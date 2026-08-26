@@ -530,12 +530,32 @@ class Scene {
     }
   }
 
-  /** 反应点：优先取反应对象**网格暴露面**的随机格中心（反应发生在哪就在哪冒泡/爆炸，
-   *  不再是"只从物块中间"）；无网格对象回退中心/底部。0.5s 时间桶内保持同一点（气流
-   *  柱/气泡不来回蹦），桶交替时在暴露面随机移动——大反应"处处有体现"。 */
+  /** 反应格：优先取"浸入容器内区"的暴露格（真实反应只在液体接触面发生——
+   *  物块大部分在水面上时，整面暴露格会把反应点抽到水上方→气泡柱"悬空"）；
+   *  无容器/无重叠时回退全部暴露面（大气反应）。 */
+  _reactionCells(obj) {
+    const pts = obj.grid?.exposedCells ? obj.grid.exposedCells() : [];
+    if (!pts.length) return pts;
+    const c = obj._container ?? null;
+    if (!c || typeof c.innerRect !== 'function') return pts;
+    const r = c.innerRect();
+    const ox = obj.gridOrigin?.x ?? obj.x;
+    const oy = obj.gridOrigin?.y ?? obj.y;
+    const wet = [];
+    for (const cell of pts) {
+      const px = ox + cell.x * CELL_SIZE + CELL_SIZE / 2;
+      const py = oy + cell.y * CELL_SIZE + CELL_SIZE / 2;
+      // 浸入线：格中心在容器内区（顶面在水面下即算浸入——底部接触也算）
+      if (px >= r.x && px <= r.x + r.w && py >= r.y - CELL_SIZE * 0.5 && py <= r.y + r.h) wet.push(cell);
+    }
+    return wet.length ? wet : pts;
+  }
+
+  /** 反应点：优先取**反应格**（浸入溶液表面的暴露格）的随机格中心——气泡/爆炸/
+   *  火花在真实反应处冒出；0.5s 时间桶内保持同一点（气流柱/气泡不来回蹦）。 */
   _reactionPoint(obj) {
     if (obj && obj.grid && typeof obj.grid.exposedCells === 'function') {
-      const pts = obj.grid.exposedCells();
+      const pts = this._reactionCells(obj);
       if (pts.length) {
         const bucket = Math.floor(this.time * 2);
         const idx = Math.abs(Math.floor(((bucket * 2654435761) >>> 0) % pts.length));
@@ -765,10 +785,10 @@ class Scene {
    *    玩家/物块施力。同一产气点只保留一个气流，持续刷新、反应停则消散。
    *  - 气泡（Bubble）纯视觉反馈，被地板阻断消失。
    */
-  /** 暴露面外包（世界坐标 x/y 范围）：大柱覆盖整个反应面（"合并成的大柱"），
-   *  微观点位由每 tick 的 reactionPoint 提供（气泡/标签/产物在热点冒出） */
+  /** 反应面外包（世界坐标 x/y 范围）：大柱覆盖**真实反应面**（浸入容器的暴露格；
+   *  微观点位由每 tick 的 reactionPoint 提供——气泡/标签/产物在热点冒出） */
   _exposedBounds(obj) {
-    const pts = obj.grid?.exposedCells ? obj.grid.exposedCells() : [];
+    const pts = this._reactionCells(obj);
     if (!pts.length) return null;
     let x0 = Infinity;
     let x1 = -Infinity;
