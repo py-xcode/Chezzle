@@ -14,6 +14,7 @@ import { Block } from '../src/objects/block.js';
 import { Player } from '../src/objects/player.js';
 import { Deposit } from '../src/objects/deposit.js';
 import { MaterialGrid, CELL_MASS } from '../src/render/gridrender.js';
+import { particleSizeOf, splitPile } from '../src/objects/particle.js';
 
 const TICK = 1 / 30;
 function run(scene, n) {
@@ -196,8 +197,8 @@ test('沉淀堆物化后可拾取：玩家 Q 收集粒子入物品栏', () => {
 });
 
 test('沉淀堆卡在烧杯口上方：物化后粒子漏入杯内（像真沙子）', () => {
-  // 固定随机种子（LCG，seed 47 → 5 颗入杯，完全确定性）：12g 堆心 cx≈382.5，杯正对堆心
-  let seed = 47;
+  // 固定随机种子（LCG，seed 29 → 6 颗入杯，完全确定性）：12g 堆心 cx≈382.5，杯正对堆心
+  let seed = 29;
   const origRand = Math.random;
   Math.random = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
   const scene = new Scene({ worldW: 800, worldH: 700 });
@@ -209,6 +210,42 @@ test('沉淀堆卡在烧杯口上方：物化后粒子漏入杯内（像真沙�
   Math.random = origRand;
   const inBeaker = scene.particles.filter((p) => p.substance === 'BaCO3' && p.x > 352.5 && p.x < 412.5 && p.y > 460);
   assert.ok(inBeaker.length >= 5, `杯内应有漏入的沉淀粒子（12g→24 颗，≥5 颗入杯），实际 ${inBeaker.length}`);
+});
+
+// ----------------------------------------------------------------------------
+// 2.6 自由粒子的"沙"物理：堆叠塌成滩，不立高塔（圆形分离）；
+//     外观契约：尺寸=particleSizeOf（0.5g→5px，1.5g→7.5px）、分配=splitPile
+// ----------------------------------------------------------------------------
+test('自由沉淀粒子是"沙"：堆叠塌成滩（圆形分离，不立高塔）', () => {
+  let seed = 47;
+  const orig = Math.random;
+  Math.random = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  const scene = new Scene({ worldW: 1000, worldH: 800 });
+  scene.addObject(new Floor({ x: -200, y: 720, w: 3000, h: 100 }));
+  scene.status = 'running';
+  scene.spawnParticles('BaCO3', 100, { x: 500, y: 600 }, true, true, null, 80);
+  for (let i = 0; i < 900; i++) scene.step(TICK);
+  Math.random = orig;
+  const ps = scene.particles;
+  const xs = ps.map((p) => p.x + p.w / 2);
+  const ys = ps.map((p) => p.y + p.h / 2);
+  const yRange = Math.max(...ys) - Math.min(...ys);
+  const xRange = Math.max(...xs) - Math.min(...xs);
+  assert.ok(yRange < 60, `堆应为滩（高度 ≤60px，立塔曾是 ~106px），实际 ${yRange.toFixed(0)}px`);
+  assert.ok(xRange > 200, `堆应铺开（宽 >200px），实际 ${xRange.toFixed(0)}px`);
+});
+
+test('外观契约：particleSizeOf / splitPile（两套沉淀共用：0.5g→5px、1.5g→7.5px）', () => {
+  assert.ok(Math.abs(particleSizeOf(0.5) - 5) < 1e-9, '0.5g → 5px');
+  assert.ok(Math.abs(particleSizeOf(1.5) - 7.5) < 1e-9, '1.5g（3×0.5g 合并）→ 7.5px（1.5 倍）');
+  assert.ok(particleSizeOf(0.05) >= 3, '下限 3px');
+  assert.ok(particleSizeOf(3.3) <= 7.5 + 1e-9, '上限 7.5px');
+  const s1 = splitPile(100); // 100g → 200 颗 0.5g（常规）
+  assert.equal(s1.n, 200);
+  assert.ok(Math.abs(s1.per - 0.5) < 1e-9);
+  const s2 = splitPile(301, 600); // 301g：常规 602 颗 > 600 → 按 1.5g 堆叠
+  assert.ok(s2.n <= 600 && s2.n >= 200, `n=${s2.n}`);
+  assert.ok(s2.per <= 1.5 + 1e-9, `per=${s2.per}`);
 });
 
 // ---- 3. 像素模式（编辑器缩放/放置的引擎侧规则）-------------------------------

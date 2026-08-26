@@ -8,9 +8,9 @@ import { Solution, SolutionMaterial, MIN_ENTRY } from '../chem/solution.js';
 import { ContainerMaterial } from './material.js';
 import { renderFormula } from '../render/label.js';
 import { getSubstance, acidLabelOf } from '../chem/substances.js';
-import { luminance } from '../render/theme.js';
+import { renderPrecipitateBall, splitPile, particleSizeOf } from './particle.js';
 
-const GRAIN_G = 0.2; // 每颗视觉颗粒代表的沉淀质量（g），生成与移除一致
+const GRAIN_MAX = 140; // 容器内沉淀的视觉颗粒上限（超出按 1.5g 合并，与自由粒子同规则）
 
 export class Container extends Obj {
   constructor({ x, y, w, h, volume, solutes, water, ...rest } = {}) {
@@ -26,7 +26,6 @@ export class Container extends Obj {
     this.grains = []; // 视觉颗粒（世界坐标；反应点生成 + 物理堆叠）
     this.useGrains = true; // 池/烧杯用颗粒；酒精灯等用自定义渲染（见 lamp）
     this.clipGrains = true; // 是否按 grainRegion 裁剪渲染（酒精灯关掉，让颗粒自然堆成小山）
-    this.grainG = GRAIN_G; // 每颗颗粒代表的质量（g）；灯等密集区可调大 → 更少更大的颗粒，堆更干净
     this.formulaVisible = true; // 是否显示化学式
     this.spillSides = false; // 灯等开放平台：颗粒可滚出左右边缘（堆不下从两侧滚落）
   }
@@ -109,15 +108,17 @@ export class Container extends Obj {
     return r;
   }
 
-  /** 颗粒半径：随 grainG 放大（更重的颗粒更大） */
-  grainR() {
-    const s = Math.sqrt(this.grainG / GRAIN_G);
-    return (2.4 + Math.random() * 1.4) * s;
-  }
-
-  /** 把某物质的视觉颗粒数对账到 round(质量/每颗质量)：增则补、减则删 */
+  /** 把某物质的视觉颗粒对账到"合并颗粒数"（与自由粒子同规则：
+   *  常规 0.5g/颗，超出 GRAIN_MAX 按 1.5g（3×0.5g）合并——外观与自由粒子完全一致） */
   _syncGrains(id, point) {
-    const target = Math.round((this.precipitates.get(id) ?? 0) / this.grainG);
+    const mass = this.precipitates.get(id) ?? 0;
+    let target = 0;
+    let size = 5;
+    if (mass > 1e-9) {
+      const s = splitPile(mass, GRAIN_MAX); // { n, per }
+      target = s.n;
+      size = particleSizeOf(s.per); // 尺寸与自由粒子同公式（0.5g→5px；1.5g→7.5px）
+    }
     let count = 0;
     for (const g of this.grains) if (g.id === id) count++;
     // 移除多余（从数组尾部删，即最近生成的）
@@ -159,10 +160,10 @@ export class Container extends Obj {
         vx: (Math.random() - 0.5) * 20,
         vy: 2,
         rest: false,
-        r: this.grainR(),
+        r: size / 2, // 与自由粒子同尺寸（视觉完全一致，无随机大小）
       });
     }
-    if (this.grains.length > 140) this.grains.splice(0, this.grains.length - 140);
+    if (this.grains.length > GRAIN_MAX) this.grains.splice(0, this.grains.length - GRAIN_MAX);
   }
 
   /** 内部液体区域（默认整个区域；子类可覆盖，如池扣除盆壁） */
@@ -482,7 +483,8 @@ export class Container extends Obj {
     ctx.rect(rg.x, rg.y, rg.w, rg.h);
   }
 
-  /** 渲染视觉颗粒；深色物质带白色辉光。按 grainClip 裁剪（clipGrains=false 时不裁剪） */
+  /** 渲染视觉颗粒：与自由沉淀粒子同一绘制（辉光/高光/深色白色光晕），
+   *  按 grainClip 裁剪（clipGrains=false 时不裁剪）——两套沉淀外观完全一致 */
   renderGrains(ctx) {
     if (!this.useGrains) return;
     const rg = this.grainRegion();
@@ -494,13 +496,7 @@ export class Container extends Obj {
     for (const g of this.grains) {
       const sub = getSubstance(g.id);
       const c = sub.solid && sub.solid.length ? sub.solid[0] : '#c9b46a';
-      const dark = luminance(c) < 110;
-      ctx.shadowColor = dark ? 'rgba(255,255,255,0.85)' : c;
-      ctx.shadowBlur = dark ? 5 : 3;
-      ctx.fillStyle = c;
-      ctx.beginPath();
-      ctx.arc(g.x, g.y, g.r, 0, Math.PI * 2);
-      ctx.fill();
+      renderPrecipitateBall(ctx, g.x, g.y, g.r * 2, c);
     }
     ctx.restore();
   }

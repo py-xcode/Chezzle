@@ -10,7 +10,7 @@ import { ChemistryEngine } from '../chem/engine.js';
 import { Atmosphere } from '../chem/atmosphere.js';
 import { getSubstance, isSoluble } from '../chem/substances.js';
 import { CollisionSystem, ContactTracker, overlaps } from '../physics/collision.js';
-import { Particle } from '../objects/particle.js';
+import { Particle, splitPile } from '../objects/particle.js';
 import { Bubble } from '../objects/bubble.js';
 import { Spark } from '../objects/spark.js';
 import { GasColumn } from '../objects/gascolumn.js';
@@ -747,20 +747,13 @@ export class Scene {
 
   /** placed=true 的粒子有碰撞箱（放置的沉淀可垫脚）；origin 记录产物来源（调试悬停显示）。
    *  spread = 撒开范围 px（大堆用：巨大质量的沉淀堆一次撒开成滩，而不是挤在 8px 内）。
-   *  分配规则（颗粒质量 = 一颗粒子"堆叠"多少基础沉淀）：
-   *   - 常规堆：每颗 maxParticleMass(0.25g)——细沙颗粒；
-   *   - 大堆（超过粒子数上限）：按"堆叠上限" stackMaxMass(1.5g = 3×0.5g) 分配；
-   *   - 极端超大堆（>900g）仍合并（质量守恒；性能上限，已与用户确认不再优化）。
-   *  尺寸随质量缩放且被 particleMaxSize 夹住（见 Particle 构造）。 */
+   *  颗粒分配统一走 splitPile（常规 0.5g/颗；大堆按"堆叠上限"1.5g = 3×0.5g 分配，
+   *  与容器内沉淀颗粒同规则）；尺寸由 particleSizeOf 决定（0.5g→5px，1.5g→7.5px）。
+   *  极端超大堆（>900g）仍合并保质量守恒（性能上限，已与用户确认不再优化）。 */
   spawnParticles(id, mass, point, collectible, placed = false, origin = null, spread = 8) {
     if (!Number.isFinite(mass) || mass <= 0) return; // 挡住 NaN/负质量
-    let n = Math.ceil(mass / CFG.maxParticleMass);
-    if (n > CFG.maxSpawnParticles) {
-      n = Math.min(CFG.maxSpawnParticles, Math.ceil(mass / CFG.stackMaxMass)); // 大堆按堆叠上限
-    }
-    n = Math.max(1, n);
-    // 每颗粒子均分质量（堆叠上限内堆叠；极端堆仍合并——见上）
-    const amount = mass / n;
+    const { n, per } = splitPile(mass);
+    const amount = per;
     for (let i = 0; i < n; i++) {
       this.addObject(
         new Particle({

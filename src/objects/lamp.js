@@ -22,7 +22,6 @@ export class Lamp extends Container {
     this.highTemp = highTemp; // 酒精喷灯 = true
     this.spillSides = false; // 灯上颗粒留在灯顶堆成小山，不滚落
     this.clipGrains = false; // 灯上颗粒不裁剪，自然堆成小山
-    this.grainG = 0.35; // 灯上颗粒更重更大（更少颗粒，堆更干净、不重叠）
     this.flameTint = null; // 焰色反应：当前特征色（null = 默认橙/蓝）
     this.flameTintCur = null; // 缓动中的颜色（避免闪烁）
   }

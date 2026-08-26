@@ -7,6 +7,7 @@
 import { THEME, rr, panel, glowText, clearText } from './theme.js';
 import { getSubstance, acidLabelOf } from '../chem/substances.js';
 import { MIN_ENTRY } from '../chem/solution.js';
+import { CFG } from '../core/config.js';
 import { GasColumn } from '../objects/gascolumn.js';
 import { Block } from '../objects/block.js';
 
@@ -239,7 +240,8 @@ export class Hud {
     }
     for (const [id, mass] of c.precipitates) {
       if (mass < MIN_ENTRY) continue;
-      out.push({ id, mass, origin: c.precipOrigins?.get(id) ?? null });
+      // 沉淀标注合并数（几颗 0.5g 合并显示）：与自由沉淀粒子同规则
+      out.push({ id, mass, origin: c.precipOrigins?.get(id) ?? null, note: `↓×${Math.max(1, Math.ceil(mass / CFG.maxParticleMass))}` });
     }
     if (c.solution.water > 0) out.push({ id: 'H2O', mass: c.solution.water, origin: { kind: 'solvent' } });
     return out.sort((a, b) => b.mass - a.mass);

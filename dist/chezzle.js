@@ -135,7 +135,7 @@ const { ChemistryEngine } = __require('src/chem/engine.js');;
 const { Atmosphere } = __require('src/chem/atmosphere.js');;
 const { getSubstance, isSoluble } = __require('src/chem/substances.js');;
 const { CollisionSystem, ContactTracker, overlaps } = __require('src/physics/collision.js');;
-const { Particle } = __require('src/objects/particle.js');;
+const { Particle, splitPile } = __require('src/objects/particle.js');;
 const { Bubble } = __require('src/objects/bubble.js');;
 const { Spark } = __require('src/objects/spark.js');;
 const { GasColumn } = __require('src/objects/gascolumn.js');;
@@ -872,20 +872,13 @@ class Scene {
 
   /** placed=true 的粒子有碰撞箱（放置的沉淀可垫脚）；origin 记录产物来源（调试悬停显示）。
    *  spread = 撒开范围 px（大堆用：巨大质量的沉淀堆一次撒开成滩，而不是挤在 8px 内）。
-   *  分配规则（颗粒质量 = 一颗粒子"堆叠"多少基础沉淀）：
-   *   - 常规堆：每颗 maxParticleMass(0.25g)——细沙颗粒；
-   *   - 大堆（超过粒子数上限）：按"堆叠上限" stackMaxMass(1.5g = 3×0.5g) 分配；
-   *   - 极端超大堆（>900g）仍合并（质量守恒；性能上限，已与用户确认不再优化）。
-   *  尺寸随质量缩放且被 particleMaxSize 夹住（见 Particle 构造）。 */
+   *  颗粒分配统一走 splitPile（常规 0.5g/颗；大堆按"堆叠上限"1.5g = 3×0.5g 分配，
+   *  与容器内沉淀颗粒同规则）；尺寸由 particleSizeOf 决定（0.5g→5px，1.5g→7.5px）。
+   *  极端超大堆（>900g）仍合并保质量守恒（性能上限，已与用户确认不再优化）。 */
   spawnParticles(id, mass, point, collectible, placed = false, origin = null, spread = 8) {
     if (!Number.isFinite(mass) || mass <= 0) return; // 挡住 NaN/负质量
-    let n = Math.ceil(mass / CFG.maxParticleMass);
-    if (n > CFG.maxSpawnParticles) {
-      n = Math.min(CFG.maxSpawnParticles, Math.ceil(mass / CFG.stackMaxMass)); // 大堆按堆叠上限
-    }
-    n = Math.max(1, n);
-    // 每颗粒子均分质量（堆叠上限内堆叠；极端堆仍合并——见上）
-    const amount = mass / n;
+    const { n, per } = splitPile(mass);
+    const amount = per;
     for (let i = 0; i < n; i++) {
       this.addObject(
         new Particle({
@@ -4044,12 +4037,42 @@ class CollisionSystem {
             }
             continue;
           }
+          // 粒子-粒子：圆形分离（沙粒彼此是球）——法向推开（封顶防瞬移），
+          // 无切向锁定/无四方形堆积 → 堆叠自然塌成滩，不会像积木立起高塔
+          //（此前 AABB 垂直压叠只往上顶，200 颗堆出 ~100px 竖直塔——用户反馈）。
+          if (b.amount !== undefined && o.amount !== undefined) {
+            if (this._separateParticles(b, o)) moved = true;
+            continue;
+          }
           if (!overlaps(b, o)) continue;
           if (resolveEmbed(b, o)) moved = true;
         }
       }
       if (!moved) break;
     }
+  }
+
+  /** 粒子-粒子圆分离（两球重叠 → 沿圆心连线各推一半；单次封顶 3px 防瞬移） */
+  _separateParticles(a, b) {
+    const ax = a.x + a.w / 2;
+    const ay = a.y + a.h / 2;
+    const bx = b.x + b.w / 2;
+    const by = b.y + b.h / 2;
+    const dx = bx - ax;
+    const dy = by - ay;
+    const rr = (a.w + b.w) / 2;
+    const d2 = dx * dx + dy * dy;
+    if (d2 >= rr * rr) return false;
+    if (d2 < 1e-8) return false; // 完全同心（罕见）：跳过避免除零
+    const d = Math.sqrt(d2);
+    const push = Math.min((rr - d) / 2, 3);
+    const nx = dx / d;
+    const ny = dy / d;
+    a.x -= nx * push;
+    a.y -= ny * push;
+    b.x += nx * push;
+    b.y += ny * push;
+    return true;
   }
 
   /**
@@ -4199,11 +4222,16 @@ exports.AABB = AABB;
   };
   __modules["src/objects/particle.js"] = function (module, exports, __require) {
 // ============================================================================
-// 沉淀粒子：0.1g / 5px 小球，受重力落到地面，可被玩家收集。
+// 沉淀粒子：实体物理球（0.5g/5px 为基准，堆叠合并 ≤3×0.5g=1.5g）。
 // 反应生成的沉淀不实心（不阻挡、与其它动态体不碰撞），但会与静态体碰撞（落在地上）。
 // 玩家"放置"的沉淀（placed=true）有碰撞箱：可被站上去垫高（沉淀踮脚），
 // 且除被重新收集外不能被移动。
 // 只有"沉淀"（不溶固体）可收集；可溶盐粒子不可收集。
+//
+// ★ 两套沉淀系统的外观契约（与容器内沉淀 grains 完全一致）：
+//   - 尺寸公式 particleSizeOf(amount)：0.5g → 5px；1.5g（3×0.5g 合并）→ 7.5px（1.5 倍）；
+//   - 分配 splitPile(mass, maxN)：常规 0.5g/颗，超出数量上限按 1.5g 合并堆叠；
+//   - 绘制 renderPrecipitateBall（辉光/高光/深色白色光晕）——粒子与容器颗粒共用。
 // ============================================================================
 
 const { Obj } = __require('src/objects/obj.js');;
@@ -4212,14 +4240,61 @@ const { luminance } = __require('src/render/theme.js');;
 const { CFG } = __require('src/core/config.js');;
 const { ParticleMaterial } = __require('src/objects/material.js');;
 
+/** 颗粒尺寸：0.5g → CFG.particleSize(5px)；1.5g（3×0.5g）→ 1.5 倍（7.5px）；
+ *  幂次 log3(1.5)≈0.369 使两个锚点精确匹配；≥上限被夹住；小质量保底 3px。 */
+function particleSizeOf(amount) {
+  const k = Math.log(1.5) / Math.log(3);
+  return Math.max(CFG.particleMinSize, Math.min(CFG.particleMaxSize,
+    CFG.particleSize * Math.pow(amount / CFG.particleRefMass, k)));
+}
+
+/** 沉淀质量 → 颗粒数分配：常规每颗 CFG.maxParticleMass(0.5g)；
+ *  超出数量上限 maxN 时按"堆叠"合并（每颗 ≤ CFG.stackMaxMass = 3×0.5g = 1.5g）；
+ *  极端超大堆（>stackMaxMass×maxN）仍合并以保质量守恒（性能上限）。 */
+function splitPile(mass, maxN = CFG.maxSpawnParticles) {
+  let n = Math.ceil(mass / CFG.maxParticleMass);
+  if (n > maxN) n = Math.min(maxN, Math.ceil(mass / CFG.stackMaxMass));
+  n = Math.max(1, n);
+  return { n, per: mass / n };
+}
+
+/** 单颗沉淀球的绘制（自由粒子与容器内颗粒共用：外观完全一致） */
+function renderPrecipitateBall(ctx, x, y, size, color) {
+  const r = size / 2;
+  const dark = luminance(color) < 110;
+  ctx.save();
+  // 深色物质：外层白色辉光（光晕，不是描边）
+  if (dark) {
+    const halo = ctx.createRadialGradient(x, y, r * 0.15, x, y, r * 1.35);
+    halo.addColorStop(0, 'rgba(255,255,255,0.5)');
+    halo.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(x, y, r * 1.35, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // 元素辉光
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 7;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  // 高光
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.beginPath();
+  ctx.arc(x - r * 0.16, y - r * 0.16, r * 0.16, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 class Particle extends Obj {
   constructor({ x, y, substance, amount = CFG.cellMass, collectible, placed = false, ...rest }) {
     // 尺寸随质量缩放：0.5g → 5px；**1.5g（堆叠 3 个 0.5g）→ 0.5g 尺寸的 1.5 倍 = 7.5px**
     //（幂次 log3(1.5)，两个锚点精确匹配；大堆合并的更大质量被 7.5px 上限夹住）；
     // 更小质量的颗粒保底 3px（可见/可拾取）。
-    const k = Math.log(1.5) / Math.log(3); // ≈0.369：size(1.5g)/size(0.5g) = 1.5
-    const size = Math.max(CFG.particleMinSize, Math.min(CFG.particleMaxSize,
-      CFG.particleSize * Math.pow(amount / CFG.particleRefMass, k)));
+    const size = particleSizeOf(amount);
     super({
       x, y, w: size, h: size,
       solid: placed,
@@ -4240,44 +4315,22 @@ class Particle extends Obj {
     return this.mat;
   }
 
+  /** 调试悬停显示：沉淀 · 物质 ×合并数（几颗 0.5g 合并；大堆合并颗粒会 >容器上限） */
   get hoverLabel() {
-    return '沉淀';
+    const n = Math.max(1, Math.ceil(this.amount / CFG.maxParticleMass));
+    return `沉淀·${this.substance} ×${n}`;
   }
 
   render(ctx) {
     const sub = getSubstance(this.substance);
     const c = sub.solid && sub.solid.length ? sub.solid[0] : '#c9b46a';
-    const x = this.x + this.w / 2;
-    const y = this.y + this.h / 2;
-    const dark = luminance(c) < 110;
-    ctx.save();
-    // 深色物质：外层白色辉光（光晕，不是描边）
-    if (dark) {
-      const halo = ctx.createRadialGradient(x, y, this.w * 0.15, x, y, this.w * 1.35);
-      halo.addColorStop(0, 'rgba(255,255,255,0.5)');
-      halo.addColorStop(1, 'rgba(255,255,255,0)');
-      ctx.fillStyle = halo;
-      ctx.beginPath();
-      ctx.arc(x, y, this.w * 1.35, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    // 元素辉光
-    ctx.shadowColor = c;
-    ctx.shadowBlur = 7;
-    ctx.fillStyle = c;
-    ctx.beginPath();
-    ctx.arc(x, y, this.w / 2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    // 高光
-    ctx.fillStyle = 'rgba(255,255,255,0.55)';
-    ctx.beginPath();
-    ctx.arc(x - this.w * 0.16, y - this.h * 0.16, this.w * 0.16, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
+    renderPrecipitateBall(ctx, this.x + this.w / 2, this.y + this.h / 2, this.w, c);
   }
 }
 
+exports.particleSizeOf = particleSizeOf;
+exports.splitPile = splitPile;
+exports.renderPrecipitateBall = renderPrecipitateBall;
 exports.Particle = Particle;
 
   };
@@ -5183,9 +5236,9 @@ const { Solution, SolutionMaterial, MIN_ENTRY } = __require('src/chem/solution.j
 const { ContainerMaterial } = __require('src/objects/material.js');;
 const { renderFormula } = __require('src/render/label.js');;
 const { getSubstance, acidLabelOf } = __require('src/chem/substances.js');;
-const { luminance } = __require('src/render/theme.js');;
+const { renderPrecipitateBall, splitPile, particleSizeOf } = __require('src/objects/particle.js');;
 
-const GRAIN_G = 0.2; // 每颗视觉颗粒代表的沉淀质量（g），生成与移除一致
+const GRAIN_MAX = 140; // 容器内沉淀的视觉颗粒上限（超出按 1.5g 合并，与自由粒子同规则）
 
 class Container extends Obj {
   constructor({ x, y, w, h, volume, solutes, water, ...rest } = {}) {
@@ -5201,7 +5254,6 @@ class Container extends Obj {
     this.grains = []; // 视觉颗粒（世界坐标；反应点生成 + 物理堆叠）
     this.useGrains = true; // 池/烧杯用颗粒；酒精灯等用自定义渲染（见 lamp）
     this.clipGrains = true; // 是否按 grainRegion 裁剪渲染（酒精灯关掉，让颗粒自然堆成小山）
-    this.grainG = GRAIN_G; // 每颗颗粒代表的质量（g）；灯等密集区可调大 → 更少更大的颗粒，堆更干净
     this.formulaVisible = true; // 是否显示化学式
     this.spillSides = false; // 灯等开放平台：颗粒可滚出左右边缘（堆不下从两侧滚落）
   }
@@ -5284,15 +5336,17 @@ class Container extends Obj {
     return r;
   }
 
-  /** 颗粒半径：随 grainG 放大（更重的颗粒更大） */
-  grainR() {
-    const s = Math.sqrt(this.grainG / GRAIN_G);
-    return (2.4 + Math.random() * 1.4) * s;
-  }
-
-  /** 把某物质的视觉颗粒数对账到 round(质量/每颗质量)：增则补、减则删 */
+  /** 把某物质的视觉颗粒对账到"合并颗粒数"（与自由粒子同规则：
+   *  常规 0.5g/颗，超出 GRAIN_MAX 按 1.5g（3×0.5g）合并——外观与自由粒子完全一致） */
   _syncGrains(id, point) {
-    const target = Math.round((this.precipitates.get(id) ?? 0) / this.grainG);
+    const mass = this.precipitates.get(id) ?? 0;
+    let target = 0;
+    let size = 5;
+    if (mass > 1e-9) {
+      const s = splitPile(mass, GRAIN_MAX); // { n, per }
+      target = s.n;
+      size = particleSizeOf(s.per); // 尺寸与自由粒子同公式（0.5g→5px；1.5g→7.5px）
+    }
     let count = 0;
     for (const g of this.grains) if (g.id === id) count++;
     // 移除多余（从数组尾部删，即最近生成的）
@@ -5334,10 +5388,10 @@ class Container extends Obj {
         vx: (Math.random() - 0.5) * 20,
         vy: 2,
         rest: false,
-        r: this.grainR(),
+        r: size / 2, // 与自由粒子同尺寸（视觉完全一致，无随机大小）
       });
     }
-    if (this.grains.length > 140) this.grains.splice(0, this.grains.length - 140);
+    if (this.grains.length > GRAIN_MAX) this.grains.splice(0, this.grains.length - GRAIN_MAX);
   }
 
   /** 内部液体区域（默认整个区域；子类可覆盖，如池扣除盆壁） */
@@ -5657,7 +5711,8 @@ class Container extends Obj {
     ctx.rect(rg.x, rg.y, rg.w, rg.h);
   }
 
-  /** 渲染视觉颗粒；深色物质带白色辉光。按 grainClip 裁剪（clipGrains=false 时不裁剪） */
+  /** 渲染视觉颗粒：与自由沉淀粒子同一绘制（辉光/高光/深色白色光晕），
+   *  按 grainClip 裁剪（clipGrains=false 时不裁剪）——两套沉淀外观完全一致 */
   renderGrains(ctx) {
     if (!this.useGrains) return;
     const rg = this.grainRegion();
@@ -5669,13 +5724,7 @@ class Container extends Obj {
     for (const g of this.grains) {
       const sub = getSubstance(g.id);
       const c = sub.solid && sub.solid.length ? sub.solid[0] : '#c9b46a';
-      const dark = luminance(c) < 110;
-      ctx.shadowColor = dark ? 'rgba(255,255,255,0.85)' : c;
-      ctx.shadowBlur = dark ? 5 : 3;
-      ctx.fillStyle = c;
-      ctx.beginPath();
-      ctx.arc(g.x, g.y, g.r, 0, Math.PI * 2);
-      ctx.fill();
+      renderPrecipitateBall(ctx, g.x, g.y, g.r * 2, c);
     }
     ctx.restore();
   }
@@ -6558,84 +6607,18 @@ exports.Plugin = Plugin;
 // ============================================================================
 // 最小渲染器：清屏 → 相机缩放 → 逐对象渲染 → HUD
 // 对象只需实现 render(ctx, opts)。渲染器本身不关心对象类型（解耦）。
-// 粒子特例：同种且位置重合/贴近的多个沉淀粒子，合并渲染成一个大粒子
-// （掉落的一簇 20 颗不再像"撒了一地小点"，视觉上是一颗稍大的粒子）。
+// 沉淀粒子**逐颗渲染**（不再聚类合并成大圆——那会让一堆 0.5g 颗粒看起来像
+// 一颗 16px 的"巨大沉淀"，与"合并后 ≤1.5 倍尺寸"的约定冲突）。
 // ============================================================================
 
 const { Camera } = __require('src/render/camera.js');;
 const { renderBackground } = __require('src/render/background.js');;
 const { Particle } = __require('src/objects/particle.js');;
-const { getSubstance } = __require('src/chem/substances.js');;
-const { luminance } = __require('src/render/theme.js');;
 
-const CLUSTER = 12; // px：同种粒子质心间距小于此视为一簇（重合/贴近）
-
-/** 合并簇画成一颗大粒子（仿 Particle.render：辉光 + 实心圆 + 高光） */
-function renderCluster(ctx, cx, cy, r, color) {
-  const dark = luminance(color) < 110;
-  ctx.save();
-  if (dark) {
-    const halo = ctx.createRadialGradient(cx, cy, r * 0.15, cx, cy, r * 1.35);
-    halo.addColorStop(0, 'rgba(255,255,255,0.5)');
-    halo.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = halo;
-    ctx.beginPath();
-    ctx.arc(cx, cy, r * 1.35, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.shadowColor = color;
-  ctx.shadowBlur = 7;
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = 'rgba(255,255,255,0.55)';
-  ctx.beginPath();
-  ctx.arc(cx - r * 0.16, cy - r * 0.16, r * 0.16, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-}
-
-/** 同种粒子聚类渲染：单颗正常画，重合的合并成大粒子 */
 function renderParticles(ctx, particles, opts) {
-  if (!particles.length) return;
-  const bySub = new Map();
   for (const pt of particles) {
     if (pt.amount <= 1e-9) continue;
-    if (!bySub.has(pt.substance)) bySub.set(pt.substance, []);
-    bySub.get(pt.substance).push(pt);
-  }
-  for (const [substance, list] of bySub) {
-    const color = getSubstance(substance).solid?.[0] ?? '#c9b46a';
-    // 贪心聚类：质心间距 < CLUSTER 的粒子归为一簇（掉落一簇的散布很小，链式合并可接受）
-    const clusters = [];
-    for (const pt of list) {
-      const px = pt.x + pt.w / 2;
-      const py = pt.y + pt.h / 2;
-      let found = null;
-      for (const c of clusters) {
-        if (Math.abs(c.cx - px) < CLUSTER && Math.abs(c.cy - py) < CLUSTER) { found = c; break; }
-      }
-      if (found) {
-        found.list.push(pt);
-        const n = found.list.length;
-        found.cx = (found.cx * (n - 1) + px) / n;
-        found.cy = (found.cy * (n - 1) + py) / n;
-      } else {
-        clusters.push({ list: [pt], cx: px, cy: py });
-      }
-    }
-    for (const c of clusters) {
-      const n = c.list.length;
-      if (n === 1) {
-        c.list[0].render(ctx, opts); // 单颗正常画
-        continue;
-      }
-      // 合并：半径 ∝ sqrt(数量)（5px 粒子半径 2.5；20 颗 ≈ 8px 上限——比单颗大一些但不夸张）
-      const r = Math.min(8, 1.8 * Math.sqrt(n));
-      renderCluster(ctx, c.cx, c.cy, r, color);
-    }
+    pt.render(ctx, opts); // 每颗按真实尺寸（0.5g→5px；合并 1.5g→7.5px）
   }
 }
 
@@ -6817,6 +6800,7 @@ exports.renderBackground = renderBackground;
 const { THEME, rr, panel, glowText, clearText } = __require('src/render/theme.js');;
 const { getSubstance, acidLabelOf } = __require('src/chem/substances.js');;
 const { MIN_ENTRY } = __require('src/chem/solution.js');;
+const { CFG } = __require('src/core/config.js');;
 const { GasColumn } = __require('src/objects/gascolumn.js');;
 const { Block } = __require('src/objects/block.js');;
 
@@ -7049,7 +7033,8 @@ class Hud {
     }
     for (const [id, mass] of c.precipitates) {
       if (mass < MIN_ENTRY) continue;
-      out.push({ id, mass, origin: c.precipOrigins?.get(id) ?? null });
+      // 沉淀标注合并数（几颗 0.5g 合并显示）：与自由沉淀粒子同规则
+      out.push({ id, mass, origin: c.precipOrigins?.get(id) ?? null, note: `↓×${Math.max(1, Math.ceil(mass / CFG.maxParticleMass))}` });
     }
     if (c.solution.water > 0) out.push({ id: 'H2O', mass: c.solution.water, origin: { kind: 'solvent' } });
     return out.sort((a, b) => b.mass - a.mass);
@@ -9840,7 +9825,6 @@ class Lamp extends Container {
     this.highTemp = highTemp; // 酒精喷灯 = true
     this.spillSides = false; // 灯上颗粒留在灯顶堆成小山，不滚落
     this.clipGrains = false; // 灯上颗粒不裁剪，自然堆成小山
-    this.grainG = 0.35; // 灯上颗粒更重更大（更少颗粒，堆更干净、不重叠）
     this.flameTint = null; // 焰色反应：当前特征色（null = 默认橙/蓝）
     this.flameTintCur = null; // 缓动中的颜色（避免闪烁）
   }

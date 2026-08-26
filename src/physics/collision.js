@@ -548,12 +548,42 @@ export class CollisionSystem {
             }
             continue;
           }
+          // 粒子-粒子：圆形分离（沙粒彼此是球）——法向推开（封顶防瞬移），
+          // 无切向锁定/无四方形堆积 → 堆叠自然塌成滩，不会像积木立起高塔
+          //（此前 AABB 垂直压叠只往上顶，200 颗堆出 ~100px 竖直塔——用户反馈）。
+          if (b.amount !== undefined && o.amount !== undefined) {
+            if (this._separateParticles(b, o)) moved = true;
+            continue;
+          }
           if (!overlaps(b, o)) continue;
           if (resolveEmbed(b, o)) moved = true;
         }
       }
       if (!moved) break;
     }
+  }
+
+  /** 粒子-粒子圆分离（两球重叠 → 沿圆心连线各推一半；单次封顶 3px 防瞬移） */
+  _separateParticles(a, b) {
+    const ax = a.x + a.w / 2;
+    const ay = a.y + a.h / 2;
+    const bx = b.x + b.w / 2;
+    const by = b.y + b.h / 2;
+    const dx = bx - ax;
+    const dy = by - ay;
+    const rr = (a.w + b.w) / 2;
+    const d2 = dx * dx + dy * dy;
+    if (d2 >= rr * rr) return false;
+    if (d2 < 1e-8) return false; // 完全同心（罕见）：跳过避免除零
+    const d = Math.sqrt(d2);
+    const push = Math.min((rr - d) / 2, 3);
+    const nx = dx / d;
+    const ny = dy / d;
+    a.x -= nx * push;
+    a.y -= ny * push;
+    b.x += nx * push;
+    b.y += ny * push;
+    return true;
   }
 
   /**
