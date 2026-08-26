@@ -1767,14 +1767,8 @@ function togglePlay() {
   if (pls.length) C.Plugin.inject(scene, pls);
   scene.status = 'running';
   scene.debugMode = true; // 试玩默认开调试模式（F5暂停/F6步进/X切换/悬停溯源）
-  // 试玩视口 = 整个世界（全览，与编辑视图一致）：所有物体（滴管等）都可见、
-  // 可按所见点击；不跟随玩家（编辑试玩是"关卡预览"语义）。
-  const renderer = new C.Renderer(canvas, {
-    worldW: state.worldW,
-    worldH: state.worldH,
-    viewW: state.worldW,
-    viewH: state.worldH,
-  });
+  // 试玩视口与实际游戏一致（1000×800 视口、跟随玩家）：与导出关卡同一比例
+  const renderer = new C.Renderer(canvas, { worldW: state.worldW, worldH: state.worldH });
   scene.renderer = renderer;
   scene.camera = renderer.camera;
   // 试玩也带 HUD：鼠标悬停溯源 + 空气计 + 气体变化日志 + 最近反应（与游戏调试模式一致）

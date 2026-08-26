@@ -47,23 +47,13 @@ export function overlaps(a, b, eps = 0) {
 
 /**
  * 该动态体是否能被"站上去"（提供支撑）：
- * 沉淀粒子（有 amount）必须**结构稳定**——落地静止（onGround 且速度接近 0）
- * 且**持续 ≥STABLE_T**（本帧之前已经稳稳地歇了 0.45s）才可垫脚：
- *   1. 正在下落/刚放置的沉淀不能给玩家提供向上的支持力（"跳→下落瞬间放置→
- *      左脚踩右脚上天"的第一个漏洞）；
- *   2. 刚落定不到 0.45s 的新鲜层同样不支撑（"跳→空中放→回落踩住新层→每跳
- *      垫高 4px 无限飞天"的第二个漏洞——沙要踩实了才立得住）。
- * 普通物块/玩家随时可站。
+ * 沉淀粒子（有 amount）必须**落地静止**（onGround 且速度接近 0）才可踮脚——
+ * 正在下落/刚放置的沉淀不能给玩家提供向上的支持力（否则"跳→下落瞬间放置→
+ * 左脚踩右脚上天"）。普通物块/玩家随时可站。
  */
-const STABLE_T = 0.45;
 function supportsStanding(o) {
   if (o.amount === undefined) return true;
-  // 玩家"放置"的沉淀（origin.kind === 'place'）**永远不提供垫脚支撑**——左脚踩右脚
-  // 的本源：自己刚放到脚下的支撑物不能立脚（跳→放→落回→垫高的循环直接断根）。
-  // 关卡预设沉淀堆（Deposit 物化）/反应沉降等（非 place）落地静止 ≥STABLE_T
-  // （踩实）后才可被踩（真·沙堆站稳）。
-  if (o.origin?.kind === 'place') return false;
-  return o.onGround === true && Math.abs(o.vel.x) < 40 && Math.abs(o.vel.y) < 40 && o.stable === true;
+  return o.onGround === true && Math.abs(o.vel.x) < 40 && Math.abs(o.vel.y) < 40;
 }
 
 /**
@@ -225,18 +215,6 @@ export class CollisionSystem {
           b.vel.x *= Math.max(0, 1 - this.airFriction * dt);
           if (Math.abs(b.vel.x) < 2) b.vel.x = 0;
         }
-      }
-    }
-    // 颗粒"结构稳定"计时：落地静止（onGround + 慢速）持续 STABLE_T 才 marked stable，
-    // 可被踩（支撑）；一旦离地/移动立即作废——放置的新鲜层必须"踩实"才能垫脚。
-    for (const b of dynamics) {
-      if (b.amount === undefined) continue;
-      if (b.onGround && Math.abs(b.vel.x) < 40 && Math.abs(b.vel.y) < 40) {
-        b._groundT = (b._groundT ?? 0) + dt;
-        b.stable = b._groundT >= STABLE_T;
-      } else {
-        b._groundT = 0;
-        b.stable = false;
       }
     }
   }
@@ -542,27 +520,22 @@ export class CollisionSystem {
             const particle = b.amount !== undefined ? b : o;
             const solid = b.amount !== undefined ? o : b;
             if (particle === o) {
-              // 实体压在颗粒上：**只有玩家**可借稳定沉淀堆站立（支撑=主动踩上：`_landOn`
-              // 只在玩家**落到粒子顶面**时生效）；**没有"自动托升"**——粒子不会把
-              // 玩家从脚下"顶起来"（否则"左脚踩右脚"：站原地放沉淀→被抬→无限登高）。
+              // 实体压在颗粒上：**玩家**可垫脚（竖向托起，≤6px 浅嵌——"沉淀踮脚"特性），
+              // 托起仍要求粒子已落地静止（supportsStanding）：下落/刚放置的粒子托人 =
+              //   "跳→下落中放置→左脚踏右脚上天"的第一个漏洞。
               // 物块等重物不托——颗粒被挤出（软体让位），别把物块"顶起来"。
               if (!solid.isPlayerObj) {
                 if (this._pushParticleOut(particle, solid)) moved = true;
                 continue;
               }
-              // 稳定层（落地静止 ≥0.45s）：玩家落/走到粒子顶面由 _landOn 支撑；
-              // 这里只做"运动玩家把新鲜层踩散"（防跳→空中放→落回踩住新层→垫高循环）
-              if (!supportsStanding(particle)) {
-                if (Math.abs(solid.vel.y) > 40 || Math.abs(solid.vel.x) > 80) {
-                  const pp2 = penSides(solid, particle);
-                  const cx = solid.x + solid.w / 2;
-                  const dir = particle.x + particle.w / 2 < cx ? -1 : 1; // 从玩家中心向两侧挤开
-                  if (Math.abs(particle.vel.x) < 30) particle.vel.x = dir * 30;
-                  if (pp2.bottom <= pp2.left && pp2.bottom <= pp2.right) {
-                    particle.x += dir * 2; // 从玩家脚底滑出（不嵌在身体里）
-                  }
-                  moved = true;
-                }
+              if (!supportsStanding(particle)) continue;
+              const pp = penSides(solid, particle);
+              if (pp.top > 1e-6 && pp.top <= pp.bottom && pp.top <= 6) {
+                const lift = Math.min(pp.top, 8);
+                solid.y -= lift;
+                solid.vel.y = Math.min(solid.vel.y, 0);
+                solid.onGround = true; // 托住了：站上粒子堆顶（垫脚）
+                moved = true;
               }
               continue;
             }

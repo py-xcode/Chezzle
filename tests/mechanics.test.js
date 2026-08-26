@@ -29,46 +29,22 @@ function flatScene() {
   return scene;
 }
 
-// ---- 1. 沉淀踮脚 / 左脚踩右脚 ------------------------------------------------
-test('玩家放置的沉淀不可垫脚：跳+空中放置循环不升天（断根：place 粒子永不支撑）', () => {
+// ---- 1. 沉淀踮脚 -------------------------------------------------------------
+test('放置的沉淀有碰撞箱且可把玩家垫高（沉淀踮脚搭高特性）', () => {
   const scene = flatScene();
   const p = new Player({ x: 300, y: 600 });
   scene.addObject(p);
-  p.inventory.add('Cu(OH)2', 100);
-  for (let round = 0; round < 12; round++) {
-    scene.control.add('jump');
-    scene.step(TICK);
-    scene.control.delete('jump');
-    for (let i = 0; i < 7; i++) { // 空中
-      scene.step(TICK);
-      if (i === 4) { scene.pressed.add('place'); } // 空中放置：左脚踩右脚的（曾经的）起手式
-      else scene.pressed.delete('place');
-    }
-    for (let i = 0; i < 60; i++) {
-      scene.step(TICK);
-      if (p.onGround && i > 5) break;
-    }
-    assert.ok(p.bottom >= 719, `第 ${round} 轮应落回地面，bottom=${p.bottom.toFixed(1)}`);
+  p.inventory.add('Cu', 10);
+  for (let k = 0; k < 8; k++) {
+    scene.pressed.add('place'); // 地面放置 → 实心粒子
+    run(scene, 8); // 等粒子落定（下落/刚放置的粒子不提供支撑——防"踩脚上天"）
   }
-  assert.ok(p.bottom >= 719.5, `连续跳放 12 轮始终落回地面：bottom=${p.bottom.toFixed(1)}`);
-});
-
-// 关卡预设沉淀堆（Deposit 物化）踩实后可垫脚——同 deposit.test「落进沉淀堆」；
-// 这里验证反面：从堆上起跳会把沙堆蹬散、玩家落回地面（跳+放式"接力升高"被禁）。
-test('从踩实的预设沉淀堆上起跳：沙子被蹬散，玩家落回地面（无接力升高）', () => {
-  const scene = new Scene();
-  scene.addObject(new Floor({ x: -200, y: 700, w: 2000, h: 60 }));
-  scene.addObject(new Deposit({ x: 120, y: 685, substance: 'BaCO3', mass: 10 }));
-  const p = new Player({ x: 140, y: 500 });
-  scene.addObject(p);
-  scene.status = 'running';
-  run(scene, 240); // 玩家落进堆并站稳（同 deposit.test 场景）
-  assert.ok(p.bottom <= 701 && p.onGround, `先站稳：bottom=${p.bottom.toFixed(1)}`);
-  scene.control.add('jump');
-  run(scene, 8);
-  scene.control.delete('jump');
-  run(scene, 90);
-  assert.ok(p.bottom >= 699.5, `从堆上起跳后应落回地面（堆被蹬散），bottom=${p.bottom.toFixed(1)}`);
+  run(scene, 30);
+  assert.ok(p.bottom < 719, `连续放置应把玩家垫高，bottom=${p.bottom.toFixed(1)}`);
+  assert.ok(scene.particles.every((pt) => pt.solid), '放置的沉淀粒子应为实心');
+  // 玩家无 input 时也不会把自己从堆上"顶穿"（站立稳定）
+  run(scene, 120);
+  assert.ok(p.bottom < 719, `站稳后仍保持在沉淀堆上，bottom=${p.bottom.toFixed(1)}`);
 });
 
 // ---- 2. 物块自动上小台阶 -------------------------------------------------------
