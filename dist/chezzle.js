@@ -3813,9 +3813,9 @@ class CollisionSystem {
         if (!xShouldResolve(b, p)) continue;
         // 站在物块顶上（接触来自上方，只差亚像素）：把 b 顶回表面即可，不横向推/挡
         if (b.y < o.y && b.bottom <= o.top + 1.5 && supportsStanding(o)) {
-          // 推动中的玩家站到小沉淀上 → 优先踢开沉淀（推动优先于上台阶/踮脚）
+          // 推动中的玩家站到小沉淀上 → 优先推开沉淀（推动优先于上台阶/踮脚）
           if (o.amount !== undefined && o.pushable && Math.abs(b.vel.x) > 50) {
-            this.kickParticle(o, b, statics);
+            this._nudgeOrKick(o, b, statics);
             continue;
           }
           b.setBottom(o.top);
@@ -3930,7 +3930,7 @@ class CollisionSystem {
         if (prevBottom <= o.top + 1 && supportsStanding(o)) {
           this._landOn(b, o); // 从上方落到 o 上（下落中的沉淀不提供支撑）
         } else if (o.amount !== undefined && o.pushable && Math.abs(b.vel.x) > 50) {
-          this.kickParticle(o, b, statics); // 推动中的玩家碰到可推沉淀：水平推开
+          this._nudgeOrKick(o, b, statics); // 推动中的玩家碰到可推沉淀：水平推开
         }
         // 注意：下沉时不做"撞顶钳制"。b 的顶贴着 o 的底 = 支撑接触（o 站在 b 上），
         // 不是碰撞——钳制会把下方物块吸死在玩家脚底，玩家移动时带着物块走
@@ -3941,10 +3941,10 @@ class CollisionSystem {
         } else if (prevBottom <= o.top + 1 && supportsStanding(o)) {
           this._landOn(b, o);
         } else if (o.amount !== undefined && o.pushable && Math.abs(b.vel.x) > 50) {
-          this.kickParticle(o, b, statics);
+          this._nudgeOrKick(o, b, statics);
         }
       } else if (o.amount !== undefined && o.pushable && Math.abs(b.vel.x) > 50) {
-        this.kickParticle(o, b, statics);
+        this._nudgeOrKick(o, b, statics);
       }
     }
   }
@@ -3967,6 +3967,20 @@ class CollisionSystem {
   _ceilingClamp(b, s) {
     b.setTop(s.bottom);
     b.vel.y = 0;
+  }
+
+  /**
+   * 玩家碰到可推沉淀：水平推动 → 只给**软让位**速度（≤45px/s，同 integrateX 让位语义——
+   * 150 的"踢飞"会让玩家离开时粒子反方向窜出很远，用户反馈）；只有真正的下落/上升
+   * 撞击（|vel.y| > 100）才用 kickParticle 的速度推开。
+   */
+  _nudgeOrKick(o, b, statics) {
+    if (Math.abs(b.vel.y) > 100) {
+      this.kickParticle(o, b, statics);
+      return;
+    }
+    const dir = b.vel.x > 0 ? 1 : -1;
+    if (Math.abs(o.vel.x) < 45) o.vel.x = dir * 45;
   }
 
   /** 把可推沉淀粒子从玩家身侧水平踢开（推动优先于自动上台阶/垫高）；无空间则返回 false */
