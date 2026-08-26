@@ -549,12 +549,26 @@ export class Scene {
    * 受冲击过强的物块/玩家碎裂掉渣（自身缩小，掉出等量可收集沉淀）。
    * cause：爆炸原因文本（调试悬停/面板显示，如"2H2+O2 → 2H2O"、"2Al+Fe2O3 → ..."）。
    */
+  /** 爆炸的焰色染色：取反应对象的主物质焰色（Na 黄/K 紫/Li 红/Cu 绿…）——
+   *  爆炸的"一部分颜色粒子"按焰色反应上色 */
+  _explosionFlameColor() {
+    const o = this._emitCtx?.obj ?? this._emitCtx?.player ?? null;
+    let id = o?.substance ?? null;
+    if (!id && o?.grid && typeof o.grid.ids === 'function') {
+      const ids = o.grid.ids();
+      if (ids.length) id = ids[0]; // 多物质取主物质
+    }
+    if (!id) return null;
+    const sub = getSubstance(id);
+    return sub?.flameColor ?? null;
+  }
+
   explode(point, strength, cause = null) {
     const p = point ?? (this._emitCtx ? this._emitCtx.point : { x: this.worldW / 2, y: this.worldH / 2 });
     const R = 150; // 爆炸半径（衰减基准）
     // 视觉 + 屏幕震动；记录最近爆炸原因（HUD 调试面板显示）
     const flip = (this._explosionSeq = (this._explosionSeq ?? 0) + 1) % 2 === 0; // 连续爆炸相位交替，不雷同
-    this.addObject(new Explosion({ x: p.x, y: p.y, strength, cause, flip }));
+    this.addObject(new Explosion({ x: p.x, y: p.y, strength, cause, flip, flame: this._explosionFlameColor() }));
     this._lastExplosion = { cause: cause || '剧烈反应', t: this.time };
     if (this.camera) this.camera.shake(Math.min(22, 5 + strength * 0.2));
     // 冲击：动态体（玩家/物块/烧杯）
@@ -662,9 +676,7 @@ export class Scene {
     // 柱的位置=**反应暴露面外包**（合并成一条稳定大柱：覆盖整个反应面，不再每条
     // 小柱四处跳——用户反馈"零零散散"）；微观点位（气泡/标签/产物）仍按热点走。
     const eb = srcObj ? this._exposedBounds(srcObj) : null;
-    const center = eb
-      ? { x: (eb.x0 + eb.x1) / 2, y: (Math.max(eb.y1, point.y)) }
-      : point;
+    const center = eb ? { x: (eb.x0 + eb.x1) / 2, y: Math.min(eb.y0, point.y) } : point;
     let plume = null;
     for (const o of this.objects) {
       // 同一产气源、同方向、同气体共柱（源变（被溶窄等）时柱自然跟随；不同源各显各的）
@@ -677,11 +689,11 @@ export class Scene {
       // 气泡柱高度：用产气源对象配置的 gasHeight，默认 80；不配则读容器（池/烧杯）
       const ghSrc = srcObj && srcObj.gasHeight ? srcObj : (emit.container ?? null);
       const gh = ghSrc && ghSrc.gasHeight ? ghSrc.gasHeight : 80;
-      // 柱宽 = 反应面（暴露面）宽 × 0.5（30~130px）；无暴露面回退"源宽×0.3"
+      // 柱宽 ≈ 整个反应暴露面（0.85×，40~180px）——气泡柱覆盖整个反应面，不再"只生成一部分"
       const faceW = eb ? eb.x1 - eb.x0 : (srcObj?.w ?? emit.container?.w ?? 48) * 0.6;
-      const w = Math.max(34, Math.min(130, faceW * 0.5));
+      const w = Math.max(40, Math.min(180, faceW * 0.85));
       plume = new GasColumn({
-        x: center.x - w / 2, y: center.y - gh / 2, w, h: gh,
+        x: center.x - w / 2, y: center.y - gh, w, h: gh,
         dir, accel, maxSpeed, life: 2.5, gasId: id,
         source: srcObj, // 产气源（自身不被自己的气流托起）
         origin: ctx ? { kind: 'reaction', text: ctx.lastRxText ?? '' } : null, // 来源方程式（调试悬停显示）
