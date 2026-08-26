@@ -4052,7 +4052,9 @@ class CollisionSystem {
     }
   }
 
-  /** 粒子-粒子圆分离（两球重叠 → 沿圆心连线各推一半；单次封顶 3px 防瞬移） */
+  /** 粒子-粒子圆分离（两球重叠 → 沿圆心连线各推一半；单次封顶 3px 防瞬移）。
+   *  位移要过**静态阻挡**（软滑动穿墙=嵌进池壁/地板——用户反馈"穿模"）：
+   *  完整向量 / 水平 / 垂直 三级降级，都被挡才不动。 */
   _separateParticles(a, b) {
     const ax = a.x + a.w / 2;
     const ay = a.y + a.h / 2;
@@ -4068,11 +4070,30 @@ class CollisionSystem {
     const push = Math.min((rr - d) / 2, 3);
     const nx = dx / d;
     const ny = dy / d;
-    a.x -= nx * push;
-    a.y -= ny * push;
-    b.x += nx * push;
-    b.y += ny * push;
+    this._slideParticle(a, -nx * push, -ny * push);
+    this._slideParticle(b, nx * push, ny * push);
     return true;
+  }
+
+  /** 粒子软位移：目标位置若嵌入静态体（池壁/地板/墙）则按 水平→垂直 降级；全挡则不动 */
+  _slideParticle(p, mx, my) {
+    if ((!mx || Math.abs(mx) < 1e-9) && (!my || Math.abs(my) < 1e-9)) return;
+    const sx = p.x;
+    const sy = p.y;
+    const tryMove = (dx2, dy2) => {
+      p.x = sx + dx2;
+      p.y = sy + dy2;
+      for (const s of this._near(p)) {
+        if (s === p) continue;
+        if (s.solid && this._stSet.has(s) && overlaps(p, s)) return false;
+      }
+      return true;
+    };
+    if (tryMove(mx, my)) return;
+    if (tryMove(mx, 0)) return; // 仅水平（贴墙横推被撤，但塌滑等水平分量可用）
+    if (tryMove(0, my)) return; // 仅垂直
+    p.x = sx;
+    p.y = sy;
   }
 
   /**
