@@ -245,9 +245,9 @@ test('反应产气时生成上升气泡', () => {
 // ---- 11. 从容器收集沉淀 ---------------------------------------------------------
 test('玩家从池中收集沉淀', () => {
   const scene = flatScene();
-  const p = new Player({ x: 200, y: 540 }); // 靠近池子
+  const p = new Player({ x: 300, y: 540 }); // 玩家横向覆盖池口上方（贴池边，够得着池底沉淀）
   scene.addObject(p);
-  const pool = new Pool({ x: 320, y: 620, w: 100, h: 80, volume: 150 });
+  const pool = new Pool({ x: 320, y: 620, w: 100, h: 60, volume: 150 });
   scene.addObject(pool);
   pool.addPrecipitate('Cu(OH)2', 5);
   scene.pressed.add('collect');

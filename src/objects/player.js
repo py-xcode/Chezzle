@@ -361,9 +361,10 @@ export class Player extends Obj {
       p.amount -= put;
       if (p.amount <= 1e-9) scene.removeObject(p);
     }
-    // 容器内沉淀（池/烧杯/开关等）：玩家**身体边缘**到容器边缘的距离 ≤ 拾取半径
-    //（与自由粒子同一半径；贴在池边/池内才算够得着）。旧逻辑按"容器中心 + 容器宽"
-    // 判定——大池隔着大半个屏幕就能收到（用户反馈）。
+    // 容器内沉淀（池/烧杯/开关等）：与自由粒子同语义——按沉淀**实际位置**就近收集。
+    // ①玩家身体边缘到容器边缘 ≤ 拾取半径（快速粗判：贴池边/在池里才够得着）；
+    // ②桶内沉淀按视觉颗粒（grains）位置分布，只收玩家 70px 范围内的部分——远处
+    //   沉淀留在容器里（旧逻辑"整池一起收"：贴着池边就收走全部——用户反馈）。
     for (const c of scene.containers) {
       const cw = c.w ?? 0;
       const ch = c.h ?? 0;
@@ -374,7 +375,20 @@ export class Player extends Obj {
         if (mass <= 0) continue;
         const room = this.inventory.roomFor(id);
         if (room <= 0) continue;
-        const taken = c.takePrecipitate(id, Math.min(mass, room));
+        // 只收"附近颗粒份额"；无视觉颗粒的容器（开关等自定义）回退整池收
+        const grains = c.useGrains ? c.grains.filter((g) => g.id === id) : null;
+        let takenMax = mass;
+        if (grains && grains.length) {
+          const near = grains.filter((g) => {
+            // 玩家矩形最近点 → 颗粒圆心距离 ≤ 拾取半径 + 颗粒半径（与粗判同单位）
+            const gx = Math.max(this.x, Math.min(g.x, this.x + this.w));
+            const gy = Math.max(this.top, Math.min(g.y, this.bottom));
+            return Math.hypot(g.x - gx, g.y - gy) <= CFG.collectRadius + (g.r ?? 0);
+          }).length;
+          if (near === 0) continue; // 该沉淀都在远处：不收到
+          takenMax = mass * (near / grains.length);
+        }
+        const taken = c.takePrecipitate(id, Math.min(mass, takenMax, room));
         this.inventory.add(id, taken);
       }
     }

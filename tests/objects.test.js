@@ -125,7 +125,7 @@ test('玩家收集附近沉淀', () => {
 
 test('物品栏快满时收集容器沉淀不丢失：多余部分进空格（跨格收集）', () => {
   const scene = flatScene();
-  const p = new Player({ x: 100, y: 540 });
+  const p = new Player({ x: 250, y: 440 }); // 玩家站池上方（身体横向覆盖池内区域）
   scene.addObject(p);
   const pool = new Pool({ x: 200, y: 500, w: 200, h: 60, volume: 100 }); // 任意容器，可直接装沉淀
   scene.addObject(pool);
@@ -153,8 +153,8 @@ test('物品栏快满时收集自由粒子不丢失：粒子保留剩余量', ()
   assert.ok(Math.abs(particle.amount) < 1e-6, `粒子应收完（跨格收集），实际 ${particle.amount}`);
 });
 
-test('容器沉淀按边沿距离拾取：远处收不到、贴边可收（旧=中心+容器宽，大池隔着老远能收）', () => {
-  // 远：玩家中心 (140,585)，池 (300,600,200,60) —— 边沿距 160px > 70；旧逻辑中心距 ≈264 ≤ 270（能收到＝bug）
+test('容器沉淀按位置就近拾取：远处收不到、近处收到（与自由粒子同语义，不是整池一起收）', () => {
+  // 远：玩家身体到池边缘 120px > 70 → 收不到（旧逻辑"中心+容器宽"≈264 ≤270 能收到＝bug）
   const scene1 = flatScene();
   const p1 = new Player({ x: 100, y: 540 });
   scene1.addObject(p1);
@@ -164,16 +164,23 @@ test('容器沉淀按边沿距离拾取：远处收不到、贴边可收（旧=�
   scene1.pressed.add('collect');
   scene1.step(TICK);
   assert.ok(Math.abs((pool1.precipitates.get('Cu(OH)2') ?? 0) - 3) < 1e-9, '远距离不应收到（容器沉淀留在池里）');
-  // 近：玩家贴池边（玩家右缘 ≈ 池左缘）
+  // 近+就近：玩家站池左端（横向覆盖池子 1/4）——只收 70px 内的颗粒；池右侧远处的沉淀留在池里
+  //（grain 随机散落：固定种子保证"近处/远处各有颗粒"）
+  let seed = 47;
+  const origRand = Math.random;
+  Math.random = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
   const scene2 = flatScene();
-  const p2 = new Player({ x: 250, y: 540 });
+  const p2 = new Player({ x: 300, y: 540 });
   scene2.addObject(p2);
-  const pool2 = new Pool({ x: 300, y: 600, w: 200, h: 60, volume: 100 });
+  const pool2 = new Pool({ x: 300, y: 600, w: 300, h: 60, volume: 150 });
   scene2.addObject(pool2);
-  pool2.addPrecipitate('Cu(OH)2', 3);
+  pool2.addPrecipitate('Cu(OH)2', 4); // 8 颗 0.5g 散落全池（固定种子下位置确定）
   scene2.pressed.add('collect');
   scene2.step(TICK);
-  assert.ok((pool2.precipitates.get('Cu(OH)2') ?? 0) < 1e-9, '贴池边应能收到');
+  Math.random = origRand;
+  const got2 = p2.inventory.slots.reduce((a, s) => a + (s?.substance === 'Cu(OH)2' ? s.mass : 0), 0);
+  assert.ok(got2 > 0, '近处应收到一部分');
+  assert.ok((pool2.precipitates.get('Cu(OH)2') ?? 0) > 0, `远处沉淀应留在池里（就近而非整池），剩余 ${pool2.precipitates.get('Cu(OH)2')}`);
 });
 
 // ---- 4. 放置沉淀（地面） -----------------------------------------------------

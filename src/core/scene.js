@@ -11,6 +11,7 @@ import { Atmosphere } from '../chem/atmosphere.js';
 import { getSubstance, isSoluble } from '../chem/substances.js';
 import { CollisionSystem, ContactTracker, overlaps } from '../physics/collision.js';
 import { Particle, splitPile } from '../objects/particle.js';
+import { CELL_SIZE } from '../render/gridrender.js';
 import { Bubble } from '../objects/bubble.js';
 import { Spark } from '../objects/spark.js';
 import { GasColumn } from '../objects/gascolumn.js';
@@ -337,7 +338,7 @@ export class Scene {
       this._emitCtx = {
         container: a._container ?? b._container,
         player: a.isPlayerObj ? a : b.isPlayerObj ? b : null,
-        point: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+        point: this._reactionPoint(Math.random() < 0.5 ? a : b), // 按接触方暴露面（不再固定中间点）
       };
       this.chem.reactPair(a.material, b.material, dt, this.makePairEnv(a, b));
     }
@@ -404,18 +405,36 @@ export class Scene {
     }
   }
 
+  /** 反应点：优先取反应对象**网格暴露面**的随机格中心（反应发生在哪就在哪冒泡/爆炸，
+   *  不再是"只从物块中间"）；无网格对象回退中心/底部。0.5s 时间桶内保持同一点（气流
+   *  柱/气泡不来回蹦），桶交替时在暴露面随机移动——大反应"处处有体现"。 */
+  _reactionPoint(obj) {
+    if (obj && obj.grid && typeof obj.grid.exposedCells === 'function') {
+      const pts = obj.grid.exposedCells();
+      if (pts.length) {
+        const bucket = Math.floor(this.time * 2);
+        const idx = Math.abs(Math.floor(((bucket * 2654435761) >>> 0) % pts.length));
+        const c = pts[idx];
+        const ox = obj.gridOrigin ? obj.gridOrigin.x : obj.x;
+        const oy = obj.gridOrigin ? obj.gridOrigin.y : obj.y;
+        return { x: ox + c.x * CELL_SIZE + CELL_SIZE / 2, y: oy + c.y * CELL_SIZE + CELL_SIZE / 2 };
+      }
+    }
+    const base = obj ? { x: obj.x + obj.w / 2, y: obj.isLamp ? obj.flameY() : obj.bottom } : null;
+    return base ?? { x: this.worldW / 2, y: this.worldH / 2 };
+  }
+
   _setEmitCtx(obj, container) {
     // 容器自身的反应（如灯上沉淀分解）：产物回到容器自己，而不是当开阔地粒子撒出去
     const selfContainer = obj && obj.material && obj.material.owner === obj ? obj : null;
-    // 灯的反应点取火焰位置（沉淀/气泡从火焰附近生成）
-    const py = obj && obj.isLamp ? obj.flameY() : obj ? obj.bottom : 0;
     // spread = 生成宽幅：玩家的底边宽度（沉淀从玩家两侧的液体接触处冒出，不压在玩家身上）
     const spread = obj && obj.isLamp ? 14 : obj && obj.w ? obj.w : 20;
     this._emitCtx = {
       obj: obj ?? null, // 反应对象（气泡柱产气源：自身不被自己的气流托起）
       container: container ?? selfContainer ?? obj?._container,
       player: obj && obj.isPlayerObj ? obj : null,
-      point: { x: obj ? obj.x + obj.w / 2 : 0, y: py, spread },
+      point: this._reactionPoint(obj), // 反应位置（暴露面随机格；不再是物体中心）
+      spread,
     };
   }
 
@@ -534,7 +553,8 @@ export class Scene {
     const p = point ?? (this._emitCtx ? this._emitCtx.point : { x: this.worldW / 2, y: this.worldH / 2 });
     const R = 150; // 爆炸半径（衰减基准）
     // 视觉 + 屏幕震动；记录最近爆炸原因（HUD 调试面板显示）
-    this.addObject(new Explosion({ x: p.x, y: p.y, strength, cause }));
+    const flip = (this._explosionSeq = (this._explosionSeq ?? 0) + 1) % 2 === 0; // 连续爆炸相位交替，不雷同
+    this.addObject(new Explosion({ x: p.x, y: p.y, strength, cause, flip }));
     this._lastExplosion = { cause: cause || '剧烈反应', t: this.time };
     if (this.camera) this.camera.shake(Math.min(22, 5 + strength * 0.2));
     // 冲击：动态体（玩家/物块/烧杯）
@@ -629,13 +649,13 @@ export class Scene {
       // 否则编辑器里设置的"气泡柱高度"永远不生效。
       const emit = this._emitCtx ?? {};
       const srcObj = emit.obj ?? null;
-      // 源物体带 gasHeight 用它；否则回退读容器（池/烧杯）的配置——产气源多数是
-      // 池溶液反应的固体反应物（无 gasHeight），不回退的话编辑器里设置的
-      // "气泡柱高度"永远不生效。
       const ghSrc = srcObj && srcObj.gasHeight ? srcObj : (emit.container ?? null);
       const gh = ghSrc && ghSrc.gasHeight ? ghSrc.gasHeight : 80;
+      // 柱宽随产气源尺寸（物块/容器宽）：小反应细柱，宽反应面宽柱（不再 48px 恒定）
+      const srcW = (srcObj && srcObj.w) || (emit.container && emit.container.w) || 48;
+      const w = Math.max(36, Math.min(110, srcW * 0.3));
       plume = new GasColumn({
-        x: point.x - 24, y: point.y - gh / 2, w: 48, h: gh,
+        x: point.x - w / 2, y: point.y - gh / 2, w, h: gh,
         dir, accel, maxSpeed, life: 2.5, gasId: id,
         source: srcObj, // 产气源（自身不被自己的气流托起）
         origin: ctx ? { kind: 'reaction', text: ctx.lastRxText ?? '' } : null, // 来源方程式（调试悬停显示）

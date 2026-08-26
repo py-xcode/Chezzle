@@ -196,6 +196,31 @@ export class MaterialGrid {
     return Object.keys(this._totals);
   }
 
+  /** 暴露格列表（实心但四邻至少一格空旷/微量）——反应/产气/爆炸发生在暴露面 */
+  exposedCells() {
+    const out = [];
+    for (let y = 0; y < this.rows; y++) {
+      for (let x = 0; x < this.cols; x++) {
+        const m = this.cells[y][x];
+        if (!m || this._cellTotal(m) < MIN_SOLID_MASS) continue;
+        if (this._cellExposed(x, y)) out.push({ x, y });
+      }
+    }
+    return out;
+  }
+
+  /** 该格是否暴露（四邻任意一格为空/微量） */
+  _cellExposed(x, y) {
+    return !this._cellSolid(x - 1, y) || !this._cellSolid(x + 1, y)
+      || !this._cellSolid(x, y - 1) || !this._cellSolid(x, y + 1);
+  }
+
+  _cellSolid(x, y) {
+    if (x < 0 || y < 0 || x >= this.cols || y >= this.rows) return false; // 边界外=暴露
+    const m = this.cells[y][x];
+    return !!(m && this._cellTotal(m) >= MIN_SOLID_MASS);
+  }
+
   /** 该行是否"空行"（整行无实心格：全 null 或全微量 < MIN_SOLID_MASS） */
   _rowEmpty(y) {
     for (let x = 0; x < this.cols; x++) {
