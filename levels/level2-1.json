@@ -1,0 +1,649 @@
+{
+  "version": 1,
+  "worldW": 1500,
+  "worldH": 800,
+  "rx": [
+    "NaClO+NH4OH->NaCl+N2+H2O"
+  ],
+  "objects": [
+    {
+      "type": "floor",
+      "opts": {
+        "x": 16,
+        "y": 703,
+        "w": 296,
+        "h": 50,
+        "id": "floor1"
+      }
+    },
+    {
+      "type": "player",
+      "opts": {
+        "x": 45,
+        "y": 580,
+        "substance": "Fe2O3",
+        "mass": 30,
+        "noLift": false,
+        "id": "player1"
+      }
+    },
+    {
+      "type": "blastlamp",
+      "opts": {
+        "x": 182,
+        "y": 665,
+        "autoOn": true,
+        "highTemp": true,
+        "id": "blastlamp1",
+        "precipitates": {
+          "Al": 1
+        }
+      }
+    },
+    {
+      "type": "pool",
+      "opts": {
+        "x": 304,
+        "y": 703,
+        "w": 260,
+        "h": 73,
+        "volume": 200,
+        "solutes": {
+          "HCl": 100
+        },
+        "gasHeight": 80,
+        "id": "pool1"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 352,
+        "y": 517,
+        "w": 250,
+        "h": 21,
+        "id": "floor2"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 16,
+        "y": 337,
+        "w": 369,
+        "h": 84,
+        "id": "floor3"
+      }
+    },
+    {
+      "type": "pool",
+      "opts": {
+        "x": 378,
+        "y": 337,
+        "w": 190,
+        "h": 57,
+        "volume": 200,
+        "solutes": {},
+        "gasHeight": 80,
+        "id": "2"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 352,
+        "y": 425,
+        "w": 20,
+        "h": 96,
+        "id": "floor4"
+      }
+    },
+    {
+      "type": "block",
+      "opts": {
+        "x": 437,
+        "y": 465,
+        "substance": "K",
+        "mass": 10,
+        "w": 50,
+        "h": 50,
+        "pushable": true,
+        "noLift": false,
+        "id": "block1"
+      }
+    },
+    {
+      "type": "block",
+      "opts": {
+        "x": 441,
+        "y": 576,
+        "substance": "NaClO",
+        "mass": 10,
+        "w": 50,
+        "h": 50,
+        "pushable": true,
+        "noLift": false,
+        "id": "block2"
+      }
+    },
+    {
+      "type": "rope",
+      "opts": {
+        "x": 456,
+        "y": 494,
+        "length": 100,
+        "hanging": "block2",
+        "anchorMode": "fixed",
+        "anchorObj": "block1",
+        "id": "rope1"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 558,
+        "y": 702,
+        "w": 190,
+        "h": 50,
+        "id": "floor5"
+      }
+    },
+    {
+      "type": "block",
+      "opts": {
+        "x": 689,
+        "y": 649,
+        "substance": "NaOH",
+        "mass": 10,
+        "w": 50,
+        "h": 50,
+        "pushable": true,
+        "noLift": true,
+        "id": "block3"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 580,
+        "y": 396,
+        "w": 20,
+        "h": 126,
+        "id": "floor6"
+      }
+    },
+    {
+      "type": "pool",
+      "opts": {
+        "x": 740,
+        "y": 699,
+        "w": 150,
+        "h": 63,
+        "volume": 200,
+        "solutes": {
+          "NH3·H2O": 1
+        },
+        "gasHeight": 850,
+        "id": "pool3"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 563,
+        "y": 337,
+        "w": 174,
+        "h": 64,
+        "id": "floor7"
+      }
+    },
+    {
+      "type": "extractor",
+      "opts": {
+        "x": 263,
+        "y": 321,
+        "w": 50,
+        "h": 14,
+        "poolId": 2,
+        "switchId": 1,
+        "rate": 0.25,
+        "id": "extractor1"
+      }
+    },
+    {
+      "type": "switch",
+      "opts": {
+        "x": 206,
+        "y": 326,
+        "mode": "pressure",
+        "opening": null,
+        "and": null,
+        "deleteId": null,
+        "showId": null,
+        "igniteId": null,
+        "extinguishId": null,
+        "openId": null,
+        "id": "1",
+        "precipitates": {}
+      }
+    },
+    {
+      "type": "portal",
+      "opts": {
+        "x": 123,
+        "y": 271,
+        "w": 44,
+        "h": 64,
+        "color": "#c78bff",
+        "uses": 2,
+        "switchId": null,
+        "id": "portal1"
+      }
+    },
+    {
+      "type": "portal",
+      "opts": {
+        "x": 386,
+        "y": 454,
+        "w": 44,
+        "h": 64,
+        "color": "#c78bff",
+        "uses": 2,
+        "switchId": null,
+        "id": "portal3"
+      }
+    },
+    {
+      "type": "portal",
+      "opts": {
+        "x": 517,
+        "y": 451,
+        "w": 44,
+        "h": 64,
+        "color": "#2bc001",
+        "uses": 1,
+        "switchId": null,
+        "id": "portal4"
+      }
+    },
+    {
+      "type": "portal",
+      "opts": {
+        "x": 335,
+        "y": 272,
+        "w": 44,
+        "h": 64,
+        "color": "#2bc001",
+        "uses": 1,
+        "switchId": null,
+        "id": "portal2"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 885,
+        "y": 702,
+        "w": 350,
+        "h": 50,
+        "id": "floor8"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 907,
+        "y": 342,
+        "w": 280,
+        "h": 58,
+        "id": "floor9"
+      }
+    },
+    {
+      "type": "gasdetector",
+      "opts": {
+        "x": 579,
+        "y": 328,
+        "gas": "H2",
+        "threshold": 0.1,
+        "opening": "H2",
+        "precipitates": {},
+        "and": null,
+        "deleteId": null,
+        "showId": null,
+        "igniteId": null,
+        "extinguishId": null,
+        "openId": null,
+        "id": "gasdetector1"
+      }
+    },
+    {
+      "type": "switch",
+      "opts": {
+        "x": 1019,
+        "y": 320,
+        "mode": "chemical",
+        "opening": "Al2O3",
+        "and": "switch2",
+        "deleteId": null,
+        "showId": null,
+        "igniteId": null,
+        "extinguishId": null,
+        "openId": null,
+        "id": "switch1",
+        "precipitates": {}
+      }
+    },
+    {
+      "type": "switch",
+      "opts": {
+        "x": 1077,
+        "y": 320,
+        "mode": "chemical",
+        "opening": "FeCl2",
+        "and": null,
+        "deleteId": null,
+        "showId": null,
+        "igniteId": null,
+        "extinguishId": null,
+        "openId": null,
+        "id": "switch2",
+        "precipitates": {}
+      }
+    },
+    {
+      "type": "portal",
+      "opts": {
+        "x": 678,
+        "y": 269,
+        "w": 44,
+        "h": 64,
+        "color": "#d8b32c",
+        "uses": 0,
+        "switchId": "gasdetector1",
+        "id": "portal5"
+      }
+    },
+    {
+      "type": "portal",
+      "opts": {
+        "x": 941,
+        "y": 282,
+        "w": 44,
+        "h": 64,
+        "color": "#d8b32c",
+        "uses": 0,
+        "switchId": "gasdetector1",
+        "id": "portal6"
+      }
+    },
+    {
+      "type": "portal",
+      "opts": {
+        "x": 1138,
+        "y": 277,
+        "w": 44,
+        "h": 64,
+        "color": "#1e77eb",
+        "uses": 0,
+        "switchId": "switch1",
+        "id": "portal7"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 16,
+        "y": 162,
+        "w": 240,
+        "h": 27,
+        "id": "floor10"
+      }
+    },
+    {
+      "type": "portal",
+      "opts": {
+        "x": 49,
+        "y": 97,
+        "w": 44,
+        "h": 64,
+        "color": "#1e77eb",
+        "uses": 0,
+        "switchId": "switch1",
+        "id": "portal8"
+      }
+    },
+    {
+      "type": "switch",
+      "opts": {
+        "x": 147,
+        "y": 140,
+        "mode": "chemical",
+        "opening": "Fe(OH)3",
+        "and": null,
+        "deleteId": null,
+        "showId": null,
+        "igniteId": "lamp1",
+        "extinguishId": null,
+        "openId": null,
+        "id": "switch3",
+        "precipitates": {}
+      }
+    },
+    {
+      "type": "lamp",
+      "opts": {
+        "x": 208,
+        "y": 127,
+        "autoOn": false,
+        "id": "lamp1",
+        "precipitates": {}
+      }
+    },
+    {
+      "type": "pool",
+      "opts": {
+        "x": 249,
+        "y": 162,
+        "w": 173,
+        "h": 43,
+        "volume": 200,
+        "solutes": {
+          "HClO": 10
+        },
+        "gasHeight": 80,
+        "id": "pool4"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 415,
+        "y": 162,
+        "w": 150,
+        "h": 35,
+        "id": "floor11"
+      }
+    },
+    {
+      "type": "gasdetector",
+      "opts": {
+        "x": 426,
+        "y": 141,
+        "gas": "O2",
+        "threshold": 0.5,
+        "opening": "O2",
+        "precipitates": {},
+        "and": null,
+        "deleteId": "floor12",
+        "showId": null,
+        "igniteId": null,
+        "extinguishId": null,
+        "openId": null,
+        "id": "gasdetector2"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 483,
+        "y": -38,
+        "w": 20,
+        "h": 200,
+        "id": "floor12"
+      }
+    },
+    {
+      "type": "block",
+      "opts": {
+        "x": 516,
+        "y": 125,
+        "substance": "Cu",
+        "mass": 3,
+        "w": 25,
+        "h": 30,
+        "pushable": true,
+        "noLift": false,
+        "id": "block4"
+      }
+    },
+    {
+      "type": "pool",
+      "opts": {
+        "x": 559,
+        "y": 162,
+        "w": 182,
+        "h": 30,
+        "volume": 200,
+        "solutes": {
+          "HNO3": 5
+        },
+        "gasHeight": 80,
+        "id": "pool5"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 736,
+        "y": 163,
+        "w": 250,
+        "h": 43,
+        "id": "floor13"
+      }
+    },
+    {
+      "type": "extractor",
+      "opts": {
+        "x": 743,
+        "y": 149,
+        "w": 50,
+        "h": 14,
+        "poolId": "pool5",
+        "switchId": "switch4",
+        "rate": 0.25,
+        "id": "extractor2"
+      }
+    },
+    {
+      "type": "switch",
+      "opts": {
+        "x": 803,
+        "y": 143,
+        "mode": "pressure",
+        "opening": null,
+        "and": null,
+        "deleteId": null,
+        "showId": null,
+        "igniteId": null,
+        "extinguishId": null,
+        "openId": null,
+        "id": "switch4",
+        "precipitates": {}
+      }
+    },
+    {
+      "type": "key",
+      "opts": {
+        "x": 869,
+        "y": 140,
+        "opening": "CuCl2",
+        "deleteId": null,
+        "showId": null,
+        "igniteId": null,
+        "extinguishId": null,
+        "openId": "door1",
+        "id": "key1",
+        "precipitates": {}
+      }
+    },
+    {
+      "type": "door",
+      "opts": {
+        "x": 928,
+        "y": 92,
+        "w": 50,
+        "h": 70,
+        "id": "door1"
+      }
+    },
+    {
+      "type": "sign",
+      "opts": {
+        "x": 759,
+        "y": 639,
+        "text": "3NaClO + 2NH₃ → 3NaCl + N₂↑ + 3H₂O",
+        "id": "sign2"
+      }
+    },
+    {
+      "type": "extractor",
+      "opts": {
+        "x": 570,
+        "y": 686,
+        "w": 50,
+        "h": 14,
+        "poolId": "pool1",
+        "switchId": "switch5",
+        "rate": 1,
+        "id": "extractor3"
+      }
+    },
+    {
+      "type": "switch",
+      "opts": {
+        "x": 638,
+        "y": 692,
+        "mode": "pressure",
+        "opening": null,
+        "and": null,
+        "deleteId": null,
+        "showId": null,
+        "igniteId": null,
+        "extinguishId": null,
+        "openId": null,
+        "id": "switch5",
+        "precipitates": {}
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 904,
+        "y": 242,
+        "w": 20,
+        "h": 99,
+        "id": "floor14"
+      }
+    },
+    {
+      "type": "sign",
+      "opts": {
+        "x": 1265,
+        "y": 777,
+        "text": "enjoy!",
+        "id": "sign3"
+      }
+    }
+  ]
+}

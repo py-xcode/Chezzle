@@ -1,0 +1,264 @@
+{
+  "version": 1,
+  "worldW": 1500,
+  "worldH": 800,
+  "objects": [
+    {
+      "type": "floor",
+      "opts": {
+        "x": 52,
+        "y": 703,
+        "w": 443,
+        "h": 94,
+        "id": "floor5"
+      }
+    },
+    {
+      "type": "block",
+      "opts": {
+        "x": 359,
+        "y": 624,
+        "substance": "Zn",
+        "mass": 25.6,
+        "w": 80,
+        "h": 80,
+        "pushable": true,
+        "noLift": false,
+        "id": "block1"
+      }
+    },
+    {
+      "type": "pool",
+      "opts": {
+        "x": 490,
+        "y": 704,
+        "w": 241,
+        "h": 55,
+        "volume": 500,
+        "solutes": {
+          "HCl": 30
+        },
+        "gasHeight": 900,
+        "id": "pool1"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 178,
+        "y": 401,
+        "w": 308,
+        "h": 70,
+        "id": "floor6"
+      }
+    },
+    {
+      "type": "player",
+      "opts": {
+        "x": 166,
+        "y": 580,
+        "substance": "NaOH",
+        "mass": 30,
+        "noLift": false,
+        "id": "player1"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 725,
+        "y": 705,
+        "w": 331,
+        "h": 87,
+        "id": "floor7"
+      }
+    },
+    {
+      "type": "extractor",
+      "opts": {
+        "x": 747,
+        "y": 692,
+        "w": 50,
+        "h": 11,
+        "poolId": "pool1",
+        "switchId": "switch1",
+        "rate": 1,
+        "id": "extractor1"
+      }
+    },
+    {
+      "type": "switch",
+      "opts": {
+        "x": 809,
+        "y": 682,
+        "mode": "pressure",
+        "opening": null,
+        "and": null,
+        "deleteId": null,
+        "showId": null,
+        "igniteId": null,
+        "extinguishId": null,
+        "openId": null,
+        "id": "switch1",
+        "precipitates": {}
+      }
+    },
+    {
+      "type": "pool",
+      "opts": {
+        "x": 51,
+        "y": 401,
+        "w": 134,
+        "h": 57,
+        "volume": 200,
+        "solutes": {
+          "AgNO3": 1
+        },
+        "gasHeight": 80,
+        "id": "pool2"
+      }
+    },
+    {
+      "type": "switch",
+      "opts": {
+        "x": 334,
+        "y": 375,
+        "mode": "chemical",
+        "opening": "AgCl",
+        "and": null,
+        "deleteId": null,
+        "showId": null,
+        "igniteId": null,
+        "extinguishId": null,
+        "openId": "portal1",
+        "id": "switch2",
+        "precipitates": {}
+      }
+    },
+    {
+      "type": "portal",
+      "opts": {
+        "x": 424,
+        "y": 333,
+        "w": 44,
+        "h": 64,
+        "color": "#c78bff",
+        "uses": 0,
+        "switchId": "switch2",
+        "id": "portal1"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 66,
+        "y": 131,
+        "w": 263,
+        "h": 96,
+        "id": "floor8"
+      }
+    },
+    {
+      "type": "portal",
+      "opts": {
+        "x": 86,
+        "y": 67,
+        "w": 44,
+        "h": 64,
+        "color": "#c78bff",
+        "uses": 0,
+        "switchId": "switch2",
+        "id": "portal3"
+      }
+    },
+    {
+      "type": "pool",
+      "opts": {
+        "x": 323,
+        "y": 138,
+        "w": 230,
+        "h": 58,
+        "volume": 200,
+        "solutes": {
+          "CuSO4": 20
+        },
+        "gasHeight": 80,
+        "id": "pool3"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 548,
+        "y": 141,
+        "w": 317,
+        "h": 78,
+        "id": "floor9"
+      }
+    },
+    {
+      "type": "switch",
+      "opts": {
+        "x": 566,
+        "y": 116,
+        "mode": "chemical",
+        "opening": "NaCl",
+        "and": null,
+        "deleteId": null,
+        "showId": null,
+        "igniteId": "blastlamp1",
+        "extinguishId": null,
+        "openId": null,
+        "id": "switch3",
+        "precipitates": {}
+      }
+    },
+    {
+      "type": "key",
+      "opts": {
+        "x": 684,
+        "y": 114,
+        "opening": "Cu",
+        "deleteId": null,
+        "showId": null,
+        "igniteId": null,
+        "extinguishId": null,
+        "openId": "door1",
+        "id": "key1",
+        "precipitates": {}
+      }
+    },
+    {
+      "type": "door",
+      "opts": {
+        "x": 769,
+        "y": 60,
+        "w": 52,
+        "h": 80,
+        "id": "door1"
+      }
+    },
+    {
+      "type": "blastlamp",
+      "opts": {
+        "x": 628,
+        "y": 101,
+        "autoOn": false,
+        "highTemp": true,
+        "id": "blastlamp1",
+        "precipitates": {
+          "C": 3
+        }
+      }
+    },
+    {
+      "type": "sign",
+      "opts": {
+        "x": 1193,
+        "y": 773,
+        "text": "level1 H",
+        "id": "sign1"
+      }
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Chezzle 关卡</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0e28; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { background: #0b0e28; box-shadow: 0 0 60px rgba(120,90,220,0.25); }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script src="../dist/chezzle.js"></script>
+<script src="report.js"></script>
+<script>
+const canvas = document.getElementById('game');
+canvas.width = 1100;
+canvas.height = 700;
+const L = new Chezzle.LevelBuilder(canvas, { worldW: 1500, worldH: 800 });
+L
+  .floor(52, 703, 443, 94, { id: 'floor5' })
+  .block(359, 624, { substance: 'Zn', w: 80, h: 80, id: 'block1' })
+  .pool(490, 704, 241, 55, { volume: 500, solutes: {"HCl":30}, gasHeight: 900, id: 'pool1' })
+  .floor(178, 401, 308, 70, { id: 'floor6' })
+  .player(166, 580, { substance: 'NaOH', mass: 30, id: 'player1' })
+  .floor(725, 705, 331, 87, { id: 'floor7' })
+  .extractor(747, 692, { w: 50, h: 11, poolId: 'pool1', switchId: 'switch1', rate: 1, id: 'extractor1' })
+  .switch(809, 682, { mode: 'pressure', id: 'switch1' })
+  .pool(51, 401, 134, 57, { volume: 200, solutes: {"AgNO3":1}, id: 'pool2' })
+  .switch(334, 375, { mode: 'chemical', opening: 'AgCl', openId: 'portal1', id: 'switch2' })
+  .portal(424, 333, { w: 44, h: 64, color: '#c78bff', switchId: 'switch2', id: 'portal1' })
+  .floor(66, 131, 263, 96, { id: 'floor8' })
+  .portal(86, 67, { w: 44, h: 64, color: '#c78bff', switchId: 'switch2', id: 'portal3' })
+  .pool(323, 138, 230, 58, { volume: 200, solutes: {"CuSO4":20}, id: 'pool3' })
+  .floor(548, 141, 317, 78, { id: 'floor9' })
+  .switch(566, 116, { mode: 'chemical', opening: 'NaCl', igniteId: 'blastlamp1', id: 'switch3' })
+  .key(684, 114, { opening: 'Cu', openId: 'door1', id: 'key1' })
+  .door(769, 60, 52, 80, { id: 'door1' })
+  .blastlamp(628, 101, { autoOn: false, highTemp: true, id: 'blastlamp1' })
+  .sign(1193, 773, 'level1 H', { id: 'sign1' })
+;
+
+const scene = L.build();
+scene.byId['blastlamp1'].addPrecipitate('C', 3);
+
+// ⚡ 接线（示例，按需取消注释）：
+// scene.byId['sw'].onOpen(() => scene.byId['lamp'].ignite());
+// scene.byId['sw'].onClose(() => scene.byId['lamp'].extinguish());
+// scene.byId['key'].onOpen(() => scene.byId['door'].open());
+// scene.atmosphere.add('CO2', 8); // 可选：初始大气 CO2（碳化玩法）
+
+L.start();
+// 通关上报（选关系统：H 元素 · 氕）
+ChezzleReport.bind(scene, 'H-1');
+</script>
+</body>
+</html>

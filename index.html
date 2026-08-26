@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chezzle · 化学 × 解谜</title>
+<style>
+  :root { --gold: #e8b84b; --gold-l: #ffd76a; --cyan: #7fd8ff; --txt: #e8ecff; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body { display: flex; align-items: center; justify-content: center; overflow: hidden;
+    background:
+      radial-gradient(1100px 620px at 50% 12%, rgba(84,60,180,.34) 0%, transparent 60%),
+      radial-gradient(1600px 1000px at 50% 110%, rgba(20,14,64,.9) 0%, #07051a 60%) #07051a;
+    color: var(--txt); font: 15px "Segoe UI","Microsoft YaHei",sans-serif; }
+  .nebula { position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background:
+      radial-gradient(360px 240px at 16% 78%, rgba(232,184,75,.10), transparent 70%),
+      radial-gradient(520px 320px at 86% 82%, rgba(127,216,255,.09), transparent 70%),
+      radial-gradient(680px 420px at 50% -8%, rgba(199,139,255,.13), transparent 72%);
+    animation: neb 18s ease-in-out infinite alternate; }
+  @keyframes neb { from { transform: translateY(0); opacity: .8; } to { transform: translateY(-16px); opacity: 1; } }
+  #stars { position: fixed; inset: 0; z-index: 1; pointer-events: none; }
+  .st { position: absolute; border-radius: 50%; background: #fff; animation: twinkle ease-in-out infinite; }
+  @keyframes twinkle { 0%,100% { opacity: .12; transform: scale(.8); } 50% { opacity: .8; transform: scale(1); } }
+  .sigil { position: fixed; left: 50%; top: 42%; width: 820px; height: 820px; transform: translate(-50%,-50%);
+    z-index: 0; opacity: .1; pointer-events: none; animation: spin 120s linear infinite; }
+  @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
+
+  .hero { position: relative; z-index: 2; text-align: center; padding: 0 16px; width: 100%; max-width: 1200px; }
+  /* —— MC 风方块字标题 —— */
+  .title { width: min(680px, 86vw); display: block; margin: 0 auto; animation: bob 5.2s ease-in-out infinite; }
+  @keyframes bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
+  /* 字母淡入：只动 opacity（transform 会被 SVG 字母的定位属性占用，不能动画） */
+  .title .lt { opacity: 0; animation: pop .5s ease forwards; }
+  @keyframes pop { from { opacity: 0; } to { opacity: 1; } }
+  /* —— 两个长条按钮 —— */
+  .bar { display: flex; align-items: center; justify-content: center; gap: 13px; margin: 0 auto;
+    width: min(560px, 82vw); padding: 14px 20px; font-size: 17px; font-weight: bold; letter-spacing: 8px;
+    text-decoration: none; cursor: pointer;
+    clip-path: polygon(16px 0, calc(100% - 16px) 0, 100% 16px, 100% calc(100% - 16px), calc(100% - 16px) 100%, 16px 100%, 0 calc(100% - 16px), 0 16px);
+    opacity: 0; animation: pop .55s ease forwards; transition: transform .18s ease, filter .18s ease; }
+  #btnPlay { margin-top: 36px; animation-delay: .55s;
+    background: linear-gradient(180deg, #ffe9a8 0%, #e8b84b 46%, #9a6d1e 100%); color: #241a02;
+    filter: drop-shadow(0 0 16px rgba(232,184,75,.45)) drop-shadow(0 10px 20px rgba(0,0,0,.5)); }
+  #btnAbout { margin-top: 15px; animation-delay: .7s;
+    background: linear-gradient(180deg, #2a2270 0%, #1a1650 50%, #0f0c34 100%); color: var(--cyan);
+    border: 1.5px solid rgba(127,216,255,.55);
+    filter: drop-shadow(0 0 10px rgba(127,216,255,.2)) drop-shadow(0 10px 20px rgba(0,0,0,.5)); }
+  #btnPlay:hover { transform: translateY(-2px); filter: drop-shadow(0 0 26px rgba(255,215,106,.75)) drop-shadow(0 14px 24px rgba(0,0,0,.5)); }
+  #btnAbout:hover { transform: translateY(-2px); filter: drop-shadow(0 0 22px rgba(127,216,255,.5)) drop-shadow(0 14px 24px rgba(0,0,0,.5)); }
+  .bar:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+  .foot { margin-top: 24px; color: #5a527e; font-size: 12px; letter-spacing: 3px; opacity: 0;
+    animation: pop .8s ease 1.05s forwards; }
+  .foot b { color: var(--gold); font-weight: 600; }
+
+  /* —— 两个小动画（半透明，无边框无标题；不拦截鼠标——真实按钮照常可点）—— */
+  .stage { position: fixed; bottom: 14px; z-index: 3; }
+  .stage canvas { display: block; opacity: .85; pointer-events: none; }
+  #stageL { left: 14px; }
+  #stageR { right: 14px; }
+  @media (max-width: 1000px) {
+    .stage { position: relative; margin: 14px auto 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .nebula, .st, .sigil, .title { animation: none !important; }
+    .bar, .lt, .foot { animation: pop .4s ease forwards; }
+  }
+</style>
+</head>
+<body>
+<div class="nebula" aria-hidden="true"></div>
+<div id="stars" aria-hidden="true"></div>
+<svg class="sigil" viewBox="0 0 900 900" aria-hidden="true">
+  <g fill="none" stroke="#c78bff">
+    <circle cx="450" cy="450" r="330" stroke-width="2"/>
+    <circle cx="450" cy="450" r="366" stroke-width="1" stroke-dasharray="30 22"/>
+    <path d="M450 84 L540 450 L450 816 L360 450 Z" stroke-width="1.5"/>
+    <path d="M84 450 L450 360 L816 450 L450 540 Z" stroke-width="1.5"/>
+  </g>
+</svg>
+
+<div class="hero">
+  <!-- MC 风方块字：CHE 金 / ZZLE 青（白色主体 + 渐变描边 + 立体投影层，每字微歪） -->
+  <svg class="title" viewBox="0 0 492 132" role="img" aria-label="CHEZZLE">
+    <defs>
+      <linearGradient id="gGold" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#ffe9a8"/><stop offset="1" stop-color="#96691d"/>
+      </linearGradient>
+      <linearGradient id="gCyan" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#c9eeff"/><stop offset="1" stop-color="#2b6fc4"/>
+      </linearGradient>
+      <!-- 字母形（0..64 × 0..80 局部坐标） -->
+      <g id="gC"><path d="M64 0 H4 L0 4 V76 L4 80 H64 V62 H18 V18 H64 Z"/></g>
+      <g id="gH"><path d="M0 0 H16 V32 H48 V0 H64 V80 H48 V50 H16 V80 H0 Z"/></g>
+      <g id="gE"><path d="M64 0 H0 V80 H64 V62 H16 V46 H60 V30 H16 V18 H64 Z"/></g>
+      <g id="gZ"><path d="M64 0 H0 V16 H34 L0 64 V80 H64 V64 H30 L64 16 Z"/></g>
+      <g id="gL"><path d="M0 0 H16 V64 H64 V80 H0 Z"/></g>
+    </defs>
+    <!-- 立体投影层 -->
+    <g fill="#171329">
+      <use href="#gC" transform="translate(0,9) rotate(-1.5 32 40)"/>
+      <use href="#gH" transform="translate(70,9) rotate(1.2 32 40)"/>
+      <use href="#gE" transform="translate(140,9) rotate(-1 32 40)"/>
+      <use href="#gZ" transform="translate(210,9) rotate(1.6 32 40)"/>
+      <use href="#gZ" transform="translate(280,9) rotate(-1.6 32 40)"/>
+      <use href="#gL" transform="translate(350,9) rotate(1 32 40)"/>
+      <use href="#gE" transform="translate(420,9) rotate(-1.2 32 40)"/>
+    </g>
+    <!-- 主体（白字 + 渐变描边） -->
+    <g style="paint-order:stroke;fill:#f2f4fa">
+      <path class="lt" style="animation-delay:.05s" transform="translate(0,0) rotate(-1.5 32 40)" d="M64 0 H4 L0 4 V76 L4 80 H64 V62 H18 V18 H64 Z" stroke="url(#gGold)" stroke-width="9"/>
+      <path class="lt" style="animation-delay:.12s" transform="translate(70,0) rotate(1.2 32 40)" d="M0 0 H16 V32 H48 V0 H64 V80 H48 V50 H16 V80 H0 Z" stroke="url(#gGold)" stroke-width="9"/>
+      <path class="lt" style="animation-delay:.19s" transform="translate(140,0) rotate(-1 32 40)" d="M64 0 H0 V80 H64 V62 H16 V46 H60 V30 H16 V18 H64 Z" stroke="url(#gGold)" stroke-width="9"/>
+      <path class="lt" style="animation-delay:.26s" transform="translate(210,0) rotate(1.6 32 40)" d="M64 0 H0 V16 H34 L0 64 V80 H64 V64 H30 L64 16 Z" stroke="url(#gCyan)" stroke-width="9"/>
+      <path class="lt" style="animation-delay:.33s" transform="translate(280,0) rotate(-1.6 32 40)" d="M64 0 H0 V16 H34 L0 64 V80 H64 V64 H30 L64 16 Z" stroke="url(#gCyan)" stroke-width="9"/>
+      <path class="lt" style="animation-delay:.40s" transform="translate(350,0) rotate(1 32 40)" d="M0 0 H16 V64 H64 V80 H0 Z" stroke="url(#gCyan)" stroke-width="9"/>
+      <path class="lt" style="animation-delay:.47s" transform="translate(420,0) rotate(-1.2 32 40)" d="M64 0 H0 V80 H64 V62 H16 V46 H60 V30 H16 V18 H64 Z" stroke="url(#gCyan)" stroke-width="9"/>
+    </g>
+  </svg>
+
+  <a id="btnPlay" class="bar" href="select.html">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M9 3h6M10 3v5.2L4.8 17a3.4 3.4 0 0 0 3 5h8.4a3.4 3.4 0 0 0 3-5L14.4 8.2V3"
+        stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M7.6 15h8.8" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
+    </svg>
+    开始选关
+  </a>
+  <a id="btnAbout" class="bar" href="about.html">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/>
+      <path d="M12 8.2v0M12 11.4v4.6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+    </svg>
+    关于
+  </a>
+
+  <div class="foot">CHE <b>+</b> ZZLE · 走进周期表，解一道化学题</div>
+</div>
+
+<!-- 左下：传送门（A 高 B 低） -->
+<div class="stage" id="stageL">
+  <canvas id="cvL" width="380" height="300"></canvas>
+</div>
+
+<!-- 右下：焰色反应（A/B/C 三灯，玩家跳灯 → 反弹回 A） -->
+<div class="stage" id="stageR">
+  <canvas id="cvR" width="430" height="330"></canvas>
+</div>
+
+<script src="dist/chezzle.js"></script>
+<script>
+const C = window.Chezzle;
+const TICK = 1 / 30;
+
+// ============================================================================
+// 左下：传送门舞台 —— 真实物理：A=高处门（高台顶），B=地面门。
+// 玩家从 B 左侧起步，一直往右：进 B → 引擎传到 A（高台顶）→ 出 A 继续向右 →
+// 走出高台边缘掉下来 → 落到 B 门前 → 再进 B → 再传 A…（无限循环）
+// ============================================================================
+(function portalDemo() {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const canvas = document.getElementById('cvL');
+  const ctx = canvas.getContext('2d');
+  const scene = new C.Scene({ worldW: 380, worldH: 300 });
+  scene.addObject(new C.Floor({ x: -40, y: 280, w: 460, h: 40 })); // 地面
+  scene.addObject(new C.Floor({ x: -40, y: 140, w: 160, h: 30 })); // 高台（顶 y=140，右缘 x=120）
+  const pa = new C.Portal({ x: 32, y: 76, w: 46, h: 64, color: '#c78bff', id: 'pa' });  // A：高处门（高台顶左侧）
+  const pb = new C.Portal({ x: 170, y: 208, w: 60, h: 72, color: '#c78bff', id: 'pb' }); // B：地面门
+  scene.addObject(pa); scene.addObject(pb);
+  const p = new C.Player({ x: 140, y: 235, substance: 'NaOH', mass: 8, moveSpeed: 120, id: 'walk' }); // 起点：B 左侧（慢速）
+  scene.addObject(p);
+  scene.status = 'running';
+  scene.control.add('right'); // 一直往右：进 B → 传 A → 出 A 掉下 → 落 B 前 → 再进 B…
+  let acc = 0, last = performance.now();
+  (function loop(now) {
+    requestAnimationFrame(loop);
+    acc += Math.min((now - last) / 1000, 0.1); last = now;
+    let n = 0;
+    while (acc >= TICK && n < 8) { scene.step(TICK); acc -= TICK; n++; }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, 380, 300);
+    ctx.fillStyle = 'rgba(8,6,24,0.30)';
+    ctx.fillRect(0, 0, 380, 300);
+    for (const o of scene.objects) {
+      if (o.render) { try { o.render(ctx, { scene, time: scene.time }); } catch (e) {} }
+    }
+  })(performance.now());
+})();
+
+// ============================================================================
+// 右下：焰色舞台 —— 只有地板 / 玩家 / 三盏酒精灯（A B C，各配一种盐的焰色）
+// 玩家流程：A 左侧 → 跳到 A 上（停）→ 跳到 B 上（停）→ 跳到 C 上（停）→
+// 向左大跳，顶到页面真实"关于"按钮的右边 → 反弹，恰好落回 A 上 → 循环
+// ============================================================================
+(function flameDemo() {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const canvas = document.getElementById('cvR');
+  const ctx = canvas.getContext('2d');
+  const W = 430, H = 330;
+  const scene = new C.Scene({ worldW: W, worldH: H });
+  scene.addObject(new C.Floor({ x: -20, y: 276, w: 480, h: 30 }));
+  // 玩家（NaOH，小方块）——先加入（绘制在灯后层）
+  const p = new C.Player({ x: 70, y: 231, substance: 'NaOH', mass: 8, id: 'hero' });
+  p.gravity = 0; // 脚本动画：不参与重力
+  scene.addObject(p);
+  // 三盏酒精灯 A / B / C（盐：KCl 紫 / NaCl 黄 / CuSO4 绿）
+  const salts = [['KCl', 0.6], ['NaCl', 0.8], ['CuSO4', 0.5]];
+  salts.forEach(([salt, m], i) => {
+    const lamp = new C.Lamp({ x: 140 + i * 60, y: 236, autoOn: true, id: 'lamp' + i });
+    scene.addObject(lamp);
+    lamp.addPrecipitate(salt, m);
+  });
+  scene.status = 'running';
+
+  // 悬停点（玩家左缘 x）：A=137.5 B=197.5 C=257.5（灯中心 - 22.5）
+  // y=185 → 玩家 bottom=230，脚贴在灯顶(236)上方 6px（站火焰上缘，不悬空）
+  const AX = [137.5, 197.5, 257.5];
+  const AY = 185;
+  // 撞点 = 页面真实"关于"按钮的**右下角**（换算到画布坐标；随布局实时读取并缓存）
+  const HIT = { x: 200, y: 8 };
+  function computeHit() {
+    try {
+      const c = canvas.getBoundingClientRect();
+      const b = document.getElementById('btnAbout').getBoundingClientRect();
+      HIT.x = Math.max(8, b.right - c.left);          // 按钮右缘（画布坐标）
+      HIT.y = Math.max(8, b.bottom - c.top - 45);     // 玩家顶部贴按钮底缘（顶到右下角）
+    } catch (e) { /* 保持默认 */ }
+  }
+  computeHit();
+  window.addEventListener('resize', () => { computeHit(); });
+  setInterval(computeHit, 400); // 布局变化（按钮入场/换行）也兜底
+
+  // 把画布摆到"关于"按钮右下角附近：按钮右下角伸进画布 x≈198、y≈52
+  // —— 玩家一跳就顶到真实按钮，不再隔着几百像素飞出画面反弹
+  function placeStage() {
+    if (innerWidth < 1000) return; // 窄屏走 CSS 流式布局
+    try {
+      const b = document.getElementById('btnAbout').getBoundingClientRect();
+      const s = document.getElementById('stageR');
+      s.style.left = (b.right - 198) + 'px';
+      s.style.right = 'auto';
+      s.style.top = (b.bottom - 52) + 'px';
+      s.style.bottom = 'auto';
+    } catch (e) {}
+  }
+  placeStage();
+  window.addEventListener('resize', placeStage);
+  setInterval(placeStage, 400);
+  setTimeout(placeStage, 900); // 按钮入场动画结束后再对齐一次
+
+  const CYCLE = 5.8;
+  function bez(x0, y0, cx, cy, x1, y1, k) {
+    const u = 1 - k;
+    return { x: u * u * x0 + 2 * u * k * cx + k * k * x1, y: u * u * y0 + 2 * u * k * cy + k * k * y1 };
+  }
+  // 相位：停A → 跳B → 停B → 跳C → 停C → 大跳撞"关于"按钮右下角 → 反弹落回 A
+  function pose(t) {
+    if (t < 0.8) return { x: AX[0], y: AY, vx: 0, vy: 0 };
+    if (t < 1.4) { const b = bez(AX[0], AY, 197.5, 138, AX[1], AY, (t - 0.8) / 0.6); return { ...b, vx: 220, vy: -240 }; }
+    if (t < 2.2) return { x: AX[1], y: AY, vx: 0, vy: 0 };
+    if (t < 2.8) { const b = bez(AX[1], AY, 237.5, 138, AX[2], AY, (t - 2.2) / 0.6); return { ...b, vx: 220, vy: -240 }; }
+    if (t < 3.6) return { x: AX[2], y: AY, vx: 0, vy: 0 };
+    if (t < 4.5) { const b = bez(AX[2], AY, 218, 30, HIT.x, HIT.y, (t - 3.6) / 0.9); return { ...b, vx: -140, vy: -540 }; }
+    if (t < 5.5) { const b = bez(HIT.x, HIT.y, 150, 90, AX[0], AY, (t - 4.5) / 1.0); return { ...b, vx: 190, vy: 430 }; }
+    return { x: AX[0], y: AY, vx: 0, vy: 0 };
+  }
+
+  let acc = 0, last = performance.now(), cycleT = 0, bumped = false;
+  (function loop(now) {
+    requestAnimationFrame(loop);
+    const dt = Math.min((now - last) / 1000, 0.1); last = now;
+    cycleT = (cycleT + dt) % CYCLE;
+    const pos = pose(cycleT);
+    p.vel.x = pos.vx; p.vel.y = pos.vy;
+    scene.control.clear(); scene.pressed.clear();
+    acc += dt;
+    while (acc >= TICK) { scene.step(TICK); acc -= TICK; } // 灯（焰色检测）更新
+    p.x = Math.round(pos.x);
+    p.y = Math.round(pos.y);
+    p.vel.x = pos.vx; p.vel.y = pos.vy;
+
+    // 顶到真实"关于"按钮的瞬间：按钮被撞得抖一下
+    if (cycleT >= 4.42 && cycleT < 4.5) {
+      if (!bumped) {
+        bumped = true;
+        const btn = document.getElementById('btnAbout');
+        if (btn && typeof btn.animate === 'function') {
+          btn.animate(
+            [{ transform: 'translateY(0)' }, { transform: 'translateY(4px)' },
+             { transform: 'translateY(-2px)' }, { transform: 'translateY(0)' }],
+            { duration: 320, easing: 'ease-out' },
+          );
+        }
+      }
+    } else if (cycleT >= 4.55 || cycleT < 4.42) {
+      bumped = false;
+    }
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(8,6,24,0.30)';
+    ctx.fillRect(0, 0, W, H);
+    for (const o of scene.objects) {
+      if (o.render) { try { o.render(ctx, { scene, time: scene.time }); } catch (e) {} }
+    }
+  })(performance.now());
+})();
+
+// 星夜
+(function () {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const box = document.getElementById('stars');
+  for (let i = 0; i < 90; i++) {
+    const s = document.createElement('i');
+    s.className = 'st';
+    const sz = 1 + Math.random() * 2.2;
+    s.style.width = sz + 'px';
+    s.style.height = sz + 'px';
+    s.style.left = (Math.random() * 100) + 'vw';
+    s.style.top = (Math.random() * 100) + 'vh';
+    s.style.animationDuration = (2.4 + Math.random() * 5) + 's';
+    s.style.animationDelay = (Math.random() * 5) + 's';
+    s.style.filter = 'drop-shadow(0 0 3px rgba(200,220,255,.9))';
+    box.appendChild(s);
+  }
+})();
+</script>
+</body>
+</html>

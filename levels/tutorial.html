@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chezzle · 新手引导</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0e28; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { background: #0b0e28; box-shadow: 0 0 60px rgba(120,90,220,0.25); }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script src="../dist/chezzle.js"></script>
+<script src="report.js"></script>
+<script>
+const canvas = document.getElementById('game');
+canvas.width = 1100;
+canvas.height = 700;
+const L = new Chezzle.LevelBuilder(canvas, { worldW: 1500, worldH: 800 });
+L
+  .floor(-20, 703, 320, 94, { id: 'floor1' })
+  .pool(300, 703, 130, 40, { volume: 150, solutes: {}, id: 'pool1' })
+  .floor(430, 703, 210, 94, { id: 'floor2' })
+  .floor(700, 703, 800, 94, { id: 'floor3' })
+  .player(80, 580, { substance: 'NaOH', mass: 30, id: 'player1' })
+  .sign(40, 690, 'A / D 移动  空格跳跃  R 重开', { id: 'sign1' })
+  .sign(288, 660, 'Q 收集：走进池子\n把 NaCl 沉淀收起来', { id: 'sign2', size: 11 })
+  .switch(900, 681, { mode: 'chemical', opening: 'NaCl', consumeRate: 0.5, openId: 'door1', id: 'switch1' })
+  .sign(830, 668, '站上开关，Shift 放下\n收集到的 NaCl', { id: 'sign3', size: 11 })
+  .door(1180, 623, 52, 80, { id: 'door1' })
+  .sign(1148, 612, '走进开启的门：通关！', { id: 'sign4' })
+;
+const scene = L.build();
+scene.byId['pool1'].addPrecipitate('NaCl', 8);
+L.start();
+// 通关上报（选关系统：记录 tutorial + 弹浮层）
+ChezzleReport.bind(scene, 'tutorial');
+</script>
+</body>
+</html>

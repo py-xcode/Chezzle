@@ -1,0 +1,283 @@
+{
+  "version": 1,
+  "worldW": 950,
+  "worldH": 800,
+  "rx": [
+    "H2O + H2O -> 2H2O"
+  ],
+  "objects": [
+    {
+      "type": "floor",
+      "opts": {
+        "x": 49,
+        "y": 676,
+        "w": 229,
+        "h": 94,
+        "id": "floor15"
+      }
+    },
+    {
+      "type": "player",
+      "opts": {
+        "x": 81,
+        "y": 577,
+        "substance": "Cu",
+        "mass": 30,
+        "noLift": false,
+        "id": "player2"
+      }
+    },
+    {
+      "type": "block",
+      "opts": {
+        "x": 217,
+        "y": 624,
+        "substance": "KMnO4",
+        "mass": 7.2,
+        "w": 40,
+        "h": 45,
+        "pushable": true,
+        "noLift": false,
+        "id": "block5"
+      }
+    },
+    {
+      "type": "pool",
+      "opts": {
+        "x": 271,
+        "y": 678,
+        "w": 216,
+        "h": 62,
+        "volume": 500,
+        "solutes": {
+          "HCl": 30
+        },
+        "gasHeight": 900,
+        "id": "pool6"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 482,
+        "y": 679,
+        "w": 308,
+        "h": 80,
+        "id": "floor16"
+      }
+    },
+    {
+      "type": "gasdetector",
+      "opts": {
+        "x": 507,
+        "y": 658,
+        "gas": "Cl2",
+        "threshold": 0.5,
+        "opening": "Cl2",
+        "precipitates": {},
+        "and": null,
+        "deleteId": null,
+        "showId": null,
+        "igniteId": null,
+        "extinguishId": null,
+        "openId": null,
+        "id": "gasdetector3"
+      }
+    },
+    {
+      "type": "portal",
+      "opts": {
+        "x": 585,
+        "y": 614,
+        "w": 44,
+        "h": 64,
+        "color": "#c78bff",
+        "uses": 1,
+        "switchId": "gasdetector3",
+        "id": "portal9"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 458,
+        "y": 418,
+        "w": 303,
+        "h": 48,
+        "id": "floor17"
+      }
+    },
+    {
+      "type": "portal",
+      "opts": {
+        "x": 684,
+        "y": 350,
+        "w": 44,
+        "h": 64,
+        "color": "#c78bff",
+        "uses": 1,
+        "switchId": "gasdetector3",
+        "id": "portal10"
+      }
+    },
+    {
+      "type": "block",
+      "opts": {
+        "x": 508,
+        "y": 333,
+        "substance": "Zn",
+        "mass": 25.6,
+        "w": 80,
+        "h": 80,
+        "pushable": true,
+        "noLift": false,
+        "id": "block6"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 17,
+        "y": 280,
+        "w": 311,
+        "h": 62,
+        "id": "floor18"
+      }
+    },
+    {
+      "type": "lamp",
+      "opts": {
+        "x": 173,
+        "y": 241,
+        "autoOn": true,
+        "id": "lamp1",
+        "precipitates": {
+          "S": 3
+        }
+      }
+    },
+    {
+      "type": "key",
+      "opts": {
+        "x": 108,
+        "y": 253,
+        "opening": "FeS",
+        "deleteId": null,
+        "showId": null,
+        "igniteId": null,
+        "extinguishId": null,
+        "openId": "door1",
+        "id": "key1",
+        "precipitates": {}
+      }
+    },
+    {
+      "type": "door",
+      "opts": {
+        "x": 35,
+        "y": 210,
+        "w": 42,
+        "h": 73,
+        "id": "door1"
+      }
+    },
+    {
+      "type": "sign",
+      "opts": {
+        "x": 834,
+        "y": 769,
+        "text": "level 3-1 Easy!",
+        "id": "sign1"
+      }
+    },
+    {
+      "type": "pool",
+      "opts": {
+        "x": 2400,
+        "y": 540,
+        "w": 255,
+        "h": 63,
+        "volume": 200,
+        "solutes": {},
+        "gasHeight": 80,
+        "id": "pool7"
+      }
+    },
+    {
+      "type": "sign",
+      "opts": {
+        "x": 2510,
+        "y": 652,
+        "text": "放水！！:D",
+        "id": "sign2"
+      }
+    },
+    {
+      "type": "block",
+      "opts": {
+        "x": 2470,
+        "y": 367,
+        "substance": "H2O",
+        "mass": 50.6,
+        "w": 110,
+        "h": 115,
+        "pushable": false,
+        "noLift": false,
+        "id": "block7"
+      }
+    },
+    {
+      "type": "block",
+      "opts": {
+        "x": 180,
+        "y": 72,
+        "substance": "Fe",
+        "mass": 4.9,
+        "w": 35,
+        "h": 35,
+        "pushable": true,
+        "noLift": false,
+        "id": "block8"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 157,
+        "y": 116,
+        "w": 81,
+        "h": 20,
+        "id": "floor19"
+      }
+    },
+    {
+      "type": "switch",
+      "opts": {
+        "x": 262,
+        "y": 256,
+        "mode": "pressure",
+        "opening": null,
+        "and": null,
+        "deleteId": "floor19",
+        "showId": null,
+        "igniteId": null,
+        "extinguishId": null,
+        "openId": null,
+        "id": "switch1",
+        "precipitates": {}
+      }
+    },
+    {
+      "type": "deposit",
+      "opts": {
+        "x": 2490,
+        "y": 315,
+        "substance": "H2O",
+        "mass": 5.4,
+        "w": 70,
+        "h": 30,
+        "id": "deposit1"
+      }
+    }
+  ]
+}

@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chezzle 演示关卡 · 化学机制巡礼</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0e28; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { background: #0b0e28; box-shadow: 0 0 60px rgba(120,90,220,0.25), 0 0 20px rgba(0,0,0,0.6); }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script src="../dist/chezzle.js"></script>
+<script>
+  // ==========================================================================
+  // 演示关卡：从 ① 一路向右，每个区域演示一种化学/物理机制。
+  // ①离子反应 ②金属置换 ③酒精灯分解 ④喷灯还原 ⑤催化制氧 ⑥燃烧 ⑦气泡柱
+  // ⑧沉淀搭高 ⑨绳子 ⑩金属+酸产H2 / 消耗物质的开关 ⑪钥匙+通关口
+  // ==========================================================================
+  const canvas = document.getElementById('game');
+  canvas.width = 1100;
+  canvas.height = 700;
+
+  const L = new Chezzle.LevelBuilder(canvas, { worldW: 4050, worldH: 800 });
+
+  L.setTip('①跳进 CuSO4 池生成 Cu(OH)2 并收集；一路向右观察各区域反应；\n' +
+           '⑧用沉淀垫高登上高台（Shift 放置）；⑨把 NaCl 推下高台让绳子断裂；\n' +
+           '⑩把 Zn 推进盐酸池产 H2；给开关放入 Cu 可点亮灯；最后把 Cu(OH)2 放进钥匙通关。\n' +
+           'A/D 移动 空格跳 Q 收集 Shift 放置。')
+
+    // ---------- ① 离子反应：NaOH + CuSO4 → Cu(OH)2↓ + Na2SO4 ----------
+    .floor(0, 720, 100, 80)
+    .floor(460, 720, 60, 80)
+    .pool(100, 720, 360, 60, { volume: 220, solutes: { CuSO4: 20 } })
+    .player(150, 600, { substance: 'NaOH', mass: 30 })
+    .sign(120, 680, '① 跳进 CuSO4 池：NaOH+CuSO4 → Cu(OH)2↓，收集它（保留一点通关用）')
+
+    // ---------- ② 金属置换：Fe + CuSO4 → FeSO4 + Cu↓ ----------
+    .floor(520, 720, 40, 80)
+    .floor(780, 720, 120, 80)
+    .pool(560, 720, 220, 60, { volume: 200, solutes: { CuSO4: 40 } })
+    .block(520, 680, { substance: 'Fe', w: 40, h: 40, pushable: true })
+    .sign(520, 640, '② 把 Fe 块推进 CuSO4 池：置换出铜')
+
+    // ---------- ③ 压力开关 + 酒精灯加热分解（只烧灯上的东西） ----------
+    .floor(900, 720, 420, 80)
+    .sign(905, 640, '③ 站上开关点燃酒精灯；把 Cu(OH)2 放到灯上加热分解为 CuO')
+    .switch(950, 696, { mode: 'pressure', id: 'sw3' })
+    .lamp(1000, 680, { autoOn: false, id: 'lamp3' })
+
+    // ---------- ④ 酒精喷灯高温还原（CuO 粉末 + C 粉末 → Cu 粉末） ----------
+    .floor(1320, 720, 460, 80)
+    .sign(1330, 640, '④ 站上开关点燃喷灯(高温)：CuO 粉 + 碳粉还原出 Cu 粉')
+    .switch(1340, 696, { mode: 'pressure', id: 'sw4' })
+    .blastlamp(1410, 710, { w: 160, h: 10, autoOn: false, id: 'lamp4' })
+
+    // ---------- ⑤ 催化制氧：2H2O2 --MnO2--> 2H2O + O2↑ ----------
+    .floor(1780, 720, 60, 80)
+    .floor(1960, 720, 100, 80)
+    .pool(1840, 720, 120, 60, { volume: 100, solutes: { H2O2: 90 } })
+    .block(1860, 740, { substance: 'MnO2', w: 24, h: 24 })   // 催化剂投入池中
+    .sign(1820, 640, '⑤ H2O2 遇 MnO2 催化剂分解释放 O2（看泡泡）')
+
+    // ---------- ⑥ 燃烧：C + O2 --点燃--> CO2↑（物块放上灯条点燃） ----------
+    .floor(2060, 720, 220, 80)
+    .sign(2070, 640, '⑥ 站上开关点燃灯；C 放上灯条燃烧耗 O2 生 CO2')
+    .switch(2090, 696, { mode: 'pressure', id: 'sw6' })
+    .lamp(2160, 710, { w: 120, h: 10, autoOn: false, id: 'lamp6' })
+    .block(2200, 670, { substance: 'C', w: 40, h: 40 })
+
+    // ---------- ⑦ 气泡柱托升 ----------
+    .floor(2280, 720, 160, 80)
+    .sign(2300, 640, '⑦ 气泡柱气流把你托上高台')
+    .gas(2320, 320, 100, 400, { accel: 1300 })
+    .floor(2300, 280, 140, 24)
+
+    // ---------- ⑧ 沉淀搭高（踮脚）+ 压力开关点喷灯还原 ----------
+    .floor(2440, 720, 840, 80)                        // 地面 2440..3280
+    .sign(2460, 680, '⑧ 沉淀搭高：站在高台下连按 Shift 放置沉淀把自己垫高，登上高台点喷灯')
+    .floor(2640, 600, 560, 12)                        // 高台+绳台 top=600（140px，跳不上去）
+    .switch(2700, 590, { mode: 'pressure', id: 'sw8' })
+    .blastlamp(2780, 590, { w: 130, h: 10, autoOn: false, id: 'lamp8' })
+
+    // ---------- ⑨ 绳子：推下锚点块断绳，悬挂物坠落 ----------
+    .block(3100, 560, { substance: 'NaCl', w: 40, h: 40, id: 'nacl' })   // 锚点块（在台上）
+    .sign(3110, 680, '⑨ 绳子：把台上 NaCl 块推下高台，绳子断裂，悬挂的 Zn 块坠落')
+
+    // ---------- ⑩ 金属+酸产 H2；消耗物质的开关 ----------
+    .floor(3280, 720, 60, 80)                         // 地面 3280..3340
+    .floor(3540, 720, 360, 80)                        // 地面 3540..3900（盐酸池在缺口 3340..3540）
+    .sign(3290, 680, '⑩ 把 Zn 推进盐酸池：Zn+2HCl → ZnCl2 + H2↑（冒泡）')
+    .pool(3340, 720, 200, 60, { volume: 160, solutes: { HCl: 40 } })
+    .sign(3670, 640, '⑩ 化学开关：放入 Cu 开启并消耗，耗尽自动熄灭（灯10）')
+    .switch(3720, 696, { mode: 'chemical', opening: 'Cu', consumeRate: 0.8, id: 'sw10' })
+    .lamp(3800, 680, { autoOn: false, id: 'lamp10' })
+    .floor(3840, 660, 100, 12)                        // 小台子上的烧杯（被动演示：CuSO4 块溶解显蓝）
+    .beaker(3860, 590, { w: 60, h: 70, volume: 30 })
+    .block(3880, 600, { substance: 'CuSO4', w: 16, h: 16, pushable: false })
+
+    // ---------- ⑪ 钥匙 + 通关口 ----------
+    .floor(3900, 720, 160, 80)
+    .key(3960, 696, { opening: 'Cu(OH)2', w: 70, id: 'key' })
+    .door(4060, 640, 30, 80, { id: 'door' });
+
+  const scene = L.build();
+
+  // 预置粉末
+  scene.byId['lamp4'].addPrecipitate('CuO', 10);
+  scene.byId['lamp4'].addPrecipitate('C', 5);
+  scene.byId['lamp8'].addPrecipitate('CuO', 10);
+  scene.byId['lamp8'].addPrecipitate('C', 5);
+
+  // 绳子：锚定在 NaCl 块上，悬挂 Zn 块（在高台下方、地面上方）
+  const nacl = scene.byId['nacl'];
+  const zn = new Chezzle.Block({ x: 3090, y: 600, w: 40, h: 40, substance: 'Zn', id: 'zn' });
+  scene.addObject(zn);
+  scene.addObject(new Chezzle.Rope({
+    x: 3120, y: 560, length: 100,
+    anchor: { obj: nacl, dx: 20, dy: 0 },
+    hanging: zn,
+    id: 'rope1',
+  }));
+
+  // 接线
+  scene.byId['sw3'].onOpen(() => scene.byId['lamp3'].ignite());
+  scene.byId['sw3'].onClose(() => scene.byId['lamp3'].extinguish());
+  scene.byId['sw4'].onOpen(() => scene.byId['lamp4'].ignite());
+  scene.byId['sw4'].onClose(() => scene.byId['lamp4'].extinguish());
+  scene.byId['sw6'].onOpen(() => scene.byId['lamp6'].ignite());
+  scene.byId['sw6'].onClose(() => scene.byId['lamp6'].extinguish());
+  scene.byId['sw8'].onOpen(() => scene.byId['lamp8'].ignite());
+  scene.byId['sw8'].onClose(() => scene.byId['lamp8'].extinguish());
+  scene.byId['sw10'].onOpen(() => scene.byId['lamp10'].ignite());
+  scene.byId['sw10'].onClose(() => scene.byId['lamp10'].extinguish());
+  scene.byId['key'].onOpen(() => scene.byId['door'].open());
+
+  L.start();
+</script>
+</body>
+</html>

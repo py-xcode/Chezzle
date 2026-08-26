@@ -1,0 +1,7 @@
+node_modules/
+*.log
+.idea/
+.vscode/
+tools/_*
+_dbg_*.mjs
+*.tmp

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chezzle 示例关卡</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0e28; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { background: #0b0e28; box-shadow: 0 0 60px rgba(120,90,220,0.25), 0 0 20px rgba(0,0,0,0.6); }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script src="../dist/chezzle.js"></script>
+<script>
+  // ---- 关卡：跳进 CuSO4 池生成 Cu(OH)2 → 收集 → 放进钥匙 → 门开通关 ----
+  const canvas = document.getElementById('game');
+  canvas.width = 1000;
+  canvas.height = 800;
+
+  const L = new Chezzle.LevelBuilder(canvas);
+
+  L.setTip('A/D 移动，空格跳，Q 收集，Shift 放置，R 重开。\n' +
+           '跳进右侧 CuSO4 池：NaOH + CuSO4 → Cu(OH)2↓ + Na2SO4。\n' +
+           '在池边按 Q 收集 Cu(OH)2，站到钥匙上按 Shift 放入，门会打开。')
+    .floor(0, 720, 480, 80)          // 左地面
+    .floor(760, 720, 300, 80)        // 右地面
+    .floor(0, 500, 220, 24)          // 左侧高台（跳上可以避开头池水）
+    .pool(480, 720, 280, 60, { volume: 220, solutes: { CuSO4: 12 } })
+    .block(240, 500, { substance: 'Fe', w: 40, h: 40, pushable: true })
+    .player(100, 520, { substance: 'NaOH', mass: 40 })
+    .key(820, 696, { opening: 'Cu(OH)2', id: 'key' })
+    .door(950, 640, 30, 80, { id: 'door' });
+
+  const scene = L.build();
+  // 钥匙开启 → 通关口打开
+  scene.byId['key'].onOpen(() => scene.byId['door'].open());
+
+  L.start();
+</script>
+</body>
+</html>

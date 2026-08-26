@@ -1,0 +1,13 @@
+{
+  "name": "chezzle",
+  "version": "0.1.0",
+  "description": "Chezzle — a pure-H5 2D chemistry puzzle game. Core library (chemistry engine first).",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test \"tests/**/*.test.js\"",
+    "build": "node tools/build.mjs",
+    "serve": "node tools/serve.mjs",
+    "demo": "npm run build && node tools/serve.mjs"
+  }
+}

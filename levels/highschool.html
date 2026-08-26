@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chezzle 高中化学巡礼</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0e28; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { background: #0b0e28; box-shadow: 0 0 60px rgba(120,90,220,0.25), 0 0 20px rgba(0,0,0,0.6); }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script src="../dist/chezzle.js"></script>
+<script>
+  // ==========================================================================
+  // 高中化学巡礼：①焰色反应 ②金属置换镀铜 ③碳粉燃烧/高温还原 ④氢气爆鸣
+  // ⑤铝热反应 ⑥量变（稀/浓硝酸） ⑦锰铬（高锰酸钾褪色、重铬酸根酸碱互变）
+  // ⑧离子检验（Cl-/SO42-/CO32-/NH4+/Fe3+） ⑨pH 指示剂 ⑩碳化→回血再生
+  // ==========================================================================
+  const canvas = document.getElementById('game');
+  canvas.width = 1100;
+  canvas.height = 700;
+
+  const L = new Chezzle.LevelBuilder(canvas, { worldW: 7000, worldH: 800 });
+
+  L.debugmode()
+    .setTip('①把盐放到灯焰上看焰色；②把 Fe 推进 CuSO4 池镀铜；③C 块放喷灯点燃烧成 CO2；\n' +
+           '④把 Zn 推进浓盐酸池产 H2，站上开关点亮喷灯——攒够氢气会爆鸣！\n' +
+           '⑤把 Al 粉和 Fe2O3 粉放到喷灯上——铝热！⑥比较稀/浓硝酸与 Cu 的气泡颜色。\n' +
+           '⑦酸性高锰酸钾氧化 FeSO4 褪色；重铬酸钾加酸变橙红、加碱变黄。\n' +
+           '⑧按路标混合溶液做离子检验；⑨向石蕊/酚酞池滴加酸碱看变色和 pH。\n' +
+           '⑩大气有 CO2 会把你的 NaOH 身体碳化（掉血），跳进 Ba(OH)2 池来回游动再生回血！\n' +
+           'A/D 移动 空格跳 Q 收集 Shift 放置。')
+
+    // ---------- ① 焰色反应（物理变化：元素特征色） ----------
+    .floor(0, 720, 660, 80)
+    .player(30, 600, { substance: 'NaOH', mass: 30 })
+    .sign(20, 640, '① 焰色反应：把 NaCl/KCl/CaCl2/CuSO4 放到灯焰上（火焰上方）看颜色')
+    .lamp(120, 690, { autoOn: true, id: 'l1' })
+    .lamp(220, 690, { autoOn: true, id: 'l2' })
+    .lamp(320, 690, { autoOn: true, id: 'l3' })
+    .lamp(420, 690, { autoOn: true, id: 'l4' })
+    .lamp(520, 690, { autoOn: true, id: 'l5' })
+
+    // ---------- ② 金属置换：Fe 浸 CuSO4 表面变铜（附着+致密壳） ----------
+    .floor(660, 720, 40, 80)
+    .floor(960, 720, 40, 80)
+    .pool(700, 720, 260, 60, { volume: 220, solutes: { CuSO4: 40 } })
+    .block(660, 680, { substance: 'Fe', w: 40, h: 40, pushable: true })
+    .sign(660, 640, '② Fe 块浸入 CuSO4：置换出 Cu 附着表面（镀铜），Cu 壳致密会阻隔反应')
+
+    // ---------- ③ 碳粉燃烧：点燃→CO2；高温+缺氧→CO ----------
+    // C/CaCO3 块放在喷灯火焰区之外——需要玩家主动推上喷灯才会被点燃/分解
+    .floor(1000, 720, 500, 80)
+    .sign(1010, 640, '③ 把 C 块推到喷灯上点燃：空气充足→CO2；高温缺氧会生成 CO')
+    .switch(1050, 696, { mode: 'pressure', id: 'sw3' })
+    .blastlamp(1120, 710, { w: 140, h: 10, autoOn: false, id: 'lamp3' })
+    .block(1300, 670, { substance: 'C', w: 40, h: 40, pushable: true })
+    .block(1370, 690, { substance: 'CaCO3', w: 30, h: 30, pushable: true })
+
+    // ---------- ④ 氢气爆鸣：Zn + 浓HCl → H2↑，点燃积累 → 爆炸 ----------
+    // Zn 块放在池外地板上（中等大小好推）——玩家推入盐酸池才会产 H2
+    .floor(1500, 720, 60, 80)
+    .floor(1900, 720, 60, 80)
+    .pool(1560, 720, 340, 60, { volume: 300, solutes: { HCl: 700 } })
+    .block(1360, 690, { substance: 'Zn', mass: 150, pushable: true })  // 150+80g Zn → 约 7g H2，够爆炸阈值
+    .block(1420, 690, { substance: 'Zn', mass: 80, pushable: true })
+    .floor(1960, 720, 160, 80)
+    .switch(1980, 696, { mode: 'pressure', id: 'sw4' })
+    .blastlamp(2050, 710, { w: 60, h: 10, autoOn: false, id: 'lamp4' })
+    .sign(1510, 640, '④ Zn 进浓盐酸池产 H2（上升气泡柱）；点喷灯，攒够氢气会爆鸣（小心被炸飞！）')
+
+    // ---------- ⑤ 铝热反应：2Al + Fe2O3 --高温--> Al2O3 + 2Fe（爆炸） ----------
+    .floor(2120, 720, 480, 80)
+    .sign(2130, 640, '⑤ 把 Al 粉 + Fe2O3 粉放到喷灯上（Shift 放置）：铝热反应，火星四溅！')
+    .switch(2140, 696, { mode: 'pressure', id: 'sw5' })
+    .blastlamp(2240, 710, { w: 160, h: 10, autoOn: false, id: 'lamp5' })
+
+    // ---------- ⑥ 量变：稀硝酸→NO（无色），浓硝酸→NO2（红棕） ----------
+    .floor(2600, 720, 60, 80)
+    .floor(2940, 720, 60, 80)
+    .pool(2660, 720, 130, 60, { volume: 200, solutes: { HNO3: 40 } })   // 稀：40/0.2=200 g/L < 300
+    .pool(2830, 720, 110, 60, { volume: 160, solutes: { HNO3: 90 } })   // 浓：90/0.16=562 g/L > 300
+    .block(2960, 680, { substance: 'Cu', w: 40, h: 40, pushable: true })
+    .sign(2665, 660, '稀 HNO3')   // 左：稀硝酸（无色 NO）
+    .sign(2835, 660, '浓 HNO3')   // 右：浓硝酸（红棕 NO2）
+    .sign(2600, 640, '⑥ Cu 分别浸入稀/浓硝酸：稀→无色 NO，浓→红棕 NO2（看气泡柱标签！）')
+
+    // ---------- ⑦ 锰铬（地板分段给池留缺口；试剂块放池间地板上，玩家推入） ----------
+    .floor(3000, 720, 40, 80)
+    .sign(3010, 640, '⑦ 左：KMnO4+H2SO4 池放入 FeSO4 紫色褪去（MnO4⁻→Mn²⁺）；右：K2Cr2O7 池加酸变橙红、加碱变黄')
+    .pool(3040, 720, 200, 60, { volume: 180, solutes: { KMnO4: 8, H2SO4: 40 } })
+    .floor(3240, 720, 100, 80)
+    .pool(3340, 720, 200, 60, { volume: 180, solutes: { K2Cr2O7: 30 } })
+    .floor(3540, 720, 280, 80)
+    .block(3245, 690, { substance: 'FeSO4', w: 40, h: 40, pushable: true })  // → 推入左池（褪色）
+    .block(3300, 690, { substance: 'NaOH', w: 30, h: 30, pushable: true })   // → 推入右池（变黄）
+    .block(3560, 690, { substance: 'HCl', w: 30, h: 30, pushable: true })    // → 推入右池（回橙红）
+
+    // ---------- ⑧ 离子检验（3 池 + 试剂块放池间地板，玩家推入） ----------
+    .floor(3820, 720, 60, 80)
+    .sign(3830, 640, '⑧ 检验：NaCl块→AgNO3池(白沉Cl⁻)；Na2SO4块→BaCl2池(白沉SO4²⁻)；KSCN块→FeCl3池(血红Fe³⁺)')
+    .pool(3880, 720, 150, 60, { volume: 150, solutes: { AgNO3: 30 } })
+    .floor(4030, 720, 60, 80)
+    .block(4045, 690, { substance: 'NaCl', w: 30, h: 30, pushable: true })
+    .pool(4090, 720, 150, 60, { volume: 150, solutes: { BaCl2: 30 } })
+    .floor(4240, 720, 60, 80)
+    .block(4255, 690, { substance: 'Na2SO4', w: 30, h: 30, pushable: true })
+    .pool(4300, 720, 150, 60, { volume: 150, solutes: { FeCl3: 30 } })
+    .floor(4450, 720, 60, 80)
+    .block(4465, 690, { substance: 'KSCN', w: 30, h: 30, pushable: true })
+    .floor(4510, 720, 350, 80)
+
+    // ---------- ⑨ pH 指示剂（地板只留两池之间的小平台） ----------
+    .floor(4860, 720, 40, 80)
+    .pool(4900, 720, 130, 60, { volume: 150, solutes: { Litmus: 4 } })      // 石蕊
+    .floor(5030, 720, 50, 80)
+    .pool(5080, 720, 130, 60, { volume: 150, solutes: { C20H14O4: 4 } })    // 酚酞
+    .block(4920, 680, { substance: 'HCl', w: 24, h: 24, pushable: true })   // 加酸 → 红/无色
+    .block(5100, 680, { substance: 'NaOH', w: 24, h: 24, pushable: true })  // 加碱 → 蓝/深红
+    .sign(4880, 640, '⑨ 石蕊：酸红/中性紫/碱蓝；酚酞：酸无色/碱深红（容器标签显示 pH）')
+
+    // ---------- ⑩ 碳化 → 再生回血（大气 CO2 + Ba(OH)2 池；地板留缺口） ----------
+    .floor(5210, 720, 190, 80)
+    .sign(5230, 640, '⑩ 大气里的 CO2 会把你的 NaOH 身体碳化成 Na2CO3（掉血，看 HUD 身体组成）。跳进 Ba(OH)2 池：Na2CO3+Ba(OH)2→BaCO3↓+2NaOH 回血！BaCO3 致密壳会阻隔反应，来回游动把壳冲掉继续回血')
+    .pool(5400, 720, 260, 60, { volume: 300, solutes: { 'Ba(OH)2': 80 } })
+    .floor(5660, 720, 340, 80)
+    .key(5860, 696, { opening: 'Cu(OH)2', w: 70, id: 'key' })
+    .door(6000, 640, 30, 80, { id: 'door' })
+
+    // ---------- ⑪ 新装置演示：传送门/气体探测器/提取器/"&"联锁 ----------
+    .floor(6080, 720, 920, 80)
+    .sign(6090, 640, '⑪ 紫色传送门穿门瞬移；气体探测器(H2>0.5g)点灯；提取器配压力开关(踩上)从池里冒 CuSO4 固体；两个"&"压力开关同时踩才点灯')
+    .portal(6140, 664, { w: 44, h: 64, color: '#c78bff', id: 'pa' })
+    .portal(6250, 664, { w: 44, h: 64, color: '#c78bff', id: 'pb' })
+    .gasdetector(6360, 696, { gas: 'H2', threshold: 0.5, id: 'gd1' })
+    .lamp(6460, 690, { autoOn: false, id: 'gdLamp' })
+    .extractor(6520, 720, { w: 44, h: 14, poolId: 'expool', switchId: 'exsw', rate: 0.4, id: 'ex1' })
+    .pool(6580, 720, 160, 60, { volume: 150, solutes: { CuSO4: 30 }, id: 'expool' })
+    .switch(6700, 696, { mode: 'pressure', id: 'exsw' })
+    .switch(6800, 696, { mode: 'pressure', id: 'and1' })
+    .switch(6900, 696, { mode: 'pressure', id: 'and2', and: 'and1' })
+    .lamp(6980, 690, { autoOn: false, id: 'andLamp' });
+
+  const scene = L.build();
+
+  // 预设：① 灯上放焰色测试盐；⑤ 喷灯上放铝热剂
+  scene.byId['l1'].addPrecipitate('NaCl', 3);
+  scene.byId['l2'].addPrecipitate('KCl', 3);
+  scene.byId['l3'].addPrecipitate('CaCl2', 3);
+  scene.byId['l4'].addPrecipitate('CuSO4', 3);
+  scene.byId['l5'].addPrecipitate('BaCl2', 3);
+  scene.byId['lamp5'].addPrecipitate('Al', 8);
+  scene.byId['lamp5'].addPrecipitate('Fe2O3', 8);
+
+  // 接线：压力开关点灯
+  scene.byId['sw3'].onOpen(() => scene.byId['lamp3'].ignite());
+  scene.byId['sw3'].onClose(() => scene.byId['lamp3'].extinguish());
+  scene.byId['sw4'].onOpen(() => scene.byId['lamp4'].ignite());
+  scene.byId['sw4'].onClose(() => scene.byId['lamp4'].extinguish());
+  scene.byId['sw5'].onOpen(() => scene.byId['lamp5'].ignite());
+  scene.byId['sw5'].onClose(() => scene.byId['lamp5'].extinguish());
+  scene.byId['key'].onOpen(() => scene.byId['door'].open());
+
+  // ⑪ 新装置接线：气体探测器点灯；"&"开关双开点灯
+  scene.byId['gd1'].onOpen(() => scene.byId['gdLamp'].ignite());
+  scene.byId['gd1'].onClose(() => scene.byId['gdLamp'].extinguish());
+  scene.byId['and2'].onOpen(() => scene.byId['andLamp'].ignite());
+  scene.byId['and2'].onClose(() => scene.byId['andLamp'].extinguish());
+
+  // 大气注入少量 CO2：玩家（NaOH）会被缓慢碳化（表层生成 Na2CO3 壳即停止），
+  // 然后在 ⑩ 区跳 Ba(OH)2 池再生回血（HUD 身体组成面板可看到碳化/再生）
+  scene.atmosphere.add('CO2', 8);
+
+  L.start();
+</script>
+</body>
+</html>

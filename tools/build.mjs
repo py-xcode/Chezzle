@@ -1,0 +1,100 @@
+// ============================================================================
+// 零依赖迷你打包器：把 src/ 的 ES Module 图打包成单个 UMD 文件 dist/chezzle.js，
+// 挂全局 `Chezzle`（关卡 HTML 用 <script> 引入即可，file:// 双击也能玩）。
+//
+// 支持的语法（本库代码风格一致）：
+//   import { A, B } from './x.js';
+//   export * from './x.js';
+//   export function/class/const/let/var NAME ...
+// 不支持：default 导出、`export { a }`、多行 import。
+// ============================================================================
+
+import fs from 'node:fs';
+import path from 'node:path';
+
+const ROOT = path.resolve(import.meta.dirname, '..');
+const SRC = path.join(ROOT, 'src');
+const OUT = path.join(ROOT, 'dist', 'chezzle.js');
+
+const modules = new Map(); // absPath → mod
+
+function resolve(fromFile, spec) {
+  return path.resolve(path.dirname(fromFile), spec);
+}
+
+function parse(abs) {
+  if (modules.has(abs)) return modules.get(abs);
+  const src = fs.readFileSync(abs, 'utf8');
+  const mod = {
+    abs,
+    id: path.relative(ROOT, abs).split(path.sep).join('/'),
+    imports: [], // [{ names, spec, targetAbs }]
+    reexports: [], // [targetAbs]
+    exports: [], // [name]
+    src,
+  };
+  modules.set(abs, mod);
+
+  let m;
+  const importRe = /import\s*\{([^}]*)\}\s*from\s*'([^']+)'/g;
+  while ((m = importRe.exec(src))) {
+    const names = m[1].split(',').map((s) => s.trim()).filter(Boolean);
+    const targetAbs = resolve(abs, m[2]);
+    mod.imports.push({ names, spec: m[2], targetAbs });
+    parse(targetAbs);
+  }
+  const reRe = /export\s*\*\s*from\s*'([^']+)'/g;
+  while ((m = reRe.exec(src))) {
+    const targetAbs = resolve(abs, m[1]);
+    mod.reexports.push(targetAbs);
+    parse(targetAbs);
+  }
+  const exportRe = /export\s+(function|class|const|let|var)\s+([A-Za-z_$][\w$]*)/g;
+  while ((m = exportRe.exec(src))) mod.exports.push(m[2]);
+  return mod;
+}
+
+function transform(mod) {
+  let src = mod.src;
+  src = src.replace(/import\s*\{([^}]*)\}\s*from\s*'([^']+)'/g, (all, names, spec) => {
+    const target = modules.get(resolve(mod.abs, spec));
+    const list = names.split(',').map((s) => s.trim()).filter(Boolean).join(', ');
+    return `const { ${list} } = __require('${target.id}');`;
+  });
+  src = src.replace(/export\s*\*\s*from\s*'([^']+)'/g, (all, spec) => {
+    const target = modules.get(resolve(mod.abs, spec));
+    return `Object.assign(exports, __require('${target.id}'));`;
+  });
+  src = src.replace(/export\s+(function|class|const|let|var)\s+/g, '$1 ');
+  if (mod.exports.length) {
+    src += '\n' + mod.exports.map((n) => `exports.${n} = ${n};`).join('\n') + '\n';
+  }
+  return src;
+}
+
+const entry = path.join(SRC, 'index.js');
+parse(entry);
+
+const lines = [
+  '(function (global) {',
+  '  var __modules = {};',
+  '  var __cache = {};',
+  '  function __require(id) {',
+  '    if (__cache[id]) return __cache[id].exports;',
+  '    var module = { exports: {} };',
+  '    __cache[id] = module;',
+  '    __modules[id](module, module.exports, __require);',
+  '    return module.exports;',
+  '  }',
+];
+for (const mod of modules.values()) {
+  lines.push(`  __modules[${JSON.stringify(mod.id)}] = function (module, exports, __require) {`);
+  lines.push(transform(mod));
+  lines.push('  };');
+}
+lines.push(`  global.Chezzle = __require(${JSON.stringify(modules.get(entry).id)});`);
+lines.push("})(typeof window !== 'undefined' ? window : globalThis);");
+
+fs.mkdirSync(path.dirname(OUT), { recursive: true });
+fs.writeFileSync(OUT, lines.join('\n') + '\n');
+console.log(`built ${modules.size} modules → dist/chezzle.js (${fs.statSync(OUT).size} bytes)`);

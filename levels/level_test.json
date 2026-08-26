@@ -1,0 +1,130 @@
+{
+  "version": 2,
+  "levelId": "",
+  "plugins": [
+    {
+      "file": "chapters.js",
+      "reg": "chapters",
+      "name": "章节场景",
+      "enabled": true
+    }
+  ],
+  "rx": [],
+  "editorState": {
+    "chapters": {
+      "scenes": [
+        {
+          "id": "a",
+          "snap": {
+            "worldW": 3000,
+            "worldH": 800,
+            "rx": [],
+            "objects": [
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 374,
+                  "y": 558,
+                  "w": 646,
+                  "h": 184,
+                  "id": "floor3"
+                }
+              },
+              {
+                "type": "player",
+                "opts": {
+                  "x": 441,
+                  "y": 450,
+                  "substance": "NaOH",
+                  "mass": 30,
+                  "noLift": false,
+                  "id": "player2"
+                }
+              },
+              {
+                "type": "switch",
+                "opts": {
+                  "x": 850,
+                  "y": 516,
+                  "mode": "pressure",
+                  "opening": null,
+                  "and": null,
+                  "deleteId": null,
+                  "showId": null,
+                  "igniteId": null,
+                  "extinguishId": null,
+                  "openId": null,
+                  "id": "switch1",
+                  "precipitates": {},
+                  "sceneTo": "b"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "b",
+          "snap": {
+            "worldW": 3000,
+            "worldH": 800,
+            "rx": [],
+            "objects": [
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 519,
+                  "y": 527,
+                  "w": 1025,
+                  "h": 184,
+                  "id": "floor1"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "current": "a"
+    }
+  },
+  "objects": [
+    {
+      "type": "floor",
+      "opts": {
+        "x": 374,
+        "y": 558,
+        "w": 646,
+        "h": 184,
+        "id": "floor3"
+      }
+    },
+    {
+      "type": "player",
+      "opts": {
+        "x": 441,
+        "y": 450,
+        "substance": "NaOH",
+        "mass": 30,
+        "noLift": false,
+        "id": "player2"
+      }
+    },
+    {
+      "type": "switch",
+      "opts": {
+        "x": 850,
+        "y": 516,
+        "mode": "pressure",
+        "opening": null,
+        "and": null,
+        "deleteId": null,
+        "showId": null,
+        "igniteId": null,
+        "extinguishId": null,
+        "openId": null,
+        "id": "switch1",
+        "precipitates": {},
+        "sceneTo": "b"
+      }
+    }
+  ]
+}

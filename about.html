@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chezzle · 关于</title>
+<style>
+  :root { --gold: #e8b84b; --gold-l: #ffd76a; --cyan: #7fd8ff; --panel: #141a40; --edge: #2b3047; --txt: #dfe8f2; --dim: #9fb2c8; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { min-height: 100%;
+    background:
+      radial-gradient(1150px 700px at 50% -12%, rgba(84,60,180,.30) 0%, transparent 60%),
+      radial-gradient(1500px 900px at 50% 115%, rgba(20,14,64,.85) 0%, #090720 60%) #090720;
+    color: var(--txt); font: 15px/1.75 "Segoe UI","Microsoft YaHei",sans-serif; }
+  body { padding: 20px 22px 60px; position: relative; }
+  .wrap { max-width: 860px; margin: 0 auto; position: relative; z-index: 1; }
+  #stars { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
+  .st { position: absolute; border-radius: 50%; background: #fff; animation: twinkle ease-in-out infinite; }
+  @keyframes twinkle { 0%,100% { opacity: .1; transform: scale(.8); } 50% { opacity: .7; transform: scale(1); } }
+  header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+  .back { display: inline-flex; align-items: center; gap: 7px; padding: 9px 16px; border: 1px solid var(--edge);
+    background: linear-gradient(180deg, #232a5c, #12163a); color: var(--txt); cursor: pointer; transition: filter .2s, transform .2s;
+    clip-path: polygon(10px 0, calc(100% - 10px) 0, 100% 10px, 100% calc(100% - 10px), calc(100% - 10px) 100%, 10px 100%, 0 calc(100% - 10px), 0 10px); }
+  .back:hover { filter: drop-shadow(0 0 10px rgba(232,184,75,.45)); color: var(--gold-l); transform: translateY(-1px); }
+  .back:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+  h1 { font-size: 23px; color: var(--gold-l); text-shadow: 0 0 14px rgba(232,184,75,.45); }
+  .card { background: linear-gradient(180deg, rgba(30,30,72,.92), rgba(12,12,36,.92)); border: 1px solid rgba(232,184,75,.4);
+    padding: 18px 22px; margin-bottom: 14px; color: var(--txt);
+    filter: drop-shadow(0 0 10px rgba(232,184,75,.15));
+    clip-path: polygon(14px 0, calc(100% - 14px) 0, 100% 14px, 100% calc(100% - 14px), calc(100% - 14px) 100%, 14px 100%, 0 calc(100% - 14px), 0 14px); }
+  .card h2 { font-size: 16px; color: var(--cyan); margin-bottom: 10px; text-shadow: 0 0 10px rgba(127,216,255,.4); }
+  .card h2 .e { margin-right: 7px; }
+  .card p { color: var(--dim); margin-bottom: 8px; }
+  .card b { color: #fff; font-weight: 600; }
+  .keys { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+  .k { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; background: #0e1432; border: 1px solid var(--edge);
+    border-radius: 8px; font-size: 13px; color: var(--txt); }
+  kbd { background: #1c2350; border: 1px solid #3a4178; border-bottom-width: 3px; border-radius: 5px; padding: 1px 8px;
+    font: 12px Consolas,monospace; color: var(--gold-l); }
+  ul { padding-left: 20px; color: var(--dim); }
+  li { margin-bottom: 5px; }
+  .tip { border-left: 3px solid var(--gold); background: rgba(232,184,75,.08); padding: 10px 14px; border-radius: 0 10px 10px 0;
+    color: #ffe9b0; margin-top: 10px; font-size: 13.5px; }
+  .foot { text-align: center; color: #55617f; font-size: 12px; margin-top: 26px; }
+  a { color: var(--cyan); }
+</style>
+</head>
+<body>
+<div id="stars" aria-hidden="true"></div>
+<div class="wrap">
+<header>
+  <a class="back" href="index.html" aria-label="返回主页">← 主页</a>
+  <a class="back" href="select.html" aria-label="去选关">⚗ 去选关</a>
+  <h1>关于 Chezzle</h1>
+</header>
+
+<div class="card">
+  <h2><span class="e">🧪</span>你是谁？</h2>
+  <p>在 Chezzle 里，你就是<b>一块物质</b>——比如 NaOH（氢氧化钠）。你的<b>血量 = 剩余质量</b>：被反应消耗掉一点，血就少一点；吃回同类物质，血就慢慢回来。世界是会真实发生化学反应的：池水、大气、灯焰都会改变你。</p>
+</div>
+
+<div class="card">
+  <h2><span class="e">🎮</span>操作</h2>
+  <div class="keys">
+    <span class="k"><kbd>A</kbd><kbd>D</kbd> 左右移动</span>
+    <span class="k"><kbd>空格</kbd> 跳跃</span>
+    <span class="k"><kbd>Q</kbd> 收集沉淀/溶质</span>
+    <span class="k"><kbd>Shift</kbd> 放下手中物质</span>
+    <span class="k"><kbd>R</kbd> 重开本关</span>
+    <span class="k"><kbd>F5</kbd> 暂停 <kbd>F6</kbd> 步进（调试模式）</span>
+  </div>
+  <p>悬停物体可以查看它的<b>来源与成分</b>（调试模式）。鼠标点击右下角的物品栏格子可以切换收集槽。</p>
+</div>
+
+<div class="card">
+  <h2><span class="e">⚗</span>化学反应怎么玩？</h2>
+  <p><b>做实验，解机关。</b>关卡里的物体（钥匙、门、传送门、气体探测器…）由<i>化学状态</i>打开：</p>
+  <ul>
+    <li><b>浸入液体</b>：Fe 掉进 CuSO₄ 池子会慢慢变成铜（置换反应）；Zn + HCl 冒 H₂。</li>
+    <li><b>大气气体</b>：空气中飘着 CO₂ 时，NaOH 会被<b>碳化</b>掉血；跳进 Ba(OH)₂ 池又反应再生。</li>
+    <li><b>产物与壳</b>：固体产物会<b>附着在表面</b>生长；BaCO₃、Cu 这类致密壳会包住内核<b>阻断反应</b>（这也是防守手段！）。</li>
+    <li><b>收集与放置</b>：<kbd>Q</kbd> 把沉淀收进背包，站到开关/池子上按 <kbd>Shift</kbd> 放下——化学开关就是这么开的。</li>
+    <li><b>焰色反应</b>：火焰沾上 Na/K/Cu 等元素会变色，是检验物质的利器；<b>多种盐同在时焰色按暴露质量取平均</b>（混合色调）。</li>
+    <li><b>自定义反应</b>：部分关卡添加了专属反应式（优先级最高），注意关卡里的手写提示。</li>
+  </ul>
+  <div class="tip">💡 小贴士：反应有速率、质量守恒；表面被致密壳包住反应就停了——从<b>暴露面</b>考虑问题。</div>
+</div>
+
+<div class="card">
+  <h2><span class="e">🗺</span>选关系统 · 元素周期表</h2>
+  <ul>
+    <li>选关页就是一张<b>元素周期表</b>：每个格子 = 一个元素，可能绑定了<b>多个同位素关卡</b>（同格多关，通常<b>质量数越大越难</b>）。</li>
+    <li><b>普通元素</b>（琥珀色）与<b>稀有元素</b>（浅蓝辉光，难度显著提升）视觉可辨。</li>
+    <li>格子亮度就是进度：<b>暗→未写关卡 · 微亮→未解锁 · 亮→已解锁 · 全亮→已通关 · 金光→该元素所有同位素全部通关</b>。</li>
+    <li>通关会按配置<b>解锁指定关卡</b>（一个关可解锁多个关）；顶部琥珀格是<b>新手引导</b>。</li>
+    <li>进度保存在浏览器本地（localStorage），刷新不丢。</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h2><span class="e">🔬</span>给玩家的建议</h2>
+  <ul>
+    <li>卡关时先想：<b>什么物质会引起什么反应？</b>再想：怎么把它送到反应位置。</li>
+    <li>用<b>焰色</b>和<b>指示剂</b>（池水带 pH 读数）做"试纸"。</li>
+    <li>血量很宝贵——被腐蚀太多会死；但弱反应（碳化、落壳）有救回来的办法。</li>
+    <li>调试模式里 <kbd>X</kbd> 可以切换悬停目标，F6 逐帧看反应过程。</li>
+  </ul>
+</div>
+
+<div class="foot">Chezzle · 化学 × 解谜 —— 每个关卡都是一道化学题</div>
+</div>
+<script>
+(function () {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const box = document.getElementById('stars');
+  for (let i = 0; i < 60; i++) {
+    const s = document.createElement('i');
+    s.className = 'st';
+    const sz = 1 + Math.random() * 2;
+    s.style.width = sz + 'px';
+    s.style.height = sz + 'px';
+    s.style.left = (Math.random() * 100) + 'vw';
+    s.style.top = (Math.random() * 100) + 'vh';
+    s.style.animationDuration = (2.6 + Math.random() * 5) + 's';
+    s.style.animationDelay = (Math.random() * 5) + 's';
+    box.appendChild(s);
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,11223 @@
+(function (global) {
+  var __modules = {};
+  var __cache = {};
+  function __require(id) {
+    if (__cache[id]) return __cache[id].exports;
+    var module = { exports: {} };
+    __cache[id] = module;
+    __modules[id](module, module.exports, __require);
+    return module.exports;
+  }
+  __modules["src/index.js"] = function (module, exports, __require) {
+// ============================================================================
+// 库入口：re-export 所有公共模块。浏览器打包后挂全局 `Chezzle`。
+// ============================================================================
+
+Object.assign(exports, __require('src/core/config.js'));;
+Object.assign(exports, __require('src/core/scene.js'));;
+Object.assign(exports, __require('src/core/input.js'));;
+Object.assign(exports, __require('src/core/loop.js'));;
+
+Object.assign(exports, __require('src/level/builder.js'));;
+Object.assign(exports, __require('src/level/plugins.js'));;
+Object.assign(exports, __require('src/level/multiscene.js'));;
+Object.assign(exports, __require('src/level/click.js'));;
+
+Object.assign(exports, __require('src/objects/obj.js'));;
+Object.assign(exports, __require('src/objects/material.js'));;
+Object.assign(exports, __require('src/objects/particle.js'));;
+Object.assign(exports, __require('src/objects/floor.js'));;
+Object.assign(exports, __require('src/objects/container.js'));;
+Object.assign(exports, __require('src/objects/pool.js'));;
+Object.assign(exports, __require('src/objects/block.js'));;
+Object.assign(exports, __require('src/objects/deposit.js'));;
+Object.assign(exports, __require('src/objects/player.js'));;
+Object.assign(exports, __require('src/objects/switch.js'));;
+Object.assign(exports, __require('src/objects/key.js'));;
+Object.assign(exports, __require('src/objects/door.js'));;
+Object.assign(exports, __require('src/objects/lamp.js'));;
+Object.assign(exports, __require('src/objects/blastlamp.js'));;
+Object.assign(exports, __require('src/objects/beaker.js'));;
+Object.assign(exports, __require('src/objects/rope.js'));;
+Object.assign(exports, __require('src/objects/gascolumn.js'));;
+Object.assign(exports, __require('src/objects/sign.js'));;
+Object.assign(exports, __require('src/objects/bubble.js'));;
+Object.assign(exports, __require('src/objects/spark.js'));;
+Object.assign(exports, __require('src/objects/portal.js'));;
+Object.assign(exports, __require('src/objects/gasdetector.js'));;
+Object.assign(exports, __require('src/objects/extractor.js'));;
+Object.assign(exports, __require('src/objects/dropper.js'));;
+
+Object.assign(exports, __require('src/chem/substances.js'));;
+Object.assign(exports, __require('src/chem/solution.js'));;
+Object.assign(exports, __require('src/chem/atmosphere.js'));;
+Object.assign(exports, __require('src/chem/rules.js'));;
+Object.assign(exports, __require('src/chem/engine.js'));;
+
+Object.assign(exports, __require('src/physics/body.js'));;
+Object.assign(exports, __require('src/physics/aabb.js'));;
+Object.assign(exports, __require('src/physics/collision.js'));;
+
+Object.assign(exports, __require('src/render/renderer.js'));;
+Object.assign(exports, __require('src/render/camera.js'));;
+Object.assign(exports, __require('src/render/color.js'));;
+Object.assign(exports, __require('src/render/gridrender.js'));;
+Object.assign(exports, __require('src/render/liquidrender.js'));;
+Object.assign(exports, __require('src/render/label.js'));;
+Object.assign(exports, __require('src/render/hud.js'));;
+
+// 浏览器全局挂载由 tools/build.mjs 打包时附加（`window.Chezzle = <exports>`）。
+
+  };
+  __modules["src/core/config.js"] = function (module, exports, __require) {
+// ============================================================================
+// 全局常量与调参（与 TECH_DESIGN.md §11 对应）
+// ============================================================================
+
+const CFG = {
+  worldW: 1000,
+  worldH: 800,
+
+  tickRate: 30, // 固定步长
+  gravity: 1200, // px/s²
+  groundFriction: 8, // 地面摩擦（1/s）：爆炸/踢飞后的物体不会永远滑行（物理核心默认 0，Scene 层开启）
+  airFriction: 3, // 空气摩擦（1/s，仅水平）：空中/气泡柱上玩家不会无限漂移，仍保留爆炸冲击感
+
+  player: {
+    moveSpeed: 220, // px/s
+    jumpVel: 520, // px/s（向上）
+    autoStepMax: 14, // px，自动上台阶阈值
+    defaultSubstance: 'NaOH',
+    defaultMass: 30, // g（矩形玩家，约 85×90px）
+  },
+
+  cellSize: 5, // px
+  cellMass: 0.1, // g（质量量子）
+  maxParticleMass: 0.5, // g/颗（常规颗粒质量——最小的沉淀颗粒 0.5g）
+  // 大堆（超过粒子数上限时）按"堆叠"分配：单颗粒最多堆 **3 个 0.5g 颗粒**（用户要求，
+  // 假设本来可以堆叠 10 个 → 改成 3 个）。极端超大堆（>stackMaxMass×maxSpawnParticles
+  // = 900g）仍合并以保质量守恒（性能上限，已与用户确认不需要再优化）。
+  stackMaxMass: 1.5,
+  maxSpawnParticles: 600, // 单次生成粒子数量上限（更大质量仍合并颗粒；已由空间哈希宽相位撑住邻域性能）
+
+  placeAmount: 0.5, // g/次
+  collectRadius: 70, // px
+
+  lampRange: 70, // px（灯提供加热/点燃的半径）
+  lampLightRange: 180, // px（灯提供"光照"条件的半径——见光分解如 HClO）
+  placeLampRange: 120, // px（放置沉淀到灯上的半径）
+  inventory: { slots: 5, capacity: 100 }, // g/格
+
+  doorWinRadius: 80, // px
+  worldMargin: 200, // px（出界判定）
+
+  particleSize: 5, // px（沉淀粒子参考尺寸：0.5g 颗粒 = 5px 球）
+  particleRefMass: 0.5, // g（粒子尺寸的参照质量）
+  // 尺寸随质量缩放：**1.5g（堆叠 3 个 0.5g）时的尺寸 = 0.5g 颗粒的 1.5 倍（7.5px）**，
+  // 幂次 log3(1.5)≈0.369（0.5g→5px、1.5g→7.5px 两个锚点精确匹配）；更小质量有下限 3px。
+  particleMinSize: 3, // px
+  particleMaxSize: 7.5, // px（= 0.5g 颗粒尺寸的 1.5 倍）
+};
+
+exports.CFG = CFG;
+
+  };
+  __modules["src/core/scene.js"] = function (module, exports, __require) {
+// ============================================================================
+// Scene：游戏场景调度器
+// ----------------------------------------------------------------------------
+// 每一刻：玩家输入 → 物理 → 接触事件 → 容器包含 → 化学反应（自反应/接触对/
+// 容器内/大气吸收/可燃气体燃烧）→ 网格同步 → 状态判定。
+// 同时构造化学引擎所需的 env（每对象条件 + 产物路由）。
+// ============================================================================
+
+const { ChemistryEngine } = __require('src/chem/engine.js');;
+const { Atmosphere } = __require('src/chem/atmosphere.js');;
+const { getSubstance, isSoluble } = __require('src/chem/substances.js');;
+const { CollisionSystem, ContactTracker, overlaps } = __require('src/physics/collision.js');;
+const { Particle } = __require('src/objects/particle.js');;
+const { Bubble } = __require('src/objects/bubble.js');;
+const { Spark } = __require('src/objects/spark.js');;
+const { GasColumn } = __require('src/objects/gascolumn.js');;
+const { Explosion } = __require('src/objects/explosion.js');;
+const { ReactionLabel } = __require('src/objects/reactionlabel.js');;
+const { Container } = __require('src/objects/container.js');;
+const { Portal } = __require('src/objects/portal.js');;
+const { Rope } = __require('src/objects/rope.js');;
+const { CFG } = __require('src/core/config.js');;
+
+class Scene {
+  constructor({ worldW = CFG.worldW, worldH = CFG.worldH, physics = {} } = {}) {
+    this.worldW = worldW;
+    this.worldH = worldH;
+    this.objects = [];
+    this.dynamics = [];
+    this.statics = [];
+    this.containers = [];
+    this.lamps = [];
+    this.doors = [];
+    this.portals = [];
+    this.particles = [];
+    this.hidden = []; // 初始隐藏的物体：不可见/无碰撞/不参与逻辑，由开关 showId 显现
+    this.byId = {};
+    this.player = null;
+    this.camera = null; // 由构建器注入（爆炸屏幕震动用）
+
+    this.chem = new ChemistryEngine();
+    this.atmosphere = new Atmosphere();
+    this.physics = new CollisionSystem({ gravity: CFG.gravity, autoStepMax: CFG.player.autoStepMax, groundFriction: CFG.groundFriction, airFriction: CFG.airFriction, ...physics });
+    this.contacts = new ContactTracker();
+    this.contactPairs = [];
+    this.customReactions = []; // 关卡自定义反应（最高优先级）：[{reactants:[{id,coeff}], products:[{id,coeff}]}]
+    this._reactGas = {}; // 反应产气累积器（气体探测器只检测它）：gasId → 反应产气总量（不衰减，同大气累积）
+
+    this.status = 'init';
+    this.time = 0;
+    this.dt = 1 / CFG.tickRate;
+    this.tip = '';
+    this.debugMode = false; // 调试模式（.debugmode() 开启）
+    this.debugPaused = false; // 暂停 tick 推进
+    this.debugStepOnce = false; // 手动步进一 tick
+
+    this.control = new Set(); // 长按（left/right/jump/place/collect）
+    this.pressed = new Set(); // 本刻刚按下（边缘触发）
+    this._events = {};
+    this._emitCtx = null;
+    this._plumeSeq = 0;
+    this.mouse = null; // 调试模式悬停：{x,y,on}（屏幕坐标，由 builder 鼠标监听写入）
+    this._rxLogT = {}; // 玩家反应日志限频：规范化反应式 → 上次记录时刻（防"反应抖动"）
+
+    // ---- 运行时钩子（插件/关卡脚本用）：全部走"游戏时间"，受调试暂停(F5)控制 ----
+    this._tickFns = [];    // 每帧执行: fn(dt, time)，返回 true 自动卸载
+    this._timers = [];     // 一次性延迟: {at, fn}（游戏时间）
+    this._intervals = [];  // 周期: {next, period, fn}
+    this._afterFns = [];   // 下一帧开头执行一次
+    this._keyDownFns = []; // 键盘按下（含未映射键），由 bindKeyboard 转发
+    this._keyUpFns = [];   // 键盘抬起
+  }
+
+  // ---------------------------------------------------------------------------
+  // 运行时钩子 API：wait/after/interval 基于游戏时间（scene.time，暂停即停），
+  // 与 setTimeout（墙钟时间）不同——调试暂停时不会"偷偷"继续走。
+  // ---------------------------------------------------------------------------
+
+  /** 每帧执行 fn(dt, time)：返回 true 则卸载；返回 deregister 函数可手动卸载 */
+  onTick(fn) {
+    this._tickFns.push(fn);
+    return () => {
+      const i = this._tickFns.indexOf(fn);
+      if (i >= 0) this._tickFns.splice(i, 1);
+    };
+  }
+
+  /** 等待 sec 秒（游戏时间）后执行 fn；返回取消函数 */
+  wait(sec, fn) {
+    const t = { at: this.time + Math.max(0, sec), fn };
+    this._timers.push(t);
+    return () => {
+      const i = this._timers.indexOf(t);
+      if (i >= 0) this._timers.splice(i, 1);
+    };
+  }
+
+  /** 下一帧执行一次 fn（等价 wait(0)） */
+  after(fn) {
+    this._afterFns.push(fn);
+    return () => {
+      const i = this._afterFns.indexOf(fn);
+      if (i >= 0) this._afterFns.splice(i, 1);
+    };
+  }
+
+  /** 每 period 秒执行 fn；返回取消函数 */
+  interval(period, fn) {
+    const t = { next: this.time + Math.max(0.001, period), period: Math.max(0.001, period), fn };
+    this._intervals.push(t);
+    return () => {
+      const i = this._intervals.indexOf(t);
+      if (i >= 0) this._intervals.splice(i, 1);
+    };
+  }
+
+  /** 键盘按下回调（任意键，含未映射键）：fn(e)，返回 true 表示已处理（preventDefault） */
+  onKeyDown(fn) {
+    this._keyDownFns.push(fn);
+    return () => {
+      const i = this._keyDownFns.indexOf(fn);
+      if (i >= 0) this._keyDownFns.splice(i, 1);
+    };
+  }
+
+  /** 键盘抬起回调 */
+  onKeyUp(fn) {
+    this._keyUpFns.push(fn);
+    return () => {
+      const i = this._keyUpFns.indexOf(fn);
+      if (i >= 0) this._keyUpFns.splice(i, 1);
+    };
+  }
+
+  /** 键盘事件统一入口（input.js 调用） */
+  _fireKey(type, e) {
+    const fns = type === 'up' ? this._keyUpFns : this._keyDownFns;
+    if (!fns.length) return;
+    for (const fn of [...fns]) {
+      try {
+        if (fn(e) === true && e.preventDefault && e.cancelable) e.preventDefault();
+      } catch (err) { /* 插件回调异常不拖垮游戏循环 */ }
+    }
+  }
+
+  /** 每帧推进运行时钩子（在 step 的时间推进后、对象 update 前） */
+  _runHooks(dt) {
+    const after = this._afterFns;
+    this._afterFns = [];
+    for (const fn of after) fn();
+    this._tickFns = this._tickFns.filter((fn) => {
+      try { return fn(dt, this.time) !== true; } catch (err) { return false; }
+    });
+    if (this._timers.length) {
+      this._timers = this._timers.filter((t) => {
+        if (this.time < t.at) return true;
+        try { t.fn(); } catch (err) { /* 插件回调异常不拖垮游戏循环 */ }
+        return false;
+      });
+    }
+    if (this._intervals.length) {
+      for (const t of this._intervals) {
+        while (this.time >= t.next) {
+          t.next += t.period;
+          try { t.fn(); } catch (err) { /* 同上 */ }
+        }
+      }
+    }
+  }
+
+  on(name, fn) {
+    (this._events[name] ??= []).push(fn);
+    return this;
+  }
+
+  fire(name, ...args) {
+    for (const fn of this._events[name] ?? []) fn(...args);
+  }
+
+  addObject(obj) {
+    this.byId[obj.id] = obj;
+    // 初始隐藏：只登记 byId + hidden 列表（可被开关 showId 显现），不进任何活动索引
+    if (obj.hidden) {
+      this.hidden.push(obj);
+      if (obj.subBodies) for (const sb of obj.subBodies) { sb.hidden = true; this.addObject(sb); }
+      return obj;
+    }
+    this.objects.push(obj);
+    this._register(obj);
+    if (obj.subBodies) for (const sb of obj.subBodies) this.addObject(sb);
+    return obj;
+  }
+
+  /** 把物体注册进物理/逻辑索引（statics/dynamics/containers/…） */
+  _register(obj) {
+    if (obj.physicsKind === 'static') this.statics.push(obj);
+    else if (obj.physicsKind === 'dynamic') this.dynamics.push(obj);
+    if (obj instanceof Container) this.containers.push(obj);
+    if (obj.isLamp) this.lamps.push(obj);
+    if (obj.isDoor) this.doors.push(obj);
+    if (obj instanceof Portal) this.portals.push(obj);
+    if (obj instanceof Particle) this.particles.push(obj);
+    if (obj.isPlayerObj) this.player = obj;
+  }
+
+  /** 显现一个隐藏物体（开关 showId 用）：恢复进 objects 与物理/逻辑索引 */
+  reveal(id) {
+    const obj = this.byId[id];
+    if (!obj || !obj.hidden) return obj;
+    obj.hidden = false;
+    const h = this.hidden.indexOf(obj);
+    if (h >= 0) this.hidden.splice(h, 1);
+    this.objects.push(obj);
+    this._register(obj);
+    if (obj.subBodies) for (const sb of obj.subBodies) this.reveal(sb.id);
+    return obj;
+  }
+
+  removeObject(obj) {
+    // 从所有索引里彻底移除（含 statics/containers/lamps/doors/portals）：
+    // 否则删掉的墙虽不可见仍会挡人、删掉的灯仍在加热、删掉的门仍在判定。
+    const arrays = [
+      this.objects, this.dynamics, this.statics, this.particles,
+      this.containers, this.lamps, this.doors, this.portals, this.hidden,
+    ];
+    for (const arr of arrays) {
+      const i = arr.indexOf(obj);
+      if (i >= 0) arr.splice(i, 1);
+    }
+    delete this.byId[obj.id];
+    if (this.player === obj) this.player = null; // 玩家被移除/搬走：清引用（跨场景搬运）
+  }
+
+  // ===========================================================================
+  // 主刻
+  // ===========================================================================
+  step(dt) {
+    if (this.status !== 'running') return;
+    this.time += dt;
+    this.dt = dt;
+    this._runHooks(dt); // 运行时钩子（插件/关卡脚本的 onTick/wait/interval/after）
+    // 页面不在前台（切走/最小化）时清空输入：失焦时 keyup/blur 可能不触发，
+    // 每帧兜底检测，避免"失焦后按键一直按住"（玩家一直跳/走）。
+    if (typeof document !== 'undefined' && (document.hidden || !document.hasFocus())) {
+      this.control.clear();
+      this.pressed.clear();
+    }
+
+    // 1. 玩家输入意图（读取 control/pressed）；拷贝迭代，允许 update 中移除对象（气泡等）
+    for (const obj of [...this.objects]) {
+      if (typeof obj.update === 'function') obj.update(dt, this);
+    }
+
+    // 1.5 网格形状 → 物理体（上一帧化学后的形状；物理必须用最新尺寸，
+    //     否则消耗/生长后碰撞箱持续滞后一帧——"碰撞箱显示已缩小但旧边界仍挡人"）
+    for (const obj of this.objects) {
+      if (typeof obj.syncGrid === 'function') obj.syncGrid();
+    }
+
+    // 2. 物理
+    this.physics.step(dt, { dynamics: this.dynamics, statics: this.statics });
+
+    // 2.5 物理结算后钩子（绳子定位悬挂物体、断绳检查）
+    for (const obj of this.objects) {
+      if (typeof obj.lateUpdate === 'function') obj.lateUpdate(dt, this);
+    }
+
+    // 3. 接触事件
+    const { begun, ended, current } = this.contacts.update(this.dynamics);
+    this.contactPairs = current;
+    for (const [a, b] of begun) {
+      if (a.onContactBegin) a.onContactBegin(b, this);
+      if (b.onContactBegin) b.onContactBegin(a, this);
+    }
+    for (const [a, b] of ended) {
+      if (a.onContactEnd) a.onContactEnd(b, this);
+      if (b.onContactEnd) b.onContactEnd(a, this);
+    }
+
+    // 4. 容器包含（固体在池/烧杯内）
+    this.updateContainment();
+
+    // 5. 化学
+    this.stepChemistry(dt);
+
+    // 6. 网格形状 → 物理体（碰撞箱 = 最小外接 AABB）
+    for (const obj of this.objects) {
+      if (typeof obj.syncGrid === 'function') obj.syncGrid();
+    }
+    // 溶尽/烧尽的固体物块移除（0 尺寸幽灵清理；也是"锚点物消失断绳"的前提）
+    for (const obj of [...this.objects]) {
+      if (obj.isPlayerObj) continue;
+      if (obj.grid && obj.grid.minAABB && obj.grid.minAABB() === null) {
+        this.removeObject(obj);
+      }
+    }
+    // 被反应消耗完的沉淀粒子移除（如 Zn 粒子 + HCl 反应耗尽）
+    for (const pt of [...this.particles]) {
+      if (pt.amount <= 1e-9) this.removeObject(pt);
+    }
+
+    // 7. 状态判定
+    this.checkStatus();
+
+    // 8. 清空边缘触发
+    this.pressed.clear();
+  }
+
+  updateContainment() {
+    for (const obj of this.objects) {
+      obj._container = null;
+      if (!obj.material || obj.material.phase !== 'solid') continue;
+      for (const c of this.containers) {
+        if (c.containsObj(obj)) {
+          obj._container = c;
+          break;
+        }
+      }
+    }
+  }
+
+  // ===========================================================================
+  // 化学反应调度
+  // ===========================================================================
+  stepChemistry(dt) {
+    this.atmosphere._cause = null; // 复位大气变化原因（由引擎按反应盖章）
+    // 自反应（分解/催化/燃烧/溶解/气态还原）
+    for (const obj of this.objects) {
+      if (!obj.material) continue;
+      this._setEmitCtx(obj, null);
+      // skipDissolution：溶解统一在成对反应之后执行（反应优先于溶解）
+      this.chem.reactSelf(obj.material, dt, this.makeEnv(obj), { skipDissolution: true });
+    }
+    // 接触对反应（玩家-物块、物块-物块）；条件取双方并集
+    for (const [a, b] of this.contactPairs) {
+      if (!a.material || !b.material) continue;
+      this._emitCtx = {
+        container: a._container ?? b._container,
+        player: a.isPlayerObj ? a : b.isPlayerObj ? b : null,
+        point: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+      };
+      this.chem.reactPair(a.material, b.material, dt, this.makePairEnv(a, b));
+    }
+    // 容器内反应（物体浸在池/烧杯中）；条件取双方并集
+    for (const c of this.containers) {
+      for (const obj of this.objects) {
+        if (obj === c || !obj.material || obj.material.phase !== 'solid') continue;
+        if (c.containsObj(obj)) {
+          this._setEmitCtx(obj, c);
+          this.chem.reactPair(obj.material, c.material, dt, this.makePairEnv(obj, c));
+        }
+      }
+    }
+    // 灯上物体与灯材料反应（如 CuO 粉末放灯上 + C 块 → 高温还原出 Cu 粉末）
+    // 玩家：只有"站在灯顶上"（脚底贴灯顶）才与灯上粉末反应——玩家本身可以是反应物
+    // （如 Fe2O3 玩家 + 灯上 Al 粉 → 铝热）；站灯旁/贴灯壁仍不反应。
+    for (const lamp of this.lamps) {
+      if (!lamp.lit) continue;
+      for (const obj of this.objects) {
+        if (obj === lamp || !obj.material || obj.material.phase !== 'solid') continue;
+        if (obj.isPlayerObj && Math.abs(obj.bottom - lamp.top) > 4) continue; // 玩家须站在灯顶
+        if (this._onLamp(obj, lamp)) {
+          this._setEmitCtx(obj, lamp);
+          this.chem.reactPair(obj.material, lamp.material, dt, this.makePairEnv(obj, lamp));
+        }
+      }
+    }
+
+    // 可溶沉淀粒子浸入含水容器 → 溶解为溶质（放下的 NaCl 粉掉进池里会化掉）
+    this._tryParticleDissolution(dt);
+
+    // 可溶固体浸入含水容器 → 溶解（玩家身上的盐壳/可溶物在水中洗掉）。
+    // 放在所有成对反应**之后**：反应优先于溶解——玩家 Na2CO3 壳先与池水 Ba(OH)2
+    // 反应回血，而不是先被溶解抢走变成池水溶质（再生机制依赖这个顺序）。
+    for (const obj of this.objects) {
+      if (!obj.material || obj.material.phase !== 'solid') continue;
+      const env = this.makeEnv(obj);
+      const ctx = this.chem._ctxOf(obj.material, obj.material, dt, env);
+      this.chem._tryDissolution(obj.material, dt, ctx);
+    }
+
+    // 含碱容器吸收大气酸性气体（CO2/SO2）
+    for (const c of this.containers) {
+      if (c.solution.ids().some((id) => getSubstance(id).kind === 'base')) {
+        this.chem.absorbAtmosphereGas(c.material, dt, this.makeEnv(c));
+      }
+    }
+    // 大气中可燃气体燃烧
+    this.chem.reactAtmosphere(this.makeEnv(null), dt);
+
+    // 收集本 tick 大气气体变化（产生/消耗原因，调试面板显示）
+    const glog = this.atmosphere.flushLog();
+    if (glog.length) {
+      if (!this.gasLog) this.gasLog = [];
+      // 合并同一 tick 内同气体+同原因的变化
+      const merged = new Map();
+      for (const g of glog) {
+        const k = `${g.id}|${g.cause ?? ''}`;
+        if (merged.has(k)) merged.get(k).delta += g.delta;
+        else merged.set(k, { id: g.id, delta: g.delta, cause: g.cause ?? null, t: this.time });
+      }
+      for (const m of merged.values()) this.gasLog.unshift(m);
+      if (this.gasLog.length > 60) this.gasLog.length = 60;
+    }
+  }
+
+  _setEmitCtx(obj, container) {
+    // 容器自身的反应（如灯上沉淀分解）：产物回到容器自己，而不是当开阔地粒子撒出去
+    const selfContainer = obj && obj.material && obj.material.owner === obj ? obj : null;
+    // 灯的反应点取火焰位置（沉淀/气泡从火焰附近生成）
+    const py = obj && obj.isLamp ? obj.flameY() : obj ? obj.bottom : 0;
+    // spread = 生成宽幅：玩家的底边宽度（沉淀从玩家两侧的液体接触处冒出，不压在玩家身上）
+    const spread = obj && obj.isLamp ? 14 : obj && obj.w ? obj.w : 20;
+    this._emitCtx = {
+      obj: obj ?? null, // 反应对象（气泡柱产气源：自身不被自己的气流托起）
+      container: container ?? selfContainer ?? obj?._container,
+      player: obj && obj.isPlayerObj ? obj : null,
+      point: { x: obj ? obj.x + obj.w / 2 : 0, y: py, spread },
+    };
+  }
+
+  /** 构造化学引擎 env：大气 + 该对象的环境条件 + 产物路由 + 产气气泡 + 爆炸 */
+  makeEnv(obj) {
+    return {
+      atmosphere: this.atmosphere,
+      conditions: this.conditionsFor(obj),
+      globalIgnited: this.lamps.some((l) => l.lit),
+      emit: (product, origin) => this.routeProduct(product, origin),
+      onGas: (id, mass, ctx) => this.onGas(id, mass, ctx),
+      onReaction: (text) => this.onReaction(text),
+      onSpark: () => this.onSpark(), // 金属燃烧的火星（火星四射）
+      customReactions: this.customReactions, // 关卡自定义反应（L0 最高优先级）
+      debugMode: this.debugMode,
+      explode: (point, strength, cause) => this.explode(point ?? null, strength, cause),
+      // 爆炸中心：当前反应点；大气爆炸（无反应点）取第一个点燃灯的火苗位置
+      explodePoint: this._emitCtx
+        ? this._emitCtx.point
+        : (() => {
+            const lit = this.lamps.find((l) => l.lit);
+            return lit ? { x: lit.x + lit.w / 2, y: lit.flameY() } : null;
+          })(),
+    };
+  }
+
+  /** 可溶沉淀粒子浸入含水容器 → 溶解为溶质（除玩家外，能溶的物体在水中都会溶） */
+  _tryParticleDissolution(dt) {
+    const rate = 3 * dt; // 与 RATE.dissolution 一致
+    for (const pt of this.particles.slice()) {
+      if (!isSoluble(pt.substance)) continue; // 不溶沉淀不溶解
+      if (pt.amount <= 1e-9) continue;
+      for (const c of this.containers) {
+        if (c.isLamp) continue; // 灯是台子不是液体
+        if (!c.containsObj(pt)) continue;
+        if (c.solution.water <= 0) continue;
+        const mass = Math.min(pt.amount, rate);
+        c.noteSolOrigin(pt.substance, { kind: 'dissolve' }); // 沉淀粒子溶入池水 → 来源=溶解
+        c.solution.add(pt.substance, mass);
+        pt.amount -= mass;
+        if (pt.amount <= 1e-9) {
+          this.removeObject(pt);
+          break;
+        }
+      }
+    }
+  }
+
+  /** 金属燃烧的火星：反应点迸发橙金亮粒（纯视觉；限制在场数量防刷屏） */
+  onSpark() {
+    const pt = this._emitCtx?.point ?? null;
+    if (!pt) return;
+    const cap = 36;
+    let n = 0;
+    for (const o of this.objects) if (o instanceof Spark && ++n >= cap) return;
+    const spread = this._emitCtx.spread ?? 20;
+    for (let i = 0; i < 2; i++) {
+      this.addObject(new Spark({
+        x: pt.x + (Math.random() - 0.5) * spread,
+        y: pt.y - Math.random() * 8,
+        vx: (Math.random() - 0.5) * 220,
+        vy: -(140 + Math.random() * 240),
+        life: 0.5 + Math.random() * 0.55,
+      }));
+    }
+  }
+
+  /** 反应日志的规范化键：反应物/产物各自排序，同一反应的不同书写顺序视为同一条 */
+  _rxKey(text) {
+    const [rx, pd] = String(text).split('→');
+    const norm = (s) => (s || '').split('+').map((x) => x.trim()).filter(Boolean).sort().join('+');
+    return `${norm(rx)}|${norm(pd)}`;
+  }
+
+  /** 记录反应（HUD 日志）。调试模式下在反应发生的位置飘出反应式标签 */
+  onReaction(text) {
+    const point = this._emitCtx ? this._emitCtx.point : null;
+    const key = this._rxKey(text);
+    const now = this.time;
+    // 防"反应抖动"：同一反应（规范化键：反应物排序后）在 0.5s 内只进一次
+    // 调试面板/浮动标签，1s 内只进一次玩家 HUD 日志。多反应竞争或循环
+    // （如氨气在大气与溶液间往返）时，每 tick 交替记录不同反应式会让
+    // 日志面板疯狂刷新——限频后列表稳定，真实反应仍会逐条出现。
+    const lastT = this._lastLabelT ?? {};
+    if (this.debugMode && now - (lastT[key] ?? -10) > 0.5) {
+      lastT[key] = now;
+      this._lastLabelT = lastT;
+      if (!this.debugReactions) this.debugReactions = [];
+      this.debugReactions.unshift({ text, x: point ? point.x : null, y: point ? point.y : null, t: now });
+      if (this.debugReactions.length > 60) this.debugReactions.length = 60;
+      // 在反应发生的位置生成浮动标签（与面板共用限频键，避免同一反应两种写法并存）
+      if (point) {
+        this.addObject(new ReactionLabel({
+          x: point.x,
+          y: point.y - 12,
+          text,
+          color: text.includes(this.player?.substance ?? '') ? '#ffd23f' : '#9fd8ff',
+        }));
+      }
+    }
+    if (!this.player) return;
+    if (!this.player.reactions) this.player.reactions = [];
+    if (this.player.reactions[0] === text) return; // 同反应持续进行中不重复刷
+    if (now - (this._rxLogT[key] ?? -10) < 1) return;
+    this._rxLogT[key] = now;
+    this.player.reactions.unshift(text);
+    if (this.player.reactions.length > 8) this.player.reactions.length = 8;
+  }
+
+  /**
+   * 爆炸：冲击波把周围玩家/物块/沉淀炸飞（方向∝相对位置，力度∝强度/(1+距离²)）。
+   * 受冲击过强的物块/玩家碎裂掉渣（自身缩小，掉出等量可收集沉淀）。
+   * cause：爆炸原因文本（调试悬停/面板显示，如"2H2+O2 → 2H2O"、"2Al+Fe2O3 → ..."）。
+   */
+  explode(point, strength, cause = null) {
+    const p = point ?? (this._emitCtx ? this._emitCtx.point : { x: this.worldW / 2, y: this.worldH / 2 });
+    const R = 150; // 爆炸半径（衰减基准）
+    // 视觉 + 屏幕震动；记录最近爆炸原因（HUD 调试面板显示）
+    this.addObject(new Explosion({ x: p.x, y: p.y, strength, cause }));
+    this._lastExplosion = { cause: cause || '剧烈反应', t: this.time };
+    if (this.camera) this.camera.shake(Math.min(22, 5 + strength * 0.2));
+    // 冲击：动态体（玩家/物块/烧杯）
+    for (const o of this.dynamics) {
+      if (o.static || o.subBodies) continue; // 子体（杯壁）跟随主体处理
+      const cx = o.x + o.w / 2;
+      const cy = o.y + o.h / 2;
+      const dx = cx - p.x;
+      const dy = cy - p.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > R * 3) continue;
+      const impulse = (strength * 2.8) / (1 + (dist / R) * (dist / R));
+      if (impulse <= 0.1) continue;
+      if (dist < 1) {
+        o.vel.y -= impulse * 4.5; // 炸心正上方：强力上抛
+      } else {
+        o.vel.x += (dx / dist) * impulse * 1.15; // 水平：径向（略放大，让炸飞明显）
+        // 垂直：径向分量 + 强上抛分量（爆炸把物体炸飞起来，不只水平滑开；
+        // 上抛需足够抵消重力 1200，否则物体贴地根本抬不起来）
+        o.vel.y += (dy / dist) * impulse - impulse * 2.4;
+      }
+      // 碎裂：冲击过强 → 表层物质掉渣（物块变小、玩家掉血，渣可收集回血）
+      if (impulse > 120 && o.grid) this.shatter(o, p, impulse);
+    }
+    // 冲击：沉淀粒子（直接踢飞）
+    for (const pt of this.particles) {
+      const dx = pt.x + pt.w / 2 - p.x;
+      const dy = pt.y + pt.h / 2 - p.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > R * 2.5 || dist < 1) continue;
+      const impulse = (strength * 1.6) / (1 + dist / R);
+      pt.vel.x += (dx / dist) * impulse;
+      pt.vel.y += (dy / dist) * impulse;
+    }
+    // 爆炸炸断附近的绳子（范围放大到 2.5×爆炸半径；绳子中点或悬挂物在范围内都断）
+    for (const o of this.objects) {
+      if (!(o instanceof Rope) || o.broken) continue;
+      const dAnchor = Math.hypot(o.x - p.x, o.y - p.y);
+      const dHang = o.hanging ? Math.hypot(o.hanging.x + o.hanging.w / 2 - p.x, o.hanging.y + o.hanging.h / 2 - p.y) : Infinity;
+      if (Math.min(dAnchor, dHang) < R * 2.5) o.break(this);
+    }
+  }
+
+  /** 碎裂：从表层剥离 10%~20% 质量 → 等量沉淀粒子（可收集） */
+  shatter(o, p, impulse) {
+    if (!o.grid || !o.mat) return;
+    const frac = 0.1 + Math.min(0.1, impulse / 800);
+    const total = o.grid.totalMass();
+    const shed = Math.max(0.2, total * frac);
+    const exp = o.grid.exposedMasses ? o.grid.exposedMasses() : null;
+    if (!exp || Object.keys(exp).length === 0) return;
+    const ids = Object.keys(exp);
+    const id = ids[Math.floor(Math.random() * ids.length)];
+    const take = Math.min(exp[id], shed);
+    if (take <= 1e-9) return;
+    const removed = o.grid.consume(id, take);
+    if (removed > 1e-9) {
+      this.spawnParticles(id, removed, { x: o.x + Math.random() * o.w, y: o.y + Math.random() * o.h * 0.5 }, true, false, {
+        kind: 'explosion',
+        text: `${o.substance ?? id} 碎裂`,
+      });
+      if (o.syncGrid) o.syncGrid();
+    }
+  }
+
+  /**
+   * 产气时生成气流 + 气泡柱：
+   *  - 真实气流（GasColumn）：轻于空气(摩尔质量<29)向上托、重于空气向下压，对重叠的
+   *    玩家/物块施力。同一产气点只保留一个气流，持续刷新、反应停则消散。
+   *  - 气泡（Bubble）纯视觉反馈，被地板阻断消失。
+   */
+  onGas(id, mass, ctx) {
+    // 记录"反应产生的气体"（气体探测器只检测这个，不检测预置大气气体）
+    this._reactGas[id] = (this._reactGas[id] ?? 0) + mass;
+    const point = this._emitCtx ? this._emitCtx.point : { x: this.worldW / 2, y: this.worldH / 2 };
+    const sub = getSubstance(id);
+    const dir = sub.mm < 29 ? -1 : 1;
+    // 气流强度随产气量增强（基础 > 重力，使小反应也有明显上浮/下沉）
+    const accel = Math.max(1300, 1100 + mass * 130);
+    const maxSpeed = Math.min(300, 150 + mass * 18);
+    let plume = null;
+    for (const o of this.objects) {
+      // 同一产气点、同方向、同气体才共柱（不同气体各显各的标签）
+      if (o instanceof GasColumn && o.life > 0 && o.dir === dir && o.gasId === id && Math.abs(o.x + o.w / 2 - point.x) < 30) {
+        plume = o;
+        break;
+      }
+    }
+    if (!plume) {
+      // 气泡柱高度：用产气源对象配置的 gasHeight，默认 80。产气源多数是池溶液
+      // 反应的固体反应物（无 gasHeight）——此时回退读容器（池/烧杯）的配置，
+      // 否则编辑器里设置的"气泡柱高度"永远不生效。
+      const emit = this._emitCtx ?? {};
+      const srcObj = emit.obj ?? null;
+      // 源物体带 gasHeight 用它；否则回退读容器（池/烧杯）的配置——产气源多数是
+      // 池溶液反应的固体反应物（无 gasHeight），不回退的话编辑器里设置的
+      // "气泡柱高度"永远不生效。
+      const ghSrc = srcObj && srcObj.gasHeight ? srcObj : (emit.container ?? null);
+      const gh = ghSrc && ghSrc.gasHeight ? ghSrc.gasHeight : 80;
+      plume = new GasColumn({
+        x: point.x - 24, y: point.y - gh / 2, w: 48, h: gh,
+        dir, accel, maxSpeed, life: 2.5, gasId: id,
+        source: srcObj, // 产气源（自身不被自己的气流托起）
+        origin: ctx ? { kind: 'reaction', text: ctx.lastRxText ?? '' } : null, // 来源方程式（调试悬停显示）
+        id: `plume${++this._plumeSeq}`,
+      });
+      this.addObject(plume);
+    }
+    plume.life = 2.5;
+    if (accel > plume.accel) plume.accel = accel;
+    if (maxSpeed > plume.maxSpeed) plume.maxSpeed = maxSpeed;
+    // 气泡视觉
+    const n = Math.max(1, Math.min(8, Math.round(mass * 1.5)));
+    for (let i = 0; i < n; i++) {
+      const x = point.x + (Math.random() - 0.5) * 40;
+      const y = point.y + (dir < 0 ? -(4 + i * 5) : 4 + i * 5);
+      this.addObject(new Bubble({ x, y, dir }));
+    }
+  }
+
+  /** 接触对 env：条件取双方并集（任一方受热即视为接触处受热） */
+  makePairEnv(a, b) {
+    const env = this.makeEnv(a);
+    const cb = this.conditionsFor(b);
+    env.conditions.heat = env.conditions.heat || cb.heat;
+    env.conditions.highTemp = env.conditions.highTemp || cb.highTemp;
+    env.conditions.ignited = env.conditions.ignited || cb.ignited;
+    env.conditions.light = env.conditions.light || cb.light;
+    return env;
+  }
+
+  conditionsFor(obj) {
+    let heat = false;
+    let highTemp = false;
+    let light = false;
+    const isLampItself = obj && obj.isLamp;
+    for (const lamp of this.lamps) {
+      if (!lamp.lit) continue;
+      if (isLampItself) {
+        // 灯自身：点燃即视为受热 + 发光（作用于它承载的沉淀）
+        if (lamp.highTemp) highTemp = true;
+        else heat = true;
+        light = true;
+        continue;
+      }
+      // 只在灯上/贴在火焰处才受热，旁边的物块不分解
+      if (obj && this._onLamp(obj, lamp)) {
+        if (lamp.highTemp) highTemp = true;
+        else heat = true;
+      }
+      // 光照条件：灯在 lightRange 内提供"光照"（见光分解如 HClO）
+      if (obj && this.dist(obj, lamp) <= (lamp.lightRange ?? CFG.lampLightRange)) light = true;
+    }
+    const ignited = heat || highTemp || (obj && obj.isBurning);
+    const hasCatalyst = (id) => this.catalystNear(obj, id);
+    return { heat, highTemp, ignited, light, hasCatalyst };
+  }
+
+  /** 物体是否在灯上（重叠，或贴在灯顶的火焰位置） */
+  _onLamp(obj, lamp) {
+    if (overlaps(obj, lamp, 2)) return true;
+    if (Math.abs(obj.bottom - lamp.top) <= 4 && obj.right > lamp.x && obj.left < lamp.x + lamp.w) return true;
+    return false;
+  }
+
+  catalystNear(obj, id) {
+    for (const o of this.objects) {
+      if (o === obj || !o.material) continue;
+      if (o.material.avail(id) > 0 && overlaps(o, obj, 1)) return true;
+    }
+    return false;
+  }
+
+  dist(a, b) {
+    const ax = a.x + (a.w ?? 0) / 2;
+    const ay = a.y + (a.h ?? 0) / 2;
+    const bx = b ? b.x + (b.w ?? 0) / 2 : ax;
+    const by = b ? b.y + (b.h ?? 0) / 2 : ay;
+    return Math.hypot(ax - bx, ay - by);
+  }
+
+  // ===========================================================================
+  // 产物路由
+  // ===========================================================================
+  routeProduct(product, origin = null) {
+    const ctx = this._emitCtx;
+    // 引擎传回的是反应方程式字符串 → 归一化为溯源对象（反应生成）
+    if (typeof origin === 'string' && origin) origin = { kind: 'reaction', text: origin };
+    if (product.phase === 'adhere') {
+      // 附着 = 固体产物"就地"附着在反应物表面：优先原地转化（写进被消耗的格子），
+      // 剩余才按原生长逻辑（底部新格）。避免把玩家/物块越吹越大。
+      // origin 透传给目标物块/玩家，记录该物质的来源（调试悬停按物质显示）。
+      const target = ctx.player ?? product.target;
+      if (target) {
+        if (target.mat) target.mat.add(product.id, product.mass, origin);
+        else if (target.adhereMaterial) target.adhereMaterial(product.id, product.mass, origin);
+      }
+      // 附着落空（既无玩家参与、也无固体反应物可附着）：静默丢弃，绝不撒成游离粒子
+      return;
+    }
+    if (product.phase === 'precipitate') {
+      if (ctx.container) {
+        // 在反应位置附近生成沉淀颗粒（物理堆叠），记录生成来源（调试悬停显示）
+        ctx.container.addPrecipitate(product.id, product.mass, ctx.point, origin);
+        return;
+      }
+    }
+    this.spawnParticles(product.id, product.mass, ctx.point, !isSoluble(product.id), false, origin);
+  }
+
+  /** placed=true 的粒子有碰撞箱（放置的沉淀可垫脚）；origin 记录产物来源（调试悬停显示）。
+   *  spread = 撒开范围 px（大堆用：巨大质量的沉淀堆一次撒开成滩，而不是挤在 8px 内）。
+   *  分配规则（颗粒质量 = 一颗粒子"堆叠"多少基础沉淀）：
+   *   - 常规堆：每颗 maxParticleMass(0.25g)——细沙颗粒；
+   *   - 大堆（超过粒子数上限）：按"堆叠上限" stackMaxMass(1.5g = 3×0.5g) 分配；
+   *   - 极端超大堆（>900g）仍合并（质量守恒；性能上限，已与用户确认不再优化）。
+   *  尺寸随质量缩放且被 particleMaxSize 夹住（见 Particle 构造）。 */
+  spawnParticles(id, mass, point, collectible, placed = false, origin = null, spread = 8) {
+    if (!Number.isFinite(mass) || mass <= 0) return; // 挡住 NaN/负质量
+    let n = Math.ceil(mass / CFG.maxParticleMass);
+    if (n > CFG.maxSpawnParticles) {
+      n = Math.min(CFG.maxSpawnParticles, Math.ceil(mass / CFG.stackMaxMass)); // 大堆按堆叠上限
+    }
+    n = Math.max(1, n);
+    // 每颗粒子均分质量（堆叠上限内堆叠；极端堆仍合并——见上）
+    const amount = mass / n;
+    for (let i = 0; i < n; i++) {
+      this.addObject(
+        new Particle({
+          x: point.x + (Math.random() - 0.5) * spread,
+          y: point.y - (i % 3) * 2,
+          substance: id,
+          amount,
+          collectible,
+          placed,
+          origin,
+        }),
+      );
+    }
+  }
+
+  // ===========================================================================
+  // 玩家放置辅助
+  // ===========================================================================
+  findLampNear(player) {
+    // 返回范围内**最近**的灯（供就近放置）
+    let best = null;
+    let bestD = Infinity;
+    for (const lamp of this.lamps) {
+      const d = this.dist(lamp, player);
+      if (d <= CFG.placeLampRange && d < bestD) {
+        best = lamp;
+        bestD = d;
+      }
+    }
+    return best;
+  }
+
+  containerUnderFeet(player) {
+    const feet = { x: player.x + player.w / 2, y: player.bottom };
+    for (const c of this.containers) {
+      if (!c.formulaVisible) continue; // 只对普通容器/开关生效
+      const r = c.innerRect();
+      // 水平：脚底在容器内；垂直：容器底部贴近地面，允许脚底略低于容器底（容器浮在地板上的 2px 缝隙等）
+      if (feet.x >= r.x && feet.x <= r.x + r.w && feet.y >= r.y - 8 && feet.y <= r.y + r.h + 10) return c;
+    }
+    return null;
+  }
+
+  // ===========================================================================
+  // 状态
+  // ===========================================================================
+  checkStatus() {
+    const p = this.player;
+    if (!p) return;
+    if (p.hp <= 0) {
+      this.setStatus('died');
+      return;
+    }
+    if (p.y > this.worldH + CFG.worldMargin || p.bottom < -CFG.worldMargin) {
+      this.setStatus('died');
+      return;
+    }
+    // 通关：任一开启的通关口附近
+    for (const d of this.doors) {
+      if (d.isOpen && this.dist(this.player, d) <= CFG.doorWinRadius) {
+        this.setStatus('win');
+        return;
+      }
+    }
+  }
+
+  setStatus(s) {
+    if (this.status === s) return;
+    this.status = s;
+    this.fire(s === 'win' ? 'win' : 'died');
+  }
+
+  restart() {
+    if (typeof location !== 'undefined') location.reload();
+  }
+}
+
+exports.Scene = Scene;
+
+  };
+  __modules["src/chem/engine.js"] = function (module, exports, __require) {
+// ============================================================================
+// 化学引擎 ChemistryEngine —— 高中版
+// ----------------------------------------------------------------------------
+// 核心职责：给定接触/同处的反应物与量，按质量比逐刻推进，输出产物与量（质量守恒）。
+//
+// Material 接口（化学引擎只依赖这一抽象，不碰渲染/碰撞）：
+//   { phase:'solid'|'solution'|'gas',
+//     isPlayer:boolean, container:Material|null,
+//     avail(id)->g, consume(id, g)->实际移除, add(id, g), ids()->string[] }
+//
+// env（每刻的上下文，由调用方构造）：
+//   { atmosphere, conditions:{heat,highTemp,ignited,hasCatalyst(id)},
+//     globalIgnited, emit(product), explode(point,strength)?, onGas?, explodePoint? }
+//
+// 反应分层（优先级从高到低，先跑的先消耗共享反应物 = 反应顺序）：
+//   L1 REDOX    —— 氧化还原自动配平（redox.js），含浓度/计量比分支
+//   L2 IONIC    —— 离子双置换（中和/沉淀/产气，按溶解度判据）
+//   L3 CATEGORY —— 类别规则（酸性氧化物+水、金属+非金属化合等）
+//   L4 SPECIAL  —— 特例表（分步反应、两性溶解、活泼金属遇水、制气等）
+// 爆炸：规则带 explosive 标签 → env.explode；大气可燃气体超爆炸下限遇火 → 爆炸。
+// 产物路由：玩家参与 → 固体产物附着玩家；有固体反应物 → 附着（原地转化）；
+//           纯溶液反应 → 沉淀成核。
+// ============================================================================
+
+const { IONS, ensureSalt, getSubstance, isMoreActive, isSoluble, normId, CONC_HIGH, PASSIVATION_CONC } = __require('src/chem/substances.js');;
+const { MIN_ENTRY } = __require('src/chem/solution.js');;
+const { RATE, THERMAL_RULES, CATALYTIC_RULES, COMBUSTION_RULES, AUTO_DECOMP_RULES, GAS_REDUCTION_RULES, SOLID_REDUCTION_RULES, SPECIAL_PAIR_RULES, METAL_NONMETAL_RULES, ACID_GAS_RULES, GAS_WATER_RULES, ATMOSPHERE_COMBUSTION_RULES, ATMOSPHERE_SPECIAL_RULES, acidGasRuleFor } = __require('src/chem/rules.js');;
+const { OXIDIZERS, REDUCERS, balanceRedox, mediaInfo, STRONG_OXIDIZER } = __require('src/chem/redox.js');;
+const { AtmosphereMaterial } = __require('src/chem/atmosphere.js');;
+
+const COMBUSTION_MIN_O2 = 0.05;
+const H_ACTIVITY = 10; // 金属活动性顺序中 (H) 的位置
+const EXPLOSION_LEL = 0.0008; // 大气可燃气体爆炸下限（质量分数，游戏尺度放宽以便关卡演示）
+// "浓"酸阈值（g/L）与钝化浓度定义在 substances.js（反应分支与 UI 标注共用），
+// 本文件从 substances.js 导入使用（不再 re-export——构建脚本不支持裸 re-export 语法）
+
+const gcd = (a, b) => (b === 0 ? a : gcd(b, a % b));
+const abs = Math.abs;
+
+/** 微量限速阈值（g）：低于此质量的溶液溶质在离子反应中按浓度因子限速，
+ *  防止"生成速率≈消耗速率"的中间体在 0 附近来回翻转（有→无→有抖动）。 */
+const LIMIT_MASS = 0.05;
+
+/** 反应方程式文本（调试悬停/产物溯源用；含全部反应物与产物，不过滤 H2O/气体） */
+function reactionEquation(rxIds, pdIds) {
+  return `${rxIds.join('+')} → ${pdIds.join('+')}`;
+}
+
+function phaseFactor(p1, p2) {
+  if (p1 === 'solution' && p2 === 'solution') return 1.0;
+  if (p1 === 'gas' || p2 === 'gas') return 0.5;
+  if (p1 === 'solution' || p2 === 'solution') return 0.5;
+  return 0.1; // 固-固（未溶解，反应慢）
+}
+
+/** 是否"真实溶液"（含水介质）：干式台子（酒精灯/喷灯/开关 volume=0 无水）上的
+ *  沉淀粉末是固体、不电离，不能当溶液用（phase 恒为 'solution' 是适配器实现细节） */
+function hasSolution(m) {
+  return !!(m && m.phase === 'solution' && m.solution && m.solution.volume > 0);
+}
+
+/** 条件判定：heat/highTemp/ignited/催化/浓+加热/氧分压分支（组合条件全部满足才算真） */
+function conditionMet(cond, env, ctx) {
+  if (!cond) return false;
+  if (cond === 'normal') return true;
+  if (cond === 'heat') return !!env.conditions.heat || !!env.conditions.highTemp;
+  if (cond === 'highTemp') return !!env.conditions.highTemp;
+  if (cond === 'ignited') {
+    return !!env.conditions.ignited && env.atmosphere.o2Fraction() > COMBUSTION_MIN_O2;
+  }
+  if (cond && typeof cond === 'object') {
+    if (cond.catalyst !== undefined && !env.conditions.hasCatalyst(cond.catalyst)) return false;
+    if (cond.heat !== undefined && !(env.conditions.heat || env.conditions.highTemp)) return false;
+    if (cond.highTemp !== undefined && !env.conditions.highTemp) return false;
+    if (cond.ignited !== undefined && !(env.conditions.ignited && env.atmosphere.o2Fraction() > COMBUSTION_MIN_O2)) return false;
+    if (cond.light !== undefined && !env.conditions.light) return false; // 见光反应（HClO 分解等）
+    if (cond.o2 !== undefined) {
+      const f = env.atmosphere.o2Fraction();
+      if (cond.o2 === 'low' && !(f < 0.15 && f > COMBUSTION_MIN_O2)) return false;
+      if (cond.o2 === 'high' && !(f >= 0.15)) return false;
+    }
+    if (cond.concHigh !== undefined && !(ctx && ctx.acidConc >= CONC_HIGH)) return false;
+    // 需"真实溶液"介质（容器有水，volume>0）：干式台子/开阔地固固不满足
+    if (cond.solution !== undefined && !(ctx.containerMat && ctx.containerMat.solution && ctx.containerMat.solution.volume > 0)) return false;
+    return true; // 组合条件全部满足
+  }
+  return false;
+}
+
+/** 阳离子 → 金属单质 id（'Fe2+'→'Fe'）；非金属（H+、NH4+ 等）返回 null */
+function cationToMetal(catId) {
+  const m = catId.match(/^[A-Za-z]+/);
+  const el = m ? m[0] : '';
+  const sub = getSubstance(el);
+  return sub.kind === 'metal' ? el : null;
+}
+
+class ChemistryEngine {
+  constructor() {
+    this._logTick = {}; // 玩家反应日志的频率限制（同反应每 ~20 次推进记 1 条）
+  }
+
+  /**
+   * 记录反应摘要（HUD 显示用）。玩家身上的反应始终记录；
+   * 调试模式下记录所有反应（含位置，供"玩家附近反应"面板）。
+   * 防抖动处理：
+   *  - 反应物按 id 排序，同一反应的不同书写顺序（NH3·H2O+HClO / HClO+NH3·H2O）
+   *    归一为同一条日志，配合 Scene 侧限频避免日志面板疯狂刷新；
+   *  - 只滤水，气体保留：产气反应必须有日志可见——电解水（2H2O→2H2+O2）、
+   *    碳酸分解（CO2）、制氧（H2O2→O2）、制氯等，空气计只能看到"大气里多了
+   *    什么气"，看不到"哪个反应产的"；
+   *  - 产物只剩水（中和/燃烧生成水，无气体/实体产物）→ 无可见产物，不记录
+   *    （这是"反应抖动"日志的主要噪音来源）；
+   *  - 反应物只剩水（电解水）→ 保留 H2O 显示，避免出现 "→ H2+O2" 的怪日志。
+   */
+  _logReaction(ctx, rxIds, pdIds) {
+    if (!ctx || !ctx.env.onReaction) return;
+    if (!ctx.playerInvolved && !ctx.env.debugMode) return;
+    const notWater = (ids) => ids.filter((id) => id !== 'H2O');
+    const rx = notWater(rxIds).sort();
+    const pd = notWater(pdIds).sort();
+    if (pd.length === 0) return;
+    if (rx.length === 0) {
+      if (!rxIds.some((id) => id === 'H2O')) return;
+      rx.push('H2O');
+    }
+    const text = `${rx.join('+')} → ${pd.join('+')}`;
+    ctx.env.onReaction(text);
+  }
+
+  // ===========================================================================
+  // 对外入口
+  // ===========================================================================
+
+  /** 两个物体接触，做一次成对反应（按优先级分层） */
+  reactPair(matA, matB, dt, env) {
+    if (matA === matB) return;
+    const ctx = this._ctxOf(matA, matB, dt, env);
+    // L0 关卡自定义反应：最高优先级，匹配即执行并跳过内置反应
+    if (this._tryCustomPair(matA, matB, dt, env, ctx)) return;
+    // 只有真实溶液（含水介质，含浸在溶液里的固体）才能发生离子/氧化还原/置换反应；
+    // 干式台子（酒精灯/喷灯/开关 volume=0 无水）上的粉末是固体、不电离——NaOH 块
+    // + 灯上 CuSO4 粉末没有水就不该生成 Cu(OH)2。纯固-固接触只走特例表（铝热等）
+    // 与高温固固还原（CuO+C 等）
+    const bothSolid = !hasSolution(matA) && !hasSolution(matB);
+    if (!bothSolid) {
+      this._tryRedoxPair(matA, matB, dt, env, ctx);
+      this._tryIonic(matA, matB, dt, env, ctx);
+      this._tryDisplacement(matA, matB, dt, env, ctx);
+    }
+    this._trySpecialPairs(matA, matB, dt, env, ctx);
+    this._trySolidReduction(matA, matB, dt, env, ctx);
+  }
+
+  /** 单物体自反应：分解/燃烧/还原/溶解/大气吸收/同材料氧化还原
+   *  opts.skipDissolution：Scene 层在成对反应后统一溶解时传 true（见 reactSelf 内注释） */
+  reactSelf(mat, dt, env, opts = {}) {
+    const ctx = this._ctxOf(mat, mat, dt, env);
+    // L0 关卡自定义反应（单反应物自反应）：最高优先级
+    if (this._tryCustomSelf(mat, dt, env, ctx)) return;
+    const sources = (rule) => {
+      const s = {};
+      for (const r of rule.reactants) {
+        s[r.id] = getSubstance(r.id).state === 'gas' ? this._atmMat(env) : mat;
+      }
+      return s;
+    };
+
+    for (const rule of THERMAL_RULES) {
+      if (mat.avail(rule.reactants[0].id) > 0) this._runRule(rule, sources(rule), dt, env, ctx);
+    }
+    for (const rule of CATALYTIC_RULES) {
+      if (mat.avail(rule.reactants[0].id) > 0) this._runRule(rule, sources(rule), dt, env, ctx);
+    }
+    for (const rule of AUTO_DECOMP_RULES) {
+      if (mat.avail(rule.reactants[0].id) > 0) this._runRule(rule, sources(rule), dt, env, ctx);
+    }
+    for (const rule of COMBUSTION_RULES) {
+      if (mat.phase !== 'solid') continue; // 容器内粉末不燃烧（避免还原出的 Cu 又被氧化回 CuO）
+      if (mat.avail(rule.reactants[0].id) > 0) this._runRule(rule, sources(rule), dt, env, ctx);
+    }
+    // 固-固还原先于气态还原：CuO+C 粉末优先消耗 C，避免其产物 CO2 被 C+CO2→2CO 抢走碳
+    for (const rule of SOLID_REDUCTION_RULES) {
+      if (rule.reactants.every((r) => mat.avail(r.id) > 0)) {
+        this._runRule(rule, { [rule.reactants[0].id]: mat, [rule.reactants[1].id]: mat }, dt, env, ctx);
+      }
+    }
+    for (const rule of GAS_REDUCTION_RULES) {
+      if (mat.phase !== 'solid') continue;
+      if (mat.avail(rule.reactants[0].id) > 0) this._runRule(rule, sources(rule), dt, env, ctx);
+    }
+    // 同材料混合粉末/溶质的氧化还原（KMnO4+FeSO4 同池、CuO+碳粉同灯）
+    this._tryRedoxSelf(mat, dt, env, ctx);
+    // 同材料特例：Na2O2 遇大气 CO2、CaCO3/Na2CO3 遇大气 CO2 成酸式盐
+    this._trySpecialSelf(mat, dt, env, ctx);
+    // 同材料特例配对（同一材料里两种溶质/沉淀混合：K2Cr2O7+NaOH 同池、
+    // Na2CO3+HCl 分步、Al(OH)3+NaOH 两性溶解等）
+    for (const rule of SPECIAL_PAIR_RULES) {
+      const [r0, r1] = rule.reactants;
+      if (getSubstance(r0.id).state === 'gas' || getSubstance(r1.id).state === 'gas') continue; // 气体规则由 _trySpecialSelf 处理
+      if (rule.waterNeeded) continue; // 需水规则（CaCO3/Na2CO3+CO2）由 _trySpecialSelf 处理
+      if (mat.avail(r0.id) > 0 && mat.avail(r1.id) > 0) {
+        this._runRule(rule, { [r0.id]: mat, [r1.id]: mat }, dt, env, ctx);
+      }
+    }
+    // 同材料离子反应（同池溶质混合：FeCl3+KSCN、NaOH+CuSO4 同池、AgNO3+NaCl 等）
+    this._tryIonic(mat, mat, dt, env, ctx);
+    // 金属与大气卤素/硫化合（点燃）
+    for (const rule of METAL_NONMETAL_RULES) {
+      if (mat.avail(rule.reactants[0].id) > 0) this._runRule(rule, sources(rule), dt, env, ctx);
+    }
+    // 溶解：Scene 层在所有成对反应**之后**统一调用（传 skipDissolution，反应优先于
+    // 溶解——玩家 Na2CO3 壳先与池水 Ba(OH)2 反应回血，而不是先被溶解抢走）；
+    // 直接调用 reactSelf 的单元测试不传 → 溶解照常（兼容）。
+    if (!opts?.skipDissolution) this._tryDissolution(mat, dt, ctx);
+    // 固体表面碱被大气酸性气体碳化（NaOH 玩家被 CO2 碳化 → 再生回血）
+    this._trySolidGasAbsorb(mat, dt, env, ctx);
+    // 容器水吸收大气气体（Cl2 氯水 / NH3 氨水 / SO3 / NO2——见 _tryGasWaterAbsorb）
+    if (ctx.inContainer) this._tryGasWaterAbsorb(mat, dt, env, ctx);
+  }
+
+  // ===========================================================================
+  // 关卡自定义反应（L0 最高优先级）：关卡用 env.customReactions 配置
+  // ===========================================================================
+  _ruleFromCustom(c) {
+    if (!c || !Array.isArray(c.reactants) || !c.reactants.length) return null;
+    const norm = (r) => {
+      const id = normId(typeof r === 'string' ? r : r.id);
+      return { id, coeff: typeof r === 'string' ? 1 : r.coeff || 1 };
+    };
+    const rule = {
+      reactants: c.reactants.map(norm),
+      products: (c.products || []).map(norm),
+      condition: 'normal', // 无外部条件，常开
+      rate: c.rate ?? RATE.custom,
+    };
+    return rule.reactants.length ? rule : null;
+  }
+
+  /** 成对自定义反应：反应物在 A/B 中齐全即执行并返回 true（压制内置反应） */
+  _tryCustomPair(matA, matB, dt, env, ctx) {
+    const customs = env.customReactions;
+    if (!customs || !customs.length) return false;
+    for (const c of customs) {
+      const rule = this._ruleFromCustom(c);
+      if (!rule) continue;
+      if (rule.reactants.length >= 2) {
+        const [r0, r1] = rule.reactants;
+        if (matA.avail(r0.id) > 0 && matB.avail(r1.id) > 0) {
+          this._runRule(rule, { [r0.id]: matA, [r1.id]: matB }, dt, env, ctx);
+          return true;
+        }
+        if (matA.avail(r1.id) > 0 && matB.avail(r0.id) > 0) {
+          this._runRule(rule, { [r0.id]: matB, [r1.id]: matA }, dt, env, ctx);
+          return true;
+        }
+      } else {
+        const r0 = rule.reactants[0];
+        if (matA.avail(r0.id) > 0) { this._runRule(rule, { [r0.id]: matA }, dt, env, ctx); return true; }
+        if (matB.avail(r0.id) > 0) { this._runRule(rule, { [r0.id]: matB }, dt, env, ctx); return true; }
+      }
+    }
+    return false;
+  }
+
+  /** 自定义自反应：单反应物分解，或多反应物在同一材料内（同池两种溶质混合） */
+  _tryCustomSelf(mat, dt, env, ctx) {
+    const customs = env.customReactions;
+    if (!customs || !customs.length) return false;
+    for (const c of customs) {
+      const rule = this._ruleFromCustom(c);
+      if (!rule) continue;
+      const srcs = {};
+      let all = true;
+      for (const r of rule.reactants) {
+        if (mat.avail(r.id) <= 0) { all = false; break; }
+        srcs[r.id] = mat;
+      }
+      if (all) {
+        this._runRule(rule, srcs, dt, env, ctx);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** 溶液/容器吸收大气中的酸性气体（CO2/SO2/Cl2）→ 盐；酸溶液吸收 NH3 */
+  absorbAtmosphereGas(baseMat, dt, env) {
+    const ctx = this._ctxOf(baseMat, baseMat, dt, env);
+    for (const id of baseMat.ids()) {
+      for (const gas of ['CO2', 'SO2', 'Cl2', 'NH3']) {
+        const rule = acidGasRuleFor(gas, id);
+        if (!rule) continue;
+        const gasAvail = env.atmosphere.mass(gas);
+        if (gasAvail <= 1e-9) continue;
+        const gasMM = getSubstance(gas).mm;
+        const baseMM = getSubstance(id).mm;
+        const gasPerBase = gasMM / (rule.baseCoeff * baseMM);
+        const baseAvail = baseMat.avail(id);
+        if (baseAvail <= 0) continue;
+        const gasAbsorb = Math.min(gasAvail, baseAvail * gasPerBase, RATE.acidGas * dt * 0.1);
+        if (gasAbsorb <= 1e-9) continue;
+        this._stamp(ctx, reactionEquation([gas, id], rule.products.map((p) => p.id)));
+        baseMat.consume(id, gasAbsorb / gasPerBase);
+        env.atmosphere.remove(gas, gasAbsorb);
+        const gasMoles = gasAbsorb / gasMM;
+        for (const p of rule.products) {
+          this._emit(p.id, gasMoles * p.coeff * getSubstance(p.id).mm, ctx);
+        }
+      }
+    }
+  }
+
+  /** 大气反应：可燃气体浓度超爆炸下限遇火 → 爆炸；否则缓慢燃烧/特殊反应 */
+  reactAtmosphere(env, dt) {
+    const atm = env.atmosphere;
+    // 可燃气体（H2/CO/CH4/H2S）总量与占比
+    const FUELS = ['H2', 'CO', 'CH4', 'H2S'];
+    let fuel = 0;
+    let total = 0;
+    for (const id of Object.keys(atm.composition())) {
+      const m = atm.mass(id);
+      total += m;
+      if (FUELS.includes(id)) fuel += m;
+    }
+    const frac = total > 0 ? fuel / total : 0;
+    // 爆炸：可燃气体超爆炸下限（且积累足够量）+ 点燃源 + O2 达标 → 爆鸣（消耗全部可燃气体与部分 O2）
+    if (env.globalIgnited && frac > EXPLOSION_LEL && fuel >= 4 && atm.o2Fraction() > COMBUSTION_MIN_O2) {
+      const strength = 6 + fuel * 12;
+      // 原因只列"显著"燃料（≥10% 总量，主导者在前），避免把残留的微量 H2 写进爆鸣原因误导
+      const cause = `${FUELS.filter((f) => atm.mass(f) > fuel * 0.1).sort((a, b) => atm.mass(b) - atm.mass(a)).join('+') || '可燃气体'} 爆鸣`;
+      atm._cause = cause; // 盖章：爆鸣消耗燃料/O2 的原因
+      for (const g of FUELS) atm.remove(g, atm.mass(g));
+      atm.remove('O2', Math.min(atm.mass('O2'), fuel * 2.5));
+      if (env.explode) env.explode(env.explodePoint ?? null, strength, cause);
+      return;
+    }
+    if (!env.globalIgnited) return;
+    // 缓慢燃烧（低浓度）与大气特殊反应（合成氨、氨催化氧化）
+    const env2 = { ...env, conditions: { ...env.conditions, ignited: true } };
+    const atmMat = this._atmMat(env);
+    const ctx = this._ctxOf(atmMat, atmMat, dt, env2);
+    for (const rule of ATMOSPHERE_COMBUSTION_RULES) {
+      const s = {};
+      for (const r of rule.reactants) s[r.id] = atmMat;
+      this._runRule(rule, s, dt, env2, ctx);
+    }
+    for (const rule of ATMOSPHERE_SPECIAL_RULES) {
+      const s = {};
+      for (const r of rule.reactants) s[r.id] = atmMat;
+      this._runRule(rule, s, dt, env2, ctx);
+    }
+    // 白烟：NH3 + HCl → NH4Cl（大气中相遇成固体小颗粒）
+    const nh3 = atm.mass('NH3');
+    const hcl = atm.mass('HCl');
+    if (nh3 > 1e-9 && hcl > 1e-9) {
+      const mmNH3 = getSubstance('NH3').mm;
+      const mmHCl = getSubstance('HCl').mm;
+      const m = Math.min(nh3, (hcl * mmNH3) / mmHCl, RATE.special * dt);
+      if (m > 1e-9) {
+        this._stamp(ctx, reactionEquation(['NH3', 'HCl'], ['NH4Cl']));
+        atm.remove('NH3', m);
+        atm.remove('HCl', (m * mmHCl) / mmNH3);
+        ctx.env.emit({ id: 'NH4Cl', mass: m * (1 + mmHCl / mmNH3), phase: 'particle' }, ctx.lastRxText);
+      }
+    }
+  }
+
+  // ===========================================================================
+  // L1 氧化还原（自动配平）
+  // ===========================================================================
+
+  _tryRedoxPair(matA, matB, dt, env, ctx) {
+    const cands = this._redoxCandidates(matA, matB, env, ctx);
+    for (const c of cands) this._runRedox(c, dt, env, ctx);
+  }
+
+  _tryRedoxSelf(mat, dt, env, ctx) {
+    const cands = this._redoxCandidates(mat, mat, env, ctx);
+    for (const c of cands) this._runRedox(c, dt, env, ctx);
+  }
+
+  /** 收集氧化剂×还原剂候选，按氧化剂强度/还原性排序（强氧化剂优先消耗共享还原剂） */
+  _redoxCandidates(matA, matB, env, ctx) {
+    const out = [];
+    const oxIdsOf = (mat) => {
+      const list = [];
+      for (const id of mat.ids()) {
+        if (OXIDIZERS[id]) list.push({ oxId: id });
+        // 非氧化性酸（HCl/稀 H2SO4）→ 归一为 H+ 氧化剂（金属+酸产 H2）；
+        // HNO3 是氧化性酸走 NO3- 还原（表中 HNO3 条目）
+        const s = getSubstance(id);
+        if (s.ions?.cat === 'H+' && s.kind === 'acid' && id !== 'HNO3' && id !== 'H2SO4') {
+          list.push({ oxId: 'H+', acidId: id });
+        }
+        if (id === 'H2SO4') list.push({ oxId: 'H2SO4', acidId: 'H2SO4' }); // 浓硫酸氧化（稀/常温不氧化见 _isPassivated）
+      }
+      return list;
+    };
+    const push = (oxMat, redMat) => {
+      for (const { oxId, acidId } of oxIdsOf(oxMat)) {
+        const ox = OXIDIZERS[oxId];
+        for (const redId of redMat.ids()) {
+          if (oxId === redId) continue;
+          const red = REDUCERS[redId];
+          if (!red) continue;
+          // 氧化剂强度门槛（I2 氧化性不足，不能氧化 Fe2+）
+          if (red.minOx && (ox.strength ?? 0) < red.minOx) continue;
+          if (this._isPassivated(oxId, redId, env, ctx)) continue;
+          // 金属+酸：只有活动性在 H 之前的金属能置换出 H2（Cu/Ag 不反应）
+          if (oxId === 'H+' || oxId === 'H2SO4') {
+            const metal = getSubstance(redId);
+            if (metal.kind === 'metal' && !(metal.activity < H_ACTIVITY)) continue;
+          }
+          // Na/K/Li 遇盐溶液：先与水反应（特例），不直接置换
+          if ((redId === 'Na' || redId === 'K' || redId === 'Li') && getSubstance(oxId).kind === 'salt') continue;
+          const score = (ox.strength ?? 0) * 100 + (REDOX_REDUCIBILITY[redId] ?? 0);
+          out.push({ oxMat, redMat, oxId, redId, acidId: acidId ?? null, score });
+        }
+      }
+    };
+    push(matA, matB);
+    if (matA !== matB) push(matB, matA);
+    out.sort((p, q) => q.score - p.score);
+    return out;
+  }
+
+  /** 氧化性酸的浓度/温度条件：浓 H2SO4 需"浓+加热"才氧化（Cu 等）；Fe/Al 常温浓酸钝化 */
+  _isPassivated(oxId, redId, env, ctx) {
+    if (oxId === 'H2SO4') {
+      // 稀硫酸/常温不氧化任何金属（只走 H+ 产氢路径）；浓+加热才氧化（Fe/Al 钝化也要加热后）
+      if (!(ctx.acidConc >= PASSIVATION_CONC && (env.conditions.heat || env.conditions.highTemp))) return true;
+      return false;
+    }
+    if (oxId !== 'HNO3') return false;
+    if (redId !== 'Fe' && redId !== 'Al') return false;
+    // Fe/Al 常温遇浓硝酸钝化（加热后反应）
+    if (ctx.acidConc >= PASSIVATION_CONC && !(env.conditions.heat || env.conditions.highTemp)) return true;
+    return false;
+  }
+
+  /** 还原剂"还原性强弱"（同共享氧化剂时强者先反应：I- > Fe2+ > Br-） */
+  _pickRedKey(oxId, redId, env, ctx) {
+    const red = REDUCERS[redId];
+    if (!red.branches) return undefined;
+    if (red.branches.weak && red.branches.strong) {
+      if (oxId === 'HNO3') {
+        // Fe + HNO3 计量比：酸过量（n≥4×nFe）→ Fe3+；Fe 过量 → Fe2+
+        const nHNO3 = this._molesOf(ctx, oxId);
+        const nFe = this._molesOf(ctx, redId);
+        return nHNO3 / Math.max(1e-9, nFe) >= 4 ? 'strong' : 'weak';
+      }
+      return (OXIDIZERS[oxId].strength ?? 0) >= STRONG_OXIDIZER ? 'strong' : 'weak';
+    }
+    if (red.branches.full && red.branches.partial) {
+      // C：O2 分压决定充分/不充分燃烧
+      return env.atmosphere.o2Fraction() > 0.3 ? 'full' : 'partial';
+    }
+    return undefined;
+  }
+
+  /** 配平执行：摩尔推进（质量守恒） */
+  _runRedox(cand, dt, env, ctx) {
+    const { oxMat, redMat, oxId, redId } = cand;
+    const redKey = this._pickRedKey(oxId, redId, env, ctx);
+    const acidId = cand.acidId ?? (oxId === 'HNO3' || oxId === 'H+' ? (ctx.acidId || 'H2SO4') : ctx.acidId);
+    const eq = balanceRedox(oxId, redId, {
+      medium: ctx.medium,
+      acidId,
+      baseId: ctx.baseId,
+      conc: ctx.acidConc,
+      redKey,
+    });
+    if (!eq) return;
+    // 防呆：产物与反应物完全同集（如 CuSO4+Cu 同元素往返）→ 跳过
+    if (eq.pd.every((p) => eq.rx.some((r) => r.id === p.id))) return;
+
+    const ref = eq.rx[0];
+    const refMM = getSubstance(ref.id).mm;
+    // 金属+酸（H+ 氧化剂）是教学核心：快速产 H2（否则攒不够爆鸣演示）；
+    // 双氧水作还原剂（被氧化放出 O2，如 NaClO+H2O2 制氧）也加快——否则太慢看不见
+    let rate = RATE.redox * (oxId === 'H+' ? 8 : 1) * phaseFactor(oxMat.phase, redMat.phase) * (redId === 'H2O2' ? 4 : 1);
+    for (const r of eq.rx) {
+      const m = this._rxSource(r.id, oxMat, redMat, ctx);
+      if (!m) return;
+      rate *= this._concFactorFor(m, r.id);
+    }
+    let units = (rate * dt) / refMM;
+    for (const r of eq.rx) {
+      const m = this._rxSource(r.id, oxMat, redMat, ctx);
+      units = Math.min(units, this._availFor(m, r.id) / (getSubstance(r.id).mm * r.coeff));
+    }
+    if (!(units > 1e-12)) return;
+    // 盖章大气原因（REDOX 可能消耗大气 O2/CO/H2，须在消耗前盖章）
+    this._stamp(ctx, reactionEquation(eq.rx.map((r) => r.id), eq.pd.map((p) => p.id)));
+    // 按实际消耗推进：固体反应物可能被致密外壳阻断（consume 只取暴露格），
+    // 产物必须按"实际移除量"生成，否则会凭空造出产物——如 Fe 被 Cu 壳包住后还在长铜。
+    let scale = 1;
+    for (const r of eq.rx) {
+      const m = this._rxSource(r.id, oxMat, redMat, ctx);
+      const take = units * r.coeff * getSubstance(r.id).mm;
+      const removed = m.consume(r.id, take);
+      if (take > 1e-12) scale = Math.min(scale, removed / take);
+    }
+    if (!(scale > 1e-9)) return;
+    const act = units * scale;
+    for (const p of eq.pd) {
+      this._emit(p.id, act * p.coeff * getSubstance(p.id).mm, ctx);
+    }
+    this._logReaction(ctx, eq.rx.map((r) => r.id), eq.pd.map((p) => p.id));
+  }
+
+  /** 反应物来源：优先氧化剂/还原剂材料本身，其次介质溶液 */
+  _rxSource(id, oxMat, redMat, ctx) {
+    if (oxMat.avail(id) > 1e-12 || oxMat.ids().includes(id)) return oxMat;
+    if (redMat !== oxMat && (redMat.avail(id) > 1e-12 || redMat.ids().includes(id))) return redMat;
+    if (ctx.containerMat && ctx.containerMat.avail(id) > 1e-12) return ctx.containerMat;
+    return null;
+  }
+
+  _molesOf(ctx, id) {
+    if (!ctx.containerMat) return 0;
+    return ctx.containerMat.avail(id) / getSubstance(id).mm;
+  }
+
+  /**
+   * 反应可用量：固体材料用"暴露格"质量（被致密外壳包住的内核不计入反应，
+   * 否则产物会按总量凭空生成——如 Fe 被 Cu 壳包住后还在长铜）；溶液/气体用总量。
+   */
+  _availFor(m, id) {
+    return m.exposedAvail ? m.exposedAvail(id) : m.avail(id);
+  }
+
+  /**
+   * 记录反应方程式并"盖章"给大气（气体产生/消耗原因溯源：本反应的
+   * 方程式将出现在大气气体变化日志里）。
+   */
+  _stamp(ctx, text) {
+    ctx.lastRxText = text;
+    if (ctx.env && ctx.env.atmosphere) ctx.env.atmosphere._cause = text;
+    return text;
+  }
+
+  // ===========================================================================
+  // L2 离子双置换（中和/沉淀/产气）
+  // ===========================================================================
+
+  _tryIonic(matA, matB, dt, env, ctx) {
+    // 离子交换需要水性介质（电离发生地）：干式台子（灯/开关 volume=0）上的粉末
+    // 是固体不能电离（灯上 NaOH + CuSO4 无水不该生成 Cu(OH)2）；
+    // reactPair 已按 hasSolution 拦截，这里兜底 reactSelf 的同材料离子路径
+    if (!hasSolution(matA) && !hasSolution(matB)) return;
+    for (const idA of matA.ids()) {
+      const eA = getSubstance(idA);
+      if (!eA.ions) continue;
+      for (const idB of matB.ids()) {
+        if (idA === idB) continue;
+        const eB = getSubstance(idB);
+        if (!eB.ions) continue;
+        // 不溶物（沉淀/不溶固体）不电离，不能参与离子交换：
+        // 只与酸/碱（H+/OH-）反应（溶解/中和），不与盐复分解
+        // （如 Fe(OH)2 沉淀 + CuSO4 不反应；Cu(OH)2 + HCl 溶解）
+        if (!isSoluble(idA) && eB.kind !== 'acid' && eB.kind !== 'base') continue;
+        if (!isSoluble(idB) && eA.kind !== 'acid' && eA.kind !== 'base') continue;
+        this._ionicOne(matA, matB, idA, idB, eA, eB, dt, env, ctx);
+      }
+    }
+  }
+
+  _ionicOne(matA, matB, idA, idB, eA, eB, dt, env, ctx) {
+    const { cat: catA, an: anA, catCount: xA, anCount: yA } = eA.ions;
+    const { cat: catB, an: anB, catCount: xB, anCount: yB } = eB.ions;
+
+    // 金属氧化物（阴离子 O2-）只与酸反应（避免 NaOH+CuO→Cu(OH)2+Na2O 之类的假反应）
+    if (anA === 'O2-' && catB !== 'H+') return;
+    if (anB === 'O2-' && catA !== 'H+') return;
+
+    const p1 = this._pairInfo(catA, anB, idA, idB);
+    const p2 = this._pairInfo(catB, anA, idA, idB);
+    if (!p1.drives && !p2.drives) return;
+
+    // 离子不在表中（运行时生成的盐/自定义反应引入的离子）→ 跳过该离子反应，不崩溃
+    const c1 = abs(IONS[catA]?.charge ?? 0);
+    const a2 = abs(IONS[anB]?.charge ?? 0);
+    const c2 = abs(IONS[catB]?.charge ?? 0);
+    const a1 = abs(IONS[anA]?.charge ?? 0);
+    if (!c1 || !a2 || !c2 || !a1) return;
+
+    const ratio = (yB / c1) * (a2 / xA);
+    const mmA = eA.mm;
+    const mmB = eB.mm;
+    // 微量限速：低于 MIN_IONIC_MASS 的溶液溶质，本 tick 最多反应其总量 × 浓度因子。
+    // 否则"生成速率 ≈ 消耗速率"的中间体（如 NH4ClO：NH3·H2O+HClO 生成 0.0002g/tick，
+    // NH4ClO+NaOH 立刻吃光）会在 0 附近每 tick 来回翻转——溶液面板"有→无→有"抖动。
+    // 限速后中间体累积到非零稳态（生成=消耗×浓度），条目稳定存在。正常量（≥0.05g）
+    // 与固体（浓度因子=1）不受影响。
+    const molesA_avail = this._availFor(matA, idA) / mmA;
+    const molesB_avail = this._availFor(matB, idB) / mmB;
+    const limitFactor = (m, id) => {
+      const avail = this._availFor(m, id);
+      return avail < LIMIT_MASS && m.phase === 'solution' ? this._concFactorFor(m, id) : 1;
+    };
+    // 弱酸/弱碱（CH3COOH、H2CO3、氨水）电离慢 → 离子反应速率打折（强酸优先）
+    const rate = RATE.ionic * phaseFactor(matA.phase, matB.phase)
+      * this._concFactorFor(matA, idA) * this._concFactorFor(matB, idB)
+      * this._strengthFactor(matA, idA) * this._strengthFactor(matB, idB);
+    const molesA_tick = (rate * dt) / mmA;
+
+    const molesA = Math.min(
+      molesA_avail * limitFactor(matA, idA),
+      molesB_avail * ratio * limitFactor(matB, idB),
+      molesA_tick,
+    );
+    if (!(molesA > 1e-12)) return;
+    const molesB = molesA / ratio;
+    this._stamp(ctx, reactionEquation([idA, idB], [...p1.products, ...p2.products].map((p) => p.id)));
+
+    const remA = matA.consume(idA, molesA * mmA);
+    const remB = matB.consume(idB, molesB * mmB);
+    // 固体反应物被外壳阻断时按实际消耗缩放产物（避免凭空生成沉淀/气体）
+    let scale = 1;
+    if (molesA * mmA > 1e-12) scale = Math.min(scale, remA / (molesA * mmA));
+    if (molesB * mmB > 1e-12) scale = Math.min(scale, remB / (molesB * mmB));
+    if (!(scale > 1e-9)) return;
+    const aA = molesA * scale;
+    const aB = molesB * scale;
+
+    const g1 = gcd(c1, a2);
+    const g2 = gcd(c2, a1);
+    const p1Moles = (aA * xA * g1) / a2;
+    const p2Moles = (aB * xB * g2) / a1;
+    for (const prod of p1.products) this._emit(prod.id, p1Moles * prod.coeff * getSubstance(prod.id).mm, ctx);
+    for (const prod of p2.products) this._emit(prod.id, p2Moles * prod.coeff * getSubstance(prod.id).mm, ctx);
+    this._logReaction(ctx, [idA, idB], [...p1.products, ...p2.products].map((p) => p.id));
+  }
+
+  /** 酸/碱强度因子：强酸强碱 1，弱酸弱碱 0.1（弱电解质电离慢） */
+  _strengthFactor(mat, id) {
+    const s = getSubstance(id);
+    if (s.kind === 'acid' || s.kind === 'base') {
+      return s.acidStrength === 'strong' ? 1 : 0.1;
+    }
+    return 1;
+  }
+
+  /** 一对 (catId, anId) 的产物与是否驱动反应（沉淀/气体/水/显色） */
+  _pairInfo(catId, anId, idA, idB) {
+    if (catId === 'H+' && anId === 'OH-') return { drives: true, products: [{ id: 'H2O', coeff: 1 }] };
+    if (catId === 'H+' && anId === 'CO3^2-') return { drives: true, products: [{ id: 'CO2', coeff: 1 }, { id: 'H2O', coeff: 1 }] };
+    if (catId === 'H+' && anId === 'HCO3-') return { drives: true, products: [{ id: 'CO2', coeff: 1 }, { id: 'H2O', coeff: 1 }] };
+    if (catId === 'H+' && anId === 'SO3^2-') return { drives: true, products: [{ id: 'SO2', coeff: 1 }, { id: 'H2O', coeff: 1 }] };
+    if (catId === 'H+' && anId === 'S2-') return { drives: true, products: [{ id: 'H2S', coeff: 1 }] };
+    if (catId === 'H+' && anId === 'SiO3^2-') return { drives: true, products: [{ id: 'H2SiO3', coeff: 1 }] }; // 硅酸胶状沉淀（水玻璃+酸）
+    if (catId === 'NH4+' && anId === 'OH-') return { drives: true, products: [{ id: 'NH3', coeff: 1 }, { id: 'H2O', coeff: 1 }] };
+    // 检验铁离子：Fe3+ + 3SCN- → 血红色溶液（显色驱动）
+    if (catId === 'Fe3+' && anId === 'SCN-') return { drives: true, products: [{ id: 'Fe(SCN)3', coeff: 1 }] };
+    const salt = ensureSalt(catId, anId);
+    if (salt.id === idA || salt.id === idB) return { drives: false, products: [] };
+    return { drives: salt.soluble !== 'soluble', products: [{ id: salt.id, coeff: 1 }] };
+  }
+
+  // ===========================================================================
+  // L4 特例表 / 固固还原（数据规则）
+  // ===========================================================================
+
+  _trySpecialPairs(matA, matB, dt, env, ctx) {
+    for (const rule of SPECIAL_PAIR_RULES) this._runPairDataRule(rule, matA, matB, dt, env, ctx);
+  }
+
+  _trySolidReduction(matA, matB, dt, env, ctx) {
+    for (const rule of SOLID_REDUCTION_RULES) this._runPairDataRule(rule, matA, matB, dt, env, ctx);
+  }
+
+  _runPairDataRule(rule, matA, matB, dt, env, ctx) {
+    if (rule.atmosphereOnly) return; // 仅大气反应（NH3+HCl 白烟在 reactAtmosphere）
+    // 碳酸盐+CO2→酸式盐需有水且非强酸性（酸性环境碳酸盐直接被酸分解产 CO2，不会积累酸式盐）
+    if (rule.waterNeeded && !(ctx.inContainer && ctx.containerMat.avail('H2O') > 0)) return;
+    if (rule.waterNeeded && ctx.medium === 'acid') return;
+    const [r0, r1] = rule.reactants;
+    const gas0 = getSubstance(r0.id).state === 'gas';
+    const gas1 = getSubstance(r1.id).state === 'gas';
+    const src0 = gas0 ? this._atmMat(env) : null;
+    const src1 = gas1 ? this._atmMat(env) : null;
+    const has0 = (m) => (gas0 ? src0.avail(r0.id) > 0 : m.avail(r0.id) > 0);
+    const has1 = (m) => (gas1 ? src1.avail(r1.id) > 0 : m.avail(r1.id) > 0);
+    if (has0(matA) && has1(matB)) {
+      this._runRule(rule, { [r0.id]: gas0 ? src0 : matA, [r1.id]: gas1 ? src1 : matB }, dt, env, ctx);
+    } else if (has0(matB) && has1(matA)) {
+      this._runRule(rule, { [r0.id]: gas0 ? src0 : matB, [r1.id]: gas1 ? src1 : matA }, dt, env, ctx);
+    }
+  }
+
+  /** 同材料自反应特例：Na2O2 遇大气 CO2、碳酸盐遇过量 CO2 成酸式盐 */
+  _trySpecialSelf(mat, dt, env, ctx) {
+    const atm = env.atmosphere;
+    // Na2O2 + CO2（大气）→ Na2CO3 + O2
+    if (mat.avail('Na2O2') > 0 && atm.mass('CO2') > 1e-9) {
+      const rule = SPECIAL_PAIR_RULES.find((r) => r.reactants[0].id === 'Na2O2' && r.reactants[1].id === 'CO2');
+      if (rule) this._runRule(rule, { Na2O2: mat, CO2: this._atmMat(env) }, dt, env, ctx);
+    }
+    // 溶液/池中的碳酸盐 + 过量大气 CO2 → 碳酸氢盐（少量 CO2 先生成正盐，过量后转化；酸性环境不转化）
+    if (ctx.inContainer && ctx.medium !== 'acid' && atm.mass('CO2') > 1e-9 && ctx.containerMat.avail('H2O') > 0) {
+      for (const rule of SPECIAL_PAIR_RULES) {
+        const [r0, r1] = rule.reactants;
+        const gasId = getSubstance(r0.id).state === 'gas' ? r0.id : getSubstance(r1.id).state === 'gas' ? r1.id : null;
+        if (gasId !== 'CO2') continue;
+        const solidId = r0.id === 'CO2' ? r1.id : r0.id;
+        if (mat.avail(solidId) > 0) {
+          this._runRule(rule, { [solidId]: mat, CO2: this._atmMat(env) }, dt, env, ctx);
+        }
+      }
+    }
+  }
+
+  // ===========================================================================
+  // 金属置换（活动性序：仅盐溶液；金属+酸由 REDOX 统一处理）
+  // ===========================================================================
+
+  _tryDisplacement(matA, matB, dt, env, ctx) {
+    for (let swapped = 0; swapped < 2; swapped++) {
+      const A = swapped ? matB : matA;
+      const B = swapped ? matA : matB;
+      for (const idM of A.ids()) {
+        if (getSubstance(idM).kind !== 'metal') continue;
+        for (const idE of B.ids()) {
+          const e = getSubstance(idE);
+          if (!e.ions) continue;
+          if (e.kind !== 'salt') continue; // 酸由 REDOX 的 H+ 氧化剂处理
+          this._displaceOne(A, B, idM, idE, dt, env, ctx);
+        }
+      }
+    }
+  }
+
+  _displaceOne(matM, matE, idM, idE, dt, env, ctx) {
+    const m = getSubstance(idM);
+    const e = getSubstance(idE);
+    const { cat: catE, an: anE } = e.ions;
+    const v = m.valence;
+
+    const metalCat = cationToMetal(catE);
+    if (!metalCat) return;
+    if (!isMoreActive(idM, metalCat)) return; // 前面的金属置换后面的
+    const cM = abs(IONS[catE]?.charge ?? 0);
+    if (!cM) return; // 离子不在表中 → 跳过置换
+    // 金属阳离子：化合价 1 时省略数字（K → K+，不是 K1+）
+    const metalCation = `${idM}${v > 1 ? v : ''}+`;
+    const salt = ensureSalt(metalCation, anE);
+    const saltCatCount = salt.ions.catCount;
+    const products = [
+      { id: salt.id, coeff: 1 / saltCatCount },
+      { id: metalCat, coeff: v / cM },
+    ];
+    const acidH = v / cM / e.ions.catCount;
+
+    const mmM = m.mm;
+    const mmE = e.mm;
+    const xTick = (RATE.displace * phaseFactor(matM.phase, matE.phase)
+      * this._concFactorFor(matM, idM) * this._concFactorFor(matE, idE) * dt) / mmM;
+    const xByM = this._availFor(matM, idM) / mmM;
+    const xByE = this._availFor(matE, idE) / mmE / acidH; // 用暴露量：固体盐被致密壳包住时产物不按全量算
+    const x = Math.max(0, Math.min(xTick, xByM, xByE));
+    if (x <= 1e-12) return;
+    this._stamp(ctx, reactionEquation([idM, idE], products.map((p) => p.id)));
+
+    // 按实际消耗推进：金属可能已被致密壳（Cu/氧化物）包住，consume 只取暴露格，
+    // 产物按实际置换的摩尔数生成，避免"包好壳后还在凭空长铜"。
+    const remM = matM.consume(idM, x * mmM);
+    const xAct = remM / mmM;
+    if (xAct <= 1e-12) return;
+    matE.consume(idE, xAct * acidH * mmE);
+    for (const p of products) {
+      this._emit(p.id, xAct * p.coeff * getSubstance(p.id).mm, ctx);
+    }
+    this._logReaction(ctx, [idM, idE], products.map((p) => p.id));
+  }
+
+  // ===========================================================================
+  // 通用推进（质量守恒核心）
+  // ===========================================================================
+
+  /**
+   * 执行一条规则：按 rate 与限域试剂推进一个 tick，消耗并产出。
+   * 规则带 explosive 标签 → 推进后触发爆炸。
+   */
+  _runRule(rule, sources, dt, env, ctx) {
+    if (!conditionMet(rule.condition, env, ctx)) return;
+    const ref = rule.reactants[0];
+    const refMM = getSubstance(ref.id).mm;
+    let rate = rule.rate;
+    for (const r of rule.reactants) {
+      const m = sources[r.id];
+      if (!m) return;
+      rate *= this._concFactorFor(m, r.id);
+    }
+    let units = (rate * dt) / refMM;
+
+    for (const r of rule.reactants) {
+      const m = sources[r.id];
+      const mm = getSubstance(r.id).mm;
+      units = Math.min(units, this._availFor(m, r.id) / (mm * r.coeff));
+    }
+    // !(units > 0) 同时拦截 NaN/负值（NaN 比较恒 false，旧写法 units<=0 会放行 NaN）
+    if (!(units > 1e-12)) return;
+    // 盖章大气原因（燃烧会消耗大气 O2/燃料，须在消耗前盖章）
+    this._stamp(ctx, reactionEquation(rule.reactants.map((r) => r.id), rule.products.map((p) => p.id)));
+
+    // 按实际消耗推进：固体反应物被致密外壳阻断时（consume 只取暴露格），产物同步减少，
+    // 避免"产物凭空生成"（如 CuO 被还原出的 Cu 包住后还继续产 Cu）。
+    let scale = 1;
+    let reactedMass = 0;
+    for (const r of rule.reactants) {
+      const m = sources[r.id];
+      const take = units * r.coeff * getSubstance(r.id).mm;
+      const removed = m.consume(r.id, take);
+      reactedMass += removed;
+      if (take > 1e-12) scale = Math.min(scale, removed / take);
+    }
+    if (!(scale > 1e-9)) return;
+    const act = units * scale;
+    for (const p of rule.products) {
+      this._emit(p.id, act * p.coeff * getSubstance(p.id).mm, ctx);
+    }
+    this._logReaction(ctx, rule.reactants.map((r) => r.id), rule.products.map((p) => p.id));
+    // 反应现象：金属燃烧迸发火星（火星四射——铁/镁/铝等在氧中燃烧的标志现象）
+    if (rule.sparks && env.onSpark) env.onSpark();
+    // 爆炸：剧烈反应（放热+产气）→ 冲击波（威力∝实际反应量），原因=反应方程式
+    if (rule.explosive && env.explode) {
+      env.explode(env.explodePoint ?? null, 4 + reactedMass * 1.2, ctx.lastRxText || '剧烈反应');
+    }
+  }
+
+  /**
+   * 可溶固体浸入含水的溶液 → 溶解为溶质。
+   * 玩家：非核心的可溶物质（反应附着上去的盐壳）会被池水"洗掉"；
+   * 核心物质（=血量）与不溶壳（Cu(OH)2/BaCO3 等）保留。
+   */
+  _tryDissolution(mat, dt, ctx) {
+    if (mat.phase !== 'solid') return;
+    const container = mat.container;
+    if (!container || container.avail('H2O') <= 0) return;
+    const core = mat.obj ? mat.obj.substance : mat.substance; // 玩家核心物质（=血量）
+    const isPlayer = mat.isPlayer;
+    for (const id of mat.ids()) {
+      if (!isSoluble(id)) continue;
+      if (isPlayer && id === core) continue; // 玩家核心物质不溶解
+      // 玩家全身的可溶物都能洗掉（不限于浸入区域）；物块按浸入区域溶解
+      const avail = isPlayer && mat.obj?.grid ? mat.obj.grid.avail(id) : mat.avail(id);
+      const mass = Math.min(avail, RATE.dissolution * dt);
+      if (mass <= 0) continue;
+      if (isPlayer && mat.obj?.grid) mat.obj.grid.consume(id, mass);
+      else mat.consume(id, mass);
+      container.add(id, mass, { kind: 'dissolve' }); // 固体溶解入池水 → 来源=溶解
+    }
+  }
+
+  // ===========================================================================
+  // 产物路由
+  // ===========================================================================
+
+  _ctxOf(matA, matB, dt, env) {
+    const containerMat = matA.container || matB.container;
+    // 固体反应物（产物附着目标：Fe 浸 CuSO4 表面变铜等）
+    const solidObj = (matA.phase === 'solid' && (matA.obj ?? matA.owner))
+      ? (matA.obj ?? matA.owner)
+      : (matB.phase === 'solid' && (matB.obj ?? matB.owner) ? (matB.obj ?? matB.owner) : null);
+    // 玩家核心物质（可溶产物 == 核心 → 附着回血；其余可溶产物进溶液）
+    const playerCore = matA.isPlayer ? (matA.obj?.substance ?? matA.substance ?? null)
+      : matB.isPlayer ? (matB.obj?.substance ?? matB.substance ?? null)
+      : null;
+    // 粉末沉淀参与：自由沉淀粒子（amount）或灯上的沉淀（precipitates，如灯上的 Al/CuO 粉末）。
+    // 池子里的沉淀是反应产物/沉渣、不是反应物，不算粉末（否则会破坏"沉淀附着回血"等机制）。
+    // 粉末 + 物块/玩家反应时，固体产物以沉淀形式生成，不附着到物块表面。
+    const isPowder = (obj) => obj && (obj.amount !== undefined || (obj.isLamp && obj.precipitates && obj.precipitates.size > 0));
+    const aObj = matA.obj ?? matA.owner;
+    const bObj = matB.obj ?? matB.owner;
+    const powderInvolved = isPowder(aObj) || isPowder(bObj);
+    // 介质判定（溶液强酸/强碱 → REDOX 的 H+/OH- 分支）
+    let medium = 'neutral';
+    let acidId = null;
+    let baseId = null;
+    let acidConc = 0;
+    const sol = containerMat?.solution ?? (matA.solution ?? matB.solution ?? null);
+    if (sol) {
+      const info = mediaInfo(sol);
+      medium = info.medium;
+      acidId = info.acidId;
+      if (acidId) acidConc = (sol.mass(acidId) / sol.volume) * 1000;
+      if (info.baseId) baseId = info.baseId;
+      if (medium === 'acid' && !acidId) medium = 'neutral';
+    }
+    return {
+      env,
+      dt,
+      inContainer: !!containerMat,
+      containerMat,
+      playerInvolved: matA.isPlayer || matB.isPlayer,
+      solidObj,
+      playerCore,
+      powderInvolved,
+      medium,
+      acidId,
+      baseId,
+      acidConc,
+      lastRxText: null, // 本反应方程式（每次反应前设置，供产物/气泡溯源）
+    };
+  }
+
+  _emit(id, mass, ctx) {
+    // 挡住 NaN/非法质量（反应数学异常时避免生成 NaN 粒子 → 物品栏质量变 NaN）
+    if (!Number.isFinite(mass) || mass <= 1e-9) return;
+    const sub = getSubstance(id);
+
+    if (sub.state === 'gas') {
+      this._emitGas(id, mass, ctx);
+      return;
+    }
+    if (id === 'H2O') {
+      // 水只进"真容器"（池/烧杯等有水介质）；干式台子（灯/开关 volume=0）与开阔地
+      // 的水蒸发不建模——否则灯上反应（NH4Cl+Ca(OH)2 制氨等）会把水积进灯里，
+      // 干式台子被"弄湿"后触发本不该发生的遇水反应
+      if (ctx.inContainer && ctx.containerMat.solution && ctx.containerMat.solution.volume > 0) {
+        ctx.containerMat.add('H2O', mass);
+      }
+      return;
+    }
+    // 特例：Cu(OH)2 絮状沉淀一律成核沉淀（多缝隙不附着，用户指定）
+    if (id === 'Cu(OH)2') {
+      if (ctx.inContainer) ctx.env.emit({ id, mass, phase: 'precipitate' }, ctx.lastRxText);
+      else ctx.env.emit({ id, mass, phase: 'particle' }, ctx.lastRxText);
+      return;
+    }
+    if (ctx.playerInvolved && sub.state === 'solid') {
+      // 玩家参与：可溶产物（非玩家核心）直接进溶液（ZnCl2 溶于盐酸，不堆积在身上）；
+      // 核心物质（NaOH 再生回血）与不溶物（BaCO3 壳阻断）附着玩家
+      if (isSoluble(id) && id !== ctx.playerCore) {
+        if (ctx.inContainer) {
+          ctx.containerMat.add(id, mass, ctx.lastRxText);
+          return;
+        }
+        ctx.env.emit({ id, mass, phase: 'particle' }, ctx.lastRxText);
+        return;
+      }
+      // 玩家核心物质再生：仍附着回血；其他不可溶产物：粉末参与时以沉淀形式生成（玩家也是物块）
+      if (id === ctx.playerCore || !ctx.powderInvolved) {
+        ctx.env.emit({ id, mass, phase: 'adhere' }, ctx.lastRxText);
+        return;
+      }
+      ctx.env.emit({ id, mass, phase: 'precipitate' }, ctx.lastRxText);
+      return;
+    }
+    if (ctx.solidObj && sub.state === 'solid') {
+      // 有固体反应物参与：可溶产物直接进溶液（ZnCl2 不附着在锌块上），
+      // 不溶产物附着在反应物表面（Fe 浸 CuSO4 表面就地变铜）
+      if (ctx.inContainer && isSoluble(id)) {
+        ctx.containerMat.add(id, mass, ctx.lastRxText);
+        return;
+      }
+      // 粉末沉淀 + 物块反应：固体产物以沉淀形式生成（不附着到物块表面）
+      if (ctx.powderInvolved) {
+        ctx.env.emit({ id, mass, phase: 'precipitate' }, ctx.lastRxText);
+        return;
+      }
+      ctx.env.emit({ id, mass, phase: 'adhere', target: ctx.solidObj }, ctx.lastRxText);
+      return;
+    }
+    if (ctx.inContainer) {
+      if (isSoluble(id)) ctx.containerMat.add(id, mass, ctx.lastRxText);
+      else ctx.env.emit({ id, mass, phase: 'precipitate' }, ctx.lastRxText);
+      return;
+    }
+    if (ctx.playerInvolved) {
+      ctx.env.emit({ id, mass, phase: 'adhere' }, ctx.lastRxText);
+      return;
+    }
+    ctx.env.emit({ id, mass, phase: 'particle' }, ctx.lastRxText);
+  }
+
+  /** 气体产物：碱/酸吸收 → 水溶解成酸 → 剩余进大气 */
+  _emitGas(id, mass, ctx) {
+    if (!Number.isFinite(mass) || mass <= 1e-9) return;
+    if (ctx.env.onGas) ctx.env.onGas(id, mass, ctx);
+    let leftover = mass;
+    const baseMat = ctx.inContainer ? ctx.containerMat : null;
+    // 1. 碱吸收酸性气体 / 酸吸收 NH3（尾气处理、石灰水检验等）
+    if (baseMat) {
+      for (const base of baseMat.ids()) {
+        const rule = acidGasRuleFor(id, base);
+        if (!rule) continue;
+        const gasMM = getSubstance(id).mm;
+        const baseMM = getSubstance(base).mm;
+        const gasPerBase = gasMM / (rule.baseCoeff * baseMM);
+        const baseAvail = baseMat.avail(base);
+        if (baseAvail <= 0) continue;
+        const gasAbsorb = Math.min(leftover, baseAvail * gasPerBase, RATE.acidGas * ctx.dt);
+        if (gasAbsorb <= 1e-9) continue;
+        baseMat.consume(base, gasAbsorb / gasPerBase);
+        const gasMoles = gasAbsorb / gasMM;
+        for (const p of rule.products) {
+          this._emit(p.id, gasMoles * p.coeff * getSubstance(p.id).mm, ctx);
+        }
+        leftover -= gasAbsorb;
+        if (leftover <= 1e-9) return;
+      }
+    }
+    // 2. 水溶解气体（CO2→H2CO3、SO2→H2SO3、SO3→H2SO4、NO2→HNO3+NO、NH3→氨水、
+    //    Cl2→氯水溶质）；消耗等摩尔水（防止 H2CO3⇌CO2+H2O 循环无限产水）
+    if (leftover > 1e-9 && baseMat && baseMat.avail('H2O') > 0) {
+      for (const gw of GAS_WATER_RULES) {
+        if (gw.gas !== id) continue;
+        // CO2/SO2/NO2/Cl2 不主动溶进水：否则 CO2 形成 H2CO3→CO2 零净循环无限冒泡、
+        // NO2 被水转成 NO 逃不出来（浓硝酸红棕变无色）、Cl2 溶成氯水看不到黄绿气体。
+        // 它们与碱/水的反应由被动吸收（_tryGasWaterAbsorb/碱吸收）按大气浓度慢慢进行。
+        if (gw.gas === 'CO2' || gw.gas === 'SO2' || gw.gas === 'NO2' || gw.gas === 'Cl2') continue;
+        const gasMM = getSubstance(id).mm;
+        const diss = Math.min(leftover, RATE.acidGas * ctx.dt * 0.15);
+        if (diss <= 1e-9) break;
+        const waterNeed = diss / gasMM; // 1 mol 气体配 1 mol 水（简化）
+        if (baseMat.avail('H2O') < waterNeed) break;
+        baseMat.consume('H2O', waterNeed);
+        if (getSubstance(gw.acid).state === 'gas') {
+          baseMat.add(gw.acid, (diss * getSubstance(gw.acid).mm) / gasMM, ctx.lastRxText); // 气体溶质（氯水）
+        } else {
+          this._emit(gw.acid, (diss * getSubstance(gw.acid).mm) / gasMM, ctx);
+        }
+        if (gw.byGas) this._emit(gw.byGas, (diss * getSubstance(gw.byGas).mm) / gasMM, ctx);
+        leftover -= diss;
+        break;
+      }
+    }
+    if (leftover > 1e-9) ctx.env.atmosphere.add(id, leftover);
+  }
+
+  /**
+   * 溶液浓度因子：反应物浓度越低反应越慢（相对其饱和显色浓度；无色溶质用默认参照）。
+   * 固体/气体返回 1。范围钳制在 [0.05, 1]，避免反应永远无法完成。
+   */
+  _concFactorFor(mat, id) {
+    if (!mat || mat.phase !== 'solution' || !mat.solution) return 1;
+    // 干式台子（酒精灯/喷灯 volume=0，内部无水）不参与浓度计算——
+    // 否则 mass/0 = NaN 会污染 rate → 反应推进 NaN → 溶液写入 NaN
+    if (!(mat.solution.volume > 0)) return 1;
+    if (id === 'H2O') return 1; // 溶剂浓度恒定（避免 water=0 时反应被压到 5%）
+    if (mat.owner && mat.owner.precipitates && (mat.owner.precipitates.get(id) ?? 0) > 0) return 1;
+    const sub = getSubstance(id);
+    const sat = sub.ionColor ? sub.ionColor.sat : 100;
+    const gPerL = (mat.solution.mass(id) / mat.solution.volume) * 1000;
+    if (!Number.isFinite(gPerL) || gPerL <= 0) return 0.05;
+    return Math.max(0.05, Math.min(1, gPerL / sat));
+  }
+
+  /** 固体材料表层（暴露格）的碱吸收大气酸性气体 → 附着自身（NaOH 玩家被 CO2 碳化） */
+  _trySolidGasAbsorb(mat, dt, env, ctx) {
+    if (mat.phase !== 'solid' || !mat.obj || !mat.obj.grid) return;
+    const exp = mat.obj.grid.exposedMasses ? mat.obj.grid.exposedMasses() : null;
+    if (!exp) return;
+    for (const id of Object.keys(exp)) {
+      const s = getSubstance(id);
+      if (s.kind !== 'base') continue;
+      for (const gas of ['CO2', 'SO2', 'Cl2']) {
+        const rule = acidGasRuleFor(gas, id);
+        if (!rule) continue;
+        const gasAvail = env.atmosphere.mass(gas);
+        if (gasAvail <= 1e-9) continue;
+        const gasMM = getSubstance(gas).mm;
+        const baseMM = getSubstance(id).mm;
+        const gasPerBase = gasMM / (rule.baseCoeff * baseMM);
+        const absorb = Math.min(gasAvail, exp[id] * gasPerBase, RATE.acidGas * dt * 0.05); // 缓慢碳化（玩家有足够时间走到再生池）
+        if (absorb <= 1e-9) continue;
+        const removedBase = mat.consume(id, absorb / gasPerBase);
+        const actAbsorb = removedBase * gasPerBase; // 实际吸收（表层被壳包住时 consume 只取暴露格，会小于请求）
+        if (actAbsorb <= 1e-9) continue;
+        this._stamp(ctx, reactionEquation([id, gas], rule.products.map((p) => p.id)));
+        env.atmosphere.remove(gas, actAbsorb);
+        const gasMoles = actAbsorb / gasMM;
+        for (const p of rule.products) {
+          const pmass = gasMoles * p.coeff * getSubstance(p.id).mm;
+          if (p.id === 'H2O') {
+            // 水不附着固体：容器内进池水，开阔地蒸发（绝不生成"水沉淀"粒子）
+            if (ctx.inContainer) ctx.containerMat.add('H2O', pmass);
+            continue;
+          }
+          // 碳化产物就地附着固体表面（玩家形成 Na2CO3 壳；NaOH 物块同样就地碳化）。
+          // 显式 target=反应固体：非玩家物块碳化时不至于找不到目标、把 Na2CO3 撒成游离粒子。
+          ctx.env.emit({ id: p.id, mass: pmass, phase: 'adhere', target: mat.obj ?? ctx.solidObj ?? null }, ctx.lastRxText);
+        }
+        this._logReaction(ctx, [id, gas], rule.products.map((p) => p.id));
+      }
+    }
+  }
+
+  /**
+   * 容器水吸收大气气体 → 溶解（Cl2 氯水、NH3 氨水、SO3→H2SO4、NO2→HNO3+NO）。
+   * 注意：CO2/SO2 不在此主动吸收——否则 CO2→H2CO3→分解→CO2 的净零循环会让
+   * 所有含水容器一直冒 CO2 气泡（CO2/SO2 的溶解只在反应产气时即时发生）。
+   */
+  _tryGasWaterAbsorb(mat, dt, env, ctx) {
+    if (!ctx.inContainer || ctx.containerMat.avail('H2O') <= 0) return;
+    const atm = env.atmosphere;
+    for (const gw of GAS_WATER_RULES) {
+      // CO2/SO2/NO2/Cl2 不主动吸收：CO2/SO2 是分解循环源，NO2 会被立刻吸回转成 NO
+      // （浓硝酸红棕变无色），Cl2 溶成氯水看不到黄绿气体。它们在大气中可见、由碱吸收等路径处理。
+      if (gw.gas === 'CO2' || gw.gas === 'SO2' || gw.gas === 'NO2' || gw.gas === 'Cl2') continue;
+
+      const gasAvail = atm.mass(gw.gas);
+      if (gasAvail <= MIN_ENTRY) continue;
+      const gasMM = getSubstance(gw.gas).mm;
+      const absorb = Math.min(gasAvail, RATE.acidGas * dt * 0.1);
+      // 微量不吸收：吸收量不足 MIN_ENTRY 时让气体留在大气（空气计可见），
+      // 避免在溶液里反复生成"0.000g 级"的微量溶质（NH3·H2O 条目翻转）
+      if (absorb <= MIN_ENTRY) continue;
+      const waterNeed = absorb / gasMM;
+      if (ctx.containerMat.avail('H2O') < waterNeed) continue;
+      this._stamp(ctx, reactionEquation([gw.gas], [gw.acid, gw.byGas].filter(Boolean)));
+      ctx.containerMat.consume('H2O', waterNeed);
+      atm.remove(gw.gas, absorb);
+      if (getSubstance(gw.acid).state === 'gas') {
+        ctx.containerMat.add(gw.acid, (absorb * getSubstance(gw.acid).mm) / gasMM, ctx.lastRxText); // 氯水溶质
+      } else {
+        this._emit(gw.acid, (absorb * getSubstance(gw.acid).mm) / gasMM, ctx);
+      }
+      if (gw.byGas) this._emit(gw.byGas, (absorb * getSubstance(gw.byGas).mm) / gasMM, ctx);
+    }
+  }
+
+  _atmMat(env) {
+    return new AtmosphereMaterial(env.atmosphere);
+  }
+}
+
+// 还原剂"还原性"次序（供候选排序：还原性强者优先被氧化——Cl2 先氧化 I- 再 Fe2+ 再 Br-）
+const REDOX_REDUCIBILITY = {
+  KI: 100, NaI: 100, H2S: 95, FeS: 95, H2SO3: 80, SO2: 80, Na2SO3: 80,
+  FeSO4: 70, FeCl2: 70, H2C2O4: 65, C2H5OH: 60, H2O2: 50, CO: 45, H2: 40,
+  C: 30, KBr: 25, NaBr: 25, HCl: 15, Fe: 10, Cu: 9, Zn: 8, Mg: 7, Al: 6,
+  Na: 5, K: 5, Li: 5, 'K2MnO4': 40, H2: 40,
+};
+
+exports.COMBUSTION_MIN_O2 = COMBUSTION_MIN_O2;
+exports.H_ACTIVITY = H_ACTIVITY;
+exports.EXPLOSION_LEL = EXPLOSION_LEL;
+exports.reactionEquation = reactionEquation;
+exports.ChemistryEngine = ChemistryEngine;
+
+  };
+  __modules["src/chem/substances.js"] = function (module, exports, __require) {
+// ============================================================================
+// 物质属性库（PropertyDB）
+// ----------------------------------------------------------------------------
+// 职责：
+//   - 离子表（符号/是否多原子/电荷/离子摩尔质量）
+//   - 物质表（分子式作为唯一 id，含摩尔质量/状态/类别/溶解度/颜色/可燃性/金属活动性等）
+//   - 从两个离子推导盐的化学式、摩尔质量、溶解度（产物兜底生成，保证"离子推导"可扩展）
+// 约定：分子式即 id；正文用 ASCII（CuSO4、Fe(OH)3）。
+// ============================================================================
+
+const gcd = (a, b) => (b === 0 ? a : gcd(b, a % b));
+
+// ---------------------------------------------------------------------------
+// 离子表
+// ---------------------------------------------------------------------------
+const IONS = {
+  'H+':      { symbol: 'H',   poly: false, charge:  1, mass:  1   },
+  'Na+':     { symbol: 'Na',  poly: false, charge:  1, mass: 23   },
+  'K+':      { symbol: 'K',   poly: false, charge:  1, mass: 39   },
+  'Li+':     { symbol: 'Li',  poly: false, charge:  1, mass: 7    },
+  'NH4+':    { symbol: 'NH4', poly: true,  charge:  1, mass: 18   },
+  'Ca2+':    { symbol: 'Ca',  poly: false, charge:  2, mass: 40   },
+  'Mg2+':    { symbol: 'Mg',  poly: false, charge:  2, mass: 24   },
+  'Zn2+':    { symbol: 'Zn',  poly: false, charge:  2, mass: 65   },
+  'Fe2+':    { symbol: 'Fe',  poly: false, charge:  2, mass: 56   },
+  'Fe3+':    { symbol: 'Fe',  poly: false, charge:  3, mass: 56   },
+  'Cu2+':    { symbol: 'Cu',  poly: false, charge:  2, mass: 64   },
+  'Al3+':    { symbol: 'Al',  poly: false, charge:  3, mass: 27   },
+  'Ag+':     { symbol: 'Ag',  poly: false, charge:  1, mass: 108  },
+  'Ba2+':    { symbol: 'Ba',  poly: false, charge:  2, mass: 137  },
+  'Cl-':     { symbol: 'Cl',  poly: false, charge: -1, mass: 35.5 },
+  'SO4^2-':  { symbol: 'SO4', poly: true,  charge: -2, mass: 96   },
+  'NO3-':    { symbol: 'NO3', poly: true,  charge: -1, mass: 62   },
+  'OH-':     { symbol: 'OH',  poly: true,  charge: -1, mass: 17   },
+  'CO3^2-':  { symbol: 'CO3', poly: true,  charge: -2, mass: 60   },
+  'SO3^2-':  { symbol: 'SO3', poly: true,  charge: -2, mass: 80   },
+  'MnO4-':   { symbol: 'MnO4', poly: true, charge: -1, mass: 119  },
+  'MnO4^2-': { symbol: 'MnO4', poly: true, charge: -2, mass: 119  },
+  'ClO3-':   { symbol: 'ClO3', poly: true, charge: -1, mass: 83.5 },
+  'O2-':     { symbol: 'O',   poly: false, charge: -2, mass: 16   },
+  'Mn2+':    { symbol: 'Mn',  poly: false, charge:  2, mass: 55   },
+  'Cr3+':    { symbol: 'Cr',  poly: false, charge:  3, mass: 52   },
+  'Cr2O7^2-':{ symbol: 'Cr2O7', poly: true, charge: -2, mass: 216  },
+  'CrO4^2-': { symbol: 'CrO4', poly: true, charge: -2, mass: 116  },
+  'S2-':     { symbol: 'S',   poly: false, charge: -2, mass: 32   },
+  'Br-':     { symbol: 'Br',  poly: false, charge: -1, mass: 80   },
+  'I-':      { symbol: 'I',   poly: false, charge: -1, mass: 127  },
+  'HCO3-':   { symbol: 'HCO3', poly: true, charge: -1, mass: 61   },
+  'AlO2-':   { symbol: 'AlO2', poly: true, charge: -1, mass: 59   },
+  'CH3COO-': { symbol: 'CH3COO', poly: true, charge: -1, mass: 59 },
+  'SCN-':    { symbol: 'SCN', poly: true, charge: -1, mass: 58   },
+  'ClO-':    { symbol: 'ClO', poly: true, charge: -1, mass: 51.5 },
+  'PO4^3-':  { symbol: 'PO4', poly: true, charge: -3, mass: 95   },
+  'SiO3^2-': { symbol: 'SiO3', poly: true, charge: -2, mass: 76  },
+  'C2O4^2-': { symbol: 'C2O4', poly: true, charge: -2, mass: 88  },
+  'CrO2-':   { symbol: 'CrO2', poly: true, charge: -1, mass: 68  },
+};
+
+// 有色离子在溶液中的显色（饱和浓度参照，单位 g 离子 / L 溶液，可调）
+const ION_COLORS = {
+  'Cu2+':    { color: '#00e7ff', sat: 150 },
+  'Fe3+':    { color: '#ffbb00', sat: 250 },
+  'Fe2+':    { color: '#11ff24', sat: 150 },
+  'MnO4-':   { color: '#a54ac9', sat: 60  },
+  'MnO4^2-': { color: '#2e8b57', sat: 40  },
+  'Cr2O7^2-':{ color: '#ff6a3d', sat: 80  }, // 重铬酸根 橙红
+  'CrO4^2-': { color: '#ffd23f', sat: 80  }, // 铬酸根 黄
+  'Cr3+':    { color: '#3fbf7f', sat: 100 }, // 三价铬 绿
+  'S2-':     { color: '#ffe9a8', sat: 100 }, // 硫离子 淡黄（硫化钠溶液）
+};
+
+// ---------------------------------------------------------------------------
+// 公式与盐推导
+// ---------------------------------------------------------------------------
+function canonicalFormula(catId, cc, anId, ac) {
+  if (catId === 'H+' && anId === 'OH-') return 'H2O'; // H+OH- → 规范写作 H2O
+  const cat = IONS[catId] ?? { symbol: catId, poly: false };
+  const an = IONS[anId] ?? { symbol: anId, poly: false };
+  const catPart = cat.poly && cc > 1 ? `(${cat.symbol})${cc}` : cat.symbol + (cc > 1 ? cc : '');
+  const anPart = an.poly && ac > 1 ? `(${an.symbol})${ac}` : an.symbol + (ac > 1 ? ac : '');
+  return catPart + anPart;
+}
+
+/** 由阳离子 + 阴离子推导盐：{ formula, catCount, anCount, mm } */
+function buildSalt(catId, anId) {
+  const cat = IONS[catId];
+  const an = IONS[anId];
+  // 未知离子（运行时生成/自定义反应引入）：兜底不崩溃，按 1:1 假盐处理并记录一次，便于定位
+  if (!cat || !an) {
+    console.warn(`[化学] 离子不在表：${catId}(${cat ? '有' : '无'}) / ${anId}(${an ? '有' : '无'})`);
+    const c = cat ?? { symbol: catId, charge: 1, mass: 20 };
+    const a = an ?? { symbol: anId, charge: -1, mass: 35 };
+    return { formula: `${catId}(${anId})`, catCount: 1, anCount: 1, mm: c.mass + a.mass };
+  }
+  const g = gcd(Math.abs(cat.charge), Math.abs(an.charge));
+  const cc = Math.abs(an.charge) / g;
+  const ac = Math.abs(cat.charge) / g;
+  return {
+    formula: canonicalFormula(catId, cc, anId, ac),
+    catCount: cc,
+    anCount: ac,
+    mm: cc * cat.mass + ac * an.mass,
+  };
+}
+
+/** 常温常压下在水中的溶解性（高中溶解度规则：钾钠铵硝全溶…） */
+function solubilityOf(catId, anId) {
+  if (anId === 'NO3-') return 'soluble';                       // 硝酸盐全溶
+  if (catId === 'Na+' || catId === 'K+' || catId === 'NH4+') return 'soluble'; // 碱金属/铵盐全溶
+  if (anId === 'Cl-' || anId === 'Br-' || anId === 'I-') {
+    // 卤化银难溶（AgCl 白 / AgBr 淡黄 / AgI 黄——检验卤离子）；其余卤化物可溶（Hg2Cl2/PbCl2 微溶省略）
+    return catId === 'Ag+' ? 'insoluble' : 'soluble';
+  }
+  if (anId === 'SO4^2-') return catId === 'Ba2+' ? 'insoluble' : 'soluble';    // 硫酸盐除 BaSO4（CaSO4/PbSO4 微溶省略）
+  if (anId === 'CO3^2-' || anId === 'SO3^2-') return 'insoluble';              // 碳酸盐/亚硫酸盐不溶（碱金属铵盐已在上面返回）
+  if (anId === 'S2-') return 'insoluble';                      // 硫化物：碱金属/铵盐溶（上面返回），其余 FeS/CuS/ZnS 不溶
+  if (anId === 'CrO4^2-') return catId === 'Ba2+' ? 'insoluble' : 'soluble';   // 铬酸盐：BaCrO4↓(黄) 其余溶
+  if (anId === 'HCO3-' || anId === 'AlO2-' || anId === 'SCN-' || anId === 'ClO-') return 'soluble'; // 碳酸氢盐/偏铝酸盐/硫氰酸盐/次氯酸盐可溶
+  if (anId === 'OH-') {
+    if (catId === 'Na+' || catId === 'K+' || catId === 'Ba2+' || catId === 'Ca2+') return 'soluble';
+    return 'insoluble';                                        // 不溶性碱（游戏内 Ca(OH)2 视为可溶）
+  }
+  return 'soluble';
+}
+
+/** 由阳/阴离子判定物质类别 */
+function kindOf(catId, anId) {
+  if (catId === 'H+') return 'acid';
+  if (anId === 'OH-') return 'base';
+  if (anId === 'O2-') return 'oxide';
+  return 'salt';
+}
+
+/** 由两个离子生成一条"盐"物质记录（产物兜底） */
+function saltEntry(catId, anId, over = {}) {
+  const { formula, catCount, anCount, mm } = buildSalt(catId, anId);
+  const soluble = solubilityOf(catId, anId);
+  const kind = kindOf(catId, anId);
+  const ionColor = ION_COLORS[catId] || ION_COLORS[anId] || null;
+  return {
+    id: formula,
+    mm,
+    state: 'solid',
+    kind,
+    soluble,
+    ions: { cat: catId, an: anId, catCount, anCount },
+    solid: over.solid ?? (soluble ? ['#e9e9e9'] : ['#9a9a9a']),
+    ...(ionColor ? { ionColor } : {}),
+    ...over,
+  };
+}
+
+/** 离子推导产物：不存在则自动登记（保证溶解度/颜色/摩尔质量正确） */
+function ensureSalt(catId, anId) {
+  const { formula } = buildSalt(catId, anId);
+  if (SUBSTANCES[formula]) return SUBSTANCES[formula];
+  const entry = saltEntry(catId, anId);
+  SUBSTANCES[formula] = entry;
+  return entry;
+}
+
+// ---------------------------------------------------------------------------
+// 物质表
+// ---------------------------------------------------------------------------
+function defineSalt(catId, anId, over = {}) {
+  const e = saltEntry(catId, anId, over);
+  SUBSTANCES[e.id] = e;
+  return e;
+}
+
+const SUBSTANCES = {};
+
+// --- 水 / 过氧化氢 / 碳酸（不稳定）---
+SUBSTANCES['H2O'] = { id: 'H2O', mm: 18, state: 'liquid', kind: 'water', soluble: 'na' };
+SUBSTANCES['H2O2'] = { id: 'H2O2', mm: 34, state: 'liquid', kind: 'other', soluble: 'soluble', solid: ['#d8f6ff'] };
+SUBSTANCES['H2CO3'] = { id: 'H2CO3', mm: 62, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'weak', ions: { cat: 'H+', an: 'HCO3-', catCount: 1, anCount: 1 }, solid: ['#e9e9e9'] }; // 碳酸（第一步电离为主）
+
+// --- 酸（acidStrength: 强酸全电离 / 弱酸部分电离，影响 pH）---
+SUBSTANCES['HCl'] = { id: 'HCl', mm: 36.5, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'H+', an: 'Cl-', catCount: 1, anCount: 1 }, solid: ['#e9e9e9'] };
+SUBSTANCES['H2SO4'] = { id: 'H2SO4', mm: 98, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'H+', an: 'SO4^2-', catCount: 2, anCount: 1 }, solid: ['#e9e9e9'] };
+SUBSTANCES['HNO3'] = { id: 'HNO3', mm: 63, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'H+', an: 'NO3-', catCount: 1, anCount: 1 }, solid: ['#e9e9e9'] };
+SUBSTANCES['H2SO3'] = { id: 'H2SO3', mm: 82, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'weak', ions: { cat: 'H+', an: 'SO3^2-', catCount: 2, anCount: 1 }, solid: ['#e9e9e9'] };
+SUBSTANCES['H3PO4'] = { id: 'H3PO4', mm: 98, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'weak', ions: { cat: 'H+', an: 'PO4^3-', catCount: 3, anCount: 1 }, solid: ['#e9e9e9'] };
+SUBSTANCES['HClO'] = { id: 'HClO', mm: 52.5, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'weak', ions: { cat: 'H+', an: 'ClO-', catCount: 1, anCount: 1 }, solid: ['#e9e9e9'] };
+SUBSTANCES['CH3COOH'] = { id: 'CH3COOH', mm: 60, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'weak', ions: { cat: 'H+', an: 'CH3COO-', catCount: 1, anCount: 1 }, solid: ['#e9e9e9'] };
+
+// --- 碱（acidStrength 同用于碱的电离强弱）---
+SUBSTANCES['NaOH'] = { id: 'NaOH', mm: 40, state: 'solid', kind: 'base', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'Na+', an: 'OH-', catCount: 1, anCount: 1 }, solid: ['#ffffff'] };
+SUBSTANCES['KOH'] = { id: 'KOH', mm: 56, state: 'solid', kind: 'base', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'K+', an: 'OH-', catCount: 1, anCount: 1 }, solid: ['#ffffff'] };
+SUBSTANCES['Ca(OH)2'] = { id: 'Ca(OH)2', mm: 74, state: 'solid', kind: 'base', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'Ca2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#f4f4f4'] };
+SUBSTANCES['Cu(OH)2'] = { id: 'Cu(OH)2', mm: 98, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Cu2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#00afff'] };
+SUBSTANCES['Fe(OH)3'] = { id: 'Fe(OH)3', mm: 107, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Fe3+', an: 'OH-', catCount: 1, anCount: 3 }, solid: ['#002929'] };
+SUBSTANCES['Mg(OH)2'] = { id: 'Mg(OH)2', mm: 58, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Mg2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#f2f2f2'] };
+SUBSTANCES['Fe(OH)2'] = { id: 'Fe(OH)2', mm: 90, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Fe2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#c9ffd4'] };
+
+// --- 盐（用 defineSalt 生成，颜色可覆盖）---
+defineSalt('Na+', 'Cl-', { solid: ['#ffffff'] });
+defineSalt('Cu2+', 'SO4^2-', { solid: ['#b7e4ff'] });
+defineSalt('Na+', 'SO4^2-', { solid: ['#ffffff'] });
+defineSalt('Fe3+', 'Cl-', { solid: ['#ffd9a8'] });
+defineSalt('Fe2+', 'Cl-', { solid: ['#c9ffd4'] });
+defineSalt('Fe2+', 'SO4^2-', { solid: ['#c9ffd4'] });
+defineSalt('Cu2+', 'Cl-', { solid: ['#b7e4ff'] });
+defineSalt('Zn2+', 'Cl-', { solid: ['#ffffff'] });
+defineSalt('Mg2+', 'Cl-', { solid: ['#ffffff'] });
+defineSalt('Ca2+', 'Cl-', { solid: ['#ffffff'] });
+defineSalt('Ba2+', 'Cl-', { solid: ['#ffffff'] });
+defineSalt('Ca2+', 'SO4^2-', { solid: ['#ffffff'] });
+defineSalt('Na+', 'CO3^2-', { solid: ['#ffffff'], dense: true }); // Na2CO3 致密晶形壳：碳化壳真正保护内核——挡 CO2 继续碳化（自限）、挡酸蚀从外到内逐层剥壳（否则盐酸穿透壳掏空内核成碎片）
+defineSalt('Ca2+', 'CO3^2-', { solid: ['#f2f2f2'], dense: true });   // CaCO3 晶形致密（石灰水检验）
+defineSalt('Ba2+', 'SO4^2-', { solid: ['#ffffff'], dense: true });  // BaSO4 致密（检验硫酸根）
+defineSalt('Ag+', 'Cl-', { solid: ['#ffffff'], dense: true });      // AgCl 致密（检验氯离子）
+defineSalt('Ag+', 'Br-', { solid: ['#f2e3b0'] });                   // AgBr 淡黄↓（检验溴离子）
+defineSalt('Ag+', 'I-', { solid: ['#ffe98a'] });                    // AgI 黄↓（检验碘离子）
+defineSalt('Ag+', 'NO3-', { solid: ['#ffffff'] });
+defineSalt('Cu2+', 'NO3-', { solid: ['#b7e4ff'] });
+defineSalt('Fe3+', 'NO3-', { solid: ['#ffd9a8'] });
+defineSalt('Al3+', 'Cl-', { solid: ['#ffffff'] });
+defineSalt('Al3+', 'SO4^2-', { solid: ['#ffffff'] });
+defineSalt('Fe3+', 'SO4^2-', { solid: ['#ffd9a8'] });
+defineSalt('Zn2+', 'SO4^2-', { solid: ['#ffffff'] });
+defineSalt('Mg2+', 'SO4^2-', { solid: ['#ffffff'] });
+defineSalt('K+', 'NO3-', { solid: ['#ffffff'] });
+defineSalt('K+', 'Cl-', { solid: ['#ffffff'] });
+defineSalt('K+', 'CO3^2-', { solid: ['#ffffff'] });
+defineSalt('Na+', 'SO3^2-', { solid: ['#ffffff'] });
+defineSalt('Ca2+', 'SO3^2-', { solid: ['#f2f2f2'] });
+defineSalt('NH4+', 'Cl-', { solid: ['#ffffff'] });
+defineSalt('Na+', 'NO3-', { solid: ['#ffffff'] });
+defineSalt('K+', 'MnO4-', { solid: ['#d8b3e8'] });
+defineSalt('K+', 'MnO4^2-', { solid: ['#a8d8b8'] });
+defineSalt('K+', 'ClO3-', { solid: ['#ffffff'] });
+defineSalt('K+', 'SO3^2-', { solid: ['#ffffff'] });
+// KMnO4 分解产物 K2MnO4 由 K+ + MnO4^2- 生成（id: K2MnO4），已覆盖。
+
+// --- 高中扩展盐（锰/铬系、碳酸氢盐、硫化物、卤化物、检验试剂等）---
+defineSalt('Mn2+', 'SO4^2-', { solid: ['#f2e3d8'] });   // MnSO4 肉粉
+defineSalt('Mn2+', 'Cl-', { solid: ['#f2e3d8'] });     // MnCl2 肉粉
+defineSalt('Cr3+', 'Cl-', { solid: ['#2fbf7f'] });     // CrCl3 绿
+defineSalt('Cr3+', 'SO4^2-', { solid: ['#2fbf7f'] });  // Cr2(SO4)3 绿
+defineSalt('K+', 'Cr2O7^2-', { solid: ['#ff6a3d'] });  // K2Cr2O7 橙红
+defineSalt('K+', 'CrO4^2-', { solid: ['#ffd23f'] });   // K2CrO4 黄
+defineSalt('Ca2+', 'Cr2O7^2-', { solid: ['#ff6a3d'] });// CaCr2O7 橙红（重铬酸钙）
+defineSalt('Ca2+', 'CrO4^2-', { solid: ['#ffd23f'] }); // CaCrO4 黄（铬酸钙）
+defineSalt('Ba2+', 'CrO4^2-', { solid: ['#ffd23f'], dense: true }); // BaCrO4 黄↓（检验铬酸根，致密）
+defineSalt('Ba2+', 'CO3^2-', { solid: ['#ffffff'], dense: true });  // BaCO3 白↓（致密晶形：附着后阻断反应）
+defineSalt('Ba2+', 'OH-', { acidStrength: 'strong', solid: ['#f4f4f4'] }); // Ba(OH)2 强碱
+defineSalt('Na+', 'HCO3-', { solid: ['#ffffff'] });    // NaHCO3
+defineSalt('Ca2+', 'HCO3-', { solid: ['#ffffff'] });   // Ca(HCO3)2 可溶
+defineSalt('Na+', 'AlO2-', { solid: ['#ffffff'] });    // NaAlO2 偏铝酸钠
+defineSalt('Fe2+', 'S2-', { solid: ['#3a3a3a'] });     // FeS 黑↓
+defineSalt('K+', 'Br-', { solid: ['#ffffff'] });
+defineSalt('Na+', 'Br-', { solid: ['#ffffff'] });
+defineSalt('Li+', 'Cl-', { solid: ['#ffffff'] });        // LiCl（焰色紫红演示）
+defineSalt('K+', 'I-', { solid: ['#ffffff'] });
+defineSalt('K+', 'SCN-', { solid: ['#ffffff'] });      // KSCN 检验 Fe3+
+defineSalt('Fe3+', 'SCN-', { ionColor: { color: '#ff2244', sat: 30 }, solid: ['#ff2244'] }); // Fe(SCN)3 血红色溶液
+defineSalt('Na+', 'ClO-', { solid: ['#ffffff'] });     // NaClO 漂白液
+defineSalt('Ca2+', 'ClO-', { solid: ['#ffffff'] });    // Ca(ClO)2 漂白粉
+defineSalt('Na+', 'SiO3^2-', { solid: ['#ffffff'] });  // Na2SiO3 水玻璃
+SUBSTANCES['H2SiO3'] = { id: 'H2SiO3', mm: 78, state: 'solid', kind: 'acid', soluble: 'insoluble', solid: ['#f0f0f0'] }; // 硅酸（胶状沉淀：Na2SiO3 + 酸 → H2SiO3↓）
+defineSalt('Cr3+', 'OH-', { solid: ['#8fb8a8'] });     // Cr(OH)3 灰绿↓（两性）
+defineSalt('Al3+', 'OH-', { solid: ['#f2f2f2'] });     // Al(OH)3 白↓（两性）
+defineSalt('Li+', 'OH-', { solid: ['#ffffff'] });      // LiOH
+defineSalt('Na+', 'CrO2-', { solid: ['#e8e8e8'] });    // NaCrO2 亚铬酸钠
+defineSalt('K+', 'ClO-', { solid: ['#ffffff'] });      // KClO 次氯酸钾
+defineSalt('Cu2+', 'S2-', { solid: ['#2a2a2a'] });     // CuS 黑↓
+defineSalt('NH4+', 'SO4^2-', { solid: ['#ffffff'] });  // (NH4)2SO4
+defineSalt('NH4+', 'HCO3-', { solid: ['#ffffff'] });   // NH4HCO3 碳酸氢铵
+
+// --- 金属氧化物（视为"电解质"，离子中阴离子为 O2-，可参与离子双置换）---
+SUBSTANCES['CuO'] = { id: 'CuO', mm: 80, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: { cat: 'Cu2+', an: 'O2-', catCount: 1, anCount: 1 }, solid: ['#222222'] };
+SUBSTANCES['FeO'] = { id: 'FeO', mm: 72, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: { cat: 'Fe2+', an: 'O2-', catCount: 1, anCount: 1 }, solid: ['#3a3a3a'] };
+SUBSTANCES['Fe2O3'] = { id: 'Fe2O3', mm: 160, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: { cat: 'Fe3+', an: 'O2-', catCount: 2, anCount: 3 }, solid: ['#ff5f00'] };
+SUBSTANCES['Fe3O4'] = { id: 'Fe3O4', mm: 232, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: null, solid: ['#111111'] }; // 混合价，走特例规则
+SUBSTANCES['MgO'] = { id: 'MgO', mm: 40, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: { cat: 'Mg2+', an: 'O2-', catCount: 1, anCount: 1 }, solid: ['#f2f2f2'] };
+SUBSTANCES['CaO'] = { id: 'CaO', mm: 56, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: { cat: 'Ca2+', an: 'O2-', catCount: 1, anCount: 1 }, solid: ['#f2f2f2'] };
+SUBSTANCES['Al2O3'] = { id: 'Al2O3', mm: 102, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: { cat: 'Al3+', an: 'O2-', catCount: 2, anCount: 3 }, solid: ['#f2f2f2'] };
+SUBSTANCES['P2O5'] = { id: 'P2O5', mm: 142, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: null, solid: ['#e8e8e8'] };
+// --- 高中扩展氧化物（钠/过氧化钠、铬绿、硅、碱式碳酸铜）---
+SUBSTANCES['K2O'] = { id: 'K2O', mm: 94, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: { cat: 'K+', an: 'O2-', catCount: 2, anCount: 1 }, solid: ['#e8e8e8'] };
+SUBSTANCES['Na2O'] = { id: 'Na2O', mm: 62, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: { cat: 'Na+', an: 'O2-', catCount: 2, anCount: 1 }, solid: ['#e8e8e8'] };
+SUBSTANCES['Na2O2'] = { id: 'Na2O2', mm: 78, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: null, peroxide: true, solid: ['#f2f2f2'] }; // 过氧化钠：遇水/CO2 歧化放 O2
+SUBSTANCES['Cr2O3'] = { id: 'Cr2O3', mm: 152, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: { cat: 'Cr3+', an: 'O2-', catCount: 2, anCount: 3 }, amphoteric: true, solid: ['#2fbf7f'] };
+SUBSTANCES['SiO2'] = { id: 'SiO2', mm: 60, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: null, solid: ['#b8c8d8'] }; // 二氧化硅（玻璃/砂）
+SUBSTANCES['Cu2(OH)2CO3'] = { id: 'Cu2(OH)2CO3', mm: 222, state: 'solid', kind: 'other', soluble: 'insoluble', ions: null, solid: ['#2fbf8f'] }; // 碱式碳酸铜（铜绿）
+
+// --- 金属（含活动性序与置换化合价）---
+// 活动性：数值越小越活泼（按金属活动性顺序 K Ca Na Mg Al Zn Fe Sn Pb (H) Cu Hg Ag Pt Au 编号 1..15，H=10）。
+SUBSTANCES['Cu'] = { id: 'Cu', mm: 64, state: 'solid', kind: 'metal', soluble: 'na', valence: 2, activity: 11, flammable: true, dense: true, solid: ['#ff8f46'] }; // 还原产物金属致密（低浓度时不阻断——见 _isDense 占比阈值）
+SUBSTANCES['Fe'] = { id: 'Fe', mm: 56, state: 'solid', kind: 'metal', soluble: 'na', valence: 2, activity: 7, flammable: true, solid: ['#fdfdfd'] };
+SUBSTANCES['Zn'] = { id: 'Zn', mm: 65, state: 'solid', kind: 'metal', soluble: 'na', valence: 2, activity: 6, flammable: true, solid: ['#c8c8c8'] };
+SUBSTANCES['Mg'] = { id: 'Mg', mm: 24, state: 'solid', kind: 'metal', soluble: 'na', valence: 2, activity: 4, flammable: true, solid: ['#cfcfcf'] };
+SUBSTANCES['Al'] = { id: 'Al', mm: 27, state: 'solid', kind: 'metal', soluble: 'na', valence: 3, activity: 5, flammable: true, solid: ['#d9d9d9'] };
+SUBSTANCES['Ag'] = { id: 'Ag', mm: 108, state: 'solid', kind: 'metal', soluble: 'na', valence: 1, activity: 13, flammable: false, dense: true, solid: ['#e8e8e8'] }; // 银镜致密
+
+// --- 碱金属（极活泼：遇水剧烈反应产 H2，火焰变色）---
+SUBSTANCES['Na'] = { id: 'Na', mm: 23, state: 'solid', kind: 'metal', soluble: 'na', valence: 1, activity: 3, flammable: true, flameColor: '#ffd23f', solid: ['#e0e0e0'] };
+SUBSTANCES['K'] = { id: 'K', mm: 39, state: 'solid', kind: 'metal', soluble: 'na', valence: 1, activity: 1, flammable: true, flameColor: '#c78bff', solid: ['#cfcfe8'] };
+SUBSTANCES['Li'] = { id: 'Li', mm: 7, state: 'solid', kind: 'metal', soluble: 'na', valence: 1, activity: 2, flammable: true, flameColor: '#ff5fd0', solid: ['#d8d8f0'] }; // 锂：焰色紫红
+
+// --- 非金属单质（可燃）---
+SUBSTANCES['C'] = { id: 'C', mm: 12, state: 'solid', kind: 'nonmetal', soluble: 'na', flammable: true, solid: ['#2a2a2a'] };
+SUBSTANCES['S'] = { id: 'S', mm: 32, state: 'solid', kind: 'nonmetal', soluble: 'na', flammable: true, solid: ['#f7e242'] };
+SUBSTANCES['P'] = { id: 'P', mm: 31, state: 'solid', kind: 'nonmetal', soluble: 'na', flammable: true, solid: ['#e8e0d0'] };
+SUBSTANCES['I2'] = { id: 'I2', mm: 254, state: 'solid', kind: 'nonmetal', soluble: 'soluble', ionColor: { color: '#8b5a2b', sat: 20 }, solid: ['#8a4ac0'] }; // 碘（紫黑，溶液棕）
+SUBSTANCES['Si'] = { id: 'Si', mm: 28, state: 'solid', kind: 'nonmetal', soluble: 'na', solid: ['#8a9bb0'] }; // 硅（半导体）
+SUBSTANCES['Mg3N2'] = { id: 'Mg3N2', mm: 100, state: 'solid', kind: 'other', soluble: 'insoluble', ions: null, solid: ['#d9cfa8'] }; // 氮化镁（水解产氨）
+
+// --- 液体（氨水/乙醇/溴）---
+SUBSTANCES['NH3·H2O'] = { id: 'NH3·H2O', mm: 35, state: 'liquid', kind: 'base', soluble: 'soluble', acidStrength: 'weak', ions: { cat: 'NH4+', an: 'OH-', catCount: 1, anCount: 1 }, solid: ['#ffffff'] }; // 氨水（弱碱）
+SUBSTANCES['NH4OH'] = { id: 'NH4OH', mm: 35, state: 'liquid', kind: 'base', soluble: 'soluble', acidStrength: 'weak', ions: { cat: 'NH4+', an: 'OH-', catCount: 1, anCount: 1 }, solid: ['#ffffff'] }; // 氢氧化铵 = 氨水（NH4OH ≡ NH3·H2O，别名）
+SUBSTANCES['C2H5OH'] = { id: 'C2H5OH', mm: 46, state: 'liquid', kind: 'other', soluble: 'soluble', flammable: true, solid: ['#ffffff'] }; // 乙醇
+SUBSTANCES['H2C2O4'] = { id: 'H2C2O4', mm: 90, state: 'solid', kind: 'acid', soluble: 'soluble', acidStrength: 'weak', ions: { cat: 'H+', an: 'C2O4^2-', catCount: 2, anCount: 1 }, solid: ['#ffffff'] }; // 草酸（高锰酸钾褪色）
+SUBSTANCES['Br2'] = { id: 'Br2', mm: 160, state: 'liquid', kind: 'nonmetal', soluble: 'soluble', ionColor: { color: '#d8762a', sat: 100 }, solid: ['#8a2c1c'] }; // 溴（橙红）
+
+// --- 气体（高中扩展：颜色按物质，可燃气体带气体火焰色）---
+SUBSTANCES['H2'] = { id: 'H2', mm: 2, state: 'gas', kind: 'nonmetal', soluble: 'na', flammable: true, gasFlameColor: '#7fd4ff', solid: [] };
+SUBSTANCES['O2'] = { id: 'O2', mm: 32, state: 'gas', kind: 'gas', soluble: 'na', solid: [] };
+SUBSTANCES['N2'] = { id: 'N2', mm: 28, state: 'gas', kind: 'gas', soluble: 'na', solid: [] };
+SUBSTANCES['CO2'] = { id: 'CO2', mm: 44, state: 'gas', kind: 'acidicGas', soluble: 'na', solid: [] };
+SUBSTANCES['SO2'] = { id: 'SO2', mm: 64, state: 'gas', kind: 'acidicGas', soluble: 'na', solid: [] };
+SUBSTANCES['CO'] = { id: 'CO', mm: 28, state: 'gas', kind: 'gas', soluble: 'na', flammable: true, gasFlameColor: '#7fd4ff', solid: [] };
+SUBSTANCES['NH3'] = { id: 'NH3', mm: 17, state: 'gas', kind: 'gas', soluble: 'na', solid: [] };
+SUBSTANCES['Cl2'] = { id: 'Cl2', mm: 71, state: 'gas', kind: 'gas', soluble: 'na', gasColor: '#b8e01f', solid: [] };   // 黄绿（有毒，需碱液吸收）
+SUBSTANCES['H2S'] = { id: 'H2S', mm: 34, state: 'gas', kind: 'acidicGas', soluble: 'na', flammable: true, gasColor: '#ffe9a8', gasFlameColor: '#7fd4ff', solid: [] }; // 臭鸡蛋气
+SUBSTANCES['NO'] = { id: 'NO', mm: 30, state: 'gas', kind: 'gas', soluble: 'na', solid: [] };                          // 无色
+SUBSTANCES['NO2'] = { id: 'NO2', mm: 46, state: 'gas', kind: 'gas', soluble: 'na', gasColor: '#ff6a3d', solid: [] };   // 红棕
+SUBSTANCES['CH4'] = { id: 'CH4', mm: 16, state: 'gas', kind: 'gas', soluble: 'na', flammable: true, gasFlameColor: '#7fd4ff', solid: [] };
+SUBSTANCES['SO3'] = { id: 'SO3', mm: 80, state: 'gas', kind: 'acidicGas', soluble: 'na', gasColor: '#f0f0ff', solid: [] }; // 白烟
+
+// --- 指示剂（pH 显色：stops = [[pH起点, 颜色]...]，按 pH 找最后一个 ≤ 的段）---
+SUBSTANCES['Litmus'] = { id: 'Litmus', mm: 210, state: 'solid', kind: 'indicator', soluble: 'soluble', indicator: { stops: [[0, '#ff3b30'], [5, '#b06ad4'], [8, '#3b6cff']] }, solid: ['#b06ad4'] }; // 石蕊：红<5 / 紫5~8 / 蓝>8
+SUBSTANCES['C20H14O4'] = { id: 'C20H14O4', mm: 318, state: 'solid', kind: 'indicator', soluble: 'soluble', indicator: { stops: [[0, '#ffffff'], [8.2, '#ffb3c1'], [10, '#ff2d55']], transparent: true }, solid: ['#ffffff'] }; // 酚酞：无色<8.2 / 浅红8.2~10 / 深红>10
+
+// --- 催化剂 / 其它 ---
+SUBSTANCES['MnO2'] = { id: 'MnO2', mm: 87, state: 'solid', kind: 'catalyst', soluble: 'insoluble', solid: ['#333333'] };
+
+// ---------------------------------------------------------------------------
+// 查询与兜底
+// ---------------------------------------------------------------------------
+/** 物质别名表：同一物质的不同写法统一到规范 id（如 NH4OH ≡ NH3·H2O 氢氧化铵=氨水）。
+ *  别名只存在于"关卡书写/配置"层面，进入化学引擎后一律归一化，避免同一物质
+ *  分裂成两个 id 导致反应路径重复、日志抖动（自定义反应认 NH4OH、内置反应认
+ *  NH3·H2O，两边各跑各的）。 */
+const ALIASES = { NH4OH: 'NH3·H2O' };
+
+/** 归一化物质 id（别名 → 规范名） */
+function normId(id) {
+  return ALIASES[id] ?? id;
+}
+
+function getSubstance(id) {
+  const s = SUBSTANCES[normId(id)];
+  if (s) return s;
+  // 兜底：从未知公式构造一条"白盐"记录（数据缺失时保证不崩，属性可在表中补齐）
+  return { id, mm: 100, state: 'solid', kind: 'other', soluble: 'soluble', solid: ['#cccccc'] };
+}
+
+function isSoluble(id) {
+  return getSubstance(id).soluble === 'soluble';
+}
+
+// ---------------------------------------------------------------------------
+// 溶液浓度判据（"浓酸"定义是化学反应分支与 UI 标注的共同依据）
+// ---------------------------------------------------------------------------
+/** "浓"酸阈值：溶液里酸的质量（g）/ 溶液体积（L）；≥300 视为浓
+ *  （MnO2+浓盐酸制氯气、浓 HNO3/H2SO4 氧化分支等；KMnO4+盐酸不需要浓——见 rules.js） */
+const CONC_HIGH = 300;
+/** 钝化浓度：Fe/Al 常温遇 ≥400 g/L 浓硫酸/浓硝酸钝化（加热后才反应） */
+const PASSIVATION_CONC = 400;
+/** 酸的浓度标签：≥CONC_HIGH → "浓"，否则 "稀"（UI 显示用，如 HCl(浓)） */
+function acidLabelOf(id, mass, volumeL) {
+  const s = getSubstance(id);
+  if (!s || s.kind !== 'acid') return null;
+  if (!(volumeL > 0) || !Number.isFinite(mass)) return '浓'; // 无溶剂稀释（干台）→ 视为浓
+  return mass / volumeL >= CONC_HIGH ? '浓' : '稀';
+}
+
+/** 贴地摩擦脱落系数（g/格/s，满格浓度时的速率上限）：可溶物更容易被蹭掉（0.005），
+ *  不溶物较难脱落（0.001）。物质表可用 shedCoeff 字段覆盖（未来按物质定制）。 */
+function shedCoeffOf(id) {
+  const s = getSubstance(id);
+  if (s.shedCoeff !== undefined) return s.shedCoeff;
+  return isSoluble(id) ? 0.005 : 0.001;
+}
+
+function isElectrolyte(id) {
+  return !!getSubstance(id).ions;
+}
+
+/** 金属 A 是否比金属 B 活泼（活动性序：数值越小越靠前/越活泼，用于置换） */
+function isMoreActive(metalA, metalB) {
+  const a = getSubstance(metalA).activity ?? -1;
+  const b = getSubstance(metalB).activity ?? -1;
+  return a < b;
+}
+
+// ---------------------------------------------------------------------------
+// 焰色反应：元素 → 特征色（物理变化，不消耗物质）
+// ---------------------------------------------------------------------------
+const FLAME_COLORS = {
+  'Li+':  '#ff5fd0', // 紫红
+  'Na+':  '#ffd23f', // 黄
+  'K+':   '#c78bff', // 紫
+  'Ca2+': '#ff5f2e', // 砖红
+  'Ba2+': '#b8ff4f', // 黄绿（绿色）
+  'Cu2+': '#4dff5f', // 绿
+};
+
+/** 物质的焰色：优先物质自带 flameColor（单质），否则按阳离子查表 */
+function flameColorOf(id) {
+  const s = getSubstance(id);
+  if (s.flameColor) return s.flameColor;
+  if (s.ions) return FLAME_COLORS[s.ions.cat] ?? null;
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// 关卡自定义反应字符串解析："Cu + FeCl3 → CuCl2 + FeCl2"
+// 支持系数（2H2 + O2 → 2H2O）与箭头（→ / -> / =>）。物质必须存在于物质表。
+// ---------------------------------------------------------------------------
+function _parseReaction(str) {
+  if (!str || !String(str).trim()) return { ok: false, error: '空' };
+  const parts = String(str).split(/\s*(?:→|->|=>)\s*/).map((s) => s.trim());
+  if (parts.length < 2) return { ok: false, error: '缺少箭头 →（格式：A + B → C + D）' };
+  const parseSide = (s) =>
+    (s || '').split(/\s*\+\s*/).filter(Boolean).map((part) => {
+      const m = part.trim().match(/^(\d*)\s*(.+)$/);
+      // 归一化别名（NH4OH → NH3·H2O），自定义反应与内置反应共用同一物质 id
+      return { id: normId((m[2] ?? part).trim()), coeff: m[1] ? Number(m[1]) : 1 };
+    });
+  const reactants = parseSide(parts[0]);
+  const products = parseSide(parts[1]);
+  if (!reactants.length) return { ok: false, error: '反应物为空' };
+  if (!products.length) return { ok: false, error: '生成物为空' };
+  for (const r of [...reactants, ...products]) {
+    if (!SUBSTANCES[r.id]) return { ok: false, error: `物质「${r.id}」不在物质表中` };
+    if (!(r.coeff > 0)) return { ok: false, error: `「${r.id}」的系数无效` };
+  }
+  return { ok: true, rule: { reactants, products } };
+}
+
+/** 解析关卡自定义反应："Cu + FeCl3 → CuCl2 + FeCl2"；失败返回 null。 */
+function parseReactionStr(str) {
+  const r = _parseReaction(str);
+  return r.ok ? r.rule : null;
+}
+
+/** 反应字符串的详细错误说明（编辑器提示用）；合法返回 null。 */
+function reactionStrError(str) {
+  return _parseReaction(str).error ?? null;
+}
+
+exports.IONS = IONS;
+exports.canonicalFormula = canonicalFormula;
+exports.buildSalt = buildSalt;
+exports.solubilityOf = solubilityOf;
+exports.kindOf = kindOf;
+exports.saltEntry = saltEntry;
+exports.ensureSalt = ensureSalt;
+exports.SUBSTANCES = SUBSTANCES;
+exports.ALIASES = ALIASES;
+exports.normId = normId;
+exports.getSubstance = getSubstance;
+exports.isSoluble = isSoluble;
+exports.CONC_HIGH = CONC_HIGH;
+exports.PASSIVATION_CONC = PASSIVATION_CONC;
+exports.acidLabelOf = acidLabelOf;
+exports.shedCoeffOf = shedCoeffOf;
+exports.isElectrolyte = isElectrolyte;
+exports.isMoreActive = isMoreActive;
+exports.FLAME_COLORS = FLAME_COLORS;
+exports.flameColorOf = flameColorOf;
+exports.parseReactionStr = parseReactionStr;
+exports.reactionStrError = reactionStrError;
+
+  };
+  __modules["src/chem/solution.js"] = function (module, exports, __require) {
+// ============================================================================
+// 溶液模型
+// ----------------------------------------------------------------------------
+// 固定体积（液面不下降），溶质按质量存储。水作为溶剂单独跟踪（中和反应会累积水）。
+// concentration(id) = 溶质质量 / 体积  → 供显色与饱和度参照。
+// pH()：由酸/碱溶质的浓度与强弱（电离度）计算——强酸/强碱完全电离，
+// 弱酸/弱碱（CH3COOH、H2CO3、NH3·H2O 等）按 2% 电离。
+// ============================================================================
+
+const { getSubstance, normId } = __require('src/chem/substances.js');;
+
+const WEAK_IONIZATION = 0.02; // 弱酸/弱碱电离度（简化）
+
+/** 溶液条目的最小记账质量（g）：
+ *  低于此质量的溶质不建立条目（add 总量不足不入账、remove 后剩余不足则删除并
+ *  丢弃残留，误差 ≤ MIN_ENTRY，对玩法无感——粒子最小 0.1g）。
+ *  防止"生成速率≈消耗速率"的微量物质（如 NH3·H2O 的产氨-吸收循环）在旧阈值
+ *  （1e-9）边缘反复出现/消失（溶液面板"0.000g ↔ 不显示"抖动）；同时远小于
+ *  微量限速阈值（LIMIT_MASS=0.05），正常量级与"微量累积型"（每 tick 0.00025g
+ *  的 NH4ClO 累积到稳态 0.0033g）都不受影响。 */
+const MIN_ENTRY = 1e-4;
+
+class Solution {
+  constructor({ volume = 300, solutes = {}, water = 0 } = {}) {
+    this.volume = volume;
+    this.water = water;
+    this.solutes = new Map(); // id -> g（id 一律为规范化名）
+    for (const [id, m] of Object.entries(solutes)) {
+      if (m > 0) this.solutes.set(normId(id), m);
+    }
+  }
+
+  /** 溶液 pH：由强/弱酸碱的摩尔浓度计算（弱电解质按 2% 电离） */
+  pH() {
+    let h = 0;
+    let oh = 0;
+    const volL = this.volume / 1000;
+    if (volL <= 0) return 7;
+    for (const [id, mass] of this.solutes) {
+      const sub = getSubstance(id);
+      const molPerL = mass / sub.mm / volL;
+      if (molPerL <= 0) continue;
+      if (sub.kind === 'acid' && sub.ions?.cat === 'H+') {
+        const ion = sub.acidStrength === 'strong' ? 1 : WEAK_IONIZATION;
+        h += molPerL * sub.ions.catCount * ion;
+      } else if (sub.kind === 'base' && sub.ions?.an === 'OH-') {
+        const ion = sub.acidStrength === 'strong' ? 1 : WEAK_IONIZATION;
+        oh += molPerL * sub.ions.anCount * ion;
+      }
+    }
+    // 强酸强碱同存时相互中和（简化：取优势方）
+    if (h > 1e-12 && h >= oh) return Math.max(0, -Math.log10(h));
+    if (oh > 1e-12 && oh > h) return Math.min(14, 14 + Math.log10(oh));
+    return 7;
+  }
+
+  mass(id) {
+    return this.solutes.get(normId(id)) ?? 0;
+  }
+
+  concentration(id) {
+    return this.mass(id) / this.volume;
+  }
+
+  /** 增加溶质（负值按移除处理）；id 归一化（NH4OH → NH3·H2O）。
+   *  总量仍低于 MIN_ENTRY 的微量入账直接丢弃（不建立条目）；
+   *  非有限质量（NaN/Infinity）直接忽略（防反应异常污染溶液）。 */
+  add(id, m) {
+    id = normId(id);
+    if (!Number.isFinite(m) || m === 0) return;
+    if (m < 0) {
+      this.remove(id, -m);
+      return;
+    }
+    const next = (this.solutes.get(id) ?? 0) + m;
+    if (next < MIN_ENTRY) return; // 微量不入账：防"0.000g ↔ 不显示"的条目抖动
+    this.solutes.set(id, next);
+  }
+
+  /** 移除溶质，返回实际移除量（不会为负）；id 归一化。
+   *  剩余不足 MIN_ENTRY 时删除条目并丢弃残留（误差 ≤ MIN_ENTRY，玩法无感）。
+   *  m 非有限（NaN）时返回 0（不写坏溶液）。 */
+  remove(id, m) {
+    id = normId(id);
+    if (!(m > 0)) return 0;
+    const cur = this.solutes.get(id) ?? 0;
+    if (!Number.isFinite(cur)) {
+      // 防御：值已被污染为 NaN 时清掉条目（不继续传播）
+      this.solutes.delete(id);
+      return 0;
+    }
+    const removed = Math.min(cur, m);
+    const next = cur - removed;
+    if (next < MIN_ENTRY) this.solutes.delete(id);
+    else this.solutes.set(id, next);
+    return removed;
+  }
+
+  /** 转移走某溶质指定质量，返回实际移除量 */
+  take(id, m) {
+    return this.remove(id, m);
+  }
+
+  ids() {
+    return [...this.solutes.keys()];
+  }
+
+  has(id) {
+    return this.solutes.has(normId(id));
+  }
+
+  clone() {
+    const c = new Solution({ volume: this.volume, water: this.water });
+    for (const [id, m] of this.solutes) c.solutes.set(id, m);
+    return c;
+  }
+}
+
+// ============================================================================
+// SolutionMaterial：把 Solution 适配成化学引擎使用的 Material 接口
+//   { phase:'solution', container:this, avail/consume/add/ids, isPlayer:false }
+// ============================================================================
+class SolutionMaterial {
+  constructor(solution, owner = null) {
+    this.solution = solution;
+    this.owner = owner; // 容器对象（池/烧杯/开关…），渲染与交互用
+    this.phase = 'solution';
+    this.isPlayer = false;
+    this.container = this; // 溶液本身就是"所在容器"的内容
+  }
+
+  avail(id) {
+    if (id === 'H2O') return this.solution.water;
+    return this.solution.mass(id);
+  }
+
+  consume(id, mass) {
+    if (id === 'H2O') {
+      const r = Math.min(this.solution.water, mass);
+      this.solution.water -= r;
+      return r;
+    }
+    return this.solution.remove(id, mass);
+  }
+
+  add(id, mass) {
+    if (id === 'H2O') {
+      this.solution.water += mass;
+      return;
+    }
+    this.solution.add(id, mass);
+  }
+
+  ids() {
+    return this.solution.ids();
+  }
+}
+
+exports.MIN_ENTRY = MIN_ENTRY;
+exports.Solution = Solution;
+exports.SolutionMaterial = SolutionMaterial;
+
+  };
+  __modules["src/chem/rules.js"] = function (module, exports, __require) {
+// ============================================================================
+// 反应规则（数据驱动）——高中版
+// ----------------------------------------------------------------------------
+// 规则统一形状：
+//   {
+//     type,
+//     reactants: [{id, coeff}],     // 速率参照 = reactants[0]（rate 单位 g/s of ref）
+//     products:  [{id, coeff}],
+//     condition: 'normal'|'heat'|'highTemp'|'ignited'|{catalyst:'MnO2'}
+//              | {concHigh:true, heat:true}   // 浓+加热（MnO2+浓HCl 制氯气）
+//              | {o2:'low'}                   // 仅低氧分压时（不充分燃烧）
+//     rate: g/s,
+//     explosive: true,   // 触发爆炸（env.explode）
+//   }
+// 引擎把"氧化还原（自动配平）""离子双置换"和"金属置换"单独实现（见 redox.js / engine.js），
+// 本文件存放需逐条列出的反应与特例。
+// ============================================================================
+
+// ---- 反应速率（g/s，基准）----
+const RATE = {
+  ionic: 24,          // 液-液基准（固-液 ×0.5，固-固 ×0.1）
+  displace: 12,       // 金属置换
+  redox: 3,           // 氧化还原（自动配平，整体较慢便于观察）
+  thermal: 5,         // 加热/高温分解
+  catalytic: 5,       // 催化/加热制氧
+  combustion: 5,      // 燃烧
+  reduction: 5,       // 固还原
+  autoDecomp: 300,    // 碳酸等自发分解（近似瞬时）
+  acidGas: 24,        // 碱吸收酸性气体
+  dissolution: 10,    // 可溶固体溶解（玩家身上的盐壳/可溶物在水中较快洗掉）
+  gasCombustion: 12,  // 大气中可燃气体燃烧
+  special: 8,         // 特例反应（分步/两性/氯化铵等）
+  custom: 8,          // 关卡自定义反应（最高优先级）
+};
+
+// ---- 自反应：加热/高温分解 ----
+const THERMAL_RULES = [
+  { type: 'thermal', reactants: [{ id: 'Cu(OH)2', coeff: 1 }], products: [{ id: 'CuO', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'heat', rate: RATE.thermal },
+  { type: 'thermal', reactants: [{ id: 'Fe(OH)3', coeff: 1 }], products: [{ id: 'Fe2O3', coeff: 1 }, { id: 'H2O', coeff: 3 }], condition: 'heat', rate: RATE.thermal },
+  { type: 'thermal', reactants: [{ id: 'Mg(OH)2', coeff: 1 }], products: [{ id: 'MgO', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'heat', rate: RATE.thermal },
+  { type: 'thermal', reactants: [{ id: 'Fe(OH)2', coeff: 1 }], products: [{ id: 'FeO', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'heat', rate: RATE.thermal },
+  { type: 'thermal', reactants: [{ id: 'CaCO3', coeff: 1 }], products: [{ id: 'CaO', coeff: 1 }, { id: 'CO2', coeff: 1 }], condition: 'highTemp', rate: RATE.thermal },
+  // NH4Cl --△--> NH3↑ + HCl↑（两种气体）
+  { type: 'thermal', reactants: [{ id: 'NH4Cl', coeff: 1 }], products: [{ id: 'NH3', coeff: 1 }, { id: 'HCl', coeff: 1 }], condition: 'heat', rate: RATE.thermal },
+  // NH4HCO3 --△--> NH3↑ + H2O + CO2↑
+  { type: 'thermal', reactants: [{ id: 'NH4HCO3', coeff: 1 }], products: [{ id: 'NH3', coeff: 1 }, { id: 'H2O', coeff: 1 }, { id: 'CO2', coeff: 1 }], condition: 'heat', rate: RATE.thermal },
+  // 2NaHCO3 --△--> Na2CO3 + H2O + CO2↑
+  { type: 'thermal', reactants: [{ id: 'NaHCO3', coeff: 2 }], products: [{ id: 'Na2CO3', coeff: 1 }, { id: 'H2O', coeff: 1 }, { id: 'CO2', coeff: 1 }], condition: 'heat', rate: RATE.thermal },
+  // Cu2(OH)2CO3 --△--> 2CuO + CO2↑ + H2O（铜绿分解）
+  { type: 'thermal', reactants: [{ id: 'Cu2(OH)2CO3', coeff: 1 }], products: [{ id: 'CuO', coeff: 2 }, { id: 'CO2', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'heat', rate: RATE.thermal },
+  // 4HNO3 --△/光照--> 4NO2↑ + O2↑ + 2H2O（浓硝酸见光/受热分解，越浓越易）
+  { type: 'thermal', reactants: [{ id: 'HNO3', coeff: 4 }], products: [{ id: 'NO2', coeff: 4 }, { id: 'O2', coeff: 1 }, { id: 'H2O', coeff: 2 }], condition: 'heat', rate: RATE.thermal * 0.3 },
+  // 2Al(OH)3 --△--> Al2O3 + 3H2O（氢氧化铝受热分解）
+  { type: 'thermal', reactants: [{ id: 'Al(OH)3', coeff: 2 }], products: [{ id: 'Al2O3', coeff: 1 }, { id: 'H2O', coeff: 3 }], condition: 'heat', rate: RATE.thermal },
+  // Ca(HCO3)2 --△--> CaCO3↓ + CO2↑ + H2O（水垢成因）
+  { type: 'thermal', reactants: [{ id: 'Ca(HCO3)2', coeff: 1 }], products: [{ id: 'CaCO3', coeff: 1 }, { id: 'CO2', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'heat', rate: RATE.thermal },
+];
+
+// ---- 自反应：催化/加热制氧 ----
+const CATALYTIC_RULES = [
+  // 2H2O2 --MnO2--> 2H2O + O2↑
+  { type: 'catalytic', reactants: [{ id: 'H2O2', coeff: 2 }], products: [{ id: 'H2O', coeff: 2 }, { id: 'O2', coeff: 1 }], condition: { catalyst: 'MnO2' }, rate: RATE.catalytic },
+  // 2KMnO4 --加热--> K2MnO4 + MnO2 + O2↑
+  { type: 'catalytic', reactants: [{ id: 'KMnO4', coeff: 2 }], products: [{ id: 'K2MnO4', coeff: 1 }, { id: 'MnO2', coeff: 1 }, { id: 'O2', coeff: 1 }], condition: 'heat', rate: RATE.catalytic },
+  // 2KClO3 --加热/MnO2--> 2KCl + 3O2↑
+  { type: 'catalytic', reactants: [{ id: 'KClO3', coeff: 2 }], products: [{ id: 'KCl', coeff: 2 }, { id: 'O2', coeff: 3 }], condition: { catalyst: 'MnO2' }, rate: RATE.catalytic },
+];
+
+// ---- 自反应：燃烧（O2 取自大气；需要点燃条件）----
+// C 不充分燃烧（低氧分压）在引擎侧按 o2 分支选择
+const COMBUSTION_RULES = [
+  // 碳：点燃（空气中）→ CO2（充分燃烧）；高温+低氧 → CO（不充分，量变引起质变）
+  { type: 'combustion', reactants: [{ id: 'C', coeff: 1 }, { id: 'O2', coeff: 1 }], products: [{ id: 'CO2', coeff: 1 }], condition: 'ignited', rate: RATE.combustion },
+  { type: 'combustion', reactants: [{ id: 'C', coeff: 2 }, { id: 'O2', coeff: 1 }], products: [{ id: 'CO', coeff: 2 }], condition: { ignited: true, highTemp: true, o2: 'low' }, rate: RATE.combustion },
+  { type: 'combustion', reactants: [{ id: 'S', coeff: 1 }, { id: 'O2', coeff: 1 }], products: [{ id: 'SO2', coeff: 1 }], condition: 'ignited', rate: RATE.combustion },
+  { type: 'combustion', reactants: [{ id: 'P', coeff: 4 }, { id: 'O2', coeff: 5 }], products: [{ id: 'P2O5', coeff: 2 }], condition: 'ignited', rate: RATE.combustion },
+  // 金属燃烧：火花四射（sparks）；块状金属氧化是表面过程，慢而真实（Mg/Al/Na/K 本身易燃快）
+  { type: 'combustion', reactants: [{ id: 'Mg', coeff: 2 }, { id: 'O2', coeff: 1 }], products: [{ id: 'MgO', coeff: 2 }], condition: 'ignited', rate: RATE.combustion, sparks: true },
+  { type: 'combustion', reactants: [{ id: 'Al', coeff: 4 }, { id: 'O2', coeff: 3 }], products: [{ id: 'Al2O3', coeff: 2 }], condition: 'ignited', rate: RATE.combustion, sparks: true },
+  // 4Fe + 3O2 --点燃--> 2Fe2O3：铁在**空气**中点燃/氧化生成三氧化二铁（铁锈红）；
+  // 块状铁氧化是缓慢的表面过程（约 0.06 g/s——一块铁锈完以分钟计），火花四射；
+  // Fe3O4 仅在纯氧/富氧燃烧出现（默认空气 O2 分压 0.2 对应 Fe2O3）
+  { type: 'combustion', reactants: [{ id: 'Fe', coeff: 4 }, { id: 'O2', coeff: 3 }], products: [{ id: 'Fe2O3', coeff: 2 }], condition: 'ignited', rate: RATE.combustion * 0.003, sparks: true },
+  // 铜加热变黑（CuO 氧化皮，无火花、慢速表面氧化）
+  { type: 'combustion', reactants: [{ id: 'Cu', coeff: 2 }, { id: 'O2', coeff: 1 }], products: [{ id: 'CuO', coeff: 2 }], condition: 'ignited', rate: RATE.combustion * 0.15 },
+  // 2Na + O2 --常温--> Na2O（慢） / 2Na + O2 --点燃--> Na2O2
+  { type: 'combustion', reactants: [{ id: 'Na', coeff: 4 }, { id: 'O2', coeff: 1 }], products: [{ id: 'Na2O', coeff: 2 }], condition: 'normal', rate: RATE.combustion * 0.2 },
+  { type: 'combustion', reactants: [{ id: 'Na', coeff: 2 }, { id: 'O2', coeff: 1 }], products: [{ id: 'Na2O2', coeff: 1 }], condition: 'ignited', rate: RATE.combustion, sparks: true },
+  { type: 'combustion', reactants: [{ id: 'K', coeff: 2 }, { id: 'O2', coeff: 1 }], products: [{ id: 'K2O', coeff: 1 }], condition: 'ignited', rate: RATE.combustion, sparks: true },
+  // 3Mg + N2 --点燃--> Mg3N2（镁在氮气中燃烧）
+  { type: 'combustion', reactants: [{ id: 'Mg', coeff: 3 }, { id: 'N2', coeff: 1 }], products: [{ id: 'Mg3N2', coeff: 1 }], condition: 'ignited', rate: RATE.combustion * 0.5 },
+  // 2Mg + CO2 --点燃--> 2MgO + C（镁在二氧化碳中燃烧）
+  { type: 'combustion', reactants: [{ id: 'Mg', coeff: 2 }, { id: 'CO2', coeff: 1 }], products: [{ id: 'MgO', coeff: 2 }, { id: 'C', coeff: 1 }], condition: 'ignited', rate: RATE.combustion * 0.5 },
+  // CH4 + 2O2 --点燃--> CO2 + 2H2O
+  { type: 'combustion', reactants: [{ id: 'CH4', coeff: 1 }, { id: 'O2', coeff: 2 }], products: [{ id: 'CO2', coeff: 1 }, { id: 'H2O', coeff: 2 }], condition: 'ignited', rate: RATE.combustion },
+  // C2H5OH + 3O2 --点燃--> 2CO2 + 3H2O
+  { type: 'combustion', reactants: [{ id: 'C2H5OH', coeff: 1 }, { id: 'O2', coeff: 3 }], products: [{ id: 'CO2', coeff: 2 }, { id: 'H2O', coeff: 3 }], condition: 'ignited', rate: RATE.combustion },
+  // 2H2S + O2（不足）→ 2S + 2H2O / 2H2S + 3O2（过量）→ 2SO2 + 2H2O（量变分支）
+  { type: 'combustion', reactants: [{ id: 'H2S', coeff: 2 }, { id: 'O2', coeff: 1 }], products: [{ id: 'S', coeff: 2 }, { id: 'H2O', coeff: 2 }], condition: { ignited: true, o2: 'low' }, rate: RATE.combustion },
+  { type: 'combustion', reactants: [{ id: 'H2S', coeff: 2 }, { id: 'O2', coeff: 3 }], products: [{ id: 'SO2', coeff: 2 }, { id: 'H2O', coeff: 2 }], condition: { ignited: true, o2: 'high' }, rate: RATE.combustion },
+];
+
+// ---- 自反应：自发分解 ----
+const AUTO_DECOMP_RULES = [
+  // H2CO3 是"CO2 溶于水"——分解即 CO2 逸出（不额外产水，避免 H2CO3⇌CO2 循环无限积累水）
+  { type: 'autoDecomp', reactants: [{ id: 'H2CO3', coeff: 1 }], products: [{ id: 'CO2', coeff: 1 }], condition: 'normal', rate: RATE.autoDecomp },
+  // 2HClO --见光--> 2HCl + O2↑（氯水见光失效；需要"光照"条件，如灯旁）
+  { type: 'autoDecomp', reactants: [{ id: 'HClO', coeff: 2 }], products: [{ id: 'HCl', coeff: 2 }, { id: 'O2', coeff: 1 }], condition: { light: true }, rate: RATE.autoDecomp * 0.05 },
+  // 4Fe(OH)2 + O2 + 2H2O → 4Fe(OH)3（白色→红棕色，需大气 O2）
+  { type: 'autoDecomp', reactants: [{ id: 'Fe(OH)2', coeff: 4 }, { id: 'O2', coeff: 1 }, { id: 'H2O', coeff: 2 }], products: [{ id: 'Fe(OH)3', coeff: 4 }], condition: 'normal', rate: RATE.autoDecomp * 0.01 },
+];
+
+// ---- 自反应：气态还原（氧化物 + 大气 CO/H2，高温）----
+const GAS_REDUCTION_RULES = [
+  { type: 'reduction', reactants: [{ id: 'CuO', coeff: 1 }, { id: 'CO', coeff: 1 }], products: [{ id: 'Cu', coeff: 1 }, { id: 'CO2', coeff: 1 }], condition: 'highTemp', rate: RATE.reduction },
+  { type: 'reduction', reactants: [{ id: 'CuO', coeff: 1 }, { id: 'H2', coeff: 1 }], products: [{ id: 'Cu', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'highTemp', rate: RATE.reduction },
+  { type: 'reduction', reactants: [{ id: 'Fe2O3', coeff: 1 }, { id: 'CO', coeff: 3 }], products: [{ id: 'Fe', coeff: 2 }, { id: 'CO2', coeff: 3 }], condition: 'highTemp', rate: RATE.reduction },
+  { type: 'reduction', reactants: [{ id: 'Fe2O3', coeff: 1 }, { id: 'H2', coeff: 3 }], products: [{ id: 'Fe', coeff: 2 }, { id: 'H2O', coeff: 3 }], condition: 'highTemp', rate: RATE.reduction },
+  { type: 'reduction', reactants: [{ id: 'Fe3O4', coeff: 1 }, { id: 'CO', coeff: 4 }], products: [{ id: 'Fe', coeff: 3 }, { id: 'CO2', coeff: 4 }], condition: 'highTemp', rate: RATE.reduction },
+  { type: 'reduction', reactants: [{ id: 'Fe3O4', coeff: 1 }, { id: 'H2', coeff: 4 }], products: [{ id: 'Fe', coeff: 3 }, { id: 'H2O', coeff: 4 }], condition: 'highTemp', rate: RATE.reduction },
+  // C + CO2 --高温--> 2CO
+  { type: 'reduction', reactants: [{ id: 'C', coeff: 1 }, { id: 'CO2', coeff: 1 }], products: [{ id: 'CO', coeff: 2 }], condition: 'highTemp', rate: RATE.reduction },
+];
+
+// ---- 成对反应：固-固还原（氧化物 + 炭/铝，高温）----
+const SOLID_REDUCTION_RULES = [
+  { type: 'reduction', reactants: [{ id: 'CuO', coeff: 2 }, { id: 'C', coeff: 1 }], products: [{ id: 'Cu', coeff: 2 }, { id: 'CO2', coeff: 1 }], condition: 'highTemp', rate: RATE.reduction },
+  { type: 'reduction', reactants: [{ id: 'Fe2O3', coeff: 2 }, { id: 'C', coeff: 3 }], products: [{ id: 'Fe', coeff: 4 }, { id: 'CO2', coeff: 3 }], condition: 'highTemp', rate: RATE.reduction },
+  { type: 'reduction', reactants: [{ id: 'Fe3O4', coeff: 1 }, { id: 'C', coeff: 2 }], products: [{ id: 'Fe', coeff: 3 }, { id: 'CO2', coeff: 2 }], condition: 'highTemp', rate: RATE.reduction },
+  // 2Al + Fe2O3 --高温--> Al2O3 + 2Fe（铝热反应，爆炸）
+  { type: 'reduction', reactants: [{ id: 'Al', coeff: 2 }, { id: 'Fe2O3', coeff: 1 }], products: [{ id: 'Al2O3', coeff: 1 }, { id: 'Fe', coeff: 2 }], condition: 'highTemp', rate: RATE.reduction * 3, explosive: true },
+  // CaCO3 + CO2 + H2O → Ca(HCO3)2（过量 CO2 变清，石灰水先浑后清；需有水，见 _trySpecialSelf）
+  { type: 'special', reactants: [{ id: 'CaCO3', coeff: 1 }, { id: 'CO2', coeff: 1 }], products: [{ id: 'Ca(HCO3)2', coeff: 1 }], condition: 'normal', rate: RATE.special, waterNeeded: true },
+  // Na2CO3 + CO2 + H2O → 2NaHCO3（CO2 过量转化为碳酸氢钠）
+  { type: 'special', reactants: [{ id: 'Na2CO3', coeff: 1 }, { id: 'CO2', coeff: 1 }], products: [{ id: 'NaHCO3', coeff: 2 }], condition: 'normal', rate: RATE.special, waterNeeded: true },
+  // Na2O2 + CO2 → Na2CO3 + O2（过氧化钠与二氧化碳）
+  { type: 'special', reactants: [{ id: 'Na2O2', coeff: 2 }, { id: 'CO2', coeff: 2 }], products: [{ id: 'Na2CO3', coeff: 2 }, { id: 'O2', coeff: 1 }], condition: 'normal', rate: RATE.special },
+  // 氨气+氯化氢（白烟，大气中相遇；引擎在 reactAtmosphere 特判处理）
+  { type: 'special', reactants: [{ id: 'NH3', coeff: 1 }, { id: 'HCl', coeff: 1 }], products: [{ id: 'NH4Cl', coeff: 1 }], condition: 'normal', rate: RATE.special * 2, atmosphereOnly: true },
+];
+
+// ---- 成对反应：特例表（分步/两性/活泼金属遇水/浓酸制气等）----
+const SPECIAL_PAIR_RULES = [
+  // Fe3O4（混合价）+ 酸（离子引擎无法覆盖，显式列出）
+  { type: 'special', reactants: [{ id: 'Fe3O4', coeff: 1 }, { id: 'HCl', coeff: 8 }], products: [{ id: 'FeCl3', coeff: 2 }, { id: 'FeCl2', coeff: 1 }, { id: 'H2O', coeff: 4 }], condition: 'normal', rate: RATE.ionic },
+  { type: 'special', reactants: [{ id: 'Fe3O4', coeff: 1 }, { id: 'H2SO4', coeff: 4 }], products: [{ id: 'Fe2(SO4)3', coeff: 1 }, { id: 'FeSO4', coeff: 1 }, { id: 'H2O', coeff: 4 }], condition: 'normal', rate: RATE.ionic },
+  // 分步：Na2CO3 + HCl（少量）→ NaHCO3 + NaCl（先无气泡）；NaHCO3 + HCl → NaCl + CO2↑ + H2O
+  { type: 'special', reactants: [{ id: 'Na2CO3', coeff: 1 }, { id: 'HCl', coeff: 1 }], products: [{ id: 'NaHCO3', coeff: 1 }, { id: 'NaCl', coeff: 1 }], condition: 'normal', rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'NaHCO3', coeff: 1 }, { id: 'HCl', coeff: 1 }], products: [{ id: 'NaCl', coeff: 1 }, { id: 'CO2', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'normal', rate: RATE.special },
+  // 酸式盐中和：NaHCO3 + NaOH → Na2CO3 + H2O（同钠离子，离子引擎不驱动，显式列出）
+  { type: 'special', reactants: [{ id: 'NaHCO3', coeff: 1 }, { id: 'NaOH', coeff: 1 }], products: [{ id: 'Na2CO3', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'normal', rate: RATE.ionic },
+  // 两性溶解：Al(OH)3 + NaOH → NaAlO2 + 2H2O（过量碱）；Cr(OH)3 同理
+  { type: 'special', reactants: [{ id: 'Al(OH)3', coeff: 1 }, { id: 'NaOH', coeff: 1 }], products: [{ id: 'NaAlO2', coeff: 1 }, { id: 'H2O', coeff: 2 }], condition: 'normal', rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'Cr(OH)3', coeff: 1 }, { id: 'NaOH', coeff: 1 }], products: [{ id: 'NaCrO2', coeff: 1 }, { id: 'H2O', coeff: 2 }], condition: 'normal', rate: RATE.special },
+  // 金属+碱：2Al + 2NaOH + 2H2O → 2NaAlO2 + 3H2↑（铝与碱反应）
+  { type: 'special', reactants: [{ id: 'Al', coeff: 2 }, { id: 'NaOH', coeff: 2 }], products: [{ id: 'NaAlO2', coeff: 2 }, { id: 'H2', coeff: 3 }], condition: 'normal', rate: RATE.special },
+  // 铬酸碱互变（量变/指示剂式应用）：Cr2O7^2- + 2OH- → 2CrO4^2- + H2O（橙红→黄）
+  { type: 'special', reactants: [{ id: 'K2Cr2O7', coeff: 1 }, { id: 'NaOH', coeff: 2 }], products: [{ id: 'K2CrO4', coeff: 2 }, { id: 'H2O', coeff: 1 }], condition: 'normal', rate: RATE.special },
+  // 2CrO4^2- + 2H+ → Cr2O7^2- + H2O（黄→橙红）
+  { type: 'special', reactants: [{ id: 'K2CrO4', coeff: 2 }, { id: 'HCl', coeff: 2 }], products: [{ id: 'K2Cr2O7', coeff: 1 }, { id: 'KCl', coeff: 2 }, { id: 'H2O', coeff: 1 }], condition: 'normal', rate: RATE.special },
+  // 活泼金属遇水（爆炸）：2Na + 2H2O → 2NaOH + H2↑
+  { type: 'special', reactants: [{ id: 'Na', coeff: 2 }, { id: 'H2O', coeff: 2 }], products: [{ id: 'NaOH', coeff: 2 }, { id: 'H2', coeff: 1 }], condition: 'normal', rate: RATE.special * 2, explosive: true },
+  { type: 'special', reactants: [{ id: 'K', coeff: 2 }, { id: 'H2O', coeff: 2 }], products: [{ id: 'KOH', coeff: 2 }, { id: 'H2', coeff: 1 }], condition: 'normal', rate: RATE.special * 2, explosive: true },
+  { type: 'special', reactants: [{ id: 'Li', coeff: 2 }, { id: 'H2O', coeff: 2 }], products: [{ id: 'LiOH', coeff: 2 }, { id: 'H2', coeff: 1 }], condition: 'normal', rate: RATE.special * 2 },
+  // 碱性氧化物遇水：Na2O + H2O → 2NaOH（剧烈）；CaO + H2O → Ca(OH)2（放热）
+  { type: 'special', reactants: [{ id: 'Na2O', coeff: 1 }, { id: 'H2O', coeff: 1 }], products: [{ id: 'NaOH', coeff: 2 }], condition: 'normal', rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'CaO', coeff: 1 }, { id: 'H2O', coeff: 1 }], products: [{ id: 'Ca(OH)2', coeff: 1 }], condition: 'normal', rate: RATE.special },
+  // 过氧化钠遇水（爆炸，放 O2）：2Na2O2 + 2H2O → 4NaOH + O2↑
+  { type: 'special', reactants: [{ id: 'Na2O2', coeff: 2 }, { id: 'H2O', coeff: 2 }], products: [{ id: 'NaOH', coeff: 4 }, { id: 'O2', coeff: 1 }], condition: 'normal', rate: RATE.special * 2, explosive: true },
+  // 氯气歧化（遇水）：Cl2 + H2O ⇌ HCl + HClO（简化单向）
+  { type: 'special', reactants: [{ id: 'Cl2', coeff: 1 }, { id: 'H2O', coeff: 1 }], products: [{ id: 'HCl', coeff: 1 }, { id: 'HClO', coeff: 1 }], condition: 'normal', rate: RATE.special },
+  // 归中：HCl + HClO → Cl2↑ + H2O（Cl⁻ 与 ClO⁻ 归中为 Cl₂，浓盐酸+漂白液制氯气）
+  { type: 'special', reactants: [{ id: 'HCl', coeff: 1 }, { id: 'HClO', coeff: 1 }], products: [{ id: 'Cl2', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'normal', rate: RATE.special },
+  // 漂白液遇酸放出氯气（危险）：NaClO + 2HCl → NaCl + Cl2↑ + H2O
+  { type: 'special', reactants: [{ id: 'NaClO', coeff: 1 }, { id: 'HCl', coeff: 2 }], products: [{ id: 'NaCl', coeff: 1 }, { id: 'Cl2', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'normal', rate: RATE.special },
+  // MnO2 + 4HCl（浓）--△--> MnCl2 + Cl2↑ + 2H2O（实验室制氯气）
+  { type: 'special', reactants: [{ id: 'MnO2', coeff: 1 }, { id: 'HCl', coeff: 4 }], products: [{ id: 'MnCl2', coeff: 1 }, { id: 'Cl2', coeff: 1 }, { id: 'H2O', coeff: 2 }], condition: { concHigh: true, heat: true }, rate: RATE.special },
+  // 3Fe + 4H2O(g) --高温--> Fe3O4 + 4H2（铁与水蒸气，游戏简化为浸水+高温）
+  { type: 'special', reactants: [{ id: 'Fe', coeff: 3 }, { id: 'H2O', coeff: 4 }], products: [{ id: 'Fe3O4', coeff: 1 }, { id: 'H2', coeff: 4 }], condition: 'highTemp', rate: RATE.special * 0.5 },
+  // 3Mg + N2 已有（燃烧）；Mg3N2 + 6H2O → 3Mg(OH)2 + 2NH3（水解）
+  { type: 'special', reactants: [{ id: 'Mg3N2', coeff: 1 }, { id: 'H2O', coeff: 6 }], products: [{ id: 'Mg(OH)2', coeff: 3 }, { id: 'NH3', coeff: 2 }], condition: 'normal', rate: RATE.special },
+  // 干法制氨：2NH4Cl + Ca(OH)2 --△--> CaCl2 + 2NH3↑ + 2H2O（固固加热；溶液里同样成立）
+  { type: 'special', reactants: [{ id: 'NH4Cl', coeff: 2 }, { id: 'Ca(OH)2', coeff: 1 }], products: [{ id: 'CaCl2', coeff: 1 }, { id: 'NH3', coeff: 2 }, { id: 'H2O', coeff: 2 }], condition: 'heat', rate: RATE.special },
+  // 2KMnO4 + 16HCl → 2KCl + 2MnCl2 + 5Cl2↑ + 8H2O（高锰酸钾制氯气：KMnO4 氧化性极强，
+  // 稀盐酸也反应——不需要"浓"（与 MnO2 制氯气不同，后者必须浓+加热））
+  { type: 'special', reactants: [{ id: 'KMnO4', coeff: 2 }, { id: 'HCl', coeff: 16 }], products: [{ id: 'KCl', coeff: 2 }, { id: 'MnCl2', coeff: 2 }, { id: 'Cl2', coeff: 5 }, { id: 'H2O', coeff: 8 }], condition: 'normal', rate: RATE.special },
+  // 两性氧化物/酸性氧化物溶于强碱（需溶液介质）：Al2O3 + 2NaOH → 2NaAlO2 + H2O；SiO2 + 2NaOH → Na2SiO3 + H2O
+  { type: 'special', reactants: [{ id: 'Al2O3', coeff: 1 }, { id: 'NaOH', coeff: 2 }], products: [{ id: 'NaAlO2', coeff: 2 }, { id: 'H2O', coeff: 1 }], condition: { solution: true }, rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'SiO2', coeff: 1 }, { id: 'NaOH', coeff: 2 }], products: [{ id: 'Na2SiO3', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: { solution: true }, rate: RATE.special },
+  // 铜绿与盐酸：Cu2(OH)2CO3 + 4HCl → 2CuCl2 + CO2↑ + 3H2O
+  { type: 'special', reactants: [{ id: 'Cu2(OH)2CO3', coeff: 1 }, { id: 'HCl', coeff: 4 }], products: [{ id: 'CuCl2', coeff: 2 }, { id: 'CO2', coeff: 1 }, { id: 'H2O', coeff: 3 }], condition: { solution: true }, rate: RATE.special },
+  // 水煤气：C + H2O(g) --高温--> CO + H2（游戏简化为浸水 + 高温）
+  { type: 'special', reactants: [{ id: 'C', coeff: 1 }, { id: 'H2O', coeff: 1 }], products: [{ id: 'CO', coeff: 1 }, { id: 'H2', coeff: 1 }], condition: 'highTemp', rate: RATE.reduction },
+  // 金属 + 硫粉（固-固化合，金属块 × 灯上硫粉等成对触发）：
+  // Fe + S --点燃--> FeS（黑色）：化合反应快（快于铁/硫各自的燃烧），点燃即优先化合
+  { type: 'special', reactants: [{ id: 'Fe', coeff: 1 }, { id: 'S', coeff: 1 }], products: [{ id: 'FeS', coeff: 1 }], condition: 'ignited', rate: RATE.special * 3 },
+  // Cu + S --点燃--> CuS（黑色）
+  { type: 'special', reactants: [{ id: 'Cu', coeff: 1 }, { id: 'S', coeff: 1 }], products: [{ id: 'CuS', coeff: 1 }], condition: 'ignited', rate: RATE.special },
+  // 注：NH3+HCl 白烟、CaCO3/Na2CO3+大气CO2→酸式盐、Na2O2+CO2 放在引擎的
+  // reactAtmosphere / _trySpecialSelf（需要大气 CO2 且仅在有水环境转酸式盐）
+];
+
+// ---- 金属与大气卤素的化合（点燃；气体来自大气，能附着金属表面）----
+const METAL_NONMETAL_RULES = [
+  // 2Na + Cl2 --点燃--> 2NaCl（白烟）
+  { type: 'special', reactants: [{ id: 'Na', coeff: 2 }, { id: 'Cl2', coeff: 1 }], products: [{ id: 'NaCl', coeff: 2 }], condition: 'ignited', rate: RATE.special },
+  // 2Fe + 3Cl2 --点燃--> 2FeCl3（棕烟）
+  { type: 'special', reactants: [{ id: 'Fe', coeff: 2 }, { id: 'Cl2', coeff: 3 }], products: [{ id: 'FeCl3', coeff: 2 }], condition: 'ignited', rate: RATE.special },
+  // Cu + Cl2 --点燃--> CuCl2（棕黄烟）
+  { type: 'special', reactants: [{ id: 'Cu', coeff: 1 }, { id: 'Cl2', coeff: 1 }], products: [{ id: 'CuCl2', coeff: 1 }], condition: 'ignited', rate: RATE.special },
+];
+
+// ---- 碱吸收酸性气体（气体在含碱容器中产生/大气被碱吸收时发生）----
+const ACID_GAS_RULES = [
+  { gas: 'CO2', base: 'NaOH', baseCoeff: 2, products: [{ id: 'Na2CO3', coeff: 1 }, { id: 'H2O', coeff: 1 }] },
+  { gas: 'CO2', base: 'Ca(OH)2', baseCoeff: 1, products: [{ id: 'CaCO3', coeff: 1 }, { id: 'H2O', coeff: 1 }] },
+  { gas: 'CO2', base: 'KOH', baseCoeff: 2, products: [{ id: 'K2CO3', coeff: 1 }, { id: 'H2O', coeff: 1 }] },
+  { gas: 'SO2', base: 'NaOH', baseCoeff: 2, products: [{ id: 'Na2SO3', coeff: 1 }, { id: 'H2O', coeff: 1 }] },
+  { gas: 'SO2', base: 'Ca(OH)2', baseCoeff: 1, products: [{ id: 'CaSO3', coeff: 1 }, { id: 'H2O', coeff: 1 }] },
+  { gas: 'SO2', base: 'KOH', baseCoeff: 2, products: [{ id: 'K2SO3', coeff: 1 }, { id: 'H2O', coeff: 1 }] },
+  // Cl2 尾气处理（有毒）：Cl2 + 2NaOH → NaCl + NaClO + H2O
+  { gas: 'Cl2', base: 'NaOH', baseCoeff: 2, products: [{ id: 'NaCl', coeff: 1 }, { id: 'NaClO', coeff: 1 }, { id: 'H2O', coeff: 1 }] },
+  { gas: 'Cl2', base: 'KOH', baseCoeff: 2, products: [{ id: 'KCl', coeff: 1 }, { id: 'KClO', coeff: 1 }, { id: 'H2O', coeff: 1 }] },
+  // NH3 碱性气体被酸吸收：NH3 + HCl → NH4Cl
+  { gas: 'NH3', base: 'HCl', baseCoeff: 1, products: [{ id: 'NH4Cl', coeff: 1 }] },
+  { gas: 'NH3', base: 'H2SO4', baseCoeff: 2, products: [{ id: '(NH4)2SO4', coeff: 1 }] },
+];
+
+function acidGasRuleFor(gas, base) {
+  for (const r of ACID_GAS_RULES) {
+    if (r.gas === gas && r.base === base) return r;
+  }
+  return null;
+}
+
+// ---- 气体溶于水（CO2→H2CO3、SO2→H2SO3、SO3→H2SO4、NO2 歧化、氨水、Cl2 氯水）----
+// acid 产物是气体（Cl2）时作为"溶质"直接入溶液（氯水，可继续参与氧化还原）
+const GAS_WATER_RULES = [
+  { gas: 'CO2', acid: 'H2CO3' },
+  { gas: 'SO2', acid: 'H2SO3' },
+  { gas: 'SO3', acid: 'H2SO4' },
+  { gas: 'NO2', acid: 'HNO3', byGas: 'NO' }, // 3NO2 + H2O → 2HNO3 + NO（简化 1:1）
+  { gas: 'NH3', acid: 'NH3·H2O' },
+  { gas: 'Cl2', acid: 'Cl2' },               // 氯气溶于水 → 氯水（溶质）
+];
+
+// ---- 大气可燃气体：不设"缓慢燃烧"----
+// 酒精灯/喷灯只是点火源与加热源，其火焰不消耗大气 O2、不产生 CO2。
+// 可燃气体（H2/CO/CH4/H2S）遇点燃源只有两种结局：积累到爆炸下限 → 爆鸣；
+// 浓度不足 → 不反应（气体留在大气里，玩家可通过气泡柱标签观察）。
+const ATMOSPHERE_COMBUSTION_RULES = [];
+
+// ---- 大气特殊反应：合成氨、氨催化氧化 ----
+const ATMOSPHERE_SPECIAL_RULES = [
+  // N2 + 3H2 ⇌ 2NH3（工业合成氨：高温高压催化剂，游戏简化为高温）
+  { type: 'special', reactants: [{ id: 'N2', coeff: 1 }, { id: 'H2', coeff: 3 }], products: [{ id: 'NH3', coeff: 2 }], condition: 'highTemp', rate: RATE.special * 0.3 },
+  // 4NH3 + 5O2 --催化剂△--> 4NO + 6H2O（氨催化氧化）
+  { type: 'special', reactants: [{ id: 'NH3', coeff: 4 }, { id: 'O2', coeff: 5 }], products: [{ id: 'NO', coeff: 4 }, { id: 'H2O', coeff: 6 }], condition: 'ignited', rate: RATE.special * 0.5 },
+  // 2NO + O2 → 2NO2（无色 NO 遇空气氧化成红棕 NO₂；慢速便于观察"无色→红棕"）
+  { type: 'special', reactants: [{ id: 'NO', coeff: 2 }, { id: 'O2', coeff: 1 }], products: [{ id: 'NO2', coeff: 2 }], condition: 'normal', rate: RATE.special * 0.05 },
+];
+
+exports.RATE = RATE;
+exports.THERMAL_RULES = THERMAL_RULES;
+exports.CATALYTIC_RULES = CATALYTIC_RULES;
+exports.COMBUSTION_RULES = COMBUSTION_RULES;
+exports.AUTO_DECOMP_RULES = AUTO_DECOMP_RULES;
+exports.GAS_REDUCTION_RULES = GAS_REDUCTION_RULES;
+exports.SOLID_REDUCTION_RULES = SOLID_REDUCTION_RULES;
+exports.SPECIAL_PAIR_RULES = SPECIAL_PAIR_RULES;
+exports.METAL_NONMETAL_RULES = METAL_NONMETAL_RULES;
+exports.ACID_GAS_RULES = ACID_GAS_RULES;
+exports.acidGasRuleFor = acidGasRuleFor;
+exports.GAS_WATER_RULES = GAS_WATER_RULES;
+exports.ATMOSPHERE_COMBUSTION_RULES = ATMOSPHERE_COMBUSTION_RULES;
+exports.ATMOSPHERE_SPECIAL_RULES = ATMOSPHERE_SPECIAL_RULES;
+
+  };
+  __modules["src/chem/redox.js"] = function (module, exports, __require) {
+// ============================================================================
+// 氧化还原规律系统（L1 REDOX_SYSTEM）
+// ----------------------------------------------------------------------------
+// 数据驱动：氧化剂表 + 还原剂表（各按价态/介质分支），balanceRedox 自动配平：
+//   1. 电子守恒 → 主系数（得失电子数最小公倍数）
+//   2. 电荷守恒 → 介质离子（酸性补 H+ / 碱性补 OH-）
+//   3. 氧守恒 → H2O 系数；氢守恒校验（不平衡则判该组合不成立）
+//   4. 旁观离子配盐（buildSalt）→ 输出完整物质方程式
+// 浓度/计量比决定分支（量变引起质变）：
+//   - 稀/浓 HNO3 → NO / NO2；Fe 被弱/强氧化剂 → Fe2+ / Fe3+
+//   - C 充分/不充分燃烧 → CO2 / CO；2H2S+O2 不足/过量 → S / SO2
+//   - CO2 与碱少量/过量 → 正盐 / 酸式盐（engine 侧计量比分支）
+// ============================================================================
+
+const { buildSalt, getSubstance, IONS } = __require('src/chem/substances.js');;
+
+const gcd = (a, b) => (b === 0 ? a : gcd(b, a % b));
+
+/**
+ * 氧化剂表：键为物质 id。
+ *   ion      —— 有效氧化离子的 { charge, o, h }（电荷/氧/氢原子数）
+ *   cation   —— 旁观阳离子（配盐用）；cationN —— 每分子氧化剂的阳离子数
+ *   anion    —— 旁观阴离子（氧化剂是盐时，如 CuSO4 的 SO4^2-）
+ *   branches —— 按介质/浓度选分支；分支含 { gain(每分子得电子), product{id,charge,o,h,count} }
+ *   strength —— 氧化剂强度（≥9 视为强：能把 Fe 氧化到 Fe3+）
+ */
+const OXIDIZERS = {
+  KMnO4: {
+    ion: { charge: -1, o: 4 }, cation: 'K+', cationN: 1,
+    branches: {
+      acid:    { gain: 5, product: { id: 'Mn2+', charge: 2, o: 0 } },                 // 紫色→Mn2+ 无色
+      neutral: { gain: 3, product: { id: 'MnO2', charge: 0, o: 2 } },                 // MnO2↓ 黑
+      base:    { gain: 1, product: { id: 'MnO4^2-', charge: -2, o: 4 } },             // 强碱→锰酸钾绿
+    },
+    strength: 10,
+  },
+  K2Cr2O7: {
+    ion: { charge: -2, o: 7 }, cation: 'K+', cationN: 2,
+    branches: {
+      acid: { gain: 6, product: { id: 'Cr3+', charge: 3, o: 0, count: 2 } },          // 橙红→Cr3+ 绿
+    },
+    strength: 9,
+  },
+  HNO3: {
+    ion: { charge: -1, o: 3 },
+    branches: {
+      conc:   { gain: 1, product: { id: 'NO2', charge: 0, o: 2 } },                   // 浓硝酸→NO2 红棕
+      dilute: { gain: 3, product: { id: 'NO', charge: 0, o: 1 } },                    // 稀硝酸→NO 无色
+    },
+    strength: 8,
+  },
+  H2SO4: {
+    // 浓硫酸（S+6→+4，每分子得 2e）。离子为 SO4^2-（电荷 -2，O4）；H+ 由 medH 统一补
+    ion: { charge: -2, o: 4 },
+    branches: { any: { gain: 2, product: { id: 'SO2', charge: 0, o: 2 } } },           // →SO2
+    strength: 8,
+  },
+  Cl2: { ion: { charge: 0, o: 0 }, branches: { any: { gain: 2, product: { id: 'Cl-', charge: -1, o: 0, count: 2 } } }, strength: 11 },
+  Br2: { ion: { charge: 0, o: 0 }, branches: { any: { gain: 2, product: { id: 'Br-', charge: -1, o: 0, count: 2 } } }, strength: 8 },
+  I2:  { ion: { charge: 0, o: 0 }, branches: { any: { gain: 2, product: { id: 'I-', charge: -1, o: 0, count: 2 } } }, strength: 7 },
+  H2O2: {
+    ion: { charge: 0, o: 2, h: 2 },
+    branches: {
+      acid:    { gain: 2, product: { id: 'H2O', charge: 0, o: 1, h: 2, count: 2 } },   // →H2O
+      base:    { gain: 2, product: { id: 'OH-', charge: -1, o: 1, h: 1, count: 2 } },  // →OH-
+      neutral: { gain: 2, product: { id: 'H2O', charge: 0, o: 1, h: 2, count: 2 } },
+    },
+    strength: 6,
+  },
+  O2: {
+    ion: { charge: 0, o: 2 },
+    branches: {
+      acid:    { gain: 4, product: { id: 'H2O', charge: 0, o: 1, h: 2, count: 2 } },
+      base:    { gain: 4, product: { id: 'OH-', charge: -1, o: 1, h: 1, count: 4 } },
+      neutral: { gain: 4, product: { id: 'OH-', charge: -1, o: 1, h: 1, count: 4 } },
+    },
+    strength: 9,
+  },
+  'Fe3+': { ion: { charge: 3, o: 0 }, branches: { any: { gain: 1, product: { id: 'Fe2+', charge: 2, o: 0 } } }, strength: 5 },
+  NaClO: {
+    ion: { charge: -1, o: 1 }, cation: 'Na+', cationN: 1,
+    branches: { any: { gain: 2, product: { id: 'Cl-', charge: -1, o: 0 } } },          // ClO-→Cl-
+    strength: 8,
+  },
+  'H+': { ion: { charge: 1, o: 0, h: 1 }, branches: { any: { gain: 1, product: { id: 'H2', charge: 0, o: 0, h: 2, count: 0.5 } } }, strength: 3 },
+  CuSO4: { ion: { charge: 2, o: 0 }, anion: 'SO4^2-', branches: { any: { gain: 2, product: { id: 'Cu', charge: 0, o: 0 } } }, strength: 4 },
+  CuCl2: { ion: { charge: 2, o: 0 }, anion: 'Cl-', anionN: 2, branches: { any: { gain: 2, product: { id: 'Cu', charge: 0, o: 0 } } }, strength: 4 },
+  AgNO3: { ion: { charge: 1, o: 0 }, anion: 'NO3-', branches: { any: { gain: 1, product: { id: 'Ag', charge: 0, o: 0 } } }, strength: 4 },
+  FeCl3: { ion: { charge: 3, o: 0 }, anion: 'Cl-', anionN: 3, branches: { any: { gain: 1, product: { id: 'Fe2+', charge: 2, o: 0 } } }, strength: 5 },
+};
+
+/**
+ * 还原剂表：
+ *   ion    —— 有效还原离子（金属单质 charge 0）
+ *   anion  —— 旁观阴离子（配盐用，如 FeSO4 的 SO4^2-）
+ *   loss   —— 每分子失电子数；product —— 氧化产物
+ *   branches —— 强/弱氧化剂分支（Fe 单质），或 O2 量分支（C、H2S）
+ */
+const REDUCERS = {
+  // Fe2+ 只能被较强氧化剂氧化（Cl2/KMnO4/K2Cr2O7/浓HNO3/Br2；I2 氧化性不足）
+  FeSO4:   { ion: { charge: 2, o: 0 }, anion: 'SO4^2-', loss: 1, product: { id: 'Fe3+', charge: 3, o: 0 }, minOx: 8 },
+  FeCl2:   { ion: { charge: 2, o: 0 }, anion: 'Cl-', anionN: 2, loss: 1, product: { id: 'Fe3+', charge: 3, o: 0 }, minOx: 8 },
+  Fe: {
+    ion: { charge: 0, o: 0 },
+    branches: {
+      weak:   { loss: 2, product: { id: 'Fe2+', charge: 2, o: 0 } },   // 弱氧化剂（H+/Cu2+/Fe3+）
+      strong: { loss: 3, product: { id: 'Fe3+', charge: 3, o: 0 } },   // 强氧化剂（Cl2/KMnO4/HNO3...）
+    },
+  },
+  Cu:    { ion: { charge: 0, o: 0 }, loss: 2, product: { id: 'Cu2+', charge: 2, o: 0 } },
+  Zn:    { ion: { charge: 0, o: 0 }, loss: 2, product: { id: 'Zn2+', charge: 2, o: 0 } },
+  Mg:    { ion: { charge: 0, o: 0 }, loss: 2, product: { id: 'Mg2+', charge: 2, o: 0 } },
+  Al:    { ion: { charge: 0, o: 0 }, loss: 3, product: { id: 'Al3+', charge: 3, o: 0 } },
+  Na:    { ion: { charge: 0, o: 0 }, loss: 1, product: { id: 'Na+', charge: 1, o: 0 } },
+  K:     { ion: { charge: 0, o: 0 }, loss: 1, product: { id: 'K+', charge: 1, o: 0 } },
+  Li:    { ion: { charge: 0, o: 0 }, loss: 1, product: { id: 'Li+', charge: 1, o: 0 } },
+  SO2:   { ion: { charge: 0, o: 2 }, loss: 2, product: { id: 'SO4^2-', charge: -2, o: 4 } },   // +4S→+6S
+  H2SO3: { ion: { charge: 0, o: 3, h: 2 }, loss: 2, product: { id: 'SO4^2-', charge: -2, o: 4 } },
+  Na2SO3:{ ion: { charge: -2, o: 3 }, cation: 'Na+', cationN: 2, loss: 2, product: { id: 'SO4^2-', charge: -2, o: 4 } }, // 旁观阳离子（碱金属盐）
+  H2S:   { ion: { charge: 0, o: 0, h: 2 }, loss: 2, product: { id: 'S', charge: 0, o: 0 } },   // -2S→0
+  FeS:   { ion: { charge: 0, o: 0 }, loss: 2, product: { id: 'S', charge: 0, o: 0 } },        // FeS→Fe2+ + S
+  H2O2:  { ion: { charge: 0, o: 2, h: 2 }, loss: 2, product: { id: 'O2', charge: 0, o: 2 } },  // 还原性（被强氧化剂）
+  KI:    { ion: { charge: -1, o: 0 }, cation: 'K+', loss: 1, product: { id: 'I2', charge: 0, o: 0, count: 0.5 } },
+  NaI:   { ion: { charge: -1, o: 0 }, cation: 'Na+', loss: 1, product: { id: 'I2', charge: 0, o: 0, count: 0.5 } },
+  KBr:   { ion: { charge: -1, o: 0 }, cation: 'K+', loss: 1, product: { id: 'Br2', charge: 0, o: 0, count: 0.5 } },
+  NaBr:  { ion: { charge: -1, o: 0 }, cation: 'Na+', loss: 1, product: { id: 'Br2', charge: 0, o: 0, count: 0.5 } },
+  CO:    { ion: { charge: 0, o: 1 }, loss: 2, product: { id: 'CO2', charge: 0, o: 2 } },
+  H2:    { ion: { charge: 0, o: 0, h: 2 }, loss: 2, product: { id: 'H2O', charge: 0, o: 1, h: 2 } },
+  // 注：C 不进 REDOX 表——碳常温不参与离子氧化还原（不跟酸/盐溶液反应），
+  // 其氧化只走 COMBUSTION_RULES（点燃）与 GAS/SOLID_REDUCTION_RULES（高温）
+  H2C2O4:{ ion: { charge: 0, o: 4, h: 2 }, loss: 2, product: { id: 'CO2', charge: 0, o: 2, count: 2 } }, // 草酸
+  C2H5OH:{ ion: { charge: 0, o: 1, h: 6 }, loss: 4, product: { id: 'CH3COOH', charge: 0, o: 2, h: 4 } },  // 酒驾橙→绿
+  'K2MnO4': { ion: { charge: -2, o: 4 }, cation: 'K+', cationN: 2, loss: 1, product: { id: 'KMnO4', charge: -1, o: 4 } }, // 锰酸钾→高锰酸钾
+};
+
+/** 氧化剂强度≥9 视为"强"（能把 Fe 氧化到 Fe3+；Cl2/KMnO4/K2Cr2O7/O2） */
+const STRONG_OXIDIZER = 9;
+
+/** 介质的阴离子（配盐用）：酸介质取酸的阴离子，碱介质取碱阳离子 */
+function mediaInfo(solution) {
+  // solution: { mass(id), ids() }；返回 { medium, acidAnion, acidId, baseId }
+  let acidAnion = null;
+  let acidId = null;
+  let baseId = null;
+  for (const id of solution.ids()) {
+    const s = getSubstance(id);
+    if (!acidAnion && s.kind === 'acid' && s.acidStrength === 'strong' && s.ions) {
+      acidAnion = s.ions.an;
+      acidId = id;
+    }
+    if (!baseId && s.kind === 'base' && s.acidStrength === 'strong') baseId = id;
+  }
+  if (acidAnion) return { medium: 'acid', acidAnion, acidId, baseId: null };
+  if (baseId) return { medium: 'base', acidAnion: null, acidId: null, baseId };
+  return { medium: 'neutral', acidAnion: null, acidId: null, baseId: null };
+}
+
+/** 选择氧化剂分支：medium + 浓度（g/L） */
+function oxBranch(entry, medium, conc) {
+  const b = entry.branches;
+  if (b.any) return b.any;
+  if (entry === OXIDIZERS.HNO3 || entry.id === 'HNO3') {
+    return conc >= 300 ? b.conc : b.dilute; // 浓/稀硝酸阈值（g/L）
+  }
+  if (b[medium]) return b[medium];
+  return b.acid ?? b.neutral ?? b.base ?? b.any;
+}
+
+/** 选择还原剂分支：weak/strong（Fe）、full/partial（C）由外部给出 */
+function redBranch(entry, key) {
+  const b = entry.branches;
+  if (!b) return { loss: entry.loss, product: entry.product };
+  return b[key] ?? b.weak ?? b.full ?? b.partial ?? b.strong;
+}
+
+function scaleProduct(p, n) {
+  const count = p.count ?? 1;
+  return { id: p.id, charge: p.charge, o: p.o, h: p.h ?? 0, n: n * count };
+}
+
+/**
+ * 自动配平：返回 { rx: [{id, coeff}], pd: [{id, coeff}] }（系数为摩尔数，可为分数）
+ * 任一步校验失败返回 null（该氧化剂×还原剂组合不成立）。
+ *
+ * 介质离子规则：
+ *   - 酸介质：dq>0 左补 H+；dq<0 右补 H+（产物酸，如 KMnO4+SO2→H2SO4）
+ *   - 碱介质：dq>0 右补 OH-；dq<0 左补 OH-
+ *   - 中性介质：dq<0 右补 H+（生成酸，如 H2S+Cl2→2HCl+S）；dq>0 判不成立
+ * H2O 系数可为负（SO2 氧化需要水参与反应物）。
+ */
+function balanceRedox(oxId, redId, opts = {}) {
+  const ox = OXIDIZERS[oxId];
+  const red = REDUCERS[redId];
+  if (!ox || !red) return null;
+  const { medium = 'acid', conc = 0, redKey = 'weak', oxKey } = opts;
+  const ob = oxKey ? ox.branches[oxKey] ?? ox.branches.any : oxBranch(ox, medium, conc);
+  const rb = redBranch(red, redKey);
+  if (!ob || !rb) return null;
+
+  const g = gcd(ob.gain, rb.loss);
+  const a = rb.loss / g; // 氧化剂 mol
+  const b = ob.gain / g; // 还原剂 mol
+
+  // 主产物
+  const redP = scaleProduct(ob.product, a);
+  const oxP = scaleProduct(rb.product, b);
+
+  // 电荷守恒 → 介质离子（酸介质 H+；碱介质 OH-；中性 dq<0 时产物酸）
+  if (!ox.ion || !red.ion) return null; // 氧化剂/还原剂缺离子配置 → 跳过配平
+  const qRx = a * ox.ion.charge + b * red.ion.charge;
+  const qPd = redP.n * redP.charge + oxP.n * oxP.charge;
+  const dq = qPd - qRx;
+  let medH = 0; // H+ mol：>0 在方程左（消耗），<0 在方程右（产物酸）
+  let medOH = 0; // OH- mol：>0 在方程左（消耗），<0 在方程右（产物碱）
+  if (Math.abs(dq) > 1e-9) {
+    if (medium === 'acid') medH = dq;        // dq>0 左补 H+；dq<0 右补 H+
+    else if (medium === 'base') medOH = dq;  // dq>0 左补 OH-；dq<0 右补 OH-
+    else medH = dq < 0 ? dq : 0;             // 中性：仅 dq<0（产物酸）成立
+  }
+  // 校验电荷：qRx + 左介质电荷 = qPd + 右介质电荷
+  const qL = qRx + (medH > 0 ? medH : 0) + (medOH < 0 ? medOH : 0);
+  const qR = qPd + (medH < 0 ? -medH : 0) + (medOH > 0 ? -medOH : 0);
+  if (Math.abs(qL - qR) > 1e-6) return null;
+
+  // 氧守恒 → H2O（可为负：H2O 参与反应物，如 SO2 被氧化需补水）
+  const oL = a * ox.ion.o + b * red.ion.o + (medOH < 0 ? -medOH : 0);
+  const oR = redP.n * redP.o + oxP.n * oxP.o + (medOH > 0 ? medOH : 0);
+  const h2o = oL - oR;
+
+  // 氢守恒校验
+  const hL = a * (ox.ion.h ?? 0) + b * (red.ion.h ?? 0) + (medH > 0 ? medH : 0) + (medOH < 0 ? -medOH : 0) + (h2o < 0 ? -h2o * 2 : 0);
+  const hR = redP.n * redP.h + oxP.n * oxP.h + (medH < 0 ? -medH : 0) + (medOH > 0 ? medOH : 0) + (h2o > 0 ? h2o * 2 : 0);
+  if (Math.abs(hL - hR) > 1e-6) return null;
+
+  // ---- 组装产物（分子式级别）：介质离子 → 酸/碱分子；离子产物 → 配盐 ----
+  const rx = [];
+  const pd = [];
+  const cations = []; // {id, n}
+  const anions = [];  // {id, n}
+  const freeProducts = []; // {id, n} 分子产物（气体/沉淀/单质）
+
+  /** 产物归类：离子 → 配盐池；酸/分子 → 直接产物 */
+  const classify = (id, n) => {
+    if (n <= 1e-9) return;
+    if (id === 'H+') { cations.push({ id: 'H+', n }); return; }
+    if (id === 'OH-') { anions.push({ id: 'OH-', n }); return; }
+    const ion = IONS[id];
+    if (ion) {
+      if (ion.charge > 0) cations.push({ id, n });
+      else anions.push({ id, n });
+      return;
+    }
+    const s = getSubstance(id);
+    if (s.ions && s.ions.cat === 'H+') {
+      freeProducts.push({ id, n }); // 酸（弱酸不电离，直接产物）
+      return;
+    }
+    if (s.ions) {
+      cations.push({ id: s.ions.cat, n: n * s.ions.catCount });
+      anions.push({ id: s.ions.an, n: n * s.ions.anCount });
+      return;
+    }
+    freeProducts.push({ id, n });
+  };
+  classify(redP.id, redP.n);
+  classify(oxP.id, oxP.n);
+
+  // 旁观离子：氧化剂阳离子/阴离子 + 还原剂阳离子/阴离子
+  if (ox.cation) cations.push({ id: ox.cation, n: a * (ox.cationN ?? 1) });
+  if (ox.anion) anions.push({ id: ox.anion, n: a * (ox.anionN ?? 1) });
+  if (red.cation) cations.push({ id: red.cation, n: b * (red.cationN ?? 1) });
+  if (red.anion) anions.push({ id: red.anion, n: b * (red.anionN ?? 1) });
+
+  // 介质：H+ / OH- 的来源与去向
+  const oxIsAcid = oxId === 'H+' || getSubstance(oxId).ions?.cat === 'H+';
+  if (oxId === 'H+') {
+    // H+ 作氧化剂：酸分子承载全部 H+（a 个被还原 + medH 个电荷差额）
+    const acid = getSubstance(opts.acidId ?? 'H2SO4');
+    const acidMol = (a + (medH > 0 ? medH : 0)) / acid.ions.catCount;
+    rx.push({ id: opts.acidId ?? 'H2SO4', coeff: acidMol });
+    anions.push({ id: acid.ions.an, n: a + (medH > 0 ? medH : 0) });
+  } else if (oxIsAcid) {
+    // 氧化剂即酸（HNO3）：被还原 a 分子；medH>0 时还需额外酸提供 H+
+    const acid = getSubstance(oxId);
+    const acidMol = medH > 0 ? Math.max(a, medH / acid.ions.catCount) : a;
+    rx.push({ id: oxId, coeff: acidMol });
+    const leftoverAn = (acidMol - a) * acid.ions.anCount; // 未被还原的酸根→配盐
+    if (leftoverAn > 1e-9) anions.push({ id: acid.ions.an, n: leftoverAn });
+    if (medH < 0) cations.push({ id: 'H+', n: -medH + a * acid.ions.catCount }); // 产物酸 H+（含 ox 电离贡献）
+  } else {
+    rx.push({ id: oxId, coeff: a });
+    if (medH > 0) {
+      // 非酸氧化剂 + 酸介质：介质酸提供 H+ 与阴离子
+      const acidId = opts.acidId ?? 'H2SO4';
+      const acid = getSubstance(acidId);
+      rx.push({ id: acidId, coeff: medH / acid.ions.catCount });
+      anions.push({ id: acid.ions.an, n: medH });
+    }
+    if (medH < 0) cations.push({ id: 'H+', n: -medH }); // 产物酸
+  }
+  if (medOH !== 0) {
+    const baseId = opts.baseId ?? 'KOH';
+    const base = getSubstance(baseId);
+    if (medOH < 0) {
+      // OH- 在左（消耗）：碱分子参与反应，阳离子配盐
+      rx.push({ id: baseId, coeff: -medOH / base.ions.anCount });
+      cations.push({ id: base.ions.cat, n: -medOH });
+    } else {
+      anions.push({ id: 'OH-', n: medOH }); // OH- 在右（产物）：配盐成碱
+    }
+  }
+  rx.push({ id: redId, coeff: b });
+  if (h2o !== 0) (h2o > 0 ? pd : rx).push({ id: 'H2O', coeff: Math.abs(h2o) });
+  for (const p of freeProducts) pd.push({ id: p.id, coeff: p.n });
+
+  // ---- 配盐：阳离子 × 阴离子（buildSalt），贪婪匹配 ----
+  const cMap = new Map();
+  for (const c of cations) cMap.set(c.id, (cMap.get(c.id) ?? 0) + c.n);
+  const aMap = new Map();
+  for (const an of anions) aMap.set(an.id, (aMap.get(an.id) ?? 0) + an.n);
+  for (const [catId, catN] of cMap) {
+    if (catN <= 1e-9) continue;
+    let rest = catN;
+    for (const [anId, anN] of aMap) {
+      if (anN <= 1e-9 || rest <= 1e-9) continue;
+      const salt = buildSalt(catId, anId);
+      const take = Math.min(rest / salt.catCount, anN / salt.anCount);
+      if (take <= 1e-9) continue;
+      pd.push({ id: salt.formula, coeff: take });
+      rest -= take * salt.catCount;
+      aMap.set(anId, anN - take * salt.anCount);
+    }
+  }
+  // 合并同 id 产物（H2O 可能出现两次）
+  const pdMap = new Map();
+  for (const p of pd) pdMap.set(p.id, (pdMap.get(p.id) ?? 0) + p.coeff);
+  pd.length = 0;
+  for (const [id, coeff] of pdMap) if (Math.abs(coeff) > 1e-9) pd.push({ id, coeff });
+  return { rx, pd };
+}
+
+exports.OXIDIZERS = OXIDIZERS;
+exports.REDUCERS = REDUCERS;
+exports.STRONG_OXIDIZER = STRONG_OXIDIZER;
+exports.mediaInfo = mediaInfo;
+exports.balanceRedox = balanceRedox;
+
+  };
+  __modules["src/chem/atmosphere.js"] = function (module, exports, __require) {
+// ============================================================================
+// 环境大气模型
+// ----------------------------------------------------------------------------
+// 名义总空气 totalAir（默认 2000g，游戏尺度）：玩家产生 1g 气体 ≈ 0.05% 可见度。
+// 初始组成默认 N2 80% / O2 20%。反应产生气体 → add；燃烧耗氧 → remove。
+// 百分比按实时总质量计算（HUD 同时显示百分比与质量）。
+// ============================================================================
+
+class Atmosphere {
+  constructor({ totalAir = 2000, init = { N2: 0.8, O2: 0.2 } } = {}) {
+    this.gas = new Map();
+    for (const [id, frac] of Object.entries(init)) {
+      this.gas.set(id, totalAir * frac);
+    }
+    // 保证总质量至少等于 totalAir（预留可加"基准惰性气体"）
+    this._baseTotal = totalAir;
+    this._cause = null; // 当前反应原因（气体变化溯源；由化学引擎盖章）
+    this._log = []; // 本 tick 气体变化日志 [{id, delta, cause}]
+  }
+
+  mass(id) {
+    return this.gas.get(id) ?? 0;
+  }
+
+  total() {
+    let s = 0;
+    for (const m of this.gas.values()) s += m;
+    return s;
+  }
+
+  fraction(id) {
+    const t = this.total();
+    return t === 0 ? 0 : this.mass(id) / t;
+  }
+
+  add(id, mass) {
+    if (mass <= 0) return;
+    this.gas.set(id, this.mass(id) + mass);
+    if (this._cause) this._log.push({ id, delta: mass, cause: this._cause });
+  }
+
+  /** 直接设置某气体含量（g）——关卡/插件场景大气预设用（覆盖而非累加） */
+  setGas(id, mass) {
+    if (!Number.isFinite(mass) || mass < 0) return;
+    const prev = this.mass(id);
+    this.gas.set(id, mass);
+    if (this._cause && Math.abs(mass - prev) > 1e-9) this._log.push({ id, delta: mass - prev, cause: this._cause });
+  }
+
+  remove(id, mass) {
+    if (mass <= 0) return 0;
+    const cur = this.mass(id);
+    const removed = Math.min(cur, mass);
+    this.gas.set(id, cur - removed);
+    if (removed > 1e-9 && this._cause) this._log.push({ id, delta: -removed, cause: this._cause });
+    return removed;
+  }
+
+  /** 取走并清空本 tick 的气体变化日志（调试面板显示产生/消耗原因） */
+  flushLog() {
+    const out = this._log;
+    this._log = [];
+    return out;
+  }
+
+  o2Fraction() {
+    return this.fraction('O2');
+  }
+
+  composition() {
+    const t = this.total();
+    const out = {};
+    for (const [id, m] of this.gas) out[id] = m / t;
+    return out;
+  }
+}
+
+// ============================================================================
+// AtmosphereMaterial：把大气适配成 Material 接口（作为还原剂 CO/H2、燃烧 O2 的反应物）
+// ============================================================================
+class AtmosphereMaterial {
+  constructor(atmosphere) {
+    this.atmosphere = atmosphere;
+    this.phase = 'gas';
+    this.isPlayer = false;
+    this.container = null;
+  }
+
+  avail(id) {
+    return this.atmosphere.mass(id);
+  }
+
+  consume(id, mass) {
+    return this.atmosphere.remove(id, mass);
+  }
+
+  add(id, mass) {
+    this.atmosphere.add(id, mass);
+  }
+
+  ids() {
+    return [...this.atmosphere.gas.keys()];
+  }
+}
+
+exports.Atmosphere = Atmosphere;
+exports.AtmosphereMaterial = AtmosphereMaterial;
+
+  };
+  __modules["src/physics/collision.js"] = function (module, exports, __require) {
+// ============================================================================
+// 碰撞系统
+// ----------------------------------------------------------------------------
+// 分轴解算：先 X 后 Y。两轴都按小步长移动（≤ maxXStep / maxYStep），避免高速穿过
+// 薄墙/薄板；被挡时在精确边界停下。静态体（地板）阻挡所有动态体；动态体彼此仅在
+// 双方 solid 时碰撞；可推动物块被水平链式推挤，单次推挤不超过一个步长，被挡则
+// 整体还原、推动方停住。自动上台阶：被台阶阻挡且高度差 ≤ autoStepMax 时直接走上。
+//
+// 防穿模/防瞬移的关键设计：
+//  1. 撞顶/落地按"本子步移动前的相对位置"判定接触面，钳制后立即停止剩余子步——
+//     旧代码在撞顶钳制后子步继续上移，留下嵌入，随后被"宽面抬升"一帧帧顶穿到
+//     板顶（"跳到池底上方"的瞬移）。现在撞顶即停在板底，永不嵌入。
+//  2. X 轴只解算真正的侧面接触；正在落地（底边浅入）或撞顶（头顶浅入）时不横推，
+//     交给 Y 轴——杜绝"落地瞬间被横向甩出 16px"的落地瞬移，也杜绝深嵌时一帧帧
+//     横向漂移。
+//  3. 每刻末尾的残余重叠解算（4 面 MTV：取上/下/左/右四个面中最小穿透量推出，
+//     单次封顶 MAX_RESOLVE_X/Y）：处理斜向冲入板底、出生嵌入实心、传送落点、
+//     爆炸推挤等轴解算覆盖不到的残留。穿透最小的面 = 体离哪边最近，推出方向必然
+//     把体送回它来的那一侧——被池底顶住时只会被推回下方，绝不会被顶到上方。
+//  4. 深嵌入（传送/出生/爆炸后）按 ≤16px/帧温柔推出，不一次性大位移。
+//
+// 已知简化（MVP）：推挤不"携带"堆叠在上方的物块（上方物块会短暂失去支撑而后落下）；
+// 下落速度被钳制以防穿墙。
+// ============================================================================
+
+const { AABB } = __require('src/physics/aabb.js');;
+
+/** 单次穿透解压的最大位移（px）：任何一帧都不会"一次性推出很远"而显得瞬移。 */
+const MAX_RESOLVE_X = 16;
+const MAX_RESOLVE_Y = 16;
+/** 垂直面接触的判定阈值（px）：小于此值的穿透按"落地/撞顶"处理，不做横向解算；
+ *  大于此值的深嵌入交给 MTV 按最小穿透面推出。 */
+const STEP_MAX = 32;
+
+/** 某体的碰撞形状列表（世界坐标 AABB）。默认单矩形；网格类对象返回贴合物质的多矩形 */
+function shapesOf(b) {
+  const list = b && typeof b.getShapes === 'function' ? b.getShapes() : [b.collider()];
+  return list.map((s) => (s && typeof s.overlaps === 'function' ? s : new AABB(s.x, s.y, s.w, s.h)));
+}
+
+function overlaps(a, b, eps = 0) {
+  const sa = shapesOf(a);
+  const sb = shapesOf(b);
+  for (const x of sa) for (const y of sb) if (x.overlaps(y, eps)) return true;
+  return false;
+}
+
+/**
+ * 该动态体是否能被"站上去"（提供支撑）：
+ * 沉淀粒子（有 amount）必须**结构稳定**——落地静止（onGround 且速度接近 0）
+ * 且**持续 ≥STABLE_T**（本帧之前已经稳稳地歇了 0.45s）才可垫脚：
+ *   1. 正在下落/刚放置的沉淀不能给玩家提供向上的支持力（"跳→下落瞬间放置→
+ *      左脚踩右脚上天"的第一个漏洞）；
+ *   2. 刚落定不到 0.45s 的新鲜层同样不支撑（"跳→空中放→回落踩住新层→每跳
+ *      垫高 4px 无限飞天"的第二个漏洞——沙要踩实了才立得住）。
+ * 普通物块/玩家随时可站。
+ */
+const STABLE_T = 0.45;
+function supportsStanding(o) {
+  if (o.amount === undefined) return true;
+  // 玩家"放置"的沉淀（origin.kind === 'place'）**永远不提供垫脚支撑**——左脚踩右脚
+  // 的本源：自己刚放到脚下的支撑物不能立脚（跳→放→落回→垫高的循环直接断根）。
+  // 关卡预设沉淀堆（Deposit 物化）/反应沉降等（非 place）落地静止 ≥STABLE_T
+  // （踩实）后才可被踩（真·沙堆站稳）。
+  if (o.origin?.kind === 'place') return false;
+  return o.onGround === true && Math.abs(o.vel.x) < 40 && Math.abs(o.vel.y) < 40 && o.stable === true;
+}
+
+/**
+ * 四面穿透量：对每对重叠的碰撞形状，计算从 上/下/左/右 四个面的最小穿透深度。
+ * 某面没有重叠时为 Infinity（该面不构成候选）。
+ * 用"形状对"而非整个 AABB：被完全腐蚀掉的部分（无形状）不参与，也不挡人。
+ */
+function penSides(b, o) {
+  const sb = shapesOf(b);
+  const so = shapesOf(o);
+  let top = Infinity;
+  let bottom = Infinity;
+  let left = Infinity;
+  let right = Infinity;
+  for (const a of sb) {
+    for (const c of so) {
+      if (!a.overlaps(c, 0)) continue;
+      top = Math.min(top, a.bottom - c.top);
+      bottom = Math.min(bottom, c.bottom - a.top);
+      left = Math.min(left, c.right - a.left);
+      right = Math.min(right, a.right - c.left);
+    }
+  }
+  return { top, bottom, left, right };
+}
+
+/**
+ * X 轴是否应该做横向解算？
+ * 垂直面接触（正在落地/撞顶，或深嵌但 MTV 会选垂直轴）时返回 false，把体交给
+ * Y 轴/MTV——否则横向解算会把刚落到表面的体横着甩出去（"落地瞬移"），或在深嵌
+ * 宽地板里一帧帧横向漂移。
+ */
+function xShouldResolve(b, p) {
+  const mHor = Math.min(p.left, p.right);
+  if (b.vel.y > 0) return !(p.top < mHor); // 下落中：底边穿透更小 → 落地接触，不横推
+  if (b.vel.y < 0) return !(p.bottom < mHor); // 上升中：头顶穿透更小 → 撞顶接触，不横推
+  // 静止：浅穿透（≤STEP_MAX）可能是台阶/矮墙侧擦，保持旧语义（横向阻挡）；
+  // 只有深嵌入且垂直轴占优时才放行给 MTV 垂直解压，避免横向漂移。
+  const vert = Math.min(p.top, p.bottom);
+  return !(vert > STEP_MAX && vert < mHor);
+}
+
+/**
+ * 残余重叠 4 面 MTV 解算：把 b 沿"穿透最小的面"推出 o（单次封顶；深嵌入分帧推出）。
+ * 由上一子步位置无法判定接触面的残留重叠（斜向冲入、出生嵌入、传送落点、爆炸
+ * 推挤）都走这里——穿透最小的面就是体离哪边最近，推出方向必然把体送回它来的那侧，
+ * 杜绝"被顶穿到另一面"（如被池底顶到池子上方）。
+ */
+function resolveEmbed(b, o) {
+  const p = penSides(b, o);
+  let side = null;
+  let pen = Infinity;
+  if (p.top <= pen) { side = 'top'; pen = p.top; }
+  if (p.bottom < pen) { side = 'bottom'; pen = p.bottom; }
+  if (p.left < pen) { side = 'left'; pen = p.left; }
+  if (p.right < pen) { side = 'right'; pen = p.right; }
+  if (side === null || pen === Infinity) return false;
+  // 方向修正：MTV 选了"向下推出"（穿透最小的面在下方），但 b 的顶已在 o 的顶之上
+  // ——b 不可能在 o 下方（否则顶不会高过 o 的顶），它只可能是从上方嵌入的，改判落地。
+  // 典型：大物块放进池里时底边嵌进池底壁（旧代码的"宽面抬升"就为此存在），
+  // 以及出生时顶恰好与地面齐平的深嵌。只对"非上升"的体生效：上升中（vel.y<0）的
+  // 体是刚从下方冲上来的（如跳起斜撞池底），必须维持 MTV 的向下推出，否则会被
+  // 抬到板上方——正是要杜绝的"瞬移到上面"。反过来（顶在 o 顶之下）则维持 MTV 的
+  // 向下，保证撞池底/悬空板底时只会被推回下方、绝不会被抬到上方。
+  if (side === 'bottom' && b.top <= o.top + 0.5 && b.vel.y >= 0) side = 'top';
+  // 支撑接触保护：b 的底不高于 o 的底（b 基本在 o 正下方）时，side=bottom 的"下压"
+  // 实际上是把支撑物压走——典型：物块被站在上面的玩家"踩"着，每 tick 被压进地板
+  // 1.33px，玩家与物块一起下沉（"骑着物块沉地"）。这种重叠的正确解是抬 o（o 侧的
+  // resolveEmbed 会按 top 面把 o 抬回 b 的顶），b 侧跳过即可。静态体（地板）除外：
+  // b 嵌在地板里且底不高于地板底时仍需向下推出。
+  if (side === 'bottom' && b.bottom >= o.bottom - 0.5 && !o.static) return false;
+  const move = Math.min(pen, side === 'top' || side === 'bottom' ? MAX_RESOLVE_Y : MAX_RESOLVE_X);
+  switch (side) {
+    case 'top':
+      b.y -= move;
+      b.vel.y = 0;
+      if (move >= pen) b.onGround = true; // 完全落地才给支撑（分帧推出期间不算）
+      break;
+    case 'bottom':
+      b.y += move; // 从板底下方推出：向下送回，绝不向上顶穿
+      b.vel.y = 0;
+      break;
+    case 'left':
+      b.x += move;
+      b.vel.x = 0;
+      break;
+    case 'right':
+      b.x -= move;
+      b.vel.x = 0;
+      break;
+  }
+  return true;
+}
+
+/**
+ * 沿穿透较小的那一侧推出（对"已嵌入"的重叠最温和，避免大跨度瞬移）。
+ * 只在 X 轴判定为"侧面接触"时才调用（见 xShouldResolve）。
+ */
+function resolveOverlapX(b, o) {
+  const sb = shapesOf(b);
+  const so = shapesOf(o);
+  let leftPen = Infinity;
+  let rightPen = Infinity;
+  for (const a of sb) {
+    for (const c of so) {
+      if (!a.overlaps(c, 0)) continue;
+      leftPen = Math.min(leftPen, c.right - a.left);
+      rightPen = Math.min(rightPen, a.right - c.left);
+    }
+  }
+  if (leftPen === Infinity || rightPen === Infinity) return;
+  if (leftPen < rightPen) b.x += Math.min(leftPen, MAX_RESOLVE_X);
+  else b.x -= Math.min(rightPen, MAX_RESOLVE_X);
+}
+
+class CollisionSystem {
+  constructor({ gravity = 1200, autoStepMax = 14, maxFallSpeed = 1500, maxYStep = 6, maxXStep = 6, groundFriction = 0, airFriction = 0 } = {}) {
+    this.gravity = gravity;
+    this.autoStepMax = autoStepMax;
+    this.maxFallSpeed = maxFallSpeed;
+    this.maxYStep = maxYStep; // Y 分步移动的最大步长（防穿模）
+    this.maxXStep = maxXStep; // X 分步移动的最大步长（防穿墙 / 防推挤瞬移）
+    this.groundFriction = groundFriction; // 落地物体的水平摩擦系数（1/s，衰减速度）
+    this.airFriction = airFriction; // 空气摩擦（1/s，仅水平）：空中不无限漂移
+  }
+
+  step(dt, { dynamics, statics }) {
+    this.dt = dt;
+    this._buildHash(dynamics, statics); // 空间哈希宽相位（粒子堆 O(N²)→ 邻域 O(N)）
+    for (const b of dynamics) {
+      b.onGround = false;
+      b.blockedX = false;
+      b.collisions = [];
+    }
+    // 重力
+    for (const b of dynamics) {
+      if (!b.static && b.gravity > 0) {
+        b.vel.y += this.gravity * b.gravity * dt;
+        if (b.vel.y > this.maxFallSpeed) b.vel.y = this.maxFallSpeed;
+      }
+    }
+    // X 积分（含推挤、自动上台阶）
+    for (const b of dynamics) this.integrateX(b, dynamics, statics);
+    // Y 积分（落地、撞顶、堆叠）
+    for (const b of dynamics) this.integrateY(b, dynamics, statics);
+    // 残余重叠分离（斜向冲入/出生嵌入/传送落点/爆炸推挤）：4 面 MTV，小步推出
+    this.resolveResidual(dynamics, statics);
+    // 地面摩擦：落地的动态体水平速度快速衰减——爆炸/踢飞后的物体不会永远滑行
+    for (const b of dynamics) {
+      if (b.onGround && b.vel.x !== 0) {
+        b.vel.x *= Math.max(0, 1 - this.groundFriction * dt);
+        if (Math.abs(b.vel.x) < 5) b.vel.x = 0;
+      }
+    }
+    // 空气摩擦（仅水平）：空中/气泡柱上玩家和物块不会无限漂移；不影响垂直提升
+    if (this.airFriction > 0) {
+      for (const b of dynamics) {
+        if (b.vel.x !== 0) {
+          b.vel.x *= Math.max(0, 1 - this.airFriction * dt);
+          if (Math.abs(b.vel.x) < 2) b.vel.x = 0;
+        }
+      }
+    }
+    // 颗粒"结构稳定"计时：落地静止（onGround + 慢速）持续 STABLE_T 才 marked stable，
+    // 可被踩（支撑）；一旦离地/移动立即作废——放置的新鲜层必须"踩实"才能垫脚。
+    for (const b of dynamics) {
+      if (b.amount === undefined) continue;
+      if (b.onGround && Math.abs(b.vel.x) < 40 && Math.abs(b.vel.y) < 40) {
+        b._groundT = (b._groundT ?? 0) + dt;
+        b.stable = b._groundT >= STABLE_T;
+      } else {
+        b._groundT = 0;
+        b.stable = false;
+      }
+    }
+  }
+
+  // ---- 空间哈希宽相位（相对全 O(N²) 配对：大粒度堆/多粒子场景的关键加速） ----
+  _buildHash(dynamics, statics) {
+    this._B = 48;
+    this._hashMap = new Map();
+    this._hashBig = [];
+    this._stSet = new Set(statics);
+    this._hashAll = dynamics; // 标记：本批体已建哈希（relax/直接调用兜底）
+    const push = (b) => {
+      const x0 = Math.floor(b.x / this._B);
+      const x1 = Math.floor((b.x + b.w) / this._B);
+      const y0 = Math.floor(b.y / this._B);
+      const y1 = Math.floor((b.y + b.h) / this._B);
+      if (x1 - x0 > 3 || y1 - y0 > 3) { this._hashBig.push(b); return; } // 大物体(地板/长墙):全局
+      for (let cy = y0; cy <= y1; cy++) {
+        for (let cx = x0; cx <= x1; cx++) {
+          const k = cx * 8192 + cy;
+          const arr = this._hashMap.get(k);
+          if (arr) arr.push(b);
+          else this._hashMap.set(k, [b]);
+        }
+      }
+    };
+    for (const d of dynamics) push(d);
+    for (const s of statics) push(s);
+  }
+
+  /** b 的候选碰撞体（自身覆盖桶里的所有体 + 大物体）。每帧构建一次，每体调用一次。 */
+  _near(b) {
+    const out = this._hashBig.slice();
+    const x0 = Math.floor(b.x / this._B);
+    const x1 = Math.floor((b.x + b.w) / this._B);
+    const y0 = Math.floor(b.y / this._B);
+    const y1 = Math.floor((b.y + b.h) / this._B);
+    for (let cy = y0; cy <= y1; cy++) {
+      for (let cx = x0; cx <= x1; cx++) {
+        const arr = this._hashMap.get(cx * 8192 + cy);
+        if (arr) for (const o of arr) out.push(o);
+      }
+    }
+    return out;
+  }
+
+  // ---- X 轴 ----
+  integrateX(b, dynamics, statics) {
+    const total = b.vel.x * this.dt;
+    if (total === 0) return;
+    const dir = Math.sign(total);
+    let remaining = Math.abs(total);
+    // 分步移动：每步 ≤ maxXStep。既防高速穿过薄墙，也让推挤按小步进行（不一次性位移过大）。
+    while (remaining > 1e-6) {
+      const step = Math.min(remaining, this.maxXStep);
+      remaining -= step;
+      b.x += dir * step;
+
+      // 静态体：垂直面接触（落地/撞顶）不横推，交给 Y 轴/MTV；真侧面接触才阻挡
+      let blocked = false;
+      for (const s of this._near(b)) {
+        if (s === b || !s.solid || !this._stSet.has(s)) continue;
+        if (!overlaps(b, s)) continue;
+        // 自动上台阶：低台阶直接抬升并通过（不夹紧 X，让玩家走上台阶）
+        if (b.autoStep && this.tryAutoStep(b, s, dir)) continue;
+        const p = penSides(b, s);
+        if (!xShouldResolve(b, p)) continue; // 垂直面接触：不在这里解算
+        resolveOverlapX(b, s);
+        b.blockedX = true;
+        b.collisions.push(s);
+        blocked = true;
+        break;
+      }
+      if (blocked) break;
+
+      // 动态体
+      for (const o of this._near(b)) {
+        if (o === b || !o.solid || !b.solid || this._stSet.has(o)) continue;
+        // 可推物体用 eps 把"相切/微距"也算接触（玩家贴着物块底部侧面也应推动它，
+        // 而不是从边界相切处穿过；玩家站在矮堆顶上也能推它而不是被当台阶走上去）
+        if (!overlaps(b, o, o.pushable ? 2 : 0)) continue;
+        // 颗粒堆"软"：水平永不阻挡（大沉淀滩可穿行——粒子慢慢让位）。
+        // 否则 5px 粒子堆对玩家是一堵墙（"大型沉淀把玩家堵死"）。
+        // ★ 让位 = 极慢挤开（30px/s 上限、空气摩擦自行衰减），而不是旧版的 150 速度
+        //    "踢飞"——那个会把整堆弹散、滚得老远、无法收集（用户反馈）。
+        // 只对"移动中"的体让位：静止的玩家（如刚放置自身脚下沉淀）不被扰动，可站上去。
+        if (o.amount !== undefined) {
+          if (o.pushable && (Math.abs(b.vel.x) > 30 || Math.abs(b.vel.y) > 100) && Math.abs(o.vel.x) < 30) {
+            const dir = Math.abs(b.vel.x) > 2 ? Math.sign(b.vel.x) : (b.vel.x < 0 ? -1 : 1);
+            if (Math.abs(o.vel.x) < 15) o.vel.x = dir * 30;
+          }
+          continue;
+        }
+        // 颗粒（b）撞上实体（物块/玩家）：颗粒是"软体"，绝不推走/顶开实体（大沉淀堆
+        // 不会把物块挤走）——颗粒自己被实体挡住（与静态体同语义），继续的位移交给
+        // 后续子步/空余让位。
+        if (b.amount !== undefined) {
+          const p = penSides(b, o);
+          if (!xShouldResolve(b, p)) continue; // 垂直面接触（落地/撞顶）：交给 Y 轴
+          resolveOverlapX(b, o);
+          b.vel.x = 0;
+          b.blockedX = true;
+          b.collisions.push(o);
+          break;
+        }
+        const p = penSides(b, o);
+        if (!xShouldResolve(b, p)) continue;
+        // 站在物块顶上（接触来自上方，只差亚像素）：把 b 顶回表面即可，不横向推/挡
+        if (b.y < o.y && b.bottom <= o.top + 1.5 && supportsStanding(o)) {
+          // 推动中的玩家站到小沉淀上 → 优先踢开沉淀（推动优先于上台阶/踮脚）
+          if (o.amount !== undefined && o.pushable && Math.abs(b.vel.x) > 50) {
+            this.kickParticle(o, b, statics);
+            continue;
+          }
+          b.setBottom(o.top);
+          continue;
+        }
+        if (o.pushable && this.tryPushX(o, dir, dynamics, statics, b, 0)) {
+          continue; // 推开了，继续本子步的移动
+        }
+        resolveOverlapX(b, o);
+        b.blockedX = true;
+        b.collisions.push(o);
+        break;
+      }
+      if (b.blockedX) break;
+    }
+  }
+
+  /**
+   * 链式推挤：把 o 沿 dir 推出与 from 的重叠。单次最多推 maxXStep（残留重叠交给
+   * 后续子步/下一帧处理），避免一次位移过大造成瞬移或穿墙。若途中被实心体挡住则
+   * 整体还原并返回 false（推动方随之停住）。
+   */
+  tryPushX(o, dir, dynamics, statics, from, depth) {
+    if (depth > 8 || !o.pushable) return false;
+    if (dir === 0) dir = o.x < from.x ? -1 : 1;
+    const overlap = dir > 0 ? from.right - o.left : o.right - from.left;
+    if (overlap <= 0) return true;
+    const move = Math.min(overlap, this.maxXStep) * (dir > 0 ? 1 : -1);
+
+    const savedX = o.x;
+    o.x += move;
+    let ok = true;
+    for (const s of this._near(o)) {
+      if (!s.solid || !this._stSet.has(s) || !overlaps(o, s)) continue;
+      // 小台阶：被推动时把物块抬上台阶（同玩家自动上台阶，不夹紧 X）
+      if (o.autoStep && this.tryAutoStep(o, s, dir)) continue;
+      ok = false;
+      break;
+    }
+    if (ok) {
+      for (const d of this._near(o)) {
+        if (d === o || d === from || !d.solid || !o.solid || this._stSet.has(d)) continue;
+        if (overlaps(o, d)) {
+          // 沉淀粒子是"软体"，不挡推挤链：被推物块直接让粒子让位（不递归、不算失败）——
+          // 否则一排在物块底缘/侧面的粒子会变成"粒子坝"，把物块卡死、玩家推不动。
+          if (d.amount !== undefined && d.pushable) {
+            d.x += move;
+            continue;
+          }
+          if (!d.pushable || !this.tryPushX(d, dir, dynamics, statics, o, depth + 1)) {
+            ok = false;
+            break;
+          }
+        }
+      }
+    }
+    if (!ok) o.x = savedX;
+    return ok;
+  }
+
+  /** 判定是否为可自动上行的矮台阶：是则抬升并返回 true（不夹紧 X） */
+  tryAutoStep(b, s, dir) {
+    if (!dir) return false;
+    const inFront = dir > 0
+      ? s.left <= b.right + 0.01 && s.right >= b.right
+      : s.right >= b.left - 0.01 && s.left <= b.left;
+    if (!inFront) return false;
+    const rise = b.bottom - s.top; // 需抬升的高度（台阶顶高于脚底）
+    if (!(rise > 0 && rise <= this.autoStepMax)) return false;
+    b.setBottom(s.top);
+    return true;
+  }
+
+  // ---- Y 轴 ----
+  integrateY(b, dynamics, statics) {
+    const dy = b.vel.y * this.dt;
+    // 分步移动：每步 ≤ maxYStep，防快速下落穿过薄地板
+    const steps = Math.max(1, Math.ceil(Math.abs(dy) / this.maxYStep));
+    const stepDy = dy / steps;
+    for (let s = 0; s < steps; s++) {
+      const prevBottom = b.bottom;
+      const prevTop = b.top;
+      if (stepDy !== 0) b.y += stepDy;
+      this._resolveYStep(b, prevBottom, prevTop, dynamics, statics);
+      // 落地或撞顶（vel.y 已被清零）后立即停止剩余子步：否则后续子步继续移动，
+      // 把刚贴住表面的体又压回实心体里（旧代码正是"钳制后残留嵌入 → 被顶穿"）。
+      if (b.vel.y === 0) break;
+    }
+  }
+
+  _resolveYStep(b, prevBottom, prevTop, dynamics, statics) {
+    const dir = Math.sign(b.vel.y);
+    for (const s of this._near(b)) {
+      if (!s.solid || !this._stSet.has(s) || !overlaps(b, s)) continue;
+      b.collisions.push(s);
+      // 按"本子步移动前"的相对位置判定接触面：前一子步脚在 s 顶上方才落地，
+      // 头在 s 底下方才撞顶；其余（斜向嵌入等）留给 tick 末尾的 MTV 残余解算。
+      if (dir > 0) {
+        if (prevBottom <= s.top + 0.5) this._landOn(b, s);
+        else if (prevTop >= s.bottom - 0.5) this._ceilingClamp(b, s);
+      } else if (dir < 0) {
+        if (prevTop >= s.bottom - 0.5) this._ceilingClamp(b, s);
+        else if (prevBottom <= s.top + 0.5) this._landOn(b, s);
+      }
+    }
+
+    for (const o of this._near(b)) {
+      if (o === b || !o.solid || !b.solid || this._stSet.has(o)) continue;
+      if (!overlaps(b, o)) continue;
+      b.collisions.push(o);
+      if (dir > 0) {
+        if (prevBottom <= o.top + 1 && supportsStanding(o)) {
+          this._landOn(b, o); // 从上方落到 o 上（下落中的沉淀不提供支撑）
+        } else if (o.amount !== undefined && o.pushable && Math.abs(b.vel.x) > 50) {
+          this.kickParticle(o, b, statics); // 推动中的玩家碰到可推沉淀：水平推开
+        }
+        // 注意：下沉时不做"撞顶钳制"。b 的顶贴着 o 的底 = 支撑接触（o 站在 b 上），
+        // 不是碰撞——钳制会把下方物块吸死在玩家脚底，玩家移动时带着物块走
+        // （"骑物块"bug 的根因）。支撑接触由 o 侧的 _landOn / MTV 抬升处理。
+      } else if (dir < 0) {
+        if (prevTop >= o.bottom - 1) {
+          this._ceilingClamp(b, o);
+        } else if (prevBottom <= o.top + 1 && supportsStanding(o)) {
+          this._landOn(b, o);
+        } else if (o.amount !== undefined && o.pushable && Math.abs(b.vel.x) > 50) {
+          this.kickParticle(o, b, statics);
+        }
+      } else if (o.amount !== undefined && o.pushable && Math.abs(b.vel.x) > 50) {
+        this.kickParticle(o, b, statics);
+      }
+    }
+  }
+
+  /** 从上方落到 s 顶：按实际接触形状抬升到表面（腐蚀掉的列不参与），封顶防深嵌瞬移 */
+  _landOn(b, s) {
+    let lift = 0;
+    for (const a of shapesOf(b)) {
+      for (const c of shapesOf(s)) {
+        if (a.overlaps(c, 0)) lift = Math.max(lift, a.bottom - c.top);
+      }
+    }
+    if (lift <= 0) return;
+    b.y -= Math.min(lift, MAX_RESOLVE_Y);
+    b.vel.y = 0;
+    b.onGround = true;
+  }
+
+  /** 从下方撞到 s 底：钳制在底面之下（配合子步提前停止，保证一帧内彻底停住） */
+  _ceilingClamp(b, s) {
+    b.setTop(s.bottom);
+    b.vel.y = 0;
+  }
+
+  /** 把可推沉淀粒子从玩家身侧水平踢开（推动优先于自动上台阶/垫高）；无空间则返回 false */
+  kickParticle(o, b, statics) {
+    const pushDir = b.vel.x > 0 ? 1 : -1;
+    const saved = o.x;
+    o.x += pushDir * (o.w + 1);
+    for (const s of this._near(o)) {
+      if (s.solid && this._stSet.has(s) && overlaps(o, s)) {
+        o.x = saved;
+        return false; // 贴墙无空间：退回，让玩家垫高上去
+      }
+    }
+    o.vel.x = pushDir * 150;
+    return true;
+  }
+
+  /**
+   * 残余重叠 MTV 解算：轴解算结束后仍有重叠的体（斜向冲入板底、出生嵌入、传送
+   * 落点、爆炸推挤等），按四面最小穿透温柔推出（≤16px/帧，深嵌分帧收敛）。
+   * 静态体先解（把"被顶回地面/板底"先做掉），再解动态体之间的残留，迭代数轮
+   * 直到不再有可解的重叠。这是杜绝"穿模/瞬移到另一侧"的最后一道闸。
+   */
+  resolveResidual(dynamics, statics) {
+    // 直接调用（relax/单元测试）可能没有经过 step：补建哈希，保证邻域查询正确
+    if (this._hashAll !== dynamics) this._buildHash(dynamics, statics);
+    for (let iter = 0; iter < 4; iter++) {
+      let moved = false;
+      for (const b of dynamics) {
+        if (b.static) continue;
+        for (const s of this._near(b)) {
+          if (!s.solid || !this._stSet.has(s) || !overlaps(b, s)) continue;
+          if (resolveEmbed(b, s)) moved = true;
+        }
+        for (const o of this._near(b)) {
+          if (o === b || !o.solid || !b.solid || this._stSet.has(o)) continue;
+          // 颗粒 vs 非颗粒：颗粒是**软体**——残余重叠永远让颗粒让位，绝不"推/抬"实体。
+          // （旧代码会按 4 面 MTV 抬升实体 → "沉淀粒子跑到物块底下把物块顶起来"。）
+          if ((o.amount !== undefined) !== (b.amount !== undefined)) {
+            const particle = b.amount !== undefined ? b : o;
+            const solid = b.amount !== undefined ? o : b;
+            if (particle === o) {
+              // 实体压在颗粒上：**只有玩家**可借稳定沉淀堆站立（支撑=主动踩上：`_landOn`
+              // 只在玩家**落到粒子顶面**时生效）；**没有"自动托升"**——粒子不会把
+              // 玩家从脚下"顶起来"（否则"左脚踩右脚"：站原地放沉淀→被抬→无限登高）。
+              // 物块等重物不托——颗粒被挤出（软体让位），别把物块"顶起来"。
+              if (!solid.isPlayerObj) {
+                if (this._pushParticleOut(particle, solid)) moved = true;
+                continue;
+              }
+              // 稳定层（落地静止 ≥0.45s）：玩家落/走到粒子顶面由 _landOn 支撑；
+              // 这里只做"运动玩家把新鲜层踩散"（防跳→空中放→落回踩住新层→垫高循环）
+              if (!supportsStanding(particle)) {
+                if (Math.abs(solid.vel.y) > 40 || Math.abs(solid.vel.x) > 80) {
+                  const pp2 = penSides(solid, particle);
+                  const cx = solid.x + solid.w / 2;
+                  const dir = particle.x + particle.w / 2 < cx ? -1 : 1; // 从玩家中心向两侧挤开
+                  if (Math.abs(particle.vel.x) < 30) particle.vel.x = dir * 30;
+                  if (pp2.bottom <= pp2.left && pp2.bottom <= pp2.right) {
+                    particle.x += dir * 2; // 从玩家脚底滑出（不嵌在身体里）
+                  }
+                  moved = true;
+                }
+              }
+              continue;
+            }
+            // 颗粒嵌在实体（侧面/下方）：把颗粒向穿透最小的面推出（软体退让）。
+            // 玩家脚下的颗粒不水平挤（保留垫脚/穿行，由玩家侧重处理）。
+            if (!solid.isPlayerObj) {
+              if (this._pushParticleOut(particle, solid)) moved = true;
+            } else if (resolveEmbed(particle, solid)) {
+              moved = true;
+            }
+            continue;
+          }
+          if (!overlaps(b, o)) continue;
+          if (resolveEmbed(b, o)) moved = true;
+        }
+      }
+      if (!moved) break;
+    }
+  }
+
+  /**
+   * 颗粒嵌进实体（侧面穿入/压到正下方）时的软体让位：
+   *  - 常规：向穿透最小的面推出（resolveEmbed 的 4 面 MTV）。
+   *  - "实体正下方贴地楔入"（支撑保护规则停住的：粒子被压在地板与实体底缘之间）：
+   *    resolveEmbed 会跳过（防止把支撑物压走）——但粒子楔在原地会让物块底缘"被
+   *    垫住/卡死"（推不动）。此时把粒子往较近的侧边水平挤开，让它从块底滚出来。
+   */
+  _pushParticleOut(particle, solid) {
+    if (resolveEmbed(particle, solid)) return true;
+    if (particle.amount === undefined || solid.amount !== undefined) return false;
+    const pp = penSides(particle, solid);
+    // 只在"正下方"楔入（bottom 面最小穿透）时水平挤出；侧嵌已被 resolveEmbed 处理
+    if (!(pp.bottom <= pp.left && pp.bottom <= pp.right && pp.bottom <= pp.top)) return false;
+    const dir = particle.x + particle.w / 2 < solid.x + solid.w / 2 ? -1 : 1;
+    const saved = particle.x;
+    particle.x = saved + dir * (particle.w + 2);
+    let ok = true;
+    for (const s2 of this._near(particle)) {
+      if (s2 === particle || s2 === solid) continue;
+      if (s2.solid && this._stSet.has(s2) && overlaps(particle, s2)) { ok = false; break; }
+    }
+    if (!ok) { particle.x = saved; return false; }
+    return true;
+  }
+
+  /** 兼容旧 API：只解算动态体之间的残余重叠（测试直接调用） */
+  relax(dynamics) {
+    this.resolveResidual(dynamics, []);
+  }
+}
+
+// ============================================================================
+// 接触跟踪：每刻对比相邻两次的重叠对，产出 contactBegin/End（对象对）供化学反应/开关/池使用
+// ============================================================================
+class ContactTracker {
+  constructor(eps = 1) {
+    this.eps = eps;
+    this.pairs = new Map(); // key -> [a, b]
+  }
+
+  update(bodies) {
+    // 空间哈希（与主循环同口径）：接触对从 O(N²) 降到邻域级（大粒子堆）
+    const B = 48;
+    const hash = new Map();
+    const big = [];
+    const push = (b) => {
+      const x0 = Math.floor(b.x / B);
+      const x1 = Math.floor((b.x + b.w) / B);
+      const y0 = Math.floor(b.y / B);
+      const y1 = Math.floor((b.y + b.h) / B);
+      if (x1 - x0 > 3 || y1 - y0 > 3) { big.push(b); return; }
+      for (let cy = y0; cy <= y1; cy++) {
+        for (let cx = x0; cx <= x1; cx++) {
+          const k = cx * 8192 + cy;
+          const arr = hash.get(k);
+          if (arr) arr.push(b);
+          else hash.set(k, [b]);
+        }
+      }
+    };
+    for (const b of bodies) push(b);
+    const nearOf = (b) => {
+      const out = big.slice();
+      const x0 = Math.floor(b.x / B);
+      const x1 = Math.floor((b.x + b.w) / B);
+      const y0 = Math.floor(b.y / B);
+      const y1 = Math.floor((b.y + b.h) / B);
+      for (let cy = y0; cy <= y1; cy++) {
+        for (let cx = x0; cx <= x1; cx++) {
+          const arr = hash.get(cx * 8192 + cy);
+          if (arr) for (const o of arr) out.push(o);
+        }
+      }
+      return out;
+    };
+    const next = new Map();
+    for (const b of bodies) {
+      for (const o of nearOf(b)) {
+        if (o === b || !b.solid || !o.solid || !overlaps(b, o, this.eps)) continue;
+        const [lo, hi] = b.id < o.id ? [b, o] : [o, b];
+        next.set(`${lo.id}|${hi.id}`, [lo, hi]);
+      }
+    }
+    const begun = [];
+    const ended = [];
+    for (const [k, pair] of next) if (!this.pairs.has(k)) begun.push(pair);
+    for (const [k, pair] of this.pairs) if (!next.has(k)) ended.push(pair);
+    this.pairs = next;
+    return { begun, ended, current: [...next.values()] };
+  }
+}
+
+exports.shapesOf = shapesOf;
+exports.overlaps = overlaps;
+exports.CollisionSystem = CollisionSystem;
+exports.ContactTracker = ContactTracker;
+
+  };
+  __modules["src/physics/aabb.js"] = function (module, exports, __require) {
+// ============================================================================
+// AABB（轴对齐包围盒）：所有碰撞的统一原语（文档的 line/box 双原语已废弃）
+// ============================================================================
+
+class AABB {
+  constructor(x = 0, y = 0, w = 0, h = 0) {
+    this.x = x;
+    this.y = y;
+    this.w = w;
+    this.h = h;
+  }
+
+  get left() { return this.x; }
+  get right() { return this.x + this.w; }
+  get top() { return this.y; }
+  get bottom() { return this.y + this.h; }
+
+  /** 是否包含某点（边界算包含） */
+  contains(px, py) {
+    return px >= this.left && px <= this.right && py >= this.top && py <= this.bottom;
+  }
+
+  /** 是否与另一 AABB 相交（默认严格相交；eps>0 表示接触也算） */
+  overlaps(o, eps = 0) {
+    return this.left < o.right + eps && this.right > o.left - eps &&
+           this.top < o.bottom + eps && this.bottom > o.top - eps;
+  }
+
+  /** X 向重叠量（负值=不相交） */
+  overlapX(o) {
+    return Math.min(this.right, o.right) - Math.max(this.left, o.left);
+  }
+
+  /** Y 向重叠量 */
+  overlapY(o) {
+    return Math.min(this.bottom, o.bottom) - Math.max(this.top, o.top);
+  }
+
+  clone() {
+    return new AABB(this.x, this.y, this.w, this.h);
+  }
+}
+
+exports.AABB = AABB;
+
+  };
+  __modules["src/objects/particle.js"] = function (module, exports, __require) {
+// ============================================================================
+// 沉淀粒子：0.1g / 5px 小球，受重力落到地面，可被玩家收集。
+// 反应生成的沉淀不实心（不阻挡、与其它动态体不碰撞），但会与静态体碰撞（落在地上）。
+// 玩家"放置"的沉淀（placed=true）有碰撞箱：可被站上去垫高（沉淀踮脚），
+// 且除被重新收集外不能被移动。
+// 只有"沉淀"（不溶固体）可收集；可溶盐粒子不可收集。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+const { getSubstance, isSoluble } = __require('src/chem/substances.js');;
+const { luminance } = __require('src/render/theme.js');;
+const { CFG } = __require('src/core/config.js');;
+const { ParticleMaterial } = __require('src/objects/material.js');;
+
+class Particle extends Obj {
+  constructor({ x, y, substance, amount = CFG.cellMass, collectible, placed = false, ...rest }) {
+    // 尺寸随质量缩放：0.5g → 5px；**1.5g（堆叠 3 个 0.5g）→ 0.5g 尺寸的 1.5 倍 = 7.5px**
+    //（幂次 log3(1.5)，两个锚点精确匹配；大堆合并的更大质量被 7.5px 上限夹住）；
+    // 更小质量的颗粒保底 3px（可见/可拾取）。
+    const k = Math.log(1.5) / Math.log(3); // ≈0.369：size(1.5g)/size(0.5g) = 1.5
+    const size = Math.max(CFG.particleMinSize, Math.min(CFG.particleMaxSize,
+      CFG.particleSize * Math.pow(amount / CFG.particleRefMass, k)));
+    super({
+      x, y, w: size, h: size,
+      solid: placed,
+      pushable: placed, // 放置的沉淀可被玩家踢开
+      physicsKind: 'dynamic',
+      mass: amount,
+      gravity: 1,
+      ...rest,
+    });
+    this.substance = substance;
+    this.amount = amount;
+    this.collectible = collectible ?? !isSoluble(substance);
+    this.placed = placed;
+    this.mat = new ParticleMaterial(this); // 让浸入容器的沉淀能参与反应（Zn+HCl 等）
+  }
+
+  get material() {
+    return this.mat;
+  }
+
+  get hoverLabel() {
+    return '沉淀';
+  }
+
+  render(ctx) {
+    const sub = getSubstance(this.substance);
+    const c = sub.solid && sub.solid.length ? sub.solid[0] : '#c9b46a';
+    const x = this.x + this.w / 2;
+    const y = this.y + this.h / 2;
+    const dark = luminance(c) < 110;
+    ctx.save();
+    // 深色物质：外层白色辉光（光晕，不是描边）
+    if (dark) {
+      const halo = ctx.createRadialGradient(x, y, this.w * 0.15, x, y, this.w * 1.35);
+      halo.addColorStop(0, 'rgba(255,255,255,0.5)');
+      halo.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = halo;
+      ctx.beginPath();
+      ctx.arc(x, y, this.w * 1.35, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // 元素辉光
+    ctx.shadowColor = c;
+    ctx.shadowBlur = 7;
+    ctx.fillStyle = c;
+    ctx.beginPath();
+    ctx.arc(x, y, this.w / 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    // 高光
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.beginPath();
+    ctx.arc(x - this.w * 0.16, y - this.h * 0.16, this.w * 0.16, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+exports.Particle = Particle;
+
+  };
+  __modules["src/objects/obj.js"] = function (module, exports, __require) {
+// ============================================================================
+// Obj 基类：所有物件的根。继承物理 Body，扩展化学/渲染/交互钩子。
+// physicsKind: 'static'（地板）| 'dynamic'（玩家/物块/粒子）| 'none'（容器等区域）
+// ============================================================================
+
+const { Body } = __require('src/physics/body.js');;
+
+let SEQ = 0;
+
+class Obj extends Body {
+  constructor({
+    id = '', x = 0, y = 0, w = 16, h = 16,
+    solid = true, pushable = false, static: isStatic = false,
+    mass = 1, gravity = 1, autoStep = false,
+    physicsKind = null, layer = 0, origin = null, hidden = false, noLift = false,
+  } = {}) {
+    super({ id: id || `obj${++SEQ}`, x, y, w, h, solid, pushable, static: isStatic, mass, gravity, autoStep });
+    this.physicsKind = physicsKind ?? (isStatic ? 'static' : 'dynamic');
+    this.layer = layer;
+    this.hidden = hidden; // 初始隐藏：不可见、无碰撞、不参与逻辑，由开关 showId 开启时显现
+    this.noLift = noLift; // 不可被气泡柱/气流托起（重力照常，只是气流不托它）
+    // 溯源：此物体"为何存在"。kind ∈ 'level'|'reaction'|'explosion'|'place'|'shell'；text 为附加说明（反应方程式等）。
+    // 调试模式鼠标悬停显示（见 hud.hoverPanel）。
+    this.origin = origin;
+  }
+
+  // ---- 化学引擎 Material 接口（默认无化学） ----
+  get material() {
+    return null;
+  }
+
+  get isPlayerObj() {
+    return false;
+  }
+
+  /** 所在容器的溶液 Material（固体浸入池/烧杯时） */
+  get containerMaterial() {
+    return null;
+  }
+
+  get isBurning() {
+    return false;
+  }
+
+  get isLamp() {
+    return false;
+  }
+
+  get isDoor() {
+    return false;
+  }
+
+  /** 调试悬停时的类型名（null = 不可悬停/不显示提示，如爆炸/气泡/反应标签等瞬态物） */
+  get hoverLabel() {
+    return null;
+  }
+
+  // ---- 生命周期钩子 ----
+  update(dt, scene) {}
+  lateUpdate(dt, scene) {} // 物理结算后（绳子等需要覆盖物理结果的对象）
+  render(ctx, scene) {}
+  onContactBegin(other, scene) {}
+  onContactEnd(other, scene) {}
+
+  /** 反应产物附着到自身（默认无） */
+  adhereMaterial(id, mass, origin) {
+    return 0;
+  }
+
+  /**
+   * 记录网格内某物质的来源（调试悬停按物质显示：初始=关卡生成、反应附着=反应生成）。
+   * 仅持有 grid 的对象（物块/玩家）使用；无 gridOrigins 时惰性创建。
+   */
+  noteGridOrigin(id, origin = null) {
+    if (!this.gridOrigins) this.gridOrigins = new Map();
+    if (typeof origin === 'string' && origin) origin = { kind: 'reaction', text: origin };
+    if (!origin) {
+      if (!this.gridOrigins.has(id)) this.gridOrigins.set(id, { kind: 'level' });
+      return;
+    }
+    this.gridOrigins.set(id, origin);
+  }
+}
+
+exports.Obj = Obj;
+
+  };
+  __modules["src/physics/body.js"] = function (module, exports, __require) {
+// ============================================================================
+// 物理体 Body
+// ----------------------------------------------------------------------------
+// 提供位置/速度/尺寸与碰撞箱。静态体（地板）永不移动；动态体受重力并参与解算。
+// 标记：
+//   solid      — 阻挡其他动态体（地板静态且实心；物块动态且实心；粒子不实心）
+//   pushable   — 可被水平推动（忽略摩擦，前方有空位即可）
+//   static     — 固定不动
+//   gravity    — 重力系数（0 = 不受重力，如悬挂物体）
+//   autoStep   — 允许自动上台阶（玩家）
+// ============================================================================
+
+const { AABB } = __require('src/physics/aabb.js');;
+
+class Body {
+  constructor({
+    id = '', x = 0, y = 0, w = 16, h = 16,
+    solid = true, pushable = false, static: isStatic = false,
+    mass = 1, gravity = 1, autoStep = false,
+  } = {}) {
+    this.id = id;
+    this.x = x;
+    this.y = y;
+    this.w = w;
+    this.h = h;
+    this.vel = { x: 0, y: 0 };
+    this.solid = solid;
+    this.pushable = pushable;
+    this.static = isStatic;
+    this.mass = mass;
+    this.gravity = gravity;
+    this.autoStep = autoStep;
+
+    // 每刻结算后刷新：
+    this.onGround = false;   // 脚下是否有实心支撑（可跳跃）
+    this.blockedX = false;   // X 向被阻挡
+    this.collisions = [];    // 本刻与其相交的物体（含静态体）
+  }
+
+  get left() { return this.x; }
+  get right() { return this.x + this.w; }
+  get top() { return this.y; }
+  get bottom() { return this.y + this.h; }
+
+  setTop(v) { this.y = v; }
+  setBottom(v) { this.y = v - this.h; }
+  setLeft(v) { this.x = v; }
+  setRight(v) { this.x = v - this.w; }
+
+  collider() {
+    return new AABB(this.x, this.y, this.w, this.h);
+  }
+
+  /**
+   * 碰撞形状（世界坐标 AABB 列表）。默认单个矩形；网格类对象（玩家/物块）可覆盖为
+   * 贴合实际物质的多矩形，使被完全腐蚀掉的部分不占碰撞箱。
+   */
+  getShapes() {
+    return [this.collider()];
+  }
+}
+
+exports.Body = Body;
+
+  };
+  __modules["src/render/theme.js"] = function (module, exports, __require) {
+// ============================================================================
+// 神话·元素主题（冰火人式鲜艳 + 神殿感）
+// 所有渲染模块共享这一套色板，保证整体风格统一。
+// ============================================================================
+
+const THEME = {
+  bg: { top: '#0b0e28', mid: '#141a40', bottom: '#1e2555' },
+
+  // 神话金
+  gold: {
+    base: '#e8b84b',
+    light: '#ffd76a',
+    text: '#ffe9b0',
+    deep: '#a9782a',
+    dim: 'rgba(232,184,75,0.35)',
+  },
+
+  // 火元素
+  fire: {
+    base: '#ff5c1f',
+    light: '#ffb340',
+    white: '#fff3c4',
+    glow: 'rgba(255,122,61,0.35)',
+  },
+
+  // 水元素
+  water: {
+    base: '#1fa8e0',
+    light: '#7fe0ff',
+    glow: 'rgba(61,201,255,0.30)',
+  },
+
+  // 毒元素（绿）
+  toxic: {
+    base: '#3fd93a',
+    light: '#a6ff9a',
+    glow: 'rgba(107,255,92,0.28)',
+  },
+
+  // 传送/通路（紫）
+  portal: {
+    base: '#c78bff',
+    light: '#e7ccff',
+    glow: 'rgba(199,139,255,0.35)',
+  },
+
+  // 石材
+  stone: {
+    base: '#3a3f5c',
+    light: '#4b5175',
+    dark: '#22263f',
+    line: '#2b3047',
+    highlight: 'rgba(255,255,255,0.10)',
+  },
+
+  outline: '#160f2b', // 描边（角色轮廓）
+  panel: 'rgba(18,14,46,0.85)', // 面板底色
+};
+
+// ---- 常用绘制辅助 ----
+
+/** 圆角矩形路径 */
+function rr(ctx, x, y, w, h, r) {
+  const rr2 = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr2, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr2);
+  ctx.arcTo(x + w, y + h, x, y + h, rr2);
+  ctx.arcTo(x, y + h, x, y, rr2);
+  ctx.arcTo(x, y, x + w, y, rr2);
+  ctx.closePath();
+}
+
+/** 带发光描边与内阴影的圆角面板（神话风） */
+function panel(ctx, x, y, w, h, accent = THEME.gold.deep, r = 10) {
+  ctx.save();
+  rr(ctx, x, y, w, h, r);
+  const g = ctx.createLinearGradient(x, y, x, y + h);
+  g.addColorStop(0, 'rgba(40,32,80,0.92)');
+  g.addColorStop(1, 'rgba(14,10,36,0.92)');
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 1.5;
+  ctx.shadowColor = accent;
+  ctx.shadowBlur = 8;
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** 发光文字（仅用于大标题；小字用 clearText，避免糊） */
+function glowText(ctx, text, x, y, color = THEME.gold.text, font = 'bold 13px "Segoe UI", sans-serif', blur = 6) {
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.font = font;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = blur;
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+/** 清晰小字（细暗描边保证可读，不发光） */
+function clearText(ctx, text, x, y, color = '#ffffff', font = 'bold 12px monospace') {
+  ctx.save();
+  ctx.font = font;
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(8,6,24,0.9)';
+  ctx.strokeText(text, x, y);
+  ctx.fillStyle = color;
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+// ---- 对比度 ----
+
+/** 十六进制颜色的亮度（0-255） */
+function luminance(hex) {
+  const n = parseInt(String(hex).slice(1), 16);
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return (r * 299 + g * 587 + b * 114) / 1000;
+}
+
+/** 依据物质亮度选描边：深色用弱白光晕边缘（否则在暗背景下看不见），浅色用深描边 */
+function contrastEdge(hex) {
+  return luminance(hex) < 110 ? 'rgba(255,255,255,0.60)' : 'rgba(16,15,43,0.85)';
+}
+
+// ---- 火焰 ----
+
+/**
+ * 多层有机火焰：外辉光 + 渐变焰体 + 白热内核 + 上升火星。
+ * (x,y) 为焰底，h 为总高，color 为火焰主色。
+ */
+function drawFlame(ctx, x, y, h, color, innerColor = '#fffdf2', t = 0) {
+  const wob = Math.sin(t * 9) * 0.16 + Math.sin(t * 13.7 + 1.3) * 0.1;
+  const w = h * 0.62;
+  ctx.save();
+  // 外辉光
+  ctx.shadowColor = color;
+  ctx.shadowBlur = h * 1.7;
+  ctx.fillStyle = color;
+  ctx.globalAlpha = 0.85;
+  flamePath(ctx, x, y, h, w, wob);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 1;
+  // 焰体（自下而上渐变，底部最亮）
+  const g = ctx.createLinearGradient(x, y, x, y - h);
+  g.addColorStop(0, '#ffffff');
+  g.addColorStop(0.28, color);
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.globalAlpha = 0.9;
+  flamePath(ctx, x, y, h * 0.74, w * 0.74, wob * 1.25);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  // 内核（白热）
+  ctx.fillStyle = innerColor;
+  ctx.globalAlpha = 0.95;
+  flamePath(ctx, x, y, h * 0.42, w * 0.42, wob * 1.6);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  // 上升火星
+  for (let i = 0; i < 3; i++) {
+    const ph = (t * 46 + i * 73) % 30;
+    const ex = x + Math.sin(t * 11 + i * 2.4) * h * 0.32;
+    const ey = y - h * 0.7 - (ph / 30) * h * 0.55;
+    ctx.globalAlpha = 0.55 * (1 - ph / 30);
+    ctx.fillStyle = innerColor;
+    ctx.beginPath();
+    ctx.arc(ex, ey, 1.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+/** 泪滴形火焰路径 */
+function flamePath(ctx, x, y, h, w, wob) {
+  ctx.beginPath();
+  ctx.moveTo(x + w * wob, y - h);
+  ctx.quadraticCurveTo(x + w, y - h * 0.45, x + w * 0.52, y);
+  ctx.quadraticCurveTo(x, y + h * 0.04, x - w * 0.52, y);
+  ctx.quadraticCurveTo(x - w, y - h * 0.45, x + w * wob, y - h);
+  ctx.closePath();
+}
+
+exports.THEME = THEME;
+exports.rr = rr;
+exports.panel = panel;
+exports.glowText = glowText;
+exports.clearText = clearText;
+exports.luminance = luminance;
+exports.contrastEdge = contrastEdge;
+exports.drawFlame = drawFlame;
+
+  };
+  __modules["src/objects/material.js"] = function (module, exports, __require) {
+// ============================================================================
+// SolidMaterial：把持有 MaterialGrid 的固体物件（玩家/物块）适配成化学引擎的
+// Material 接口。consume → 网格侵蚀；add → 产物附着（生长）。
+// ============================================================================
+
+// ============================================================================
+// ContainerMaterial：容器的完整材料 = 溶液溶质 + 沉淀/内含物。
+// 这样容器内沉淀（如灯上放置的 Cu(OH)2）也能参与分解/催化等自反应。
+// ============================================================================
+class ContainerMaterial {
+  constructor(containerObj) {
+    this.owner = containerObj; // 容器对象：供 _region 取 innerRect、存取沉淀
+    this.phase = 'solution';
+    this.isPlayer = false;
+    this.solution = containerObj.solution; // 供浓度因子使用
+  }
+
+  /** 材料本身即"所在容器"，与 SolutionMaterial 语义一致（引擎用 mat.container 判 inContainer） */
+  get container() {
+    return this;
+  }
+
+  avail(id) {
+    if (id === 'H2O') return this.solution.water;
+    return this.solution.mass(id) + (this.owner.precipitates.get(id) ?? 0);
+  }
+
+  consume(id, mass) {
+    if (id === 'H2O') {
+      const r = Math.min(this.solution.water, mass);
+      this.solution.water -= r;
+      return r;
+    }
+    let rest = mass;
+    let removed = 0;
+    const fromSol = this.solution.remove(id, mass);
+    removed += fromSol;
+    rest -= fromSol;
+    if (rest > 0) removed += this.owner.takePrecipitate(id, rest);
+    return removed;
+  }
+
+  add(id, mass, origin = null) {
+    if (id === 'H2O') {
+      this.solution.water += mass;
+      return;
+    }
+    if (origin && this.owner && this.owner.noteSolOrigin) this.owner.noteSolOrigin(id, origin);
+    this.solution.add(id, mass);
+  }
+
+  ids() {
+    const s = new Set(this.solution.ids());
+    for (const id of this.owner.precipitates.keys()) s.add(id);
+    return [...s];
+  }
+}
+
+/**
+ * 沉淀粒子的材料适配器：让自由沉淀（爆炸掉渣/反应掉渣）能参与反应。
+ *  - 浸入容器（池/烧杯）时：ids=粒子物质、avail=粒子质量、container=容器材料，
+ *    于是引擎的"容器内反应"循环会把粒子当作固体反应物（如 Zn 粒子 + HCl → H2）。
+ *  - 在地面时：ids=[]，不参与任何反应（避免给所有粒子跑自反应的开销）。
+ * consume 直接把粒子质量减掉；耗尽后由 Scene 每刻清理移除。
+ */
+class ParticleMaterial {
+  constructor(particle) {
+    this.obj = particle; // Particle 实例
+    this.phase = 'solid';
+    this.isPlayer = false;
+  }
+
+  get container() {
+    return this.obj._container ? this.obj._container.material : null;
+  }
+
+  ids() {
+    return this.obj._container ? [this.obj.substance] : [];
+  }
+
+  avail(id) {
+    return id === this.obj.substance ? this.obj.amount : 0;
+  }
+
+  exposedAvail(id) {
+    return this.avail(id); // 粒子整体暴露（无壳包裹）
+  }
+
+  consume(id, mass) {
+    if (id !== this.obj.substance) return 0;
+    const r = Math.min(this.obj.amount, mass);
+    this.obj.amount -= r;
+    return r;
+  }
+
+  add(id, mass) {
+    if (id === this.obj.substance) this.obj.amount += mass;
+  }
+}
+
+class SolidMaterial {
+  constructor(obj) {
+    this.obj = obj;
+    this.phase = 'solid';
+  }
+
+  get isPlayer() {
+    return this.obj.isPlayerObj;
+  }
+
+  /** 所在容器的溶液 Material（若无容器则为 null） */
+  get container() {
+    return this.obj.containerMaterial;
+  }
+
+  /** 所在容器的液体区域（世界坐标）；无容器则 null */
+  _region() {
+    const c = this.container;
+    if (c && c.owner && typeof c.owner.innerRect === 'function') return c.owner.innerRect();
+    return null;
+  }
+
+  /**
+   * 网格原点：**从当前 body 位置现算**，不依赖滞后的存储值。
+   * （化学在 syncGrid 之前执行；若用旧 gridOrigin，快速移动时区域判定会滞后一格，导致侵蚀错位。）
+   */
+  _origin() {
+    const grid = this.obj.grid;
+    const aabb = grid.minAABB();
+    if (!aabb) return { x: this.obj.x, y: this.obj.y };
+    return { x: this.obj.x - aabb.x, y: this.obj.y - aabb.y };
+  }
+
+  avail(id) {
+    if (!this.obj.grid) return 0;
+    const region = this._region();
+    // 浸在容器里时，只有与溶液区域重叠的部分可参与反应
+    if (region) return this.obj.grid.availInRegion(id, region, this._origin());
+    return this.obj.grid.avail(id);
+  }
+
+  /** 暴露格中该物质的总质量（g）——反应实际可消耗量（被致密壳包住的内核不计入） */
+  exposedAvail(id) {
+    if (!this.obj.grid) return 0;
+    const region = this._region();
+    if (region) return this.obj.grid.exposedAvail(id, region, this._origin());
+    return this.obj.grid.exposedAvail(id);
+  }
+
+  consume(id, mass) {
+    if (!this.obj.grid) return 0;
+    const region = this._region();
+    if (region) return this.obj.grid.consumeInRegion(id, mass, region, this._origin());
+    return this.obj.grid.consume(id, mass);
+  }
+
+  /**
+   * 添加产物：优先原地转化（写入最近被消耗的格子——固体产物附着在反应物表面，
+   * Fe 浸 CuSO₄ 表面就地变铜）；盈余走暴露面渐进生长（growExposed：所有接触面
+   * 同时分到一点点，镀层一层层往外长，块均匀变大）。
+   * origin：该物质的来源（调试悬停按物质显示：反应附着=反应生成等）。
+   */
+  add(id, mass, origin = null) {
+    let rest = mass;
+    if (this.obj.grid) rest -= this.obj.grid.addInPlace(id, mass);
+    if (this.obj.noteGridOrigin) this.obj.noteGridOrigin(id, origin);
+    if (rest > 0 && this.obj.adhereMaterial) return this.obj.adhereMaterial(id, rest, origin);
+    return 0;
+  }
+
+  ids() {
+    return this.obj.grid ? this.obj.grid.ids() : [];
+  }
+}
+
+exports.ContainerMaterial = ContainerMaterial;
+exports.ParticleMaterial = ParticleMaterial;
+exports.SolidMaterial = SolidMaterial;
+
+  };
+  __modules["src/objects/bubble.js"] = function (module, exports, __require) {
+// ============================================================================
+// 气泡：反应产气时的视觉反馈（纯特效，无碰撞）。
+//   dir = -1  轻于空气的气体 → 上升气泡柱
+//   dir = +1  重于空气的气体 → 下沉气泡柱
+// 上升/下沉过程中被实心静态体（地板/顶板）阻断时立即消失。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+
+class Bubble extends Obj {
+  constructor({ x, y, dir = -1, speed = 80, ...rest } = {}) {
+    super({ x, y, w: 6, h: 6, solid: false, physicsKind: 'none', ...rest });
+    this.dir = dir;
+    this.speed = speed;
+    this.life = 2.0;
+  }
+
+  update(dt, scene) {
+    this.y += this.dir * this.speed * dt; // dir=-1 上升，dir=+1 下沉
+    this.x += Math.sin(scene.time * 6 + this.y * 0.1) * 0.3; // 轻微晃动
+    // 被地板阻断：与任意实心静态体重叠即消失
+    for (const s of scene.statics) {
+      if (!s.solid) continue;
+      if (s.x < this.x + this.w && s.x + s.w > this.x && s.y < this.y + this.h && s.y + s.h > this.y) {
+        scene.removeObject(this);
+        return;
+      }
+    }
+    this.life -= dt;
+    if (this.life <= 0) scene.removeObject(this);
+  }
+
+  render(ctx) {
+    const a = Math.max(0, Math.min(1, this.life * 0.7));
+    const x = this.x + this.w / 2;
+    const y = this.y + this.h / 2;
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.shadowColor = 'rgba(150,225,255,0.9)';
+    ctx.shadowBlur = 8;
+    ctx.fillStyle = 'rgba(205,238,255,0.85)';
+    ctx.beginPath();
+    ctx.arc(x, y, this.w / 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    // 高光
+    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.beginPath();
+    ctx.arc(x - this.w * 0.2, y - this.h * 0.2, this.w * 0.14, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+exports.Bubble = Bubble;
+
+  };
+  __modules["src/objects/spark.js"] = function (module, exports, __require) {
+// ============================================================================
+// 火星：金属燃烧（铁/镁/铝/钠/钾等在点燃条件下氧化）迸发的视觉粒子。
+// 无碰撞、短寿命：橙金亮点 + 辉光，随机初速上抛后受"重力"回落并闪烁消失。
+// 纯视觉（不参与化学/物理解算），由 scene.onSpark 在反应点生成。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+
+class Spark extends Obj {
+  constructor({ x, y, vx = 0, vy = 0, life = 0.8, color = '#ffb340', ...rest } = {}) {
+    super({ x, y, w: 3, h: 3, solid: false, physicsKind: 'none', ...rest });
+    this.vx = vx;
+    this.vy = vy;
+    this.life = life;
+    this.maxLife = life;
+    this.color = color;
+    this._seed = Math.random() * 10;
+  }
+
+  get hoverLabel() {
+    return null;
+  }
+
+  update(dt, scene) {
+    this.life -= dt;
+    if (this.life <= 0) {
+      scene.removeObject(this);
+      return;
+    }
+    // 火星：先上抛后回落 + 水平随机漂移（粒子上抛初速贯穿全场——"火星四射"）
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    this.vy += 900 * dt; // 轻"重力"让火花从最高点划落
+    this.vx *= 1 - 2.5 * dt;
+  }
+
+  render(ctx) {
+    const t = 1 - this.life / this.maxLife; // 0..1 老化
+    const blink = 0.55 + 0.45 * Math.sin((this._seed + t * 24) * 3);
+    const a = Math.max(0, 1 - t) * blink;
+    const R = 2.2 * (1 - t * 0.5);
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.shadowColor = this.color;
+    ctx.shadowBlur = 7;
+    ctx.fillStyle = t < 0.2 ? '#fff3c8' : this.color;
+    ctx.beginPath();
+    ctx.arc(this.x + this.w / 2, this.y + this.h / 2, R, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+exports.Spark = Spark;
+
+  };
+  __modules["src/objects/gascolumn.js"] = function (module, exports, __require) {
+// ============================================================================
+// 气泡柱 / 气流：对重叠的动态体施加重力以外的加速度。
+//   dir = -1  上升气流（轻气体 H2/O2，把玩家/物块托起）
+//   dir = +1  下沉气流（重气体 CO2，把玩家/物块往下压）
+//   life > 0 时为临时气流（反应产气产生，到期消失）；0 表示常驻（关卡 ⑦）。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+const { overlaps } = __require('src/physics/collision.js');;
+const { getSubstance } = __require('src/chem/substances.js');;
+const { luminance } = __require('src/render/theme.js');;
+
+class GasColumn extends Obj {
+  constructor({ x, y, w, h, accel = 1300, maxSpeed = 260, dir = -1, life = 0, gasId = null, label = null, source = null, ...rest } = {}) {
+    super({ x, y, w, h, solid: false, physicsKind: 'none', ...rest });
+    this.accel = accel;
+    this.maxSpeed = maxSpeed;
+    this.dir = dir; // -1 上 / +1 下
+    this.life = life; // 0 = 常驻
+    this.gasId = gasId; // 生成气体的物质 id（反应产气的气流显示气体种类）
+    this.label = label; // 显式标签（常驻气流用，如 "气流"）
+    this.source = source; // 产气源对象（自身不被自己的气流托起）
+  }
+
+  get hoverLabel() {
+    return '气流';
+  }
+
+  update(dt, scene) {
+    if (this.life > 0) {
+      this.life -= dt;
+      if (this.life <= 0) {
+        scene.removeObject(this);
+        return;
+      }
+    }
+    for (const obj of scene.dynamics) {
+      if (obj === this || obj === this.source || obj.static || obj.noLift) continue; // 产气源/标记 noLift 的不被气流托起
+      if (overlaps(this, obj)) {
+        obj.vel.y += this.dir * this.accel * dt;
+        if (this.dir < 0 && obj.vel.y < -this.maxSpeed) obj.vel.y = -this.maxSpeed;
+        if (this.dir > 0 && obj.vel.y > this.maxSpeed) obj.vel.y = this.maxSpeed;
+      }
+    }
+  }
+
+  render(ctx, scene) {
+    const t = scene.time ?? 0;
+    ctx.save();
+    // 柱体微光（按气体颜色；无气体信息用青色）
+    const sub = this.gasId ? getSubstance(this.gasId) : null;
+    const tint = sub?.gasColor ?? '#78dcff';
+    const { r, g, b } = hexToRgb(tint);
+    const grad = ctx.createLinearGradient(this.x, this.y, this.x, this.y + this.h);
+    grad.addColorStop(0, `rgba(${r},${g},${b},0)`);
+    grad.addColorStop(0.5, `rgba(${r},${g},${b},0.12)`);
+    grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(this.x, this.y, this.w, this.h);
+    // 气流发光粒子（方向按 dir：上浮或下沉）
+    const n = Math.min(30, Math.max(1, Math.round((this.w * this.h) / 600)));
+    for (let i = 0; i < n; i++) {
+      const bx = this.x + ((i * 7919) % 997) / 997 * this.w;
+      const phase = (t * 40 + i * 53) % (this.h + 30);
+      const by = this.dir < 0 ? this.y + this.h - phase : this.y + phase;
+      ctx.fillStyle = 'rgba(205,242,255,0.6)';
+      ctx.shadowColor = 'rgba(120,220,255,0.9)';
+      ctx.shadowBlur = 7;
+      ctx.beginPath();
+      ctx.arc(bx, by, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // 气体标签：反应产气的气流显示气体种类（NO2 红棕、Cl2 黄绿、H2/CO2 淡青…）
+    const label = this.label ?? this.gasId;
+    if (label) {
+      ctx.font = 'bold 11px "Segoe UI", "Microsoft YaHei", sans-serif';
+      const tw = ctx.measureText(label).width;
+      const lx = this.x + this.w / 2;
+      const ly = this.dir < 0 ? this.y - 6 : this.y + this.h + 16;
+      const pad = 4;
+      ctx.fillStyle = 'rgba(8,18,32,0.72)';
+      ctx.beginPath();
+      ctx.roundRect(lx - tw / 2 - pad, ly - 12, tw + pad * 2, 15, 4);
+      ctx.fill();
+      const dark = luminance(tint) < 110;
+      ctx.fillStyle = dark ? '#eaf6ff' : tint;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, lx, ly - 4);
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+    }
+    ctx.restore();
+  }
+}
+
+function hexToRgb(hex) {
+  const h = hex.replace('#', '');
+  return {
+    r: parseInt(h.slice(0, 2), 16),
+    g: parseInt(h.slice(2, 4), 16),
+    b: parseInt(h.slice(4, 6), 16),
+  };
+}
+
+exports.GasColumn = GasColumn;
+
+  };
+  __modules["src/objects/explosion.js"] = function (module, exports, __require) {
+// ============================================================================
+// 爆炸视觉：径向冲击波环 + 中心闪光 + 火星粒子，0.45s 后自动移除。
+// 物理冲击（炸飞/碎裂）由 Scene.explode 处理；本对象只负责视觉反馈。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+
+class Explosion extends Obj {
+  constructor({ x, y, strength = 10, cause = null }) {
+    super({ x, y, w: 0, h: 0, solid: false, physicsKind: 'none' });
+    this.strength = strength;
+    this.cause = cause; // 爆炸原因文本（调试：爆炸发生时显示）
+    this.age = 0;
+    this.life = 0.45;
+  }
+
+  update(dt, scene) {
+    this.age += dt;
+    if (this.age >= this.life) scene.removeObject(this);
+  }
+
+  render(ctx, scene) {
+    const t = Math.min(1, this.age / this.life); // 0..1
+    const R = 18 + this.strength * 2.2 * (0.35 + 0.65 * t);
+    const alpha = (1 - t) * 0.9;
+    ctx.save();
+    // 中心闪光（径向渐变）
+    const g = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, R * 0.7);
+    g.addColorStop(0, `rgba(255,255,240,${alpha})`);
+    g.addColorStop(0.5, `rgba(255,170,60,${alpha * 0.7})`);
+    g.addColorStop(1, 'rgba(255,100,20,0)');
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = g;
+    ctx.shadowColor = '#ff8c3d';
+    ctx.shadowBlur = 20;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, R * 0.7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    // 冲击波环
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = '#ffd9a0';
+    ctx.lineWidth = 1 + 3 * (1 - t);
+    ctx.shadowColor = '#ff8c3d';
+    ctx.shadowBlur = 14;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, R, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // 火星粒子（径向飞出）
+    const n = 10;
+    for (let i = 0; i < n; i++) {
+      const ang = (i / n) * Math.PI * 2 + t * 2.4;
+      const d = R * (0.4 + t * 1.3);
+      ctx.globalAlpha = alpha * (1 - t * 0.75);
+      ctx.fillStyle = i % 2 ? '#ffd9a0' : '#ff8c3d';
+      ctx.beginPath();
+      ctx.arc(this.x + Math.cos(ang) * d, this.y + Math.sin(ang) * d, 2.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // 爆炸原因文本（调试）：炸点上方弹出，逐帧上浮淡出
+    if (this.cause && this.age < 0.3) {
+      ctx.globalAlpha = Math.min(1, (0.3 - this.age) * 4);
+      ctx.font = 'bold 12px "Segoe UI", "Microsoft YaHei", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(8,14,26,0.72)';
+      const ty = this.y - R * 0.7 - 8;
+      const tw = ctx.measureText(this.cause).width;
+      ctx.beginPath();
+      ctx.roundRect(this.x - tw / 2 - 6, ty - 14, tw + 12, 20, 6);
+      ctx.fill();
+      ctx.fillStyle = '#ffe9b0';
+      ctx.fillText(this.cause, this.x, ty - 1);
+      ctx.textAlign = 'left';
+    }
+    ctx.restore();
+  }
+}
+
+exports.Explosion = Explosion;
+
+  };
+  __modules["src/objects/reactionlabel.js"] = function (module, exports, __require) {
+// ============================================================================
+// 反应标签（调试模式）：在反应发生的位置飘出"反应式"，缓慢上浮后淡出。
+// 调试模式下 scene.onReaction 在反应点生成。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+
+class ReactionLabel extends Obj {
+  constructor({ x, y, text, color = '#9fd8ff' }) {
+    super({ x, y, w: 0, h: 0, solid: false, physicsKind: 'none' });
+    this.text = text;
+    this.color = color;
+    this.age = 0;
+    this.life = 1.8; // 秒
+  }
+
+  update(dt, scene) {
+    this.age += dt;
+    this.y -= 20 * dt; // 缓慢上浮
+    if (this.age >= this.life) scene.removeObject(this);
+  }
+
+  render(ctx, scene) {
+    const a = Math.max(0, 1 - this.age / this.life);
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.font = 'bold 11px "Segoe UI", "Microsoft YaHei", monospace';
+    const w = ctx.measureText(this.text).width;
+    // 深色圆角底（保证在任意背景可读）
+    ctx.fillStyle = 'rgba(6,14,28,0.72)';
+    ctx.beginPath();
+    ctx.roundRect(this.x - w / 2 - 5, this.y - 11, w + 10, 17, 4);
+    ctx.fill();
+    // 反应式文本
+    ctx.fillStyle = this.color;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(this.text, this.x, this.y - 2);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.restore();
+  }
+}
+
+exports.ReactionLabel = ReactionLabel;
+
+  };
+  __modules["src/objects/container.js"] = function (module, exports, __require) {
+// ============================================================================
+// 容器基类：持有溶液 + 沉淀粒子，化学引擎以 SolutionMaterial 与之交互。
+// 容器本体不是实心（液体可穿入），其几何（池的盆壁/盆底、烧杯壁）由子类提供。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+const { Solution, SolutionMaterial, MIN_ENTRY } = __require('src/chem/solution.js');;
+const { ContainerMaterial } = __require('src/objects/material.js');;
+const { renderFormula } = __require('src/render/label.js');;
+const { getSubstance, acidLabelOf } = __require('src/chem/substances.js');;
+const { luminance } = __require('src/render/theme.js');;
+
+const GRAIN_G = 0.2; // 每颗视觉颗粒代表的沉淀质量（g），生成与移除一致
+
+class Container extends Obj {
+  constructor({ x, y, w, h, volume, solutes, water, ...rest } = {}) {
+    super({ x, y, w, h, solid: false, physicsKind: 'none', ...rest });
+    this.solution = new Solution({ volume: volume ?? 100, solutes: solutes ?? {}, water: water ?? volume ?? 100 });
+    this.solutionMat = new SolutionMaterial(this.solution, this);
+    this.mat = new ContainerMaterial(this); // 溶液 + 沉淀的完整材料（沉淀可参与反应）
+    this.precipitates = new Map(); // substanceId → g（沉淀/内含物，化学真相）
+    this.precipOrigins = new Map(); // substanceId → origin（调试悬停显示每类沉淀的来源）
+    this.solOrigins = new Map(); // 溶质 substanceId → origin（调试悬停显示每类溶质的来源）
+    // 关卡预设的初始溶质 = 关卡生成（反应产物/溶解物在加入时覆盖为对应来源）
+    for (const [id] of this.solution.solutes) this.solOrigins.set(id, { kind: 'level' });
+    this.grains = []; // 视觉颗粒（世界坐标；反应点生成 + 物理堆叠）
+    this.useGrains = true; // 池/烧杯用颗粒；酒精灯等用自定义渲染（见 lamp）
+    this.clipGrains = true; // 是否按 grainRegion 裁剪渲染（酒精灯关掉，让颗粒自然堆成小山）
+    this.grainG = GRAIN_G; // 每颗颗粒代表的质量（g）；灯等密集区可调大 → 更少更大的颗粒，堆更干净
+    this.formulaVisible = true; // 是否显示化学式
+    this.spillSides = false; // 灯等开放平台：颗粒可滚出左右边缘（堆不下从两侧滚落）
+  }
+
+  get hoverLabel() {
+    return '容器';
+  }
+
+  /** 显示容器当前内容（溶液溶质 + 沉淀；纯水显示 H2O），供子类 render 调用 */
+  renderContentsLabel(ctx) {
+    if (this.formulaVisible === false) return;
+    const parts = [];
+    for (const [id, mass] of this.solution.solutes) {
+      if (mass >= MIN_ENTRY) {
+        // 酸类标注浓/稀（阈值：≥300 g/L = 浓，与引擎"浓酸"判定一致——MnO2+浓盐酸制氯气等）
+        const c = acidLabelOf(id, mass, this.solution.volume / 1000);
+        parts.push(c ? `${id}(${c})` : id); // 微量溶质不显示化学式（防"出现/消失"闪烁）
+      }
+    }
+    for (const [id] of this.precipitates) parts.push(`${id}(↓)`);
+    if (parts.length === 0 && this.solution.water > 0) parts.push('H2O'); // 只有水的池子
+    // 含指示剂时显示 pH 数值（石蕊/酚酞加入后即可读数）
+    if (this.solution && this.solution.pH) {
+      let hasIndicator = false;
+      for (const [id] of this.solution.solutes) {
+        if (getSubstance(id).indicator) {
+          hasIndicator = true;
+          break;
+        }
+      }
+      if (hasIndicator) parts.push(`pH=${this.solution.pH().toFixed(1)}`);
+    }
+    if (parts.length) renderFormula(ctx, this.x + this.w / 2, this.y + this.h + 14, parts.join(' + '));
+  }
+
+  get material() {
+    return this.mat;
+  }
+
+  get containerMaterial() {
+    return this.mat;
+  }
+
+  /** 颗粒的沉降区域（世界坐标）；池/烧杯=内区，酒精灯=火焰附近 */
+  grainRegion() {
+    return this.innerRect();
+  }
+
+  /**
+   * 增加沉淀（g）。point 为反应/放置位置（世界坐标）+ 生成宽幅；
+   * 之后把颗粒数对账到与质量一致（避免逐次舍入导致收集后残留）。
+   */
+  addPrecipitate(id, mass, point, origin = null) {
+    this.precipitates.set(id, (this.precipitates.get(id) ?? 0) + mass);
+    // 记录该沉淀的生成来源（反应/放置/关卡预设），供调试悬停显示；未指明时保留已有来源或默认关卡生成
+    if (origin) this.precipOrigins.set(id, origin);
+    else if (!this.precipOrigins.has(id)) this.precipOrigins.set(id, { kind: 'level' });
+    if (this.useGrains && mass > 0) this._syncGrains(id, point);
+  }
+
+  /** 记录溶质来源（反应/溶解/关卡预设），供调试悬停显示；未指明时保留已有来源或默认关卡生成 */
+  noteSolOrigin(id, origin = null) {
+    if (typeof origin === 'string' && origin) origin = { kind: 'reaction', text: origin }; // 引擎传回的方程式字符串归一化
+    if (!origin) {
+      if (!this.solOrigins.has(id)) this.solOrigins.set(id, { kind: 'level' });
+      return;
+    }
+    this.solOrigins.set(id, origin);
+  }
+
+  takePrecipitate(id, mass) {
+    const cur = this.precipitates.get(id) ?? 0;
+    const r = Math.min(cur, mass);
+    const n = cur - r;
+    if (n <= 1e-9) {
+      this.precipitates.delete(id);
+      this.precipOrigins.delete(id); // 沉淀耗尽，来源一并清除
+    } else this.precipitates.set(id, n);
+    if (this.useGrains) this._syncGrains(id); // 移除多余颗粒
+    return r;
+  }
+
+  /** 颗粒半径：随 grainG 放大（更重的颗粒更大） */
+  grainR() {
+    const s = Math.sqrt(this.grainG / GRAIN_G);
+    return (2.4 + Math.random() * 1.4) * s;
+  }
+
+  /** 把某物质的视觉颗粒数对账到 round(质量/每颗质量)：增则补、减则删 */
+  _syncGrains(id, point) {
+    const target = Math.round((this.precipitates.get(id) ?? 0) / this.grainG);
+    let count = 0;
+    for (const g of this.grains) if (g.id === id) count++;
+    // 移除多余（从数组尾部删，即最近生成的）
+    if (count > target) {
+      let rm = count - target;
+      for (let i = this.grains.length - 1; i >= 0 && rm > 0; i--) {
+        if (this.grains[i].id === id) {
+          this.grains.splice(i, 1);
+          rm--;
+        }
+      }
+      return;
+    }
+    // 补不足：从反应点生成；无反应点（预置沉淀）在区域内散落，让物理自然堆成小山
+    const rg = this.grainRegion();
+    const bx = point ? point.x : rg.x + rg.w / 2;
+    // 生成 y 限制在沉降区域内（反应点常取玩家脚底，可能在池底线之下，直接钳回区内避免被裁剪）
+    const spawnY = point
+      ? Math.max(rg.y + 2, Math.min(point.y, rg.y + rg.h - 4))
+      : rg.y + Math.random() * rg.h * 0.5; // 预置沉淀：区域上部散落，落下堆成小山
+    const spread = point && point.spread ? point.spread : 16;
+    const add = target - count;
+    // 宽幅（玩家）时偏向两侧生成：从玩家左右两边冒出，不在中心、也不落在身体里
+    // （spread=玩家宽，半宽=0.5×spread，所以偏移要 >0.5×spread 才在身体外）
+    const edgeBias = spread > 40;
+    for (let i = 0; i < add; i++) {
+      // 无反应点（预置）：每颗在区域内随机 x，避免全部挤在同一点
+      const sx0 = point
+        ? (edgeBias
+          ? bx + (Math.random() < 0.5 ? -1 : 1) * (spread * 0.55 + Math.random() * spread * 0.3)
+          : bx + (Math.random() - 0.5) * spread)
+        : rg.x + Math.random() * rg.w;
+      // 生成 x 也钳回区域内（反应点靠池壁时避免生成帧即越界）
+      const sx = Math.max(rg.x + 3, Math.min(rg.x + rg.w - 3, sx0));
+      this.grains.push({
+        id,
+        x: sx,
+        y: spawnY + (Math.random() - 0.5) * 4,
+        vx: (Math.random() - 0.5) * 20,
+        vy: 2,
+        rest: false,
+        r: this.grainR(),
+      });
+    }
+    if (this.grains.length > 140) this.grains.splice(0, this.grains.length - 140);
+  }
+
+  /** 内部液体区域（默认整个区域；子类可覆盖，如池扣除盆壁） */
+  innerRect() {
+    return { x: this.x, y: this.y, w: this.w, h: this.h };
+  }
+
+  /** 物体是否在容器内 */
+  containsObj(obj) {
+    const r = this.innerRect();
+    return obj.right > r.x && obj.left < r.x + r.w && obj.bottom > r.y && obj.top < r.y + r.h;
+  }
+
+  update(dt, scene) {
+    // 颗粒 = 圆形沙粒的接触动力学（冲量 + 摩擦 + 少量位置修正）：
+    //  重力全程作用；接触时速度冲量抵消法向（不反弹、不抖），摩擦阻尼切向（堆能立住）；
+    //  位置修正只处理重叠的一小部分（≤5px/帧），不整量瞬移；
+    //  睡眠颗粒是不可动锚点（invMass=0），新颗粒架在它们上面，堆自然往上长；
+    //  支撑丢失（被挖开/下方被推走）→ 唤醒下落。
+    if (!this.useGrains || this.grains.length === 0) return;
+    const rg = this.grainRegion();
+    const floorY = rg.y + rg.h - 3;
+    const G = 900;
+    const MAX_FALL = 320;
+    const grains = this.grains;
+    // 玩家碰撞形状（当作容器内的"墙"：堆的压力与玩家边界在同一求解器里平衡，
+    // 颗粒停在玩家轮廓外，不会在脚边被堆顶回去来回振荡）。腐蚀空洞无形状 → 颗粒可进入。
+    const p = scene.player;
+    const pShapes = p && p.solid && p.w > 0
+      && p.x + p.w + 24 > rg.x && p.x - 24 < rg.x + rg.w && p.y + p.h + 24 > rg.y && p.y - 24 < rg.y + rg.h
+      ? (p.getShapes ? p.getShapes() : [p.collider()])
+      : null;
+
+    // 1) 重力（非睡眠）
+    for (const g of grains) {
+      if (g.rest) continue;
+      g.vy += G * dt;
+      if (g.vy > MAX_FALL) g.vy = MAX_FALL;
+      g.x += g.vx * dt;
+      g.y += g.vy * dt;
+    }
+
+    // 2) 位置修正（多迭代，防重叠；睡眠=不可动锚点）+ 区域边界（硬）。
+    //    每颗粒每帧总位移 ≤CAP（深嵌的弹出摊到多帧，不一次爆出去）
+    const CAP = 8;
+    const moved = new Float32Array(grains.length);
+    for (let iter = 0; iter < 6; iter++) {
+      for (let i = 0; i < grains.length; i++) {
+        if (moved[i] >= CAP) continue;
+        const a = grains[i];
+        for (let j = i + 1; j < grains.length; j++) {
+          if (moved[j] >= CAP) continue;
+          const b = grains[j];
+          if (a.rest && b.rest) continue;
+          const ia = a.rest ? 0 : 1;
+          const ib = b.rest ? 0 : 1;
+          const tot = ia + ib;
+          if (tot === 0) continue;
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const d2 = dx * dx + dy * dy;
+          const minD = a.r + b.r;
+          if (d2 >= minD * minD || d2 < 1e-8) continue;
+          const d = Math.sqrt(d2);
+          const nx = dx / d, ny = dy / d;
+          const corr = Math.min(minD - d, 5) / tot;
+          let ax = -nx * corr * ia, ay = -ny * corr * ia;
+          let bx = nx * corr * ib, by = ny * corr * ib;
+          let ma = Math.hypot(ax, ay);
+          if (moved[i] + ma > CAP && ma > 1e-9) { const k = (CAP - moved[i]) / ma; ax *= k; ay *= k; ma = Math.hypot(ax, ay); }
+          let mb = Math.hypot(bx, by);
+          if (moved[j] + mb > CAP && mb > 1e-9) { const k = (CAP - moved[j]) / mb; bx *= k; by *= k; mb = Math.hypot(bx, by); }
+          a.x += ax; a.y += ay;
+          b.x += bx; b.y += by;
+          moved[i] += ma;
+          moved[j] += mb;
+        }
+      }
+      // 区域边界（硬）
+      for (let gi = 0; gi < grains.length; gi++) {
+        const g = grains[gi];
+        // 开放平台（灯）：滚出平台左右边缘后不再贴"地板"，自由下落（由灯 update 移除）
+        const onPlatform = !this.spillSides || (g.x + g.r > rg.x && g.x - g.r < rg.x + rg.w);
+        if (g.y + g.r > floorY && onPlatform) { g.y = floorY - g.r; if (g.vy > 0) g.vy = 0; }
+        if (g.y - g.r < rg.y) { g.y = rg.y + g.r; if (g.vy < 0) g.vy = 0; }
+        if (!this.spillSides) {
+          if (g.x - g.r < rg.x) { g.x = rg.x + g.r; if (g.vx < 0) g.vx *= -0.3; }
+          else if (g.x + g.r > rg.x + rg.w) { g.x = rg.x + rg.w - g.r; if (g.vx > 0) g.vx *= -0.3; }
+        }
+        // 玩家形状当墙：把颗粒推出玩家身体（圆 vs AABB；与堆的压力在同一求解器平衡）
+        if (pShapes) {
+          for (const sh of pShapes) {
+            const cx = Math.max(sh.x, Math.min(g.x, sh.x + sh.w));
+            const cy = Math.max(sh.y, Math.min(g.y, sh.y + sh.h));
+            const dx = g.x - cx, dy = g.y - cy;
+            const d2 = dx * dx + dy * dy;
+            if (d2 >= g.r * g.r) continue;
+            let px = 0, py = 0, pm;
+            if (dx === 0 && dy === 0) {
+              // 圆心在形状内：沿最近面推出；脚底贴容器底 → 向两侧挤开
+              const dl = g.x - sh.x, dr = sh.x + sh.w - g.x;
+              const dt2 = g.y - sh.y, db = sh.y + sh.h - g.y;
+              const m = Math.min(dl, dr, dt2, db);
+              if (m === db && g.y + g.r >= floorY - 1) {
+                px = g.x < sh.x + sh.w / 2 ? -1 : 1;
+                pm = Math.min(dl, dr) + g.r;
+              } else if (m === dl) { px = -1; pm = m + g.r; }
+              else if (m === dr) { px = 1; pm = m + g.r; }
+              else if (m === dt2) { py = -1; pm = m + g.r; }
+              else { py = 1; pm = m + g.r; }
+            } else {
+              const d = Math.sqrt(d2);
+              px = dx / d; py = dy / d;
+              pm = g.r - d;
+            }
+            const mv = Math.min(Math.max(0, pm), 5 - moved[gi]);
+            if (mv > 0) { g.x += px * mv; g.y += py * mv; moved[gi] += mv; }
+            g.rest = false;
+            break;
+          }
+        }
+      }
+    }
+
+    // 3) 速度冲量：法向抵消（恢复 0，不弹起）+ 切向摩擦（阻尼相对滑速，堆立得住）
+    for (let i = 0; i < grains.length; i++) {
+      const a = grains[i];
+      for (let j = i + 1; j < grains.length; j++) {
+        const b = grains[j];
+        if (a.rest && b.rest) continue;
+        const ia = a.rest ? 0 : 1;
+        const ib = b.rest ? 0 : 1;
+        const tot = ia + ib;
+        if (tot === 0) continue;
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const d2 = dx * dx + dy * dy;
+        const minD = a.r + b.r;
+        if (d2 >= minD * minD || d2 < 1e-8) continue;
+        const d = Math.sqrt(d2);
+        const nx = dx / d, ny = dy / d;
+        const rvn = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
+        if (rvn < 0) {
+          const j = -rvn / tot;
+          a.vx -= nx * j * ia;
+          a.vy -= ny * j * ia;
+          b.vx += nx * j * ib;
+          b.vy += ny * j * ib;
+        }
+        // 切向摩擦：去掉 60% 相对切向速度（上限防过冲）
+        const tx = -ny, ty = nx;
+        const rvt = (b.vx - a.vx) * tx + (b.vy - a.vy) * ty;
+        const cap = 50 / tot;
+        const jt = Math.max(-cap, Math.min(cap, rvt * 0.6 / tot));
+        a.vx += tx * jt * ia;
+        a.vy += ty * jt * ia;
+        b.vx -= tx * jt * ib;
+        b.vy -= ty * jt * ib;
+      }
+    }
+
+    // 4) 摩擦 + 睡眠/唤醒
+    const SLEEP_SPEED = 18;
+    for (const g of grains) {
+      // 开放平台（灯）堆满到区域顶：顶部颗粒向两侧溢出滚落（小堆不触发，只有堆满才溢）
+      const spillTop = this.spillSides && g.y - g.r <= rg.y + 1.5;
+      if (spillTop && !g.rest) {
+        g.vx += (g.x < rg.x + rg.w / 2 ? -1 : 1) * 30;
+        g.sleepT = 0;
+      }
+      const floorSupport = g.y + g.r >= floorY - 0.5;
+      let supported = floorSupport;
+      if (!supported) {
+        const gB = g.y + g.r;
+        for (const o of grains) {
+          if (o === g || o.y <= g.y) continue;
+          const oTop = o.y - o.r;
+          if (gB >= oTop - 1 && gB <= oTop + 6 && Math.abs(o.x - g.x) < (g.r + o.r) * 0.7) {
+            supported = true;
+            break;
+          }
+        }
+      }
+      if (g.rest) {
+        // 睡眠颗粒：失去支撑 → 唤醒，防悬浮
+        if (!supported) { g.rest = false; g.vy = 0; }
+        continue;
+      }
+      // 入睡：速度低 + 有支撑 + 持续片刻（睡眠=不可动锚点，供后续颗粒架住）。
+      // 残留的浅重叠（1.5-3px）允许入睡，由下面第 5 步的睡眠松弛单调化解（不造成跳动）
+      if (supported && !spillTop && Math.hypot(g.vx, g.vy) < SLEEP_SPEED) {
+        g.sleepT = (g.sleepT ?? 0) + dt;
+        if (g.sleepT > 0.2) { g.rest = true; g.vx = 0; g.vy = 0; }
+      } else {
+        g.sleepT = 0;
+      }
+      // 全局阻尼（空气/滚动）：水平强（堆积稳定），垂直弱（重力主导）
+      g.vx *= Math.max(0, 1 - 4 * dt);
+      g.vy *= Math.max(0, 1 - 1 * dt);
+    }
+
+    // 5) 睡眠松弛：已睡着的颗粒若仍有**深度**重叠（>2.5px），每帧只互推 ≤1px（单调收敛），
+    //    化解深重叠但不造成跳动；浅接触（≤2.5px）保留，堆保持紧凑不散平。
+    //    水平重叠：两边各推一半；垂直堆叠：只把上面的推上去（下面有支撑，不动，避免地板振荡）
+    for (let iter = 0; iter < 3; iter++) {
+      for (let i = 0; i < grains.length; i++) {
+        const a = grains[i];
+        if (!a.rest) continue;
+        for (let j = i + 1; j < grains.length; j++) {
+          const b = grains[j];
+          if (!b.rest) continue;
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const d = Math.hypot(dx, dy);
+          const minD = a.r + b.r;
+          const pen = minD - d;
+          if (pen < 2.5 || d < 1e-6) continue;
+          if (Math.abs(dy) >= Math.abs(dx)) {
+            // 上下堆叠：把上面的颗粒往上推
+            const upper = a.y < b.y ? a : b;
+            upper.y -= Math.min(pen - 1, 1);
+          } else {
+            const push = Math.min(pen - 1, 1) * 0.5;
+            const nx = dx / d;
+            a.x -= nx * push;
+            b.x += nx * push;
+          }
+        }
+      }
+    }
+    // 松弛后钳回沉降区域（松弛可能把靠墙颗粒横向推出；开放平台允许滚出左右边缘）
+    for (const g of grains) {
+      if (!this.spillSides) g.x = Math.max(rg.x + g.r, Math.min(rg.x + rg.w - g.r, g.x));
+      g.y = Math.max(rg.y + g.r, Math.min(floorY - g.r, g.y));
+    }
+  }
+
+  /**
+   * 物理结算后：玩家与颗粒的碰撞（圆 vs 玩家碰撞形状的 AABB）。
+   *  - 推出**有单帧位移上限**（不整量瞬移出体）：颗粒被玩家平滑地推开，多帧内完全让开；
+   *  - 圆心在形状内 → 沿最近面推出；圆心在形状外但边缘重叠 → 沿法线推出；
+   *  - 完全腐蚀掉的部分（无形状）颗粒可以进入停留；
+   *  - 被推的颗粒唤醒 + 温和踢开（顺着玩家速度 + 侧向，不猛烈上抛）；
+   *  - 密集堆按穿透量给玩家阻力 → 明显减速/挡路，稀疏堆可轻松穿过。
+   */
+  lateUpdate(dt, scene) {
+    if (!this.useGrains || this.grains.length === 0) return;
+    const rg = this.grainRegion();
+    const floorY = rg.y + rg.h - 3;
+    const p = scene.player;
+    if (!p || !p.solid || p.w <= 0) return;
+    // 快速排除：玩家不在容器附近
+    if (p.x + p.w + 24 < rg.x || p.x - 24 > rg.x + rg.w || p.y + p.h + 24 < rg.y || p.y - 24 > rg.y + rg.h) return;
+    const shapes = p.getShapes ? p.getShapes() : [p.collider()];
+    const moving = Math.abs(p.vel.x) > 20;
+    let resist = 0;
+    for (const g of this.grains) {
+      let hit = false;
+      let penMax = 0;
+      for (const sh of shapes) {
+        // 圆 vs AABB：最近点
+        const cx = Math.max(sh.x, Math.min(g.x, sh.x + sh.w));
+        const cy = Math.max(sh.y, Math.min(g.y, sh.y + sh.h));
+        const dx = g.x - cx;
+        const dy = g.y - cy;
+        const d2 = dx * dx + dy * dy;
+        if (d2 >= g.r * g.r) continue; // 未接触
+        const d = Math.sqrt(Math.max(d2, 1e-9));
+        const pen = g.r - d;
+        if (pen > penMax) penMax = Math.min(pen, 6);
+        if (dx === 0 && dy === 0) {
+          // 圆心在形状内：沿最近面推出
+          const dl = g.x - sh.x, dr = sh.x + sh.w - g.x;
+          const dt2 = g.y - sh.y, db = sh.y + sh.h - g.y;
+          const m = Math.min(dl, dr, dt2, db);
+          // 最近面是下底面且已贴容器底：向下会被地板挡回（玩家脚底伸进沉淀堆时）→ 向两侧挤开
+          if (m === db && g.y + g.r >= floorY - 1) {
+            const mv = Math.min(Math.min(dl, dr) + g.r, 8);
+            g.x += (dl < dr ? -1 : 1) * mv;
+          } else {
+            const mv = Math.min(m + g.r, 8);
+            if (m === dl) g.x -= mv;
+            else if (m === dr) g.x += mv;
+            else if (m === dt2) g.y -= mv;
+            else g.y += mv;
+          }
+        } else {
+          // 圆心在形状外但边缘重叠：沿法线推出
+          const nx = dx / d, ny = dy / d;
+          const mv = Math.min(pen, 8);
+          g.x += nx * mv;
+          g.y += ny * mv;
+        }
+        g.rest = false;
+        // 温和踢开：顺着玩家速度 + 侧向，不猛烈上抛
+        if (moving) {
+          g.vx = p.vel.x * 0.25 + (g.x < sh.x + sh.w / 2 ? -30 : 30);
+          g.vy = Math.min(g.vy, -12);
+        } else {
+          g.vx += g.x < sh.x + sh.w / 2 ? -18 : 18;
+          g.vy = Math.min(g.vy, -4);
+        }
+        hit = true;
+        break; // 一次处理一个形状（其余下帧继续）
+      }
+      if (hit) {
+        // 限制在沉降区域内（开放平台不挡左右：允许滚出边缘由灯处理滚落）
+        if (!this.spillSides) g.x = Math.max(rg.x + g.r, Math.min(rg.x + rg.w - g.r, g.x));
+        g.y = Math.max(rg.y + g.r, Math.min(floorY - g.r, g.y));
+      }
+      // 阻力：与穿透量成正比 → 密集堆显著减速（挡路），稀疏/少量轻微（可进池）
+      resist += penMax * 0.004;
+    }
+    if (resist > 0) p._grainResist = (p._grainResist ?? 0) + Math.min(0.9, resist);
+  }
+
+  /** 颗粒裁剪路径（默认矩形；酒精灯覆写为拱形小山） */
+  grainClip(ctx, rg) {
+    ctx.beginPath();
+    ctx.rect(rg.x, rg.y, rg.w, rg.h);
+  }
+
+  /** 渲染视觉颗粒；深色物质带白色辉光。按 grainClip 裁剪（clipGrains=false 时不裁剪） */
+  renderGrains(ctx) {
+    if (!this.useGrains) return;
+    const rg = this.grainRegion();
+    ctx.save();
+    if (this.clipGrains) {
+      this.grainClip(ctx, rg);
+      ctx.clip();
+    }
+    for (const g of this.grains) {
+      const sub = getSubstance(g.id);
+      const c = sub.solid && sub.solid.length ? sub.solid[0] : '#c9b46a';
+      const dark = luminance(c) < 110;
+      ctx.shadowColor = dark ? 'rgba(255,255,255,0.85)' : c;
+      ctx.shadowBlur = dark ? 5 : 3;
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.arc(g.x, g.y, g.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
+exports.Container = Container;
+
+  };
+  __modules["src/render/label.js"] = function (module, exports, __require) {
+// ============================================================================
+// 化学式/标签：暗底圆角 + 金色发光文字
+// ============================================================================
+
+const { THEME, rr } = __require('src/render/theme.js');;
+
+function renderFormula(ctx, x, y, text, opts = {}) {
+  const size = opts.size ?? 10;
+  const color = opts.color ?? THEME.gold.text;
+  ctx.save();
+  ctx.font = `bold ${size}px monospace`;
+  ctx.textAlign = 'left';
+  const w = ctx.measureText(text).width + 10;
+  ctx.fillStyle = 'rgba(12,9,34,0.72)';
+  rr(ctx, x - 3, y - size, w, size + 5, 4);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(232,184,75,0.4)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  // 清晰小字：细暗描边保证可读，不发光
+  ctx.fillStyle = color;
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(8,6,24,0.9)';
+  ctx.strokeText(text, x + 2, y);
+  ctx.fillText(text, x + 2, y);
+  ctx.restore();
+}
+
+exports.renderFormula = renderFormula;
+
+  };
+  __modules["src/objects/portal.js"] = function (module, exports, __require) {
+// ============================================================================
+// 传送门：同色两个为一组。物体（玩家/物块/沉淀）走入一门即传送到另一门。
+// 传送规则 = "每扇门各自的进入/走出"（非冷却，针对单门）：
+//   - 对象记录 _portalLast（上次进过的门）
+//   - 与某门重叠且 _portalLast !== 该门 → 刚走入该门 → 传送到同色对侧，_portalLast = 对侧
+//   - 不与该门重叠但 _portalLast === 该门 → 已走出该门 → 清空
+// 效果：没离开 A 不能再进 A（避免来回弹）；但站在 A 里仍可进入别的门 B（小房间里
+//   玩家太大出不了 A 时，能靠另一扇门逃生）。落点避开其它门 → 密集摆放也不连环传。
+// n次门：可设可用次数（整组共享预算），每用一次扣 1，用尽后整组消失（旧 once:true = 1 次）。
+// 落点检查：目标门脚底对齐、水平居中；被实心体/其它门堵住时按 8px 细步进退开找空位，
+// 全堵死则本次不传——避免把物体塞进墙里被碰撞系统甩飞（"拥挤空间瞬移"）。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+const { overlaps } = __require('src/physics/collision.js');;
+
+const EMBED_TOL = 8; // 落点嵌入实心体多少 px 以内仍可落（物理一帧即可温柔推开）
+function overlapsBox(box, o, m = EMBED_TOL) {
+  // 只有穿透明显（>m px）才算"挡住"：传送门旁常有薄墙/柱，落点伸进去几 px 很常见，
+  // 交给碰撞封顶解压（≤16px/帧）即可；落点整个埋进厚墙（大穿透）才判堵。
+  return box.x + m < o.x + o.w && box.x + box.w - m > o.x && box.y + m < o.y + o.h && box.y + box.h - m > o.y;
+}
+
+/** 落点 (x,y)（obj 的左上角）是否被挡：
+ *  - 静态实心（地板/灯/开关/提取器…）挡
+ *  - 动态实心里：可推动的物块让玩家推开即可（不挡），沉淀粒子可落脚（不挡）
+ *  - 其它传送门（目标门 pair 除外）挡：落到别的门里会立即连环传
+ *  strict=true（优先模式）：动态体一律挡——传送落点与其他物体（含可推物块）
+ *  重叠会在下一帧被碰撞系统反复推挤：玩家推物体过门后两者落点重叠 → 抖动 /
+ *  被弹飞（物体被推回门内又触发传送、来回瞬移）。找不到严格空位时再放宽。 */
+function spotBlocked(obj, x, y, scene, pair, strict = false) {
+  const box = { x, y, w: obj.w, h: obj.h };
+  for (const s of scene.statics) if (s.solid && overlapsBox(box, s)) return true;
+  for (const d of scene.dynamics) {
+    if (d === obj || !d.solid || d.amount !== undefined) continue;
+    if (strict) {
+      if (overlapsBox(box, d, 0)) return true;
+    } else if (!d.pushable && overlapsBox(box, d)) {
+      return true;
+    }
+  }
+  for (const p of scene.portals) {
+    if (p === pair) continue;
+    if (overlapsBox(box, p, 0)) return true; // 严格：任何重叠都不落在别的门里
+  }
+  return false;
+}
+
+/** 在同色门找落点：基准 = 脚底对齐门底边、水平居中（站在门里，脚踩门底座，而非对心
+ *  ——对心会把高物体探出门底、撞上地板导致乱找空位）。被堵则按 8px 细步进在门旁退开
+ *  （薄墙/柱挡个 5~10px 也轻松滑过去），全堵死返回 null。
+ *  先用 strict 模式找"与其他物体零重叠"的落点（防传送后重叠抖动/弹飞），
+ *  找不到再放宽为"不挡实心体即可"（保证传送不被完全阻塞）。 */
+function findFreeSpot(obj, pair, scene) {
+  const spot = searchSpot(obj, pair, scene, true);
+  if (spot) return spot;
+  return searchSpot(obj, pair, scene, false);
+}
+
+function searchSpot(obj, pair, scene, strict) {
+  const cx = pair.x + pair.w / 2 - obj.w / 2;
+  const cy = pair.y + pair.h - obj.h;
+  // 螺旋候选：按距离门心由近到远，同一步长左右各试一次（否则会在窄通道里滑向一侧的远端）
+  for (let dy = 0; dy <= Math.max(80, obj.h); dy += 20) {
+    const y = Math.round(cy - dy);
+    for (let dx = 0; dx <= obj.w + 16; dx += 8) {
+      const xr = Math.round(cx + dx);
+      if (!spotBlocked(obj, xr, y, scene, pair, strict)) return { x: xr, y };
+      if (dx !== 0) {
+        const xl = Math.round(cx - dx);
+        if (!spotBlocked(obj, xl, y, scene, pair, strict)) return { x: xl, y };
+      }
+    }
+  }
+  return null;
+}
+
+class Portal extends Obj {
+  constructor({ x, y, w = 40, h = 64, color = '#c78bff', once = false, uses = Infinity, switchId = null, ...rest } = {}) {
+    super({ x, y, w, h, solid: false, physicsKind: 'none', ...rest });
+    this.color = color; // 组标识：同色两个为一组
+    // n次门：可设可用次数（整组共享，任一扇配置的有限次数为整组预算），用尽整组消失；
+    // once:true（旧数据）= 1 次
+    this.uses = once ? 1 : uses;
+    this.usesLeft = Number.isFinite(this.uses) ? this.uses : Infinity;
+    this.switchId = switchId; // 绑定开关 id：开关有效开启时才可传送（null = 常开）
+    this.pair = null; // 对侧门（惰性解析）
+  }
+
+  get hoverLabel() {
+    if (this.switchId) return Number.isFinite(this.usesLeft) ? `传送门（需开关·可用${this.usesLeft}次）` : '传送门（需开关）';
+    if (Number.isFinite(this.usesLeft)) return `传送门（可用${this.usesLeft}次）`;
+    return '传送门';
+  }
+
+  /** 是否可传送：绑定开关时要求开关有效开启（支持"&"联锁）；开关不存在视为关闭 */
+  _isActive(scene) {
+    if (!this.switchId) return true;
+    const sw = scene.byId[this.switchId];
+    if (!sw) return false;
+    return typeof sw.effectiveOpen === 'function' ? sw.effectiveOpen(scene) : sw.open;
+  }
+
+  /** 解析对侧门：scene.portals 中同色且非自身的另一扇（对侧被移除时重新解析） */
+  _resolvePair(scene) {
+    if (this.pair && scene.portals.includes(this.pair)) return this.pair;
+    this.pair = null;
+    for (const o of scene.portals) {
+      if (o !== this && o.color === this.color) {
+        this.pair = o;
+        break;
+      }
+    }
+    return this.pair;
+  }
+
+  update(dt, scene) {
+    const pair = this._resolvePair(scene);
+    if (!pair) return;
+    const active = this._isActive(scene); // 绑定开关时只有开关开启才传送
+    // 候选：动态体（玩家/物块）+ 自由沉淀粒子
+    for (const obj of [...scene.dynamics, ...scene.particles]) {
+      if (obj === this || obj.static) continue;
+      const inside = overlaps(this, obj);
+      if (inside && active && obj._portalLast !== this) {
+        // 刚走入本门：传送到同色对侧门（落点避开实心体/其它门）。找不到空位说明对侧
+        // 被完全堵死 → 本次不传，避免塞进墙里被碰撞系统甩飞。
+        const spot = findFreeSpot(obj, pair, scene);
+        if (!spot) continue;
+        obj.x = spot.x;
+        obj.y = spot.y;
+        obj._portalLast = pair; // 站在对侧门内：本门不重复触发；离开本门后才能再进本门
+        // n次门：整组共享剩余次数，用尽后整组消失（任一扇配置的有限次数 = 整组预算）
+        const lThis = Number.isFinite(this.usesLeft) ? this.usesLeft : Infinity;
+        const lPair = pair && Number.isFinite(pair.usesLeft) ? pair.usesLeft : Infinity;
+        const left = Math.min(lThis, lPair);
+        if (left !== Infinity) {
+          const newLeft = left - 1;
+          if (newLeft <= 0) {
+            scene.removeObject(this);
+            if (pair) scene.removeObject(pair);
+          } else {
+            this.usesLeft = newLeft;
+            if (pair) pair.usesLeft = newLeft;
+          }
+        }
+      } else if (!inside && obj._portalLast === this) {
+        // 已走出本门：允许下次再进本门
+        obj._portalLast = null;
+      }
+    }
+  }
+
+  render(ctx, opts) {
+    // 渲染器传的是 opts（{ scene, time, ... }），必须先解出 scene 再访问 scene.byId
+    const scene = opts?.scene ?? null;
+    const t = scene?.time ?? 0;
+    const cx = this.x + this.w / 2;
+    const cy = this.y + this.h / 2;
+    const active = this._isActive(scene); // 绑定开关未开 → 熄灭
+    const col = active ? this.color : '#4a4f70';
+    const blur = active ? 14 : 0;
+    ctx.save();
+    // 外框（同色发光；未激活时熄灭）
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 2;
+    ctx.shadowColor = active ? this.color : 'transparent';
+    ctx.shadowBlur = blur;
+    this._arch(ctx, 0);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // 内部漩涡（径向渐变 + 旋转符文粒子）
+    const g = ctx.createRadialGradient(cx, cy, 2, cx, cy, this.w * 0.55);
+    g.addColorStop(0, active ? '#f2e6ff' : '#5a5f74');
+    g.addColorStop(0.45, col);
+    g.addColorStop(1, active ? 'rgba(90,42,154,0)' : 'rgba(60,60,80,0)');
+    ctx.save();
+    this._arch(ctx, 3);
+    ctx.clip();
+    ctx.fillStyle = g;
+    ctx.fillRect(this.x, this.y, this.w, this.h);
+    const n = 10;
+    for (let i = 0; i < n; i++) {
+      const a = t * 1.6 + (i / n) * Math.PI * 2;
+      const rr = 4 + ((i * 37) % (this.w / 2));
+      const px = cx + Math.cos(a) * rr;
+      const py = cy + Math.sin(a) * rr * 0.8;
+      ctx.fillStyle = 'rgba(242,230,255,0.85)';
+      ctx.beginPath();
+      ctx.arc(px, py, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+    // 顶部小标记（组色圆点）；一次性门再画个 ×（用后消失）
+    ctx.fillStyle = col;
+    ctx.shadowColor = active ? this.color : 'transparent';
+    ctx.shadowBlur = active ? 8 : 0;
+    ctx.beginPath();
+    ctx.arc(cx, this.y - 5, 3, 0, Math.PI * 2);
+    ctx.fill();
+    // n次门：顶部显示剩余次数（无限次数不显示）——大号数字 + 深色底板（任何背景下可读）
+    if (Number.isFinite(this.usesLeft)) {
+      ctx.shadowBlur = 0;
+      ctx.font = 'bold 16px monospace';
+      ctx.textAlign = 'center';
+      const txt = String(this.usesLeft);
+      const tw = ctx.measureText(txt).width;
+      ctx.fillStyle = 'rgba(16,20,40,0.78)';
+      ctx.beginPath();
+      ctx.roundRect(cx - tw / 2 - 5, this.y - 31, tw + 10, 21, 6);
+      ctx.fill();
+      ctx.fillStyle = active ? '#ffffff' : '#9fb2c8';
+      ctx.fillText(txt, cx, this.y - 16);
+      ctx.textAlign = 'left';
+    }
+    ctx.restore();
+  }
+
+  /** 拱形门路径 */
+  _arch(ctx, inset) {
+    const x = this.x + inset;
+    const y = this.y + inset;
+    const w = this.w - inset * 2;
+    const h = this.h - inset * 2;
+    const r = w / 2;
+    ctx.beginPath();
+    ctx.moveTo(x, y + h);
+    ctx.lineTo(x, y + r);
+    ctx.arcTo(x, y, x + r, y, r);
+    ctx.arcTo(x + w, y, x + w, y + r, r);
+    ctx.lineTo(x + w, y + h);
+    ctx.closePath();
+  }
+}
+
+exports.Portal = Portal;
+
+  };
+  __modules["src/objects/rope.js"] = function (module, exports, __require) {
+// ============================================================================
+// 绳子：细线，悬挂一个物体。锚点可为固定坐标或跟随某物体（相对坐标）。
+// 悬挂物体的位置完全由绳子决定（lateUpdate：物理结算后再定位，避免被推走）。
+// 每刻检查：锚点物体不存在，或悬挂物体目标位置被实心体卡住 → 断绳。
+// 断绳后绳子消失，悬挂物体恢复重力。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+const { overlaps } = __require('src/physics/collision.js');;
+const { THEME } = __require('src/render/theme.js');;
+
+class Rope extends Obj {
+  constructor({ x = 0, y = 0, length = 100, anchor, hanging, ...rest } = {}) {
+    super({ x, y, w: 2, h: length, solid: false, physicsKind: 'none', ...rest });
+    this.length = length;
+    this.anchor = anchor; // {fixed:{x,y}} | {obj, dx?, dy?}
+    this.hanging = hanging; // 悬挂物体（Obj）
+    this.broken = false;
+    // 悬挂期间物体不受重力，位置由绳子决定
+    if (hanging) {
+      hanging.gravity = 0;
+      // 初始把悬挂物放到锚点+长度处，避免构造时的初始偏移被误判为"被推动"
+      const a = this.anchorPoint();
+      hanging.x = a.x - hanging.w / 2;
+      hanging.y = a.y + length - hanging.h;
+    }
+  }
+
+  anchorPoint() {
+    if (this.anchor.fixed) return { x: this.anchor.fixed.x, y: this.anchor.fixed.y };
+    const o = this.anchor.obj;
+    return { x: o.x + (this.anchor.dx ?? 0), y: o.y + (this.anchor.dy ?? 0) };
+  }
+
+  lateUpdate(dt, scene) {
+    if (this.broken || !this.hanging) return;
+    // 锚点物体消失 → 断绳
+    if (this.anchor.obj && !scene.byId[this.anchor.obj.id]) {
+      this.break(scene);
+      return;
+    }
+    // 悬挂物体被删除（如开关 deleteId 移除了它）→ 断绳
+    if (!scene.byId[this.hanging.id]) {
+      this.break(scene);
+      return;
+    }
+    let a = this.anchorPoint();
+    // 区分"推的是锚点"还是"推的是悬挂物"：
+    //  - 锚点本 tick 移动（玩家推锚点）→ 悬挂物跟随即可，不平移锚点
+    //  - 锚点没动但悬挂物被推离期望 → 平移锚点（绳子刚性，整个系统一起动）
+    const anchorDx = a.x - (this._prevAnchorX ?? a.x);
+    const tx = a.x - this.hanging.w / 2;
+    const dx = this.hanging.x - tx;
+    if (!(Math.abs(anchorDx) > 0.5) && this.anchor.obj && Math.abs(dx) > 0.5) {
+      this.anchor.obj.x += dx;
+      a.x += dx;
+    }
+    this._prevAnchorX = a.x;
+    this.x = a.x;
+    this.y = a.y;
+    const nx = a.x - this.hanging.w / 2;
+    const ny = a.y + this.length - this.hanging.h;
+    this.hanging.x = nx;
+    this.hanging.y = ny;
+    this.hanging.vel = { x: 0, y: 0 };
+    // 目标位置被实心体卡住 → 断绳
+    for (const s of scene.statics) {
+      if (overlaps(this.hanging, s)) {
+        this.break(scene);
+        return;
+      }
+    }
+  }
+
+  break(scene) {
+    this.broken = true;
+    if (this.hanging) this.hanging.gravity = 1;
+    scene.removeObject(this);
+  }
+
+  render(ctx) {
+    ctx.save();
+    ctx.strokeStyle = THEME.gold.base;
+    ctx.lineWidth = 2;
+    ctx.shadowColor = THEME.gold.light;
+    ctx.shadowBlur = 5;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.moveTo(this.x, this.y);
+    ctx.lineTo(this.x, this.y + this.length);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // 顶端小锚环
+    ctx.strokeStyle = THEME.gold.light;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, 3, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+exports.Rope = Rope;
+
+  };
+  __modules["src/core/input.js"] = function (module, exports, __require) {
+// ============================================================================
+// 键盘输入 → Scene.control（长按）/ Scene.pressed（本刻刚按下）
+// 触控暂不实现（接口位预留）。
+// ============================================================================
+
+const KEYMAP = {
+  KeyA: 'left',
+  KeyD: 'right',
+  Space: 'jump',
+  ShiftLeft: 'place',
+  ShiftRight: 'place',
+  KeyQ: 'collect',
+};
+
+function bindKeyboard(scene) {
+  // 立即清空：右键菜单、焦点切换、页面隐藏等会吞掉 keyup 的场景
+  const onClear = () => {
+    scene.control.clear();
+    scene.pressed.clear();
+  };
+  const onDown = (e) => {
+    // 页面不在前台时忽略按键
+    if (typeof document !== 'undefined' && !document.hasFocus()) return;
+    // 运行时钩子：任意键都可被插件/关卡脚本监听（返回 true 表示已处理）
+    scene._fireKey('down', e);
+    if (e.code === 'KeyR') {
+      scene.restart();
+      return;
+    }
+    // 调试模式：F5 暂停/继续，F6 步进一 tick，X 循环切换悬停重叠目标
+    if (scene.debugMode) {
+      if (e.code === 'F5') {
+        scene.debugPaused = !scene.debugPaused;
+        e.preventDefault();
+        return;
+      }
+      if (e.code === 'F6') {
+        scene.debugStepOnce = true;
+        e.preventDefault();
+        return;
+      }
+      if (e.code === 'KeyX') {
+        scene.debugHoverCycle = true;
+        e.preventDefault();
+        return;
+      }
+    }
+    const c = KEYMAP[e.code];
+    if (!c) return;
+    e.preventDefault();
+    if (!scene.control.has(c)) scene.pressed.add(c);
+    scene.control.add(c);
+  };
+  const onUp = (e) => {
+    scene._fireKey('up', e);
+    const c = KEYMAP[e.code];
+    if (c) scene.control.delete(c);
+  };
+  window.addEventListener('keydown', onDown);
+  window.addEventListener('keyup', onUp);
+  window.addEventListener('blur', onClear);
+  window.addEventListener('contextmenu', onClear); // 右键菜单会吞 keyup
+  window.addEventListener('focusout', onClear); // 焦点移出（点击别处、切换焦点）
+  document.addEventListener('visibilitychange', onClear);
+  return () => {
+    window.removeEventListener('keydown', onDown);
+    window.removeEventListener('keyup', onUp);
+    window.removeEventListener('blur', onClear);
+    window.removeEventListener('contextmenu', onClear);
+    window.removeEventListener('focusout', onClear);
+    document.removeEventListener('visibilitychange', onClear);
+  };
+}
+
+exports.bindKeyboard = bindKeyboard;
+
+  };
+  __modules["src/core/loop.js"] = function (module, exports, __require) {
+// ============================================================================
+// 固定步长主循环：tick 30/s，rAF 驱动渲染。
+// scene 可以是 Scene 实例（单场景），也可以是 () => {scene, renderer, hud}（多场景管理器
+// 用：每条循环只推进/渲染"当前激活"的场景，切换即热切换）。
+// ============================================================================
+
+const { CFG } = __require('src/core/config.js');;
+
+function startLoop(scene, renderer, opts = {}) {
+  const TICK = 1 / CFG.tickRate;
+  let last = performance.now();
+  let acc = 0;
+  let raf = 0;
+
+  const getActive = typeof scene === 'function' ? scene : () => ({ scene, renderer, hud: opts.hud });
+
+  function frame(now) {
+    const dt = Math.min((now - last) / 1000, 0.25);
+    last = now;
+    acc += dt;
+    const active = getActive();
+    if (active && active.scene) {
+      const S = active.scene;
+      let guard = 0;
+      if (S.debugMode && S.debugPaused) {
+        // 调试暂停：不推进 tick（保持画面），F6 手动步进一 tick
+        if (S.debugStepOnce) {
+          S.debugStepOnce = false;
+          S.step(TICK);
+        }
+      } else {
+        while (acc >= TICK && guard < 10) {
+          S.step(TICK);
+          acc -= TICK;
+          guard++;
+        }
+        if (acc >= TICK) acc = 0; // 追不上就丢帧
+      }
+      const R = active.renderer ?? renderer;
+      R.frame(S.objects, { hud: active.hud ?? opts.hud, time: S.time, scene: S, focus: S.player });
+    }
+    raf = requestAnimationFrame(frame);
+  }
+  raf = requestAnimationFrame(frame);
+  return () => cancelAnimationFrame(raf);
+}
+
+exports.startLoop = startLoop;
+
+  };
+  __modules["src/level/builder.js"] = function (module, exports, __require) {
+// ============================================================================
+// 关卡 DSL：流式构建 Scene，末尾 build() 返回 Scene，start() 启动游戏循环。
+// ============================================================================
+
+const { Scene } = __require('src/core/scene.js');;
+const { parseReactionStr } = __require('src/chem/substances.js');;
+const { bindKeyboard } = __require('src/core/input.js');;
+const { startLoop } = __require('src/core/loop.js');;
+const { Plugins } = __require('src/level/plugins.js');;
+const { Renderer } = __require('src/render/renderer.js');;
+const { Hud } = __require('src/render/hud.js');;
+const { Floor } = __require('src/objects/floor.js');;
+const { Pool } = __require('src/objects/pool.js');;
+const { Block } = __require('src/objects/block.js');;
+const { Deposit } = __require('src/objects/deposit.js');;
+const { Player } = __require('src/objects/player.js');;
+const { Switch } = __require('src/objects/switch.js');;
+const { Key } = __require('src/objects/key.js');;
+const { Door } = __require('src/objects/door.js');;
+const { Lamp } = __require('src/objects/lamp.js');;
+const { BlastLamp } = __require('src/objects/blastlamp.js');;
+const { Beaker } = __require('src/objects/beaker.js');;
+const { Rope } = __require('src/objects/rope.js');;
+const { GasColumn } = __require('src/objects/gascolumn.js');;
+const { Sign } = __require('src/objects/sign.js');;
+const { Portal } = __require('src/objects/portal.js');;
+const { GasDetector } = __require('src/objects/gasdetector.js');;
+const { Extractor } = __require('src/objects/extractor.js');;
+const { Dropper } = __require('src/objects/dropper.js');;
+const { bindSceneClick } = __require('src/level/click.js');;
+
+class LevelBuilder {
+  constructor(canvas, opts = {}) {
+    this.scene = new Scene(opts);
+    this.renderer = new Renderer(canvas, { worldW: this.scene.worldW, worldH: this.scene.worldH });
+    this.hud = new Hud(this.scene);
+    this.scene.renderer = this.renderer;
+  }
+
+  floor(x, y, w, h, opts = {}) {
+    return this.add(new Floor({ x, y, w, h, ...opts }));
+  }
+
+  pool(x, y, w, h, opts = {}) {
+    return this.add(new Pool({ x, y, w, h, ...opts }));
+  }
+
+  block(x, y, opts = {}) {
+    return this.add(new Block({ x, y, ...opts }));
+  }
+
+  /** 沉淀堆：直接放在地面的沉淀（默认低矮堆形、不可推动、不可被气流托起） */
+  deposit(x, y, opts = {}) {
+    return this.add(new Deposit({ x, y, ...opts }));
+  }
+
+  player(x, y, opts = {}) {
+    return this.add(new Player({ x, y, ...opts }));
+  }
+
+  switch(x, y, opts = {}) {
+    return this.add(new Switch({ x, y, ...opts }));
+  }
+
+  key(x, y, opts = {}) {
+    return this.add(new Key({ x, y, ...opts }));
+  }
+
+  door(x, y, w, h, opts = {}) {
+    return this.add(new Door({ x, y, w, h, ...opts }));
+  }
+
+  lamp(x, y, opts = {}) {
+    return this.add(new Lamp({ x, y, ...opts }));
+  }
+
+  blastlamp(x, y, opts = {}) {
+    return this.add(new BlastLamp({ x, y, ...opts }));
+  }
+
+  beaker(x, y, opts = {}) {
+    return this.add(new Beaker({ x, y, ...opts }));
+  }
+
+  rope(x, y, opts = {}) {
+    return this.add(new Rope({ x, y, ...opts }));
+  }
+
+  gas(x, y, w, h, opts = {}) {
+    return this.add(new GasColumn({ x, y, w, h, ...opts }));
+  }
+
+  sign(x, y, text, opts = {}) {
+    return this.add(new Sign({ x, y, text, ...opts }));
+  }
+
+  portal(x, y, opts = {}) {
+    return this.add(new Portal({ x, y, ...opts }));
+  }
+
+  gasdetector(x, y, opts = {}) {
+    return this.add(new GasDetector({ x, y, ...opts }));
+  }
+
+  extractor(x, y, opts = {}) {
+    return this.add(new Extractor({ x, y, ...opts }));
+  }
+
+  dropper(x, y, opts = {}) {
+    return this.add(new Dropper({ x, y, ...opts }));
+  }
+
+  add(obj) {
+    if (!obj.origin) obj.origin = { kind: 'level' }; // 关卡预设物体：来源=关卡生成
+    this.scene.addObject(obj);
+    return this;
+  }
+
+  /** 关卡自定义反应（最高优先级，覆盖内置反应）：'Cu + FeCl3 → CuCl2 + FeCl2' */
+  reaction(str) {
+    const rule = parseReactionStr(str);
+    if (rule) this.scene.customReactions.push(rule);
+    return this;
+  }
+
+  /** 插件组件（v2）：按 type 实例化插件注册的组件并放入场景。
+   *  组件对象由插件 construct(opts) 创建——需实现引擎对象契约（Obj 子类或 update/render）。 */
+  pluginObj(type, opts = {}) {
+    const obj = Plugins.create(type, opts);
+    if (!obj) throw new Error(`插件组件未注册: ${type}`);
+    return this.add(obj);
+  }
+
+  /** 开启调试模式：F5 暂停/继续 tick，F6 手动步进一 tick，HUD 显示附近所有反应 */
+  debugmode() {
+    this.scene.debugMode = true;
+    return this;
+  }
+
+  setTip(s) {
+    this.scene.tip = s;
+    return this;
+  }
+
+  on(name, fn) {
+    this.scene.on(name, fn);
+    return this;
+  }
+
+  build() {
+    // 注入相机（爆炸屏幕震动用）
+    this.scene.camera = this.renderer.camera;
+    return this.scene;
+  }
+
+  /** 启动：状态→输入→点击（提示/选格）→主循环 */
+  start() {
+    const scene = this.build();
+    scene.status = 'running';
+    this.unbind = bindKeyboard(scene);
+    this.bindClick();
+    this.stop = startLoop(scene, this.renderer, { hud: this.hud });
+    return scene;
+  }
+
+  bindClick() {
+    const canvas = this.renderer.canvas;
+    const scene = this.scene;
+    const screenPos = (e) => {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: (e.clientX - rect.left) * (canvas.width / rect.width),
+        y: (e.clientY - rect.top) * (canvas.height / rect.height),
+      };
+    };
+    // 记录鼠标位置（调试模式悬停显示物体来源用）；离开画布清除
+    const onMove = (e) => {
+      if (!scene.debugMode) return;
+      const { x, y } = screenPos(e);
+      scene.mouse = { x, y, on: true };
+    };
+    const onLeave = () => {
+      if (scene.mouse) scene.mouse.on = false;
+    };
+    canvas.addEventListener('mousemove', onMove);
+    canvas.addEventListener('mouseleave', onLeave);
+    // 点击：提示按钮 / 物品栏选格 / 场景内可点击物体（滴管等 onTap）
+    bindSceneClick(canvas, screenPos, () => ({ scene: this.scene, hud: this.hud }));
+  }
+}
+
+exports.LevelBuilder = LevelBuilder;
+
+  };
+  __modules["src/level/plugins.js"] = function (module, exports, __require) {
+// ============================================================================
+// 插件系统：把"关卡额外逻辑"做成可加载、可配置、可导出的 JS 插件。
+// ----------------------------------------------------------------------------
+// 插件 = 一个 JS 文件：
+//   - 文件头带 @@chezzle-plugin 元数据注释块（编辑器不执行代码即可展示/配置）；
+//   - 代码调用 Chezzle.Plugin.register('name', def) 注册运行时定义。
+// 运行时注入点：scene 构建完毕、主循环启动之前 —— Chezzle.Plugin.inject(scene, entries)。
+// 插件约定：顶层代码只做 register（不要产生副作用）；行为写在 def.run(scene, api, cfg) 里。
+// ============================================================================
+
+const { parseReactionStr } = __require('src/chem/substances.js');;
+
+const registry = new Map(); // name -> def
+
+/** 给插件/关卡脚本的稳定 API 面（scene 本身仍可裸访问，那是不设防的后门） */
+function makeApi(scene) {
+  return {
+    scene,
+    /** 按 id 取物体 */
+    byId: (id) => scene.byId[id],
+    /** 按类型取当前场景物体（对象构造器名，如 'Lamp'；或用 'typeName' 字段） */
+    objects: (type) => scene.objects.filter((o) => o.typeName === type || o.constructor?.name === type),
+    /** 注入自定义反应（最高优先级，覆盖内置反应）；返回是否解析成功 */
+    addReaction: (str) => {
+      const rule = parseReactionStr(str);
+      if (rule) scene.customReactions.push(rule);
+      return !!rule;
+    },
+    /** 修改关卡提示（HUD 顶部） */
+    tip: (s) => { scene.tip = s; },
+    /** 游戏时间秒（受调试暂停控制） */
+    time: () => scene.time,
+    /** 便捷：等待/每帧/下一帧/周期（同 scene 同名方法） */
+    wait: scene.wait.bind(scene),
+    after: scene.after.bind(scene),
+    interval: scene.interval.bind(scene),
+    onTick: scene.onTick.bind(scene),
+    onKeyDown: scene.onKeyDown.bind(scene),
+    onKeyUp: scene.onKeyUp.bind(scene),
+    /** 场景事件（'complete' 等）：scene.on(name, fn) */
+    on: scene.on.bind(scene),
+    /** 播放特效（火星/爆炸/粒子…对应引擎能力） */
+    spawnParticles: scene.spawnParticles.bind(scene),
+    explode: scene.explode?.bind(scene) ?? (() => {}),
+  };
+}
+
+const Plugins = {
+  /** 注册一个插件定义。def: { run(scene,api,cfg)?, components?: [...] } */
+  register(name, def = {}) {
+    registry.set(name, def);
+    return def;
+  },
+
+  get(name) {
+    return registry.get(name);
+  },
+
+  has(name) {
+    return registry.has(name);
+  },
+
+  list() {
+    return [...registry.entries()].map(([name, def]) => ({ name, def }));
+  },
+
+  /** 全部已注册名（编辑器加载插件后 diff 用：确定该文件注册了哪个名字） */
+  names() {
+    return [...registry.keys()];
+  },
+
+  /** 运行一个插件：run(scene, api, cfg)。返回 run 的返回值（可以是清理函数） */
+  call(name, scene, cfg = {}) {
+    const def = registry.get(name);
+    if (!def || typeof def.run !== 'function') return null;
+    const r = def.run(scene, makeApi(scene), cfg ?? {});
+    return typeof r === 'function' ? r : null;
+  },
+
+  /**
+   * 关卡注入点（scene 构建后、start 前调用）：
+   * entries = [{ name: 'lampDelay', cfg: { ... } }, ...]
+   * 返回一个清理函数（在场景终止时调用）。
+   */
+  inject(scene, entries = []) {
+    const cleanups = [];
+    for (const e of entries) {
+      if (!e || !e.name) continue;
+      const def = registry.get(e.name);
+      if (!def) continue; // 插件未加载/已注册名不匹配：静默跳过（不同关卡可共享同一插件集）
+      try {
+        const r = def.run ? def.run(scene, makeApi(scene), e.cfg ?? {}) : null;
+        if (typeof r === 'function') cleanups.push(r);
+      } catch (err) {
+        // 插件运行时错误：记录但绝不拖垮游戏循环
+        if (typeof console !== 'undefined') console.error(`[plugin:${e.name}]`, err);
+      }
+    }
+    return () => {
+      for (const c of cleanups) {
+        try { c(); } catch (err) { /* 同上 */ }
+      }
+    };
+  },
+
+  // ---------------------------------------------------------------------------
+  // v2：组件（插件可注册"新的可放置物体"，编辑器目录/属性/导出成为一等公民）
+  // ---------------------------------------------------------------------------
+
+  /** 按 type 实例化一个插件组件（缺 type 定义时返回 null） */
+  create(type, opts = {}) {
+    for (const [, def] of registry) {
+      for (const comp of def.components ?? []) {
+        if (comp.type === type && typeof comp.construct === 'function') {
+          const obj = comp.construct(opts);
+          if (obj && !obj.origin) obj.origin = { kind: 'plugin', plugin: comp.type };
+          return obj;
+        }
+      }
+    }
+    return null;
+  },
+
+  /** 全部已注册组件的声明（编辑器据此渲染目录/属性面板） */
+  components() {
+    const out = [];
+    for (const [plugin, def] of registry) {
+      for (const c of def.components ?? []) out.push({ plugin, ...c });
+    }
+    return out;
+  },
+
+  // ---------------------------------------------------------------------------
+  // 元数据：解析插件源码头部的 @@chezzle-plugin 注释块（编辑器展示/配置用，不执行代码）
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 解析源码中的元数据块：
+   *   // @@chezzle-plugin
+   *   // { "name": "延迟出现", "api": 1, "fields": [...], "components": [...] }
+   *   // @@end
+   * 返回对象或 null。
+   */
+  parseMeta(src) {
+    if (typeof src !== 'string') return null;
+    const m = src.match(/@@chezzle-plugin\s*([\s\S]*?)\s*@@end/);
+    if (!m) return null;
+    const text = m[1]
+      .split('\n')
+      .map((l) => l.replace(/^\s*\/\/\s?/, '').replace(/^\s*\*+\s?/, ''))
+      .join('\n')
+      .trim();
+    try {
+      const meta = JSON.parse(text);
+      return meta && typeof meta === 'object' ? meta : null;
+    } catch (err) {
+      return null;
+    }
+  },
+};
+
+/** 单数别名：插件文件/关卡脚本里习惯写 Chezzle.Plugin.register(...) */
+const Plugin = Plugins;
+
+exports.Plugins = Plugins;
+exports.Plugin = Plugin;
+
+  };
+  __modules["src/render/renderer.js"] = function (module, exports, __require) {
+// ============================================================================
+// 最小渲染器：清屏 → 相机缩放 → 逐对象渲染 → HUD
+// 对象只需实现 render(ctx, opts)。渲染器本身不关心对象类型（解耦）。
+// 粒子特例：同种且位置重合/贴近的多个沉淀粒子，合并渲染成一个大粒子
+// （掉落的一簇 20 颗不再像"撒了一地小点"，视觉上是一颗稍大的粒子）。
+// ============================================================================
+
+const { Camera } = __require('src/render/camera.js');;
+const { renderBackground } = __require('src/render/background.js');;
+const { Particle } = __require('src/objects/particle.js');;
+const { getSubstance } = __require('src/chem/substances.js');;
+const { luminance } = __require('src/render/theme.js');;
+
+const CLUSTER = 12; // px：同种粒子质心间距小于此视为一簇（重合/贴近）
+
+/** 合并簇画成一颗大粒子（仿 Particle.render：辉光 + 实心圆 + 高光） */
+function renderCluster(ctx, cx, cy, r, color) {
+  const dark = luminance(color) < 110;
+  ctx.save();
+  if (dark) {
+    const halo = ctx.createRadialGradient(cx, cy, r * 0.15, cx, cy, r * 1.35);
+    halo.addColorStop(0, 'rgba(255,255,255,0.5)');
+    halo.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 1.35, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 7;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.beginPath();
+  ctx.arc(cx - r * 0.16, cy - r * 0.16, r * 0.16, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+/** 同种粒子聚类渲染：单颗正常画，重合的合并成大粒子 */
+function renderParticles(ctx, particles, opts) {
+  if (!particles.length) return;
+  const bySub = new Map();
+  for (const pt of particles) {
+    if (pt.amount <= 1e-9) continue;
+    if (!bySub.has(pt.substance)) bySub.set(pt.substance, []);
+    bySub.get(pt.substance).push(pt);
+  }
+  for (const [substance, list] of bySub) {
+    const color = getSubstance(substance).solid?.[0] ?? '#c9b46a';
+    // 贪心聚类：质心间距 < CLUSTER 的粒子归为一簇（掉落一簇的散布很小，链式合并可接受）
+    const clusters = [];
+    for (const pt of list) {
+      const px = pt.x + pt.w / 2;
+      const py = pt.y + pt.h / 2;
+      let found = null;
+      for (const c of clusters) {
+        if (Math.abs(c.cx - px) < CLUSTER && Math.abs(c.cy - py) < CLUSTER) { found = c; break; }
+      }
+      if (found) {
+        found.list.push(pt);
+        const n = found.list.length;
+        found.cx = (found.cx * (n - 1) + px) / n;
+        found.cy = (found.cy * (n - 1) + py) / n;
+      } else {
+        clusters.push({ list: [pt], cx: px, cy: py });
+      }
+    }
+    for (const c of clusters) {
+      const n = c.list.length;
+      if (n === 1) {
+        c.list[0].render(ctx, opts); // 单颗正常画
+        continue;
+      }
+      // 合并：半径 ∝ sqrt(数量)（5px 粒子半径 2.5；20 颗 ≈ 8px 上限——比单颗大一些但不夸张）
+      const r = Math.min(8, 1.8 * Math.sqrt(n));
+      renderCluster(ctx, c.cx, c.cy, r, color);
+    }
+  }
+}
+
+class Renderer {
+  constructor(canvas, { worldW = 1000, worldH = 800, viewW = 1000, viewH = 800 } = {}) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.camera = new Camera({ worldW, worldH, viewW, viewH });
+    this.worldW = worldW;
+    this.worldH = worldH;
+  }
+
+  /** 适配画布尺寸（等比缩放由相机完成） */
+  resize(vw, vh) {
+    this.canvas.width = vw;
+    this.canvas.height = vh;
+  }
+
+  clear() {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.restore();
+  }
+
+  /** 渲染一帧；opts.focus 为相机跟随目标（通常玩家） */
+  frame(objects, opts = {}) {
+    this.clear();
+    const ctx = this.ctx;
+    // 背景（屏幕空间，神话夜色）
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    renderBackground(ctx, this.canvas.width, this.canvas.height, opts.time ?? 0);
+    ctx.restore();
+    // 世界对象
+    ctx.save();
+    this.camera.apply(ctx, this.canvas.width, this.canvas.height, opts.focus);
+    const particles = [];
+    for (const obj of objects) {
+      if (obj instanceof Particle) { particles.push(obj); continue; }
+      if (obj && typeof obj.render === 'function') obj.render(ctx, opts);
+    }
+    renderParticles(ctx, particles, opts);
+    ctx.restore();
+    if (opts.hud && typeof opts.hud.render === 'function') opts.hud.render(ctx, opts.time ?? 0);
+  }
+}
+
+exports.Renderer = Renderer;
+
+  };
+  __modules["src/render/camera.js"] = function (module, exports, __require) {
+// ============================================================================
+// 相机：逻辑视口（默认 1000×800）等比缩放居中；世界比视口大时跟随 focus 滚动。
+// ============================================================================
+
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+class Camera {
+  constructor({ viewW = 1000, viewH = 800, worldW = 1000, worldH = 800 } = {}) {
+    this.viewW = viewW;
+    this.viewH = viewH;
+    this.worldW = worldW;
+    this.worldH = worldH;
+    this._shake = 0; // 屏幕震动强度（px），每帧衰减
+  }
+
+  /** 触发屏幕震动（爆炸/剧烈反应） */
+  shake(amount) {
+    this._shake = Math.min(18, Math.max(this._shake, amount));
+  }
+
+  /** 当前震动偏移（随机，随帧衰减） */
+  shakeOffset() {
+    if (this._shake <= 0.05) return { x: 0, y: 0 };
+    const a = this._shake;
+    this._shake *= 0.86;
+    const ang = Math.random() * Math.PI * 2;
+    return { x: Math.cos(ang) * a, y: Math.sin(ang) * a * 0.6 };
+  }
+
+  /**
+   * 计算缩放与屏幕偏移。focus 为可选跟随目标（{x,y,w,h}，通常是玩家）。
+   * 世界 ≤ 视口时居中显示整个世界；世界 > 视口时跟随 focus 滚动（钳制在世界内）。
+   */
+  compute(vw, vh, focus = null) {
+    const scale = Math.min(vw / this.viewW, vh / this.viewH);
+    // 实际显示的世界窗口（单位：世界坐标）
+    const vx = Math.min(this.worldW, this.viewW);
+    const vy = Math.min(this.worldH, this.viewH);
+    // 窗口原点 ox, oy
+    let ox;
+    let oy;
+    if (focus) {
+      const cx = focus.x + (focus.w ?? 0) / 2;
+      const cy = focus.y + (focus.h ?? 0) / 2;
+      ox = clamp(cx - vx / 2, 0, Math.max(0, this.worldW - vx));
+      oy = clamp(cy - vy / 2, 0, Math.max(0, this.worldH - vy));
+    } else {
+      ox = (this.worldW - vx) / 2;
+      oy = (this.worldH - vy) / 2;
+    }
+    // 屏幕偏移：把 vx×vy 窗口放到 vw×vh 画布中央
+    const offsetX = (vw - vx * scale) / 2 - ox * scale;
+    const offsetY = (vh - vy * scale) / 2 - oy * scale;
+    return { scale, ox, oy, offsetX, offsetY };
+  }
+
+  /** 应用到 canvas 上下文（世界坐标 → 屏幕坐标；含震动偏移） */
+  apply(ctx, vw, vh, focus = null) {
+    const { scale, offsetX, offsetY } = this.compute(vw, vh, focus);
+    const sh = this.shakeOffset();
+    ctx.setTransform(scale, 0, 0, scale, offsetX + sh.x, offsetY + sh.y);
+  }
+}
+
+exports.Camera = Camera;
+
+  };
+  __modules["src/render/background.js"] = function (module, exports, __require) {
+// ============================================================================
+// 背景渲染（屏幕空间）：神殿夜色的纵向渐变 + 底部微光 + 漂浮尘埃 + 暗角。
+// ============================================================================
+
+const { THEME } = __require('src/render/theme.js');;
+
+function renderBackground(ctx, W, H, time = 0) {
+  // 纵向渐变
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, THEME.bg.top);
+  g.addColorStop(0.55, THEME.bg.mid);
+  g.addColorStop(1, THEME.bg.bottom);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  // 底部一缕神秘紫光
+  const g2 = ctx.createLinearGradient(0, H * 0.72, 0, H);
+  g2.addColorStop(0, 'rgba(120,90,220,0)');
+  g2.addColorStop(1, 'rgba(120,90,220,0.12)');
+  ctx.fillStyle = g2;
+  ctx.fillRect(0, 0, W, H);
+
+  // 漂浮尘埃（确定性，随时间缓动）
+  const n = 42;
+  for (let i = 0; i < n; i++) {
+    const px = (((i * 7919) % 997) / 997) * W;
+    const py = (((i * 104729) % 991) / 991) * H + Math.sin(time * 0.4 + i * 1.7) * 4;
+    const r = 1 + (i % 3) * 0.7;
+    const a = 0.10 + 0.22 * Math.abs(Math.sin(time * 0.7 + i * 2.3));
+    ctx.fillStyle = i % 3 === 0 ? 'rgba(199,139,255,0.9)' : 'rgba(255,217,120,0.9)';
+    ctx.globalAlpha = a;
+    ctx.beginPath();
+    ctx.arc(px, py, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // 暗角
+  const cx = W / 2;
+  const cy = H / 2;
+  const v = ctx.createRadialGradient(cx, cy, Math.min(W, H) * 0.32, cx, cy, Math.max(W, H) * 0.8);
+  v.addColorStop(0, 'rgba(0,0,0,0)');
+  v.addColorStop(1, 'rgba(4,3,16,0.6)');
+  ctx.fillStyle = v;
+  ctx.fillRect(0, 0, W, H);
+}
+
+exports.renderBackground = renderBackground;
+
+  };
+  __modules["src/render/hud.js"] = function (module, exports, __require) {
+// ============================================================================
+// HUD（神话·元素风）：
+// 左上 玩家面板（物质 + 血量药瓶）、空气计（O2/CO2）；
+// 右上 提示按钮；右下 5 格宝石物品栏（选中发光）；通关/死亡神话遮罩。
+// ============================================================================
+
+const { THEME, rr, panel, glowText, clearText } = __require('src/render/theme.js');;
+const { getSubstance, acidLabelOf } = __require('src/chem/substances.js');;
+const { MIN_ENTRY } = __require('src/chem/solution.js');;
+const { GasColumn } = __require('src/objects/gascolumn.js');;
+const { Block } = __require('src/objects/block.js');;
+
+/** 质量短格式：1.2g / 0.30g / 12g（空气计百分比旁同显质量） */
+function fmtMass(m) {
+  if (!Number.isFinite(m) || m <= 0) return '';
+  if (m >= 100) return Math.round(m) + 'g';
+  if (m >= 10) return m.toFixed(0) + 'g';
+  return m.toFixed(2).replace(/0+$/, '').replace(/\.$/, '') + 'g';
+}
+
+// 溯源 kind → 中文（调试悬停显示物体"为何存在"）
+const ORIGIN_LABELS = {
+  level: '关卡生成',
+  reaction: '反应生成',
+  explosion: '爆炸掉落',
+  place: '玩家放置',
+  shell: '移动脱落',
+  dissolve: '溶解',
+};
+
+class Hud {
+  constructor(scene) {
+    this.scene = scene;
+    this.showTip = false;
+    this.slotSize = 46; // 与 builder.bindClick 的槽位几何一致（gap=4, 边距 10）
+  }
+
+  render(ctx, time = 0) {
+    const scene = this.scene;
+    const p = scene.player;
+    const W = ctx.canvas.width;
+    const H = ctx.canvas.height;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+    if (p) {
+      this.playerPanel(ctx, p, time);
+      this.compositionPanel(ctx, p);
+      this.reactionPanel(ctx, p);
+      this.airPanel(ctx, scene, time);
+      this.inventory(ctx, p, W, H, time);
+    }
+    this.debugPanel(ctx, scene, W, H, time);
+    if (scene.debugMode) this.hoverPanel(ctx, scene, W, H);
+    this.tipButton(ctx, W, H, time);
+    this.overlay(ctx, scene, W, H);
+    ctx.restore();
+  }
+
+  // ---- 调试模式面板（F5 暂停/继续，F6 步进；显示玩家附近的每个反应 + 最近爆炸原因）----
+  debugPanel(ctx, scene, W, H, time) {
+    if (!scene.debugMode) return;
+    const p = scene.player;
+    const barW = 250;
+    const px = W - barW - 10;
+    // 右上角状态条（堆叠面板的当前顶 y）
+    let top = 10;
+    panel(ctx, px, top, barW, 22, THEME.gold.deep, 8);
+    clearText(ctx, `调试 ${scene.debugPaused ? '[暂停] F5继续 F6步进' : '[运行] F5暂停'}·悬停查源·X切换`, px, top + 11, scene.debugPaused ? '#ffd23f' : '#7fe0ff', 'bold 11px "Segoe UI", sans-serif');
+    top += 28;
+    // 最近爆炸原因（爆炸发生后 4s 内显示）
+    if (scene._lastExplosion && time - scene._lastExplosion.t < 4) {
+      panel(ctx, px, top, barW, 20, THEME.fire.base, 8);
+      clearText(ctx, `💥 ${scene._lastExplosion.cause}`, px + 4, top + 14, '#ffd9a0', 'bold 11px monospace');
+      top += 26;
+    }
+    // 附近反应面板（玩家周围 300px 内最近发生的反应，去重显示每种反应）
+    if (scene.debugReactions && p) {
+      const nearAll = scene.debugReactions.filter((r) => r.x != null && Math.abs(r.x - p.x) < 300 && Math.abs((r.y ?? 0) - (p.y + p.h / 2)) < 400);
+      // 去重：每种反应保留最近一条（避免同一反应刷屏）
+      const near = [];
+      const seen = new Set();
+      for (const r of nearAll) {
+        if (seen.has(r.text)) continue;
+        seen.add(r.text);
+        near.push(r);
+        if (near.length >= 8) break;
+      }
+      if (near.length > 0) {
+        const shown = near.length;
+        const panelW = 320;
+        const panelH = 22 + shown * 16;
+        panel(ctx, W - panelW - 10, top, panelW, panelH, THEME.gold.deep, 8);
+        clearText(ctx, `附近反应 (${near.length})`, W - panelW + 2, top + 15, THEME.gold.text, 'bold 11px "Segoe UI", sans-serif');
+        let y = top + 29;
+        for (const r of near.slice(0, shown)) {
+          clearText(ctx, `› ${r.text}`, W - panelW + 2, y + 5, '#dfe8f2', '10px monospace');
+          y += 16;
+        }
+        top += panelH + 8;
+      }
+    }
+    // 大气气体变化（产生/消耗原因——最近 6 条；+绿/消耗橙红，← 原因方程式）
+    if (scene.gasLog && scene.gasLog.length) {
+      const shown = Math.min(6, scene.gasLog.length);
+      const panelW = 380;
+      const panelH = 22 + shown * 15;
+      const gx = W - panelW - 10;
+      panel(ctx, gx, top, panelW, panelH, THEME.toxic.base, 8);
+      clearText(ctx, `气体变化 (${scene.gasLog.length})`, gx + 12, top + 15, THEME.toxic.light, 'bold 11px "Segoe UI", sans-serif');
+      let gy = top + 28;
+      for (let i = 0; i < shown; i++) {
+        const g = scene.gasLog[i];
+        // 小量精确显示：≥0.01g 显示 2 位，≥0.001g 显示 4 位，更小显示毫克
+        const absD = Math.abs(g.delta);
+        const sign = g.delta >= 0 ? '+' : '-';
+        const dStr = absD >= 0.01 ? `${sign}${absD.toFixed(2)}g` : absD >= 0.001 ? `${sign}${absD.toFixed(4)}g` : `${sign}${(absD * 1000).toFixed(1)}mg`;
+        const color = g.delta >= 0 ? '#a6ff9a' : '#ff9a6b';
+        clearText(ctx, `${g.id} ${dStr}`, gx + 12, gy + 5, color, 'bold 10px monospace');
+        const cause = g.cause ?? '未知';
+        clearText(ctx, `← ${cause.slice(0, 30)}`, gx + 90, gy + 5, '#9fb2c8', '9px monospace');
+        gy += 15;
+      }
+    }
+  }
+
+  // ---- 调试模式：鼠标悬停显示物体"为何存在"（来源溯源；X 键循环切换重叠目标）----
+  hoverPanel(ctx, scene, W, H) {
+    const m = scene.mouse;
+    if (!m || !m.on) return;
+    const cam = scene.renderer ? scene.renderer.camera : null;
+    if (!cam) return;
+    // 屏幕坐标 → 世界坐标（相机缩放/平移；忽略每帧随机震动，悬停无需精确到像素）
+    const { scale, offsetX, offsetY } = cam.compute(W, H, scene.player);
+    const wx = (m.x - offsetX) / scale;
+    const wy = (m.y - offsetY) / scale;
+    // 鼠标移动 → 重置候选与索引
+    if (!this._hoverAt || Math.abs(this._hoverAt.x - m.x) > 1 || Math.abs(this._hoverAt.y - m.y) > 1) {
+      this._hoverAt = { x: m.x, y: m.y };
+      this._hoverIdx = 0;
+    }
+    const cands = this.collectHover(scene, wx, wy);
+    if (cands.length === 0) return;
+    // X 键（scene.debugHoverCycle）：在重叠物体间循环切换
+    if (scene.debugHoverCycle) {
+      scene.debugHoverCycle = false;
+      this._hoverIdx = (this._hoverIdx + 1) % cands.length;
+    }
+    if (this._hoverIdx >= cands.length) this._hoverIdx = 0;
+    const info = cands[this._hoverIdx];
+    this.renderHoverTip(ctx, info, m.x, m.y, W, H, cands.length > 1 ? { idx: this._hoverIdx + 1, total: cands.length } : null);
+  }
+
+  /**
+   * 命中检测：收集鼠标下所有重叠物体的来源信息（按优先级排序——
+   * 玩家>沉淀>池内颗粒>物块>气流>容器/静态）。默认显示第 0 个，X 键循环切换。
+   */
+  collectHover(scene, wx, wy) {
+    const out = [];
+    const hitRect = (o) => o && wx >= o.x && wx <= o.x + o.w && wy >= o.y && wy <= o.y + o.h;
+    const inCircle = (cx, cy, r) => {
+      const dx = wx - cx;
+      const dy = wy - cy;
+      return dx * dx + dy * dy <= r * r;
+    };
+
+    // 1. 玩家（核心+附着的壳：NaOH 关卡生成，Na2CO3/BaCO3 壳反应生成）
+    const p = scene.player;
+    if (p && hitRect(p)) {
+      const info = this.objInfo(p, p.substance);
+      const bd = this.gridBreakdown(p);
+      if (bd && bd.length > 1) info.breakdown = bd;
+      out.push(info);
+    }
+
+    // 2. 自由沉淀粒子（小圆；同种且重叠的合并为一条候选——与渲染聚类一致，
+    //    否则掉落的一簇 20 颗叠在一起 → 悬停显示 20 条候选"20 个粒子叠在一起"）
+    const hitParts = [];
+    for (const pt of scene.particles) {
+      if (pt.amount <= 1e-9) continue;
+      if (inCircle(pt.x + pt.w / 2, pt.y + pt.h / 2, pt.w / 2 + 1)) hitParts.push(pt);
+    }
+    const merged = new Map(); // substance → { count, pt }
+    for (const pt of hitParts) {
+      const e = merged.get(pt.substance);
+      if (e) { e.count++; continue; }
+      merged.set(pt.substance, { count: 1, pt });
+    }
+    for (const [substance, e] of merged) {
+      const info = this.objInfo(e.pt, e.count > 1 ? `${substance}×${e.count}` : substance);
+      out.push(info);
+    }
+
+    // 3. 容器内沉淀颗粒（池/灯上的某一颗沉淀）
+    for (const c of scene.containers) {
+      for (const g of c.grains) {
+        if (inCircle(g.x, g.y, g.r + 1)) {
+          const origin = c.precipOrigins.get(g.id) ?? null;
+          out.push({ label: '沉淀', name: `${g.id}（${c.hoverLabel ?? '容器'}内）`, origin });
+        }
+      }
+    }
+
+    // 4. 物块（动态固体；含多种物质时逐物质显示来源——初始=关卡生成、反应附着=反应生成）
+    for (const o of scene.dynamics) {
+      if (!(o instanceof Block) || !hitRect(o)) continue;
+      const info = this.objInfo(o, o.grid ? o.grid.ids().join('+') : o.substance);
+      const bd = this.gridBreakdown(o);
+      if (bd && bd.length > 1) info.breakdown = bd;
+      out.push(info);
+    }
+
+    // 5. 气流柱（反应产气的气流——显示是哪个反应生成的）
+    for (const o of scene.objects) {
+      if (!(o instanceof GasColumn) || !hitRect(o)) continue;
+      out.push(this.objInfo(o, o.gasId ?? o.label ?? ''));
+    }
+
+    // 6. 容器/灯/静态元素（池、灯、开关、地板、路标、钥匙、门…）
+    for (const o of scene.objects) {
+      if (!o.hoverLabel || o instanceof GasColumn || o instanceof Block || o === p) continue;
+      if (!hitRect(o)) continue;
+      const info = this.objInfo(o, (o.opening ?? o.substance ?? ''));
+      // 容器/灯：逐物质显示来源（某物质关卡生成、某物质反应生成…）
+      if (o.solution || o.precipitates) info.breakdown = this.contentBreakdown(o);
+      out.push(info);
+    }
+    return out;
+  }
+
+  /** 容器/灯内各物质及其来源（溶质 + 沉淀 + 水，按质量降序）——悬停药品池显示每样多少克 */
+  contentBreakdown(c) {
+    const out = [];
+    for (const [id, mass] of c.solution.solutes) {
+      if (mass < MIN_ENTRY) continue; // 微量溶质不显示：防"0.0g ↔ 无"的条目抖动
+      // 酸类标注浓/稀（≥300 g/L = 浓，与引擎判定一致）
+      const note = acidLabelOf(id, mass, c.solution.volume / 1000);
+      out.push({ id, mass, origin: c.solOrigins?.get(id) ?? null, note });
+    }
+    for (const [id, mass] of c.precipitates) {
+      if (mass < MIN_ENTRY) continue;
+      out.push({ id, mass, origin: c.precipOrigins?.get(id) ?? null });
+    }
+    if (c.solution.water > 0) out.push({ id: 'H2O', mass: c.solution.water, origin: { kind: 'solvent' } });
+    return out.sort((a, b) => b.mass - a.mass);
+  }
+
+  /** 物块/玩家网格内各物质及其来源（初始=关卡生成，反应附着=反应生成） */
+  gridBreakdown(o) {
+    const masses = o.grid ? o.grid.masses() : null;
+    if (!masses) return null;
+    const out = [];
+    for (const [id, mass] of Object.entries(masses)) {
+      if (mass <= 1e-6) continue;
+      out.push({ id, mass, origin: o.gridOrigins?.get(id) ?? null });
+    }
+    return out.sort((a, b) => b.mass - a.mass);
+  }
+
+  /** 组装提示信息 */
+  objInfo(obj, name, origin = null) {
+    return { label: obj.hoverLabel ?? '元素', name, origin: origin ?? obj.origin ?? null };
+  }
+
+  /** 容器内容标签（溶质 + 沉淀） */
+  containerName(c) {
+    const parts = [];
+    for (const [id] of c.solution.solutes) parts.push(id);
+    for (const [id] of c.precipitates) parts.push(`${id}(↓)`);
+    if (parts.length === 0 && c.solution.water > 0) parts.push('H2O');
+    return parts.join('+') || '空';
+  }
+
+  /** 来源短标签（只给种类，如"关卡生成/反应生成"） */
+  originShort(origin) {
+    if (!origin) return '未知';
+    return ORIGIN_LABELS[origin.kind] ?? origin.kind;
+  }
+
+  /** 来源文本行（反应生成给出具体方程式，超长自动换行） */
+  originLines(origin) {
+    if (!origin) return ['来源：未知'];
+    const head = ORIGIN_LABELS[origin.kind] ?? origin.kind;
+    if (origin.kind === 'reaction' && origin.text) {
+      return [`来源：${head}`, ...this.wrapCJK(origin.text, 34)];
+    }
+    if (origin.text) return [`来源：${head}（${origin.text}）`];
+    return [`来源：${head}`];
+  }
+
+  /** 按字符宽度换行（中英混排按字符数截断） */
+  wrapCJK(text, maxLen) {
+    const out = [];
+    for (let i = 0; i < text.length; i += maxLen) out.push(text.slice(i, i + maxLen));
+    return out;
+  }
+
+  /** 渲染悬停提示框（鼠标附近，钳在画布内）；multi = {idx,total} 表示重叠目标循环切换 */
+  renderHoverTip(ctx, info, sx, sy, W, H, multi = null) {
+    let lines;
+    if (info.breakdown && info.breakdown.length) {
+      // 容器/灯/物块：逐物质显示来源 + 质量（各物质名 + 克数 + 来源，反应给方程式）
+      lines = [`${info.label}（${info.breakdown.length} 种）`];
+      const shown = info.breakdown.slice(0, 8);
+      for (const it of shown) {
+        const isWater = it.id === 'H2O';
+        const tag = it.note ? `(${it.note})` : '';
+        lines.push(`  ${it.id}${tag} ${it.mass.toFixed(1)}g · ${isWater ? '溶剂' : this.originShort(it.origin)}`);
+        if (it.origin && it.origin.kind === 'reaction' && it.origin.text) {
+          lines.push(...this.wrapCJK(it.origin.text, 30).map((s) => '    ' + s));
+        }
+      }
+      if (info.breakdown.length > shown.length) lines.push(`  …另有 ${info.breakdown.length - shown.length} 种`);
+    } else {
+      lines = [`${info.label} ${info.name}`, ...this.originLines(info.origin)];
+    }
+    if (multi) lines.push(`⟨ ${multi.idx}/${multi.total} · 按 X 切换 ⌦`);
+    const font = '11px monospace';
+    ctx.save();
+    ctx.font = font;
+    const pad = 8;
+    const lh = 17;
+    const maxW = Math.min(320, Math.max(...lines.map((ln) => ctx.measureText(ln).width)));
+    const boxW = maxW + pad * 2;
+    const boxH = lines.length * lh + 8;
+    // 位置：鼠标右下偏移 14/20，越界则翻到鼠标另一侧/上侧
+    let bx = sx + 14;
+    let by = sy + 20;
+    if (bx + boxW > W - 6) bx = sx - boxW - 14;
+    if (by + boxH > H - 6) by = sy - boxH - 20;
+    bx = Math.max(6, bx);
+    by = Math.max(6, by);
+    // 面板 + 发光描边
+    panel(ctx, bx, by, boxW, boxH, THEME.water.base, 6);
+    ctx.font = font;
+    let y = by + 15;
+    for (let i = 0; i < lines.length; i++) {
+      // 标题行金色加粗，方程式行青色，来源行白色
+      const color = i === 0 ? THEME.gold.text : i === 1 ? '#dfe8f2' : '#9fd8ff';
+      clearText(ctx, lines[i], bx + pad, y, color, i === 0 ? 'bold 11px monospace' : font);
+      y += lh;
+    }
+    ctx.restore();
+  }
+
+  // ---- 玩家面板（物质 + 血量药瓶）----
+  playerPanel(ctx, p, time) {
+    panel(ctx, 10, 10, 232, 66, THEME.gold.deep, 12);
+    const sub = getSubstance(p.substance);
+    const color = sub?.solid?.[0] ?? '#7fe0ff';
+    const ratio = p.maxHp ? Math.max(0, Math.min(1, p.hp / p.maxHp)) : 0;
+    this.vial(ctx, 24, 20, 34, 44, ratio, color, time);
+    clearText(ctx, p.substance, 70, 34, THEME.gold.text, 'bold 16px "Segoe UI", sans-serif');
+    clearText(ctx, `${p.hp.toFixed(1)} g 体质`, 70, 56, '#ffffff', 'bold 12px monospace');
+  }
+
+  /** 血量药瓶：玻璃烧瓶 + 发光液体填充 */
+  vial(ctx, x, y, w, h, ratio, color, time) {
+    ctx.save();
+    rr(ctx, x, y, w, h, w / 2.4);
+    ctx.fillStyle = 'rgba(190,225,255,0.10)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(200,235,255,0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // 液体
+    const lh = h * Math.max(0.06, Math.min(1, ratio));
+    ctx.save();
+    rr(ctx, x + 1.5, y + h - lh, w - 3, lh, w / 3);
+    ctx.clip();
+    const g = ctx.createLinearGradient(x, y, x, y + h);
+    g.addColorStop(0, '#d8f6ff');
+    g.addColorStop(0.5, color);
+    g.addColorStop(1, '#0e2a44');
+    ctx.fillStyle = g;
+    ctx.fillRect(x, y, w, h);
+    ctx.restore();
+    // 液面辉光（随血量轻微脉动）
+    const pulse = 6 + 4 * Math.sin(time * 3);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.shadowColor = color;
+    ctx.shadowBlur = pulse;
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fillRect(x + 1, y + h - lh, w - 2, 2);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.restore();
+  }
+
+  // ---- 身体组成面板（玩家身上多物质时：色点 + 化学式 + 占比条 + 克数）----
+  compositionPanel(ctx, p) {
+    const masses = p.grid ? p.grid.masses() : null;
+    if (!masses) return;
+    const entries = Object.entries(masses).filter(([, m]) => m > 1e-6).sort((a, b) => b[1] - a[1]);
+    if (entries.length <= 1) return; // 单物质身体不显示（就是血量）
+    const total = entries.reduce((s, [, m]) => s + m, 0);
+    const shown = Math.min(5, entries.length);
+    const W = 264;
+    const H = 20 + shown * 22 + (entries.length > 5 ? 16 : 0);
+    this._compH = H; // 供反应日志面板定位
+    panel(ctx, 10, 136, W, H, THEME.water.base, 10);
+    clearText(ctx, '身体组成', 22, 148, THEME.gold.text, 'bold 11px "Segoe UI", sans-serif');
+    let y = 162;
+    for (const [id, m] of entries.slice(0, shown)) {
+      const sub = getSubstance(id);
+      const color = sub?.solid?.[0] ?? '#7fe0ff';
+      const frac = m / total;
+      const isCore = id === p.substance;
+      // 色点
+      ctx.save();
+      if (isCore) {
+        ctx.shadowColor = THEME.gold.text;
+        ctx.shadowBlur = 6;
+      }
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(28, y + 8, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      // 占比条
+      ctx.fillStyle = 'rgba(255,255,255,0.09)';
+      ctx.fillRect(120, y + 5, 100, 7);
+      ctx.fillStyle = color;
+      ctx.fillRect(120, y + 5, 100 * frac, 7);
+      // 化学式 + 克数
+      ctx.textAlign = 'right';
+      clearText(ctx, id, 112, y + 8, isCore ? THEME.gold.text : '#dfe8f2', isCore ? 'bold 10px monospace' : '10px monospace');
+      ctx.textAlign = 'left';
+      clearText(ctx, `${m.toFixed(1)}g`, 226, y + 8, '#9fb2c8', '9px monospace');
+      y += 22;
+    }
+    if (entries.length > 5) {
+      clearText(ctx, `…另有 ${entries.length - 5} 种`, 22, y + 9, '#9fb2c8', '10px monospace');
+    }
+  }
+
+  // ---- 玩家反应日志（最近发生在玩家身上的反应）----
+  reactionPanel(ctx, p) {
+    if (!p.reactions || p.reactions.length === 0) return;
+    const shown = Math.min(4, p.reactions.length);
+    const W = 264;
+    const H = 22 + shown * 17;
+    const top = 136 + (this._compH ?? 0) + 4;
+    panel(ctx, 10, top, W, H, THEME.gold.deep, 10);
+    clearText(ctx, '最近反应', 22, top + 12, THEME.gold.text, 'bold 11px "Segoe UI", sans-serif');
+    let y = top + 26;
+    for (let i = 0; i < shown; i++) {
+      clearText(ctx, `› ${p.reactions[i]}`, 22, y + 6, '#dfe8f2', '10px monospace');
+      y += 17;
+    }
+  }
+
+  // ---- 空气计（O2/CO2 常驻；其它反应气有质量才显示，避免"生成了却看不到"）----
+  airPanel(ctx, scene, time) {
+    const atm = scene.atmosphere;
+    if (!atm) return;
+    const o2 = atm.fraction('O2') * 100;
+    const co2 = atm.fraction('CO2') * 100;
+    // 颜色：燃料气 + 氮氧化物 + 其它
+    const GAS_COLORS = {
+      CO: '#ffb86b', H2: '#9adcff', CH4: '#a8ff9a', H2S: '#ffd9a0',
+      NO: '#cfe3f7', NO2: '#e08b57', SO2: '#ffd98a', Cl2: '#b9f26b', NH3: '#b9a9ff',
+    };
+    const extras = ['CO', 'H2', 'CH4', 'H2S', 'NO', 'NO2', 'SO2', 'Cl2', 'NH3']
+      .map((id) => ({ id, mass: atm.mass(id), frac: atm.fraction(id) * 100 }))
+      .filter((g) => g.mass > 0.01);
+    const H = 46 + (extras.length ? 22 : 0);
+    panel(ctx, 10, 82, 264, H, THEME.water.base, 10);
+    // 第一行：氧（青）+ 二氧化碳（金）
+    ctx.fillStyle = THEME.water.glow;
+    ctx.beginPath();
+    ctx.arc(26, 100, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowColor = THEME.water.light;
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    ctx.arc(26, 100, 2.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    clearText(ctx, `O2  ${o2.toFixed(1)}%  ${fmtMass(atm.mass('O2'))}`, 38, 104, '#aeeaff', 'bold 11px monospace');
+    ctx.fillStyle = THEME.gold.dim;
+    ctx.beginPath();
+    ctx.arc(104, 100, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowColor = THEME.gold.light;
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    ctx.arc(104, 100, 2.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    // 少量 CO2 时如实显示"微量"，避免面板显示 0.0% 却仍在发生碳化反应的误解
+    const co2Mass = atm.mass('CO2');
+    const co2Text = co2 >= 0.05 ? `${co2.toFixed(1)}%` : co2Mass > 1e-6 ? '<0.1%' : '0%';
+    clearText(ctx, `CO2  ${co2Text}  ${co2Mass > 1e-6 ? fmtMass(co2Mass) : ''}`, 116, 104, '#ffe9b0', 'bold 11px monospace');
+    // 第二行：其它燃料气（CO/H2/CH4/H2S）——有质量才显示，爆鸣预警
+    if (extras.length) {
+      let gx = 18;
+      for (const g of extras) {
+        const color = GAS_COLORS[g.id] ?? '#ffffff';
+        ctx.fillStyle = color;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 5;
+        ctx.beginPath();
+        ctx.arc(gx + 6, 123, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        const t = g.frac >= 0.05 ? `${g.frac.toFixed(1)}%` : '<0.1%';
+        const label = `${g.id} ${t} ${fmtMass(g.mass)}`;
+        clearText(ctx, label, gx + 14, 127, color, 'bold 10px monospace');
+        gx += 14 + label.length * 6.4 + 8;
+      }
+    }
+  }
+
+  // ---- 物品栏（宝石槽）----
+  inventory(ctx, p, W, H, time) {
+    const slots = p.inventory.slots;
+    const n = slots.length;
+    const gap = 4;
+    const total = n * this.slotSize + (n - 1) * gap;
+    const sx = W - total - 10;
+    const sy = H - this.slotSize - 10;
+    for (let i = 0; i < n; i++) {
+      const x = sx + i * (this.slotSize + gap);
+      const sel = i === p.inventory.selected;
+      ctx.save();
+      rr(ctx, x, sy, this.slotSize, this.slotSize, 12);
+      const g = ctx.createLinearGradient(x, sy, x, sy + this.slotSize);
+      g.addColorStop(0, sel ? 'rgba(70,50,16,0.96)' : 'rgba(30,26,62,0.92)');
+      g.addColorStop(1, sel ? 'rgba(32,22,8,0.96)' : 'rgba(12,9,32,0.92)');
+      ctx.fillStyle = g;
+      ctx.fill();
+      ctx.strokeStyle = sel ? THEME.gold.light : 'rgba(232,184,75,0.35)';
+      ctx.lineWidth = sel ? 2 : 1.2;
+      ctx.shadowColor = THEME.gold.light;
+      ctx.shadowBlur = sel ? 10 + 4 * Math.sin(time * 4) : 0;
+      ctx.stroke();
+      ctx.restore();
+
+      const s = slots[i];
+      if (s) {
+        const sub = getSubstance(s.substance);
+        const c = sub?.solid?.[0] ?? '#c8c8c8';
+        // 物质小圆点（元素色）
+        ctx.save();
+        ctx.fillStyle = c;
+        ctx.shadowColor = c;
+        ctx.shadowBlur = 6;
+        ctx.beginPath();
+        ctx.arc(x + this.slotSize / 2, sy + 22, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        ctx.fillStyle = sel ? '#fff6dd' : THEME.gold.text;
+        ctx.font = 'bold 8px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(s.substance, x + this.slotSize / 2, sy + 15);
+        ctx.font = '10px monospace';
+        ctx.fillStyle = '#ffffff';
+        const m = Number.isFinite(s.mass) ? s.mass : 0; // NaN 质量显示 0，不显示 NaN
+        ctx.fillText(`${m.toFixed(1)}g`, x + this.slotSize / 2, sy + this.slotSize - 8);
+        ctx.textAlign = 'left';
+      } else {
+        // 空槽：淡符文环
+        ctx.strokeStyle = 'rgba(232,184,75,0.22)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(x + this.slotSize / 2, sy + this.slotSize / 2, 7, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+  }
+
+  // ---- 提示按钮 ----
+  tipButton(ctx, W, H, time) {
+    const x = W - 72;
+    const y = 10;
+    ctx.save();
+    rr(ctx, x, y, 62, 28, 8);
+    const g = ctx.createLinearGradient(x, y, x, y + 28);
+    g.addColorStop(0, '#7a5a20');
+    g.addColorStop(1, '#4a3410');
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = THEME.gold.light;
+    ctx.lineWidth = 1.5;
+    ctx.shadowColor = THEME.gold.light;
+    ctx.shadowBlur = this.showTip ? 12 : 4;
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = '#ffe9b0';
+    ctx.font = 'bold 13px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('提示', x + 31, y + 20);
+    ctx.textAlign = 'left';
+    if (this.showTip && this.scene.tip) {
+      ctx.save();
+      rr(ctx, 10, 44, Math.min(W - 20, 430), 88, 10);
+      ctx.fillStyle = THEME.panel;
+      ctx.fill();
+      ctx.strokeStyle = THEME.gold.deep;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.restore();
+      ctx.fillStyle = THEME.gold.text;
+      ctx.font = 'bold 12px "Segoe UI", sans-serif';
+      const lines = this.scene.tip.split('\n');
+      for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], 22, 66 + i * 16);
+    }
+  }
+
+  // ---- 通关 / 死亡遮罩 ----
+  overlay(ctx, scene, W, H) {
+    if (scene.status !== 'win' && scene.status !== 'died') return;
+    ctx.save();
+    ctx.fillStyle = 'rgba(6,5,20,0.72)';
+    ctx.fillRect(0, 0, W, H);
+    const win = scene.status === 'win';
+    const c = win ? THEME.portal.light : '#ff7f7f';
+    const cx = W / 2;
+    const cy = H / 2 - 10;
+    // 光环
+    ctx.save();
+    ctx.strokeStyle = c;
+    ctx.lineWidth = 3;
+    ctx.shadowColor = c;
+    ctx.shadowBlur = 30;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 46, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+    // 图标符文
+    ctx.fillStyle = c;
+    ctx.font = '34px serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(win ? '✦' : '✧', cx, cy + 12);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 34px "Segoe UI", sans-serif';
+    ctx.fillText(win ? '通关！' : '死亡', cx, cy + 58);
+    ctx.fillStyle = '#e8d8b0';
+    ctx.font = '15px "Segoe UI", sans-serif';
+    ctx.fillText('按 R 重开', cx, cy + 90);
+    ctx.textAlign = 'left';
+    ctx.restore();
+  }
+}
+
+exports.Hud = Hud;
+
+  };
+  __modules["src/objects/block.js"] = function (module, exports, __require) {
+// ============================================================================
+// 物块：有化学性质的实心固体，可被推动，可溶解/反应。材质为 MaterialGrid。
+// 尺寸可用 w/h 显式指定，否则按质量生成矩形。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+const { SolidMaterial } = __require('src/objects/material.js');;
+const { MaterialGrid, renderGrid } = __require('src/render/gridrender.js');;
+const { THEME, rr, contrastEdge, luminance } = __require('src/render/theme.js');;
+const { getSubstance } = __require('src/chem/substances.js');;
+const { renderFormula } = __require('src/render/label.js');;
+
+class Block extends Obj {
+  constructor({ x, y, substance, mass, w, h, grid, pushable = true, gravity = 1, autoStep = true, ...rest } = {}) {
+    // 质量是本源：给了质量（>0）就用质量生成网格（每格 0.1g，格数=mass/0.1），
+    // 物块尺寸随之确定；只有"没给质量（或 mass<=0）+ 给了 w/h"时才按像素尺寸
+    // 建网格（编辑器像素模式：实体质量=网格真实总质量）。也可直接传入现成 grid
+    // （子类如沉淀堆自定义形状）。
+    const manual = !!(w && h && (mass == null || mass <= 0));
+    const g = grid ?? (manual
+      ? MaterialGrid.rect(w, h, substance)
+      : MaterialGrid.rectForMass(mass ?? 50, substance));
+    const aabb = g.minAABB();
+    super({
+      x, y, w: aabb.w, h: aabb.h,
+      solid: true, pushable, gravity, autoStep,
+      physicsKind: 'dynamic',
+      mass: manual ? g.totalMass() : (mass ?? 50),
+      ...rest,
+    });
+    this.substance = substance;
+    this.grid = g;
+    this.gridOrigin = { x, y };
+    this.gridOrigins = new Map([[substance, { kind: 'level' }]]); // 网格内每种物质的来源（初始=关卡生成）
+    this.mat = new SolidMaterial(this);
+    this.formulaVisible = true;
+  }
+
+  get material() {
+    return this.mat;
+  }
+
+  get hoverLabel() {
+    return '物块';
+  }
+
+  get containerMaterial() {
+    return this._container ? this._container.material : null;
+  }
+
+  /** 网格形状变化后同步到物理体（碰撞箱 = 最小外接 AABB）；顺带修复"整行空"悬空 */
+  syncGrid() {
+    if (this.grid._dirty) {
+      this.grid.collapseHollowRows();
+      this.grid._dirty = false;
+    }
+    const aabb = this.grid.minAABB();
+    if (!aabb) {
+      this.w = 0;
+      this.h = 0;
+      return;
+    }
+    this.w = aabb.w;
+    this.h = aabb.h;
+    this.gridOrigin.x = this.x - aabb.x;
+    this.gridOrigin.y = this.y - aabb.y;
+  }
+
+  adhereMaterial(id, mass, origin) {
+    if (this.noteGridOrigin) this.noteGridOrigin(id, origin);
+    // 产物盈余长在所有暴露面（与大气/液体接触的面），所有位置同时渐进生长
+    const added = this.grid.growExposed(id, mass);
+    this.syncGrid();
+    return added;
+  }
+
+  render(ctx) {
+    const aabb = this.grid.minAABB();
+    if (!aabb) return;
+    const ox = this.gridOrigin.x;
+    const oy = this.gridOrigin.y;
+    const bx = ox + aabb.x;
+    const by = oy + aabb.y;
+    renderGrid(ctx, this.grid, ox, oy);
+    // 水晶轮廓 + 白色辉光（深色物质外层光晕）+ 顶部高光
+    const ids = this.grid.ids();
+    const blockColor = ids.length ? getSubstance(ids[0]).solid?.[0] ?? '#c9b46a' : '#c9b46a';
+    const dark = luminance(blockColor) < 110;
+    const edgeColor = dark ? 'rgba(255,255,255,0.7)' : contrastEdge(blockColor);
+    ctx.save();
+    ctx.strokeStyle = edgeColor;
+    ctx.lineWidth = 1.5;
+    if (dark) {
+      ctx.shadowColor = 'rgba(255,255,255,0.6)';
+      ctx.shadowBlur = 8;
+    }
+    rr(ctx, bx, by, aabb.w, aabb.h, 3);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.fillRect(bx, by, aabb.w, 2.5);
+    ctx.fillStyle = 'rgba(0,0,0,0.14)';
+    ctx.fillRect(bx, by + aabb.h - 2.5, aabb.w, 2.5);
+    ctx.restore();
+    if (this.formulaVisible) {
+      const ids = this.grid.ids();
+      if (ids.length) renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.join(' + '));
+    }
+  }
+}
+
+exports.Block = Block;
+
+  };
+  __modules["src/render/gridrender.js"] = function (module, exports, __require) {
+// ============================================================================
+// 固体"网格计算法"（MaterialGrid）——连续质量模型（高中版：多物质网格）
+// ----------------------------------------------------------------------------
+// 固体 = 二维单元格网格，每格 5px。每格可含**多种物质**（Map<id, mass>），
+// 各物质含量可不同，整格总质量 ≤ CELL_MASS (0.1g)。
+//   - 消耗只发生在暴露格（有开放边的表层格）——外壳物质挡住内核（如 BaCO₃
+//     外壳包住 NaOH 后反应阻断；Cu 壳包住 Fe 后内部不再被溶液侵蚀）。
+//   - 固体产物附着：产物优先写入"上次被消耗"的格子（原地转化），
+//     Fe 浸 CuSO₄ 时表面就地变铜，物块不膨胀。
+// 渲染：每格按各物质质量占比混合颜色；透明度 = 格总剩余质量/满质量。
+// ============================================================================
+
+const { getSubstance } = __require('src/chem/substances.js');;
+const { hexToRgb, rgbToHex } = __require('src/render/color.js');;
+const { luminance } = __require('src/render/theme.js');;
+
+const CELL_SIZE = 5; // px
+const CELL_MASS = 0.1; // g（每格总质量上限）
+
+/** 参与碰撞/物理的最低格质量（g）：低于此的微量格（渲染几乎透明，如生长层刚
+ *  积累的 0.001~0.005g）不计入碰撞箱——否则物块边缘有一圈"看不见却撞得到"的
+ *  幽灵层，视觉比碰撞小一圈，看起来像漂浮。0.01g（alpha≈0.1）以上已可辨 → 实心。 */
+const MIN_SOLID_MASS = 0.01;
+
+class MaterialGrid {
+  constructor(cols = 0, rows = 0) {
+    this.cols = cols;
+    this.rows = rows;
+    this.cells = [];
+    for (let y = 0; y < rows; y++) this.cells.push(new Array(cols).fill(null));
+    this._lastConsume = null; // 最近一次消耗的格子（原地转化用）
+    this._totals = {}; // 物质总量缓存（普通对象：键访问远比 Map 快——大网格每次重扫 ~9ms → ~1ms）
+    this._totalsValid = false;
+    this._exposedVer = 0; // 暴露缓存版本：格内容变化（_invalidateTotals）时 +1
+    this._exposedMemo = new Map(); // id -> {ver, sum}：每帧每物质最多全扫一次（原实现每调用一次全扫）
+  }
+
+  /** 总量缓存失效（任何"格质量变化"的写路径都必须调用） */
+  _invalidateTotals() {
+    this._totalsValid = false;
+    this._exposedVer++;
+    this._ver = (this._ver ?? 0) + 1; // 内容变更计数（暴露缓存按"变更次数"节流）
+  }
+
+  _ensureTotals() {
+    if (this._totalsValid) return;
+    const t = {};
+    for (let y = 0; y < this.rows; y++) {
+      for (let x = 0; x < this.cols; x++) {
+        const m = this.cells[y][x];
+        if (!m) continue;
+        for (const [id, v] of m) {
+          if (v > 1e-12) t[id] = (t[id] ?? 0) + v;
+        }
+      }
+    }
+    this._totals = t;
+    this._totalsValid = true;
+  }
+
+  // ---- 创建 ----
+  static rect(w, h, substance) {
+    const cols = Math.max(1, Math.round(w / CELL_SIZE));
+    const rows = Math.max(1, Math.round(h / CELL_SIZE));
+    const g = new MaterialGrid(cols, rows);
+    if (substance) g.fill(substance);
+    return g;
+  }
+
+  static ellipse(w, h, substance) {
+    const cols = Math.max(1, Math.round(w / CELL_SIZE));
+    const rows = Math.max(1, Math.round(h / CELL_SIZE));
+    const g = new MaterialGrid(cols, rows);
+    const cx = (cols - 1) / 2;
+    const cy = (rows - 1) / 2;
+    const rx = cols / 2;
+    const ry = rows / 2;
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        const dx = (x - cx) / rx;
+        const dy = (y - cy) / ry;
+        if (dx * dx + dy * dy <= 1) g.set(x, y, substance);
+      }
+    }
+    return g;
+  }
+
+  /** 按目标质量生成矩形固体（质量=格数×0.1g） */
+  static rectForMass(mass, substance) {
+    const cells = Math.max(1, Math.round(mass / CELL_MASS));
+    const cols = Math.max(1, Math.round(Math.sqrt(cells)));
+    const rows = Math.max(1, Math.round(cells / cols));
+    return MaterialGrid.rect(cols * CELL_SIZE, rows * CELL_SIZE, substance);
+  }
+
+  /** 按目标质量生成"沉淀堆"梯形网格：上窄下宽、低矮（2~6 行），
+   *  第 k 行（0=底）宽 W-2k 且居中——堆形从底部逐行收窄。
+   *  质量守恒：每格满 0.1g，总质量 = 格数×0.1（±1 格舍入）。 */
+  static heapForMass(mass, substance) {
+    const cells = Math.max(6, Math.round(mass / CELL_MASS));
+    const H = Math.max(2, Math.min(6, Math.round(Math.sqrt(cells / 8))));
+    const W = Math.max(3, Math.ceil(cells / H) + H - 1); // 总格数 = H*W - H(H-1)
+    const g = new MaterialGrid(W, H);
+    for (let k = 0; k < H; k++) {
+      const w = W - 2 * k;
+      if (w <= 0) break;
+      for (let x = 0; x < w; x++) g.set(k + x, H - 1 - k, substance); // 底行最宽，逐行收窄居中
+    }
+    return g;
+  }
+
+  /** 按目标像素尺寸生成梯形堆（沉淀堆手动缩放）：行数由高决定（2~6 行），
+   *  宽 = 目标宽（至少 2H-1 格，保证顶行 ≥1 格）。质量 = 格数×0.1g。 */
+  static heapRect(w, h, substance) {
+    const H = Math.max(2, Math.min(6, Math.round(h / CELL_SIZE)));
+    const W = Math.max(2 * H - 1, Math.round(w / CELL_SIZE));
+    const g = new MaterialGrid(W, H);
+    for (let k = 0; k < H; k++) {
+      const w2 = W - 2 * k;
+      if (w2 <= 0) break;
+      for (let x = 0; x < w2; x++) g.set(k + x, H - 1 - k, substance);
+    }
+    return g;
+  }
+
+  /** 按目标质量生成椭圆固体 */
+  static ellipseForMass(mass, substance, aspect = 1.25) {
+    const cells = Math.max(1, Math.round(mass / CELL_MASS));
+    const rx = Math.sqrt((cells * aspect) / Math.PI);
+    const ry = rx / aspect;
+    return MaterialGrid.ellipse(rx * 2 * CELL_SIZE, ry * 2 * CELL_SIZE, substance);
+  }
+
+  fill(substance) {
+    for (let y = 0; y < this.rows; y++) {
+      for (let x = 0; x < this.cols; x++) this.set(x, y, substance);
+    }
+  }
+
+  // ---- 查询 ----
+  /** 返回主物质 id（格内质量最多的；空/null 返回 null） */
+  get(x, y) {
+    const m = this.cell(x, y);
+    if (!m) return null;
+    let best = null;
+    let bestMass = -1;
+    for (const [id, mass] of m) {
+      if (mass > bestMass) { best = id; bestMass = mass; }
+    }
+    return best;
+  }
+
+  /** 格内物质表（Map<id, mass>），空格返回 null */
+  cell(x, y) {
+    return y >= 0 && y < this.rows && x >= 0 && x < this.cols ? this.cells[y][x] : null;
+  }
+
+  /** 该格总剩余质量（g） */
+  cellMass(x, y) {
+    const m = this.cell(x, y);
+    return m ? this._cellTotal(m) : 0;
+  }
+
+  /** 设置整格（id=null 清空；否则满质量单物质） */
+  set(x, y, id) {
+    if (y >= 0 && y < this.rows && x >= 0 && x < this.cols) {
+      this.cells[y][x] = id ? new Map([[id, CELL_MASS]]) : null;
+      this._invalidateTotals();
+    }
+  }
+
+  isFilled(x, y) {
+    return !!this.cell(x, y);
+  }
+
+  /** 各物质质量（g，含部分溶解的质量） */
+  masses() {
+    this._ensureTotals();
+    return { ...this._totals };
+  }
+
+  avail(id) {
+    this._ensureTotals();
+    return this._totals[id] ?? 0;
+  }
+
+  totalMass() {
+    this._ensureTotals();
+    let s = 0;
+    for (const v of Object.values(this._totals)) s += v;
+    return s;
+  }
+
+  ids() {
+    this._ensureTotals();
+    return Object.keys(this._totals);
+  }
+
+  /** 该行是否"空行"（整行无实心格：全 null 或全微量 < MIN_SOLID_MASS） */
+  _rowEmpty(y) {
+    for (let x = 0; x < this.cols; x++) {
+      const m = this.cells[y][x];
+      if (m && this._cellTotal(m) >= MIN_SOLID_MASS) return false;
+    }
+    return true;
+  }
+
+  /**
+   * 悬空修复（坍塌）：中间出现整行空行（如被反应"上下夹击"消耗断裂）时，
+   * 把上方所有行整体下移一行填补空洞——像"掉下来了"，物块/玩家不再上下分离。
+   * 只处理中间行（y=1..rows-2）：边界行可能是生长层（0 质量占位）或被消耗的
+   * 顶/底行，不参与坍塌。空行的微量残余质量并入下方行（不超格子上限，超出丢弃
+   * ——微量级，等同 MIN_ENTRY 哲学）。
+   */
+  collapseHollowRows() {
+    for (let y = this.rows - 2; y >= 1; y--) {
+      if (!this._rowEmpty(y)) continue;
+      // 微量残余并入下方行（下方行可能满：room=0 → 微量丢弃）
+      for (let x = 0; x < this.cols; x++) {
+        const m = this.cells[y][x];
+        if (!m) continue;
+        const below = this.cells[y + 1]?.[x];
+        if (!below) continue;
+        for (const [id, mass] of m) {
+          const room = CELL_MASS - this._cellTotal(below);
+          if (room > 1e-9) below.set(id, (below.get(id) ?? 0) + Math.min(room, mass));
+        }
+      }
+      // 删除空行：上方所有行整体下移一行
+      this.cells.splice(y, 1);
+      this.rows--;
+      this._invalidateTotals(); // 行移动：暴露面/总量缓存都失效
+    }
+  }
+
+  /** 填充格的最小外接 AABB（像素坐标）；微量格（< 0.01g，几乎透明）不参与碰撞
+   *  ——防止物块边缘"看不见的幽灵层"造成视觉比碰撞小、看起来像漂浮。
+   *  按内容版本缓存（grid 每帧被同步多次，大网格全扫一次 ~0.2ms，缓存后 O(1)）。 */
+  minAABB() {
+    if (this._aabbVer === this._exposedVer && this._aabb) return this._aabb;
+    let minX = this.cols;
+    let minY = this.rows;
+    let maxX = -1;
+    let maxY = -1;
+    for (let y = 0; y < this.rows; y++) {
+      for (let x = 0; x < this.cols; x++) {
+        const m = this.cells[y][x];
+        if (m && this._cellTotal(m) > MIN_SOLID_MASS) {
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    const r = maxX < 0 ? null : {
+      x: minX * CELL_SIZE,
+      y: minY * CELL_SIZE,
+      w: (maxX - minX + 1) * CELL_SIZE,
+      h: (maxY - minY + 1) * CELL_SIZE,
+    };
+    this._aabb = r;
+    this._aabbVer = this._exposedVer;
+    return r;
+  }
+
+  // ---- 溶解（渐进，按接触表面积分摊；仅暴露格可被消耗）----
+
+  /** 开阔地消耗：把 grams 分摊到边界格（按暴露面），格的质量逐渐下降 */
+  consume(id, grams) {
+    return this._consumeSmooth(id, grams, null, null);
+  }
+
+  /** 区域内消耗：只对与 region 重叠的格、按接触表面积分摊 */
+  consumeInRegion(id, grams, region, origin) {
+    return this._consumeSmooth(id, grams, region, origin);
+  }
+
+  _consumeSmooth(id, grams, regionOrNull, origin) {
+    if (grams <= 0) return 0;
+    this._lastConsume = [];
+    this._batchUsed = false; // 本批产物是否已写入（决定后续致密产物是否还能填消耗格）
+    let remaining = grams;
+    let removed = 0;
+    // —— 局部快速路径：腐蚀有局部性（上次消耗格及其 4 邻往往仍可继续消耗）。
+    //    大网格上每帧的微消耗（如 2000g 铁块的缓慢氧化）不必全格扫描——
+    //    这是"大物块反应时卡顿"的主因。仅在局部耗尽时才回落全扫。
+    //    阈值 = 8 格/帧（≈24g/s）：池内大块的强反应也走局部；只剩超高活性的极端体系才全扫。
+    if (this._prevTargets?.length && grams <= CELL_MASS * 8) {
+      const seen = new Set();
+      const active = [];
+      for (const { x, y } of this._prevTargets) {
+        for (const [nx, ny] of [[x, y], [x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
+          if (nx < 0 || ny < 0 || nx >= this.cols || ny >= this.rows) continue;
+          const k = nx + ny * this.cols;
+          if (seen.has(k)) continue;
+          seen.add(k);
+          if (regionOrNull && !cellInRegion(nx, ny, regionOrNull, origin)) continue;
+          const m = this.cells[ny][nx];
+          if (!m || !m.has(id) || this._cellTotal(m) <= 1e-9) continue;
+          if (!getSubstance(id)?.dense && this._denseBlocking(m, id)) continue;
+          active.push({ x: nx, y: ny, cell: m, sides: this._openSides(nx, ny, id) });
+        }
+      }
+      if (active.length) {
+        const r = this._applyShares(id, active, remaining);
+        removed += r.removed;
+        remaining = r.remaining;
+        if (removed > 0) {
+          this._prevTargets = this._lastConsume.slice(0, 40);
+          this._invalidateTotals();
+          return removed;
+        }
+      }
+    }
+    for (let round = 0; round < 8 && remaining > 1e-9; round++) {
+      // 收集符合条件的格 + 接触表面积（开边数）。无开放边的格（被外壳包住）
+      // sides=0 → 分不到份额 → 内核物质被阻断，待外壳耗尽后才暴露。
+      const active = [];
+      for (let y = 0; y < this.rows; y++) {
+        for (let x = 0; x < this.cols; x++) {
+          const m = this.cells[y][x];
+          if (!m || !m.has(id) || this._cellTotal(m) <= 1e-9) continue;
+          if (regionOrNull && !cellInRegion(x, y, regionOrNull, origin)) continue;
+          // 镀层完成格不再被消耗：格内"非消耗目标"的致密物质 ≥ 半格（如 Fe 格被
+          // Cu 镀到 0.05g）→ 该格停止反应（Fe 剩一半被镀层包住——"每格 Fe 不用完"，
+          // 镀层逐格渐进，而不是一格全镀完才轮到下一格）。
+          // 消耗目标自身是致密物质（BaCO3 块 + 酸）不在此列（要能被溶解）。
+          if (!getSubstance(id)?.dense && this._denseBlocking(m, id)) continue;
+          active.push({ x, y, cell: m, sides: this._openSides(x, y, id) });
+        }
+      }
+      if (active.length === 0) break;
+      const r = this._applyShares(id, active, remaining);
+      removed += r.removed;
+      remaining = r.remaining;
+      if (r.removed <= 0) break;
+    }
+    if (removed > 0) {
+      this._prevTargets = this._lastConsume.slice(0, 40); // 记住消耗区域（局部优先用）
+      this._invalidateTotals(); // 格质量变化 → 总量缓存失效
+    }
+    return removed;
+  }
+
+  /** 按接触面占比把 remaining 分摊给 active 格；返回 {removed, remaining, progressed} */
+  _applyShares(id, active, remaining) {
+    let W = 0;
+    for (const a of active) W += a.sides;
+    if (W <= 0) return { removed: 0, remaining, progressed: false }; // 全部被包围
+    let removed = 0;
+    const roundRemaining = remaining;
+    let progressed = false;
+    for (const a of active) {
+      if (remaining <= 1e-9) break;
+      const share = (roundRemaining * a.sides) / W;
+      const cur = a.cell.get(id) ?? 0;
+      const take = Math.min(cur, share);
+      if (take > 1e-12) {
+        a.cell.set(id, cur - take);
+        removed += take;
+        remaining -= take;
+        this._lastConsume.push({ x: a.x, y: a.y });
+        if (cur - take <= 1e-9) {
+          a.cell.delete(id);
+          if (a.cell.size === 0) {
+            this.cells[a.y][a.x] = null; // 溶完置空，暴露内部格
+            this._dirty = true; // 标记：可能出现"整行空"悬空 → syncGrid 时坍塌
+          }
+        }
+        progressed = true;
+      }
+    }
+    return { removed, remaining, progressed };
+  }
+
+  /**
+   * 某格的接触表面积：4 邻"可渗透"的边数（空格=暴露面；越界也算空）。
+   * 判定规则（forId 为消耗目标时）：
+   *   - 空格：可渗透
+   *   - 含 forId 的格（反应物本体）：不可渗透（需先被消耗暴露，否则内部被外壳包住）
+   *   - 絮状沉淀（Cu(OH)2 等氢氧化物）多缝隙不阻断：可渗透
+   *   - 致密晶形沉淀（BaCO3/BaSO4/AgCl/金属）：阻断
+   */
+  _openSides(x, y, forId = null) {
+    let n = 0;
+    for (const [nx, ny] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]) {
+      const m = this.cell(nx, ny);
+      if (!m) {
+        n++;
+        continue;
+      }
+      // 0 质量占位格（growExposed 刚开层未填充的生长层）视为空：
+      // 不挡反应、不阻断（否则新开的一层 dense 占位格会立即把反应面整体封死）
+      if (this._cellTotal(m) <= 1e-9) {
+        n++;
+        continue;
+      }
+      if (forId && m.has(forId)) continue; // 反应物本体不视为开放
+      if (!this._isDense(m)) n++; // 絮状沉淀可渗透
+    }
+    return n;
+  }
+
+  /** 格内是否含"足以阻断"的致密物质：**低浓度致密物质不阻断**——镀层渐进的关键：
+   *  格子体积固定 → 格内致密物质的质量即浓度。刚生成的少量 Cu/BaCO3（如 0.014g，
+   *  或纯致密物层格里的 0.004g）低于半格阈值（0.05g）→ 不阻断，反应可继续渗透；
+   *  致密物质 ≥ 半格（0.05g）才判致密（该格镀层完成 → 阻断内部）。
+   *  0 质量生长占位格不算。 */
+  _isDense(m) {
+    const total = this._cellTotal(m);
+    if (total <= 1e-9) return false;
+    let denseMass = 0;
+    for (const [id, mass] of m) {
+      const s = getSubstance(id);
+      if (s && s.dense) denseMass += mass;
+    }
+    return denseMass >= CELL_MASS / 2;
+  }
+
+  /** 格内"排除消耗目标外"的致密物质 ≥ 半格 → 该格镀层完成，不再被消耗
+   *  （Fe 格被 Cu 镀到 0.05g 即停，剩一半 Fe 被包住；BaCO3 块自身致密不在此列） */
+  _denseBlocking(m, excludeId) {
+    const total = this._cellTotal(m);
+    if (total <= 1e-9) return false;
+    let d = 0;
+    for (const [id2, mass] of m) {
+      if (id2 === excludeId) continue;
+      const s = getSubstance(id2);
+      if (s && s.dense) d += mass;
+    }
+    return d >= CELL_MASS / 2;
+  }
+
+  /**
+   * 区域内某物质的总质量（g）。变更计数节流（≥30 次内容变更重扫一次，≈每帧消耗的
+   * 大网格 1 秒刷新）：池内大块的反应循环每帧调用数十次，每次全扫是大网格
+   * "反应时卡顿"的根因之一。
+   */
+  availInRegion(id, region, origin) {
+    if (this._regVer !== undefined && (this._ver ?? 0) - this._regVer < 30 && this._regCache && this._regCache.id === id) {
+      return this._regCache.sum;
+    }
+    let s = 0;
+    for (let y = 0; y < this.rows; y++) {
+      for (let x = 0; x < this.cols; x++) {
+        const c = this.cells[y][x];
+        if (c && c.has(id) && cellInRegion(x, y, region, origin)) s += c.get(id);
+      }
+    }
+    this._regVer = this._ver ?? 0;
+    this._regCache = { id, sum: s };
+    return s;
+  }
+
+  /**
+   * 暴露格（开放边 > 0）中某物质的总质量（g）——反应"实际可消耗"的量。
+   * 被致密外壳（Cu/BaCO3 等）包住的内核不计入：反应量据此计算，产物不会凭空生成。
+   * 带版本+时间窗缓存：一帧内同一物质反复查询只全扫一次；格内容微变（消耗每帧发生）
+   * 也不会每帧强刷全扫——暴露面变化滞后 ≤150ms，化学量误差 <1%（大网格 11ms/次的全扫
+   * 若每帧发生就是卡顿主因）。
+   */
+  exposedAvail(id, region = null, origin = null) {
+    if (region) {
+      // 区域版缓存（同 availInRegion）：≥30 次内容变更重扫一次
+      if (this._regExpVer !== undefined && (this._ver ?? 0) - this._regExpVer < 30 && this._regExpCache && this._regExpCache.id === id) {
+        return this._regExpCache.sum;
+      }
+      let s = 0;
+      for (let y = 0; y < this.rows; y++) {
+        for (let x = 0; x < this.cols; x++) {
+          const c = this.cells[y][x];
+          if (!c || !c.has(id) || this._openSides(x, y, id) <= 0) continue;
+          if (!cellInRegion(x, y, region, origin)) continue;
+          s += c.get(id);
+        }
+      }
+      this._regExpVer = this._ver ?? 0;
+      this._regExpCache = { id, sum: s };
+      return s;
+    }
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (this._exposedAt === undefined || now - this._exposedAt > 150) {
+      this._exposedMemo.clear(); // 时间窗到期：强制重扫一次（暴露面变化的滞后 ≤150ms）
+      this._exposedAt = now;
+    }
+    const mem = this._exposedMemo.get(id);
+    if (mem) return mem.sum;
+    let s = 0;
+    for (let y = 0; y < this.rows; y++) {
+      for (let x = 0; x < this.cols; x++) {
+        const c = this.cells[y][x];
+        if (!c || !c.has(id) || this._openSides(x, y, id) <= 0) continue;
+        s += c.get(id);
+      }
+    }
+    this._exposedMemo.set(id, { ver: this._exposedVer, sum: s });
+    return s;
+  }
+
+  /**
+   * 直接加质量到网格（玩家吸收回血等）：不足半格先累积（避免小数质量被舍入丢失）；
+   * 优先补已有空格，剩余生长。返回本次实际写入量。
+   */
+  add(id, mass) {
+    this._addAccum = (this._addAccum ?? 0) + mass;
+    let rest = this._addAccum;
+    if (rest < CELL_MASS / 2) return 0; // 太少量先攒着
+    for (let y = this.rows - 1; y >= 0 && rest > 1e-9; y--) {
+      for (let x = 0; x < this.cols && rest > 1e-9; x++) {
+        if (!this.cells[y][x]) {
+          const put = Math.min(CELL_MASS, rest);
+          this.cells[y][x] = new Map([[id, put]]);
+          rest -= put;
+        }
+      }
+    }
+    if (rest > 1e-9) rest -= this.addEdge(id, rest);
+    const used = this._addAccum - Math.max(0, rest);
+    this._addAccum = Math.max(0, rest);
+    if (used > 1e-12) this._invalidateTotals();
+    return used;
+  }
+
+  /**
+   * 原地转化：把 grams 写入"上次被消耗"的格子（固体产物附着在反应物表面）。
+   * 非致密产物按各格剩余容量占比分摊——先到先得会让后遍历的格（大 y 行）
+   * 拿不到份额，消耗面深处出现空洞（如 NaOH 块吸收 Cl2：NaCl 填不满消耗面，
+   * 中部整片空缺）。致密产物（BaCO3/Cu 壳）先到先得集中填格：均匀分摊会让
+   * 所有消耗格同时沾上致密物质而整体变 dense，过早把反应面封死。
+   * 本批已有产物写入后，后续致密产物不再填消耗格（返回 0 走 addEdge 底部）：
+   * 否则 BaCO3 会填进刚被 NaOH 回填的表面格，把整个反应面封死（池内再生
+   * Na2CO3 转化不完）。非致密产物同批共享格子，room 填满后剩余才由调用方
+   * 走 addEdge 生长（已配质量累积器，小量不丢失）。返回实际写入量。
+   */
+  addInPlace(id, grams) {
+    if (grams <= 0 || !this._lastConsume || this._lastConsume.length === 0) return 0;
+    const dense = !!getSubstance(id)?.dense;
+    if (dense && this._batchUsed) return 0; // 本批已有产物 → 致密产物不填消耗格（防封死）
+    let wrote = 0;
+    if (dense) {
+      // 致密产物：先到先得，集中成壳
+      let rest = grams;
+      for (const { x, y } of this._lastConsume) {
+        if (rest <= 1e-12) break;
+        const row = this.cells[y];
+        if (!row) continue;
+        let m = row[x];
+        const room = m ? CELL_MASS - this._cellTotal(m) : CELL_MASS;
+        if (room <= 1e-12) continue;
+        const put = Math.min(room, rest);
+        if (!m) { m = new Map(); row[x] = m; }
+        m.set(id, (m.get(id) ?? 0) + put);
+        rest -= put;
+        wrote += put;
+      }
+    } else {
+      // 非致密产物：按各格剩余容量占比分摊（防空洞）
+      const slots = [];
+      let totalRoom = 0;
+      for (const { x, y } of this._lastConsume) {
+        const row = this.cells[y];
+        if (!row) continue;
+        const m = row[x];
+        const room = m ? CELL_MASS - this._cellTotal(m) : CELL_MASS;
+        if (room <= 1e-12) continue;
+        slots.push({ x, y, room });
+        totalRoom += room;
+      }
+      if (slots.length === 0 || totalRoom <= 1e-12) return 0;
+      let rest = grams;
+      for (const { x, y, room } of slots) {
+        if (rest <= 1e-12) break;
+        const quota = (grams * room) / totalRoom; // 该格本轮应得的份额
+        const put = Math.min(room, rest, quota);
+        const row = this.cells[y];
+        let m = row[x];
+        if (!m) { m = new Map(); row[x] = m; }
+        m.set(id, (m.get(id) ?? 0) + put);
+        rest -= put;
+        wrote += put;
+      }
+    }
+    if (wrote > 0) this._batchUsed = true;
+    if (wrote > 1e-12) this._invalidateTotals();
+    return wrote;
+  }
+
+  /** 转化边界格（保留剩余质量，原地改物质）；返回转化质量 */
+  convert(id, toId, grams) {
+    let need = grams;
+    let converted = 0;
+    for (let round = 0; round < 8 && need > 1e-9; round++) {
+      const boundary = this._boundaryCells(id);
+      if (boundary.length === 0) break;
+      let progressed = false;
+      for (const [x, y] of boundary) {
+        if (need <= 1e-9) break;
+        const m = this.cells[y][x];
+        if (m && m.has(id)) {
+          const cur = m.get(id);
+          const take = Math.min(cur, need);
+          m.set(id, cur - take);
+          m.set(toId, (m.get(toId) ?? 0) + take);
+          need -= take;
+          converted += take;
+          progressed = true;
+        }
+      }
+      if (!progressed) break;
+    }
+    if (converted > 1e-12) this._invalidateTotals();
+    return converted;
+  }
+
+  /** 在指定侧边新增整格（g）。先补满已有边界行的空位，再开新行（新行填满）。
+   *  质量累积：不足一格的余量攒着（_edgeAcc），攒满一格才生成——避免 round 把小量
+   *  吞掉（round(0.03/0.1)=0 → 产物凭空丢失）或放大（round(0.06/0.1)=1 → 凭空多造）。
+   *  （暴露面渐进生长请用 growExposed——产物盈余长在所有与大气/液体接触的面上。） */
+  addEdge(id, grams, side = 'bottom') {
+    this._edgeAcc = this._edgeAcc || {};
+    this._edgeAcc[id] = (this._edgeAcc[id] ?? 0) + grams;
+    let need = Math.floor(this._edgeAcc[id] / CELL_MASS + 1e-9); // 防浮点：0.3/0.1=2.999…
+    this._edgeAcc[id] -= need * CELL_MASS;
+    if (this._edgeAcc[id] < 1e-6) this._edgeAcc[id] = 0;
+    const totalNeeded = need;
+    // 优先补满边界行（避免每 0.1g 就开新行把物体越撑越大）
+    if (side === 'bottom' && this.rows > 0) {
+      const last = this.rows - 1;
+      for (let x = 0; x < this.cols && need > 0; x++) {
+        if (!this.cells[last][x]) {
+          this.cells[last][x] = new Map([[id, CELL_MASS]]);
+          need--;
+        }
+      }
+    }
+    while (need > 0) {
+      const added = this._growSide(side, id, need);
+      if (added <= 0) break;
+      need -= added;
+    }
+    return (totalNeeded - need) * CELL_MASS;
+  }
+
+  /**
+   * 暴露面渐进生长：产物盈余长在所有"暴露边界"上（物块/玩家与大气、液体接触的
+   * 面——四周都是接触面，不固定哪一面）。所有暴露位置**同时**开始生长：质量从 0
+   * 逐渐涨满（渲染 alpha 随质量渐变），而不是攒满一格才冒出一个满格。
+   * 关键：边界基于**实际内容（minAABB）**而非 cells 数组边界——被酸蚀缩水/内部
+   * 空洞的网格，生长贴着主体表面，不会在"原始大小"位置长出脱离的壳。
+   * 规则：
+   *  - 主体四边界行/列的空位与未满格 = 填充目标（长回被消耗挖掉的洞）
+   *  - 边界外一行/列的未满格也是目标（上次开的层——层格质量 < MIN_SOLID_MASS 时
+   *    不在 minAABB 内，必须显式收集，否则每 tick 都会重复开层叠层）
+   *  - 边界全满且边界外无未满格 → 在该面开一层（新行/列，源格位置放 0 质量占位），
+   *    占位格随后与其它目标一起逐渐填充；一层满后自动开下一层
+   *  - 质量直接写入格子（无累积器滞留：不足一格的余量也立即分摊，总量守恒）
+   * 返回实际写入量。
+   */
+  growExposed(id, grams) {
+    if (!(grams > 0) || this.rows === 0 || this.cols === 0) return 0;
+    let rest = grams;
+    let wrote = 0;
+    // 多轮：当前目标 room 不足时开新层继续写入，直到写完或无处可长
+    for (let round = 0; round < 8 && rest > 1e-12; round++) {
+      this._invalidateTotals(); // 上一轮开层/写入后：minAABB/总量缓存强制刷新
+      const aabb = this.minAABB();
+      if (!aabb) break;
+      let minX = Math.floor(aabb.x / CELL_SIZE);
+      let maxX = Math.floor((aabb.x + aabb.w) / CELL_SIZE) - 1;
+      let minY = Math.floor(aabb.y / CELL_SIZE);
+      let maxY = Math.floor((aabb.y + aabb.h) / CELL_SIZE) - 1;
+      if (minX < 0 || minY < 0 || maxX >= this.cols || maxY >= this.rows) break;
+      const rowFull = (y) => {
+        for (let x = minX; x <= maxX; x++) {
+          const m = this.cells[y]?.[x];
+          if (!m || this._cellTotal(m) < CELL_MASS - 1e-9) return false;
+        }
+        return true;
+      };
+      const colFull = (c) => {
+        for (let y = minY; y <= maxY; y++) {
+          const m = this.cells[y]?.[c];
+          if (!m || this._cellTotal(m) < CELL_MASS - 1e-9) return false;
+        }
+        return true;
+      };
+      // 收集填充目标：主体四边界（允许空位=补洞）+ 边界外一行/列（上次开的未满层）
+      const targets = [];
+      const seen = new Set();
+      const push = (x, y, allowEmpty) => {
+        const row = this.cells[y];
+        if (!row) return;
+        const m = row[x];
+        if (!m) {
+          if (allowEmpty) { const k = x + ',' + y; if (!seen.has(k)) { seen.add(k); targets.push({ x, y }); } }
+          return;
+        }
+        if (this._cellTotal(m) >= CELL_MASS - 1e-9) return;
+        const k = x + ',' + y;
+        if (seen.has(k)) return;
+        seen.add(k);
+        targets.push({ x, y });
+      };
+      for (let x = minX; x <= maxX; x++) {
+        push(x, maxY, true);
+        push(x, minY, true);
+        push(x, maxY + 1, false);
+        push(x, minY - 1, false);
+      }
+      for (let y = minY; y <= maxY; y++) {
+        push(maxX, y, true);
+        push(minX, y, true);
+        push(maxX + 1, y, false);
+        push(minX - 1, y, false);
+      }
+      if (targets.length === 0) {
+        // 边界全满且边界外无未满层 → 开新层（贴着实际边界）。
+        // 先基于当前边界统一判定四面，再统一开层（避免先开的面污染后续判定）
+        const can = {
+          bottom: rowFull(maxY),
+          top: rowFull(minY),
+          right: colFull(maxX),
+          left: colFull(minX),
+        };
+        let opened = false;
+        if (can.bottom) { this._openLayerAt('bottom', id, maxY, minX, maxX); opened = true; }
+        if (can.top) { this._openLayerAt('top', id, minY, minX, maxX); opened = true; }
+        if (can.right) { this._openLayerAt('right', id, maxX, minY, maxY); opened = true; }
+        if (can.left) { this._openLayerAt('left', id, minX, minY, maxY); opened = true; }
+        if (!opened) break;
+        // 开层后：重新用 minAABB 算主体边界（新层 0 质量不计入；top/left 的 splice
+        // 会让行/列索引漂移，手动跟踪必错位）——新层 = 主体边界外一行/列
+        this._invalidateTotals(); // 刚开层/写入：缓存强制刷新
+        const a2 = this.minAABB();
+        if (!a2) break;
+        const nMinX = Math.floor(a2.x / CELL_SIZE);
+        const nMaxX = Math.floor((a2.x + a2.w) / CELL_SIZE) - 1;
+        const nMinY = Math.floor(a2.y / CELL_SIZE);
+        const nMaxY = Math.floor((a2.y + a2.h) / CELL_SIZE) - 1;
+        for (let x = nMinX; x <= nMaxX; x++) {
+          push(x, nMaxY + 1, false); // 新底层
+          push(x, nMinY - 1, false); // 新顶层
+        }
+        for (let y = nMinY; y <= nMaxY; y++) {
+          push(nMaxX + 1, y, false); // 新右列
+          push(nMinX - 1, y, false); // 新左列
+        }
+        // 新层交叉角落（top×left 等——left 开层时已给顶层行插占位，补齐收集）
+        push(nMinX - 1, nMinY - 1, false);
+        push(nMaxX + 1, nMinY - 1, false);
+        push(nMinX - 1, nMaxY + 1, false);
+        push(nMaxX + 1, nMaxY + 1, false);
+        if (targets.length === 0) break;
+      }
+      // 均摊：每格拿相同份额（余数给最后一格），所有目标格同步增长
+      const share = rest / targets.length;
+      for (const { x, y } of targets) {
+        if (rest <= 1e-12) break;
+        const row = this.cells[y];
+        let m = row[x];
+        const room = m ? CELL_MASS - this._cellTotal(m) : CELL_MASS;
+        if (room <= 1e-12) continue;
+        const put = Math.min(room, share, rest);
+        if (put <= 1e-12) continue;
+        if (!m) { m = new Map(); row[x] = m; }
+        m.set(id, (m.get(id) ?? 0) + put);
+        rest -= put;
+        wrote += put;
+      }
+    }
+    if (wrote > 1e-12) this._invalidateTotals();
+    return wrote;
+  }
+
+  /** 在指定边界行/列（edge，基于实际内容）外侧开一层"生长层"：新行/列在源格
+   *  位置（span0..span1 范围）放 0 质量占位格，随后由 growExposed 逐渐填充。
+   *  基于实际边界而非 cells 数组边界：缩水/内部空洞的网格生长贴着主体。 */
+  _openLayerAt(side, id, edge, span0, span1) {
+    if (this.rows === 0 || this.cols === 0) return 0;
+    if (side === 'right' || side === 'left') {
+      const idx = side === 'right' ? edge + 1 : edge;
+      let any = false;
+      for (let y = span0; y <= span1; y++) if (this.cells[y]?.[edge]) { any = true; break; }
+      if (!any) return 0;
+      for (let y = 0; y < this.rows; y++) {
+        const has = y >= span0 && y <= span1 && this.cells[y][edge];
+        this.cells[y].splice(idx, 0, has ? new Map([[id, 0]]) : null);
+      }
+      this.cols++;
+      return 1;
+    }
+    let any = false;
+    for (let x = span0; x <= span1; x++) if (this.cells[edge]?.[x]) { any = true; break; }
+    if (!any) return 0;
+    const newRow = new Array(this.cols).fill(null);
+    for (let x = span0; x <= span1; x++) {
+      if (this.cells[edge][x]) newRow[x] = new Map([[id, 0]]);
+    }
+    if (side === 'bottom') this.cells.splice(edge + 1, 0, newRow);
+    else this.cells.splice(edge, 0, newRow);
+    this.rows++;
+    return 1;
+  }
+
+  _growSide(side, id, maxCells) {
+    if (this.rows === 0 || this.cols === 0) return 0;
+    if (side === 'right' || side === 'left') {
+      const idx = side === 'right' ? this.cols : 0;
+      const colIdx = side === 'right' ? this.cols - 1 : 0;
+      let added = 0;
+      for (let y = 0; y < this.rows; y++) if (this.cells[y][colIdx] && added < maxCells) added++;
+      if (added === 0) return 0;
+      // 只在实际放 Map 的行插入新列，且受 maxCells 限制（否则一次性塞进源列全部
+      // 有格数 → 多造质量：返回 added 与实际放置数不一致）
+      let placed = 0;
+      for (let y = 0; y < this.rows; y++) {
+        const has = this.cells[y][colIdx] && placed < maxCells;
+        if (has) placed++;
+        this.cells[y].splice(idx, 0, has ? new Map([[id, CELL_MASS]]) : null);
+      }
+      this.cols++;
+      return placed;
+    }
+    const srcIdx = side === 'bottom' ? this.rows - 1 : 0;
+    let added = 0;
+    for (let x = 0; x < this.cols; x++) if (this.cells[srcIdx][x] && added < maxCells) added++;
+    if (added === 0) return 0;
+    const newRow = new Array(this.cols).fill(null);
+    let placed = 0;
+    for (let x = 0; x < this.cols && placed < maxCells; x++) {
+      if (this.cells[srcIdx][x]) {
+        newRow[x] = new Map([[id, CELL_MASS]]);
+        placed++;
+      }
+    }
+    if (side === 'bottom') this.cells.push(newRow);
+    else this.cells.unshift(newRow);
+    this.rows++;
+    return placed;
+  }
+
+  /** 某物质的外圈格（四邻有空/越界） */
+  _boundaryCells(id) {
+    const out = [];
+    for (let y = 0; y < this.rows; y++) {
+      for (let x = 0; x < this.cols; x++) {
+        if (!this.cells[y][x]?.has(id)) continue;
+        if (this._openSides(x, y) > 0) out.push([x, y]);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * 暴露（表层）物质质量表：只有暴露格的物质能参与外部反应/焰色/掉渣。
+   * 返回 { id → mass }。时间窗缓存：暴露面变化滞后 ≤150ms（本表被每帧调用，
+   * 大网格上一次全扫约 10ms——逐帧重扫就是卡顿主因）。
+   */
+  exposedMasses() {
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (this._expMassesAt === undefined || now - this._expMassesAt > 150) {
+      const m = {};
+      for (let y = 0; y < this.rows; y++) {
+        for (let x = 0; x < this.cols; x++) {
+          const c = this.cells[y][x];
+          if (!c || this._openSides(x, y) <= 0) continue;
+          for (const [id, mass] of c) m[id] = (m[id] ?? 0) + mass;
+        }
+      }
+      this._expMasses = m;
+      this._expMassesAt = now;
+    }
+    return this._expMasses;
+  }
+
+  _cellTotal(m) {
+    let s = 0;
+    for (const v of m.values()) s += v;
+    return s;
+  }
+}
+
+/** 格子世界矩形是否与 region 重叠 */
+function cellInRegion(x, y, region, origin) {
+  const cx = origin.x + x * CELL_SIZE;
+  const cy = origin.y + y * CELL_SIZE;
+  return (
+    cx < region.x + region.w && cx + CELL_SIZE > region.x &&
+    cy < region.y + region.h && cy + CELL_SIZE > region.y
+  );
+}
+
+/** 格内多物质按质量占比混合成一种颜色 */
+function cellColor(m) {
+  let r = 0, g = 0, b = 0, total = 0;
+  for (const [id, mass] of m) {
+    const sub = getSubstance(id);
+    const hex = sub.solid && sub.solid.length ? sub.solid[0] : '#cccccc';
+    const c = hexToRgb(hex);
+    r += c.r * mass;
+    g += c.g * mass;
+    b += c.b * mass;
+    total += mass;
+  }
+  if (total <= 0) return '#cccccc';
+  return rgbToHex({ r: r / total, g: g / total, b: b / total });
+}
+
+// ---- 渲染：按行游程合并（大网格的相邻同色格合并为一个矩形——几千/万格的大物块
+// 从"逐格 fillRect" 变成"数十次绘制"，是消除大块卡顿的关键之一）；
+// 深色格加白色光晕（暗背景下可见），合并段整体一次投影。
+function renderGrid(ctx, grid, ox, oy) {
+  ctx.save();
+  const px = CELL_SIZE;
+  for (let y = 0; y < grid.rows; y++) {
+    const row = grid.cells[y];
+    let runX = -1;
+    let runColor = null;
+    let runAlpha = 0;
+    let runDark = false;
+    const flush = (endX) => {
+      if (runX < 0) return;
+      const w = (endX - runX) * px;
+      ctx.globalAlpha = runAlpha;
+      ctx.fillStyle = runColor;
+      ctx.fillRect(ox + runX * px, oy + y * px, w, px);
+      if (runDark) {
+        ctx.shadowColor = 'rgba(255,255,255,0.75)';
+        ctx.shadowBlur = 4;
+        ctx.fillRect(ox + runX * px, oy + y * px, w, px);
+        ctx.shadowBlur = 0;
+      }
+      runX = -1;
+    };
+    for (let x = 0; x < grid.cols; x++) {
+      const m = row[x];
+      if (!m) { flush(x); continue; }
+      const total = grid._cellTotal(m);
+      if (total < MIN_SOLID_MASS) { flush(x); continue; } // 微量格不渲染——与碰撞箱一致
+      const color = cellColor(m);
+      const alpha = Math.max(0, Math.min(1, total / CELL_MASS));
+      const dark = luminance(color) < 110;
+      // 颜色/透明度/明暗变化 → 结束上一游程（透明度允许小差，减少碎片段）
+      if (color !== runColor || dark !== runDark || Math.abs(alpha - runAlpha) > 0.15) {
+        flush(x);
+        runX = x;
+        runColor = color;
+        runAlpha = alpha;
+        runDark = dark;
+      }
+    }
+    flush(grid.cols);
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+exports.CELL_SIZE = CELL_SIZE;
+exports.CELL_MASS = CELL_MASS;
+exports.MIN_SOLID_MASS = MIN_SOLID_MASS;
+exports.MaterialGrid = MaterialGrid;
+exports.renderGrid = renderGrid;
+
+  };
+  __modules["src/render/color.js"] = function (module, exports, __require) {
+// ============================================================================
+// 颜色工具：#hex 与 rgb 互转、混色
+// ============================================================================
+
+function hexToRgb(hex) {
+  const h = hex.replace('#', '');
+  if (h.length === 3) {
+    return {
+      r: parseInt(h[0] + h[0], 16),
+      g: parseInt(h[1] + h[1], 16),
+      b: parseInt(h[2] + h[2], 16),
+    };
+  }
+  return {
+    r: parseInt(h.slice(0, 2), 16),
+    g: parseInt(h.slice(2, 4), 16),
+    b: parseInt(h.slice(4, 6), 16),
+  };
+}
+
+function rgbToHex({ r, g, b }) {
+  const c = (v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0');
+  return `#${c(r)}${c(g)}${c(b)}`;
+}
+
+/** 线性混色：t=0 → a，t=1 → b */
+function mix(a, b, t) {
+  const ca = hexToRgb(a);
+  const cb = hexToRgb(b);
+  return rgbToHex({
+    r: ca.r + (cb.r - ca.r) * t,
+    g: ca.g + (cb.g - ca.g) * t,
+    b: ca.b + (cb.b - ca.b) * t,
+  });
+}
+
+exports.hexToRgb = hexToRgb;
+exports.rgbToHex = rgbToHex;
+exports.mix = mix;
+
+  };
+  __modules["src/objects/floor.js"] = function (module, exports, __require) {
+// ============================================================================
+// 地板：静态实心体，无化学性质，不可移动。
+// 渲染为神殿石砖：纵向石色渐变 + 砖缝 + 顶部亮边（可站立面）。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+const { THEME } = __require('src/render/theme.js');;
+
+class Floor extends Obj {
+  get hoverLabel() {
+    return '地板';
+  }
+  constructor({ x, y, w, h, color = null, ...rest } = {}) {
+    super({ x, y, w, h, solid: true, static: true, physicsKind: 'static', ...rest });
+    this.color = color;
+  }
+
+  render(ctx) {
+    const { x, y, w, h } = this;
+    if (w <= 0 || h <= 0) return;
+    const base = this.color || THEME.stone.base;
+    ctx.save();
+    // 基础石色渐变
+    const g = ctx.createLinearGradient(x, y, x, y + h);
+    g.addColorStop(0, mixHex(base, '#ffffff', 0.16));
+    g.addColorStop(0.5, base);
+    g.addColorStop(1, mixHex(base, '#000000', 0.3));
+    ctx.fillStyle = g;
+    ctx.fillRect(x, y, w, h);
+    // 砖缝（确定性，基于世界坐标）
+    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+    ctx.lineWidth = 1;
+    const TILE = 34;
+    for (let tx = Math.floor(x / TILE) * TILE + TILE; tx < x + w; tx += TILE) {
+      ctx.beginPath();
+      ctx.moveTo(tx, y);
+      ctx.lineTo(tx, y + h);
+      ctx.stroke();
+    }
+    for (let ty = Math.floor(y / TILE) * TILE + TILE; ty < y + h; ty += TILE) {
+      ctx.beginPath();
+      ctx.moveTo(x, ty);
+      ctx.lineTo(x + w, ty);
+      ctx.stroke();
+    }
+    // 顶部亮边（可站立面）
+    ctx.fillStyle = 'rgba(255,255,255,0.16)';
+    ctx.fillRect(x, y, w, 3);
+    // 底部暗影
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.fillRect(x, y + h - 3, w, 3);
+    ctx.restore();
+  }
+}
+
+function mixHex(a, b, t) {
+  const ca = parseInt(a.slice(1), 16);
+  const cb = parseInt(b.slice(1), 16);
+  const r = Math.round(((ca >> 16) & 255) * (1 - t) + ((cb >> 16) & 255) * t);
+  const g = Math.round(((ca >> 8) & 255) * (1 - t) + ((cb >> 8) & 255) * t);
+  const bl = Math.round((ca & 255) * (1 - t) + (cb & 255) * t);
+  return `rgb(${r},${g},${bl})`;
+}
+
+exports.Floor = Floor;
+
+  };
+  __modules["src/objects/pool.js"] = function (module, exports, __require) {
+// ============================================================================
+// 药品池：地面凹陷的容器。自动生成盆壁/盆底静态体；内部为液体区域。
+// 液体按溶液色渲染 + 浮动小球；沉淀粒子绘制在液体底部。
+// ============================================================================
+
+const { Container } = __require('src/objects/container.js');;
+const { Floor } = __require('src/objects/floor.js');;
+const { renderLiquid } = __require('src/render/liquidrender.js');;
+
+const WALL = 8;
+
+class Pool extends Container {
+  get hoverLabel() {
+    return '池';
+  }
+  constructor({ x, y, w, h, wall = WALL, gasHeight = 80, ...rest } = {}) {
+    super({ x, y, w, h, ...rest });
+    this.wall = wall;
+    this.gasHeight = gasHeight; // 此池产气的气泡柱高度（px），可配置
+    this.subBodies = [
+      new Floor({ x, y, w: wall, h, color: '#5c4632' }), // 左壁
+      new Floor({ x: x + w - wall, y, w: wall, h, color: '#5c4632' }), // 右壁
+      new Floor({ x, y: y + h - wall, w, h: wall, color: '#5c4632' }), // 盆底
+    ];
+  }
+
+  /** 液体区域（扣除盆壁） */
+  innerRect() {
+    return { x: this.x + this.wall, y: this.y, w: this.w - 2 * this.wall, h: this.h - this.wall };
+  }
+
+  render(ctx, scene) {
+    const r = this.innerRect();
+    if (r.w <= 0 || r.h <= 0) return;
+    renderLiquid(ctx, r.x, r.y, r.w, r.h, this.solution, scene.time ?? 0);
+
+    // 沉淀：从反应位置生成的视觉颗粒，物理堆叠成堆
+    this.renderGrains(ctx);
+    this.renderContentsLabel(ctx);
+  }
+}
+
+exports.Pool = Pool;
+
+  };
+  __modules["src/render/liquidrender.js"] = function (module, exports, __require) {
+// ============================================================================
+// 液体渲染
+// ----------------------------------------------------------------------------
+// 溶液色 = 各有色离子按其浓度/饱和比加权平均；无色 → 淡灰透明。
+// 主体填充 + 少量确定性伪随机浮动小球（颜色深浅微差，纯视觉）。
+// ============================================================================
+
+const { getSubstance } = __require('src/chem/substances.js');;
+const { hexToRgb, rgbToHex, mix } = __require('src/render/color.js');;
+
+/**
+ * 计算溶液颜色与透明度（无色→饱和色平滑过渡）。
+ * 指示剂（石蕊/酚酞）：按溶液 pH 显色，与离子色叠加。
+ */
+function solutionColor(solution) {
+  let idx = 0;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let w = 0;
+  for (const [id, mass] of solution.solutes) {
+    const sub = getSubstance(id);
+    if (!sub.ionColor) continue;
+    const gPerL = (mass / solution.volume) * 1000; // volume 单位 mL → g/L
+    const f = gPerL / sub.ionColor.sat; // 相对饱和浓度
+    if (f <= 0) continue;
+    const c = hexToRgb(sub.ionColor.color);
+    idx += f;
+    r += c.r * f;
+    g += c.g * f;
+    b += c.b * f;
+    w += f;
+  }
+  let base = { color: '#aaaaaa', alpha: 0.12 }; // 无色
+  if (idx > 1e-9) {
+    // t=0 无色，t≥1 全饱和：颜色从 #aaa 线性混合到加权离子色，透明度平滑上升
+    const t = Math.min(1, idx);
+    const ion = rgbToHex({ r: r / w, g: g / w, b: b / w });
+    base = { color: mix('#aaaaaa', ion, t), alpha: 0.12 + 0.73 * t };
+  }
+  // 指示剂显色（石蕊红/紫/蓝，酚酞无色/浅红/深红，甲基橙红/橙/黄）
+  const pH = solution.pH ? solution.pH() : 7;
+  let ir = 0;
+  let ig = 0;
+  let ib = 0;
+  let iw = 0;
+  for (const [id, mass] of solution.solutes) {
+    const sub = getSubstance(id);
+    if (!sub.indicator || mass <= 0) continue;
+    let color = sub.indicator.stops[0][1];
+    for (const [cut, c] of sub.indicator.stops) {
+      if (pH >= cut) color = c;
+    }
+    if (sub.indicator.transparent && color === sub.indicator.stops[0][1]) continue; // 无色段
+    const gPerL = (mass / solution.volume) * 1000;
+    const f = Math.min(1, gPerL / 10); // ≥10g/L 视为指示剂饱和显色
+    const c = hexToRgb(color);
+    ir += c.r * f;
+    ig += c.g * f;
+    ib += c.b * f;
+    iw += f;
+  }
+  if (iw <= 1e-9) return base;
+  const ind = { r: ir / iw, g: ig / iw, b: ib / iw };
+  const bc = hexToRgb(base.color);
+  // 指示剂色与基础色叠加（各半）：石蕊加入酸性溶液 → 红
+  const mixed = rgbToHex({
+    r: (bc.r + ind.r) / 2,
+    g: (bc.g + ind.g) / 2,
+    b: (bc.b + ind.b) / 2,
+  });
+  return { color: mixed, alpha: Math.max(base.alpha, 0.25 + 0.5 * Math.min(1, iw)) };
+}
+
+/** 渲染一个矩形液面（灵动：起伏波浪 + 持续上升的气泡 + 辉光） */
+function renderLiquid(ctx, x, y, w, h, solution, time = 0) {
+  if (w <= 0 || h <= 0) return;
+  const { color, alpha } = solutionColor(solution);
+  ctx.save();
+  // 主体：纵向渐变（底部更深）
+  const g = ctx.createLinearGradient(x, y, x, y + h);
+  g.addColorStop(0, color);
+  g.addColorStop(1, mix(color, '#000000', 0.35));
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = g;
+  ctx.fillRect(x, y, w, h);
+  ctx.globalAlpha = 1;
+  // 起伏波浪表面（随时间推进，不是死线）
+  const waveAmp = 2.4;
+  ctx.globalAlpha = Math.min(1, alpha + 0.35);
+  ctx.fillStyle = mix(color, '#ffffff', 0.5);
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 10;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  const SEG = 14;
+  for (let i = 0; i <= SEG; i++) {
+    const px = x + (i / SEG) * w;
+    const py = y + Math.sin(time * 2.4 + (i / SEG) * Math.PI * 2 + x * 0.01) * waveAmp;
+    ctx.lineTo(px, py);
+  }
+  ctx.lineTo(x + w, y + 3.5);
+  ctx.lineTo(x, y + 3.5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  // 上升的气泡（从底部持续冒出，速度不一，随时间循环）
+  const n = Math.min(22, Math.max(1, Math.round((w * h) / 900)));
+  for (let i = 0; i < n; i++) {
+    const bx = x + ((i * 7919) % 997) / 997 * w;
+    const speed = 22 + (i % 4) * 9;
+    const cycle = h + 16;
+    const off = (time * speed + i * 37) % cycle;
+    const by = y + h - off;
+    const r = 1.6 + (i % 3) * 1.1;
+    ctx.globalAlpha = 0.35 + 0.3 * Math.sin(i * 2.1 + time * 2);
+    ctx.fillStyle = mix(color, '#ffffff', 0.72);
+    ctx.beginPath();
+    ctx.arc(bx, by, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+exports.solutionColor = solutionColor;
+exports.renderLiquid = renderLiquid;
+
+  };
+  __modules["src/objects/deposit.js"] = function (module, exports, __require) {
+// ============================================================================
+// 沉淀堆（Deposit）：关卡预设的"一滩沉淀"。
+// ----------------------------------------------------------------------------
+// 它**不是固体块**：开局（首帧）就物化为沉淀粒子——与玩家放置的沉淀、反应产物
+// 完全同一物理：实心可垫脚、可堆叠、可拾取（Q）、可溶解/反应、卡口会像沙一样漏入。
+// 编辑器里以"堆形网格"预览（梯形堆，质量决定大小；显式 w/h 走像素模式）；
+// 运行时网格只是物化布局，物化后壳退出活动索引（保留 byId：开关仍可引用）。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+const { MaterialGrid, renderGrid, CELL_SIZE } = __require('src/render/gridrender.js');;
+const { contrastEdge, luminance } = __require('src/render/theme.js');;
+const { getSubstance } = __require('src/chem/substances.js');;
+const { renderFormula } = __require('src/render/label.js');;
+
+class Deposit extends Obj {
+  constructor({ x, y, substance, mass, w, h, ...rest } = {}) {
+    // 显式 w/h（且未给质量）→ 按目标尺寸生成梯形堆（编辑器像素模式）；
+    // 否则质量 → 堆形（每格 0.1g，与物块同一密度）
+    const manual = !!(w && h && (mass == null || mass <= 0));
+    const grid = manual
+      ? MaterialGrid.heapRect(w, h, substance)
+      : MaterialGrid.heapForMass(mass ?? 20, substance);
+    const aabb = grid.minAABB();
+    super({ x, y, w: aabb.w, h: aabb.h, solid: false, physicsKind: 'none', noLift: true, mass: grid.totalMass(), ...rest });
+    this.substance = substance;
+    this.grid = grid;
+    this.gridOrigin = { x, y };
+    this.gridOrigins = new Map([[substance, { kind: 'level' }]]);
+    this.formulaVisible = true;
+    this._materialized = false;
+  }
+
+  get isDeposit() {
+    return true;
+  }
+
+  /** 渲染/选中框锚点同步：gridOrigin 跟随逻辑位置 x/y（编辑器拖拽、缩放、旧档归一化用）。
+   *  物块/玩家都有 syncGrid，沉淀堆漏了会导致"拖了选中框在跑、堆图形留在原地"。 */
+  syncGrid() {
+    const aabb = this.grid?.minAABB?.() ?? null;
+    if (!aabb) {
+      this.w = 0;
+      this.h = 0;
+      return;
+    }
+    this.w = aabb.w;
+    this.h = aabb.h;
+    this.gridOrigin.x = this.x - aabb.x;
+    this.gridOrigin.y = this.y - aabb.y;
+  }
+
+  get hoverLabel() {
+    return '沉淀堆';
+  }
+
+  /** 首帧：物化为沉淀粒子（之后自身成为"壳"，退出活动索引） */
+  update(dt, scene) {
+    if (!scene || this._materialized) return;
+    this._materialized = true;
+    this.materialize(scene);
+  }
+
+  /** 按预览网格逐格生成粒子：开局即"一滩真实沉淀"，堆形=编辑器所见 */
+  materialize(scene) {
+    const aabb = this.grid?.minAABB?.() ?? null;
+    if (aabb && scene) {
+      // 按物质汇总（堆可能混合多物质），整堆一次撒成"一滩"：
+      // 撒开宽度≈编辑器所见堆宽；大质量受 maxSpawnParticles 上限约束（2000g 也是几百颗，不会卡顿）
+      const byId = new Map();
+      for (let ry = 0; ry < this.grid.rows; ry++) {
+        for (let gc = 0; gc < this.grid.cols; gc++) {
+          const m = this.grid.cells[ry]?.[gc];
+          if (!m) continue;
+          for (const [id, mass] of m) {
+            if (mass > 0) byId.set(id, (byId.get(id) ?? 0) + mass);
+          }
+        }
+      }
+      const cx = this.gridOrigin.x + aabb.x + aabb.w / 2;
+      const cy = this.gridOrigin.y + aabb.y + aabb.h / 2;
+      const spread = Math.max(24, aabb.w);
+      for (const [id, mass] of byId) {
+        scene.spawnParticles(id, mass, { x: cx, y: cy }, true, true, { kind: 'level', text: '关卡预设沉淀' }, spread);
+      }
+    }
+    // 壳退场：清活动索引与可见性，仅保留 byId（开关引用仍有效）
+    const arrays = [
+      scene.objects, scene.dynamics, scene.statics, scene.particles,
+      scene.containers, scene.lamps, scene.doors, scene.portals, scene.hidden,
+    ];
+    for (const arr of arrays) {
+      const i = arr.indexOf(this);
+      if (i >= 0) arr.splice(i, 1);
+    }
+    this.grid = null; // 空壳：无渲染/无物化能力
+    this.gridOrigins = null;
+    this.hidden = true;
+  }
+
+  /** 编辑器预览：梯形堆轮廓 + 网格（物化后网格为空，不渲染） */
+  render(ctx) {
+    if (!this.grid) return;
+    const aabb = this.grid.minAABB();
+    if (!aabb) return;
+    const ox = this.gridOrigin.x;
+    const oy = this.gridOrigin.y;
+    const bx = ox + aabb.x;
+    const by = oy + aabb.y;
+    renderGrid(ctx, this.grid, ox, oy);
+    const ids = this.grid.ids();
+    const color = ids.length ? getSubstance(ids[0]).solid?.[0] ?? '#cfe0c8' : '#cfe0c8';
+    const dark = luminance(color) < 110;
+    const taper = Math.max(2, (this.grid.rows - 1) * CELL_SIZE);
+    ctx.save();
+    ctx.strokeStyle = dark ? 'rgba(255,255,255,0.7)' : contrastEdge(color);
+    ctx.lineWidth = 1.5;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    ctx.moveTo(bx + taper, by + 4);
+    ctx.lineTo(bx + aabb.w - taper, by + 4);
+    ctx.lineTo(bx + aabb.w - 4, by + aabb.h - 4);
+    ctx.lineTo(bx + 4, by + aabb.h - 4);
+    ctx.closePath();
+    if (dark) {
+      ctx.shadowColor = 'rgba(255,255,255,0.6)';
+      ctx.shadowBlur = 8;
+    }
+    ctx.stroke();
+    ctx.restore();
+    if (this.formulaVisible && ids.length) {
+      renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.join(' + '));
+    }
+  }
+}
+
+exports.Deposit = Deposit;
+
+  };
+  __modules["src/objects/player.js"] = function (module, exports, __require) {
+// ============================================================================
+// 玩家：椭圆格网材质的特殊固体。血量 = 玩家物质（关卡设定）的剩余质量。
+// 控制：left/right/jump 长按；place/collect 按下即触发。
+// 放置优先级：附近酒精灯 > 脚下容器 > 地面；每次 0.5g。
+// 物品栏：5 格，按物质种类分格，格子种类由首次放入决定，可清空。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+const { SolidMaterial } = __require('src/objects/material.js');;
+const { MaterialGrid, renderGrid, CELL_SIZE, CELL_MASS } = __require('src/render/gridrender.js');;
+const { THEME, rr, contrastEdge, luminance } = __require('src/render/theme.js');;
+const { getSubstance, isSoluble, shedCoeffOf } = __require('src/chem/substances.js');;
+const { CFG } = __require('src/core/config.js');;
+
+class Inventory {
+  constructor({ slots = CFG.inventory.slots, capacity = CFG.inventory.capacity } = {}) {
+    this.slots = new Array(slots).fill(null); // {substance, mass} | null
+    this.capacity = capacity;
+    this.selected = 0;
+  }
+
+  selectedSlot() {
+    return this.slots[this.selected];
+  }
+
+  /** 该物质还能装下的质量（g）：同物质格剩余 + 每个空格一满格（跨格收集） */
+  roomFor(substance) {
+    let room = 0;
+    for (const s of this.slots) {
+      if (s && s.substance === substance) room += this.capacity - (Number.isFinite(s.mass) ? s.mass : 0);
+      else if (s === null) room += this.capacity;
+    }
+    return room;
+  }
+
+  canCollect(substance) {
+    return this.roomFor(substance) > 0;
+  }
+
+  /**
+   * 收集某物质，返回实际放入质量。跨格：先装满同物质格，再用空格
+   * （否则 100g 封顶后即使有空格也捡不了——用户反馈）。
+   */
+  add(substance, mass) {
+    if (!Number.isFinite(mass) || mass <= 0) return 0; // 挡住 NaN/非法质量
+    let rest = mass;
+    let put = 0;
+    for (const s of this.slots) {
+      if (rest <= 1e-9) break;
+      if (s && s.substance === substance) {
+        const room = this.capacity - (Number.isFinite(s.mass) ? s.mass : 0);
+        if (room <= 1e-9) continue;
+        const p = Math.min(room, rest);
+        s.mass = (Number.isFinite(s.mass) ? s.mass : 0) + p;
+        rest -= p;
+        put += p;
+      }
+    }
+    for (let i = 0; i < this.slots.length && rest > 1e-9; i++) {
+      if (this.slots[i] !== null) continue;
+      const p = Math.min(this.capacity, rest);
+      this.slots[i] = { substance, mass: p };
+      rest -= p;
+      put += p;
+    }
+    return put;
+  }
+
+  /** 从选中格放置 amount g（不足也按 amount 扣到 0），返回 {substance, mass} 或 null */
+  place(amount) {
+    const slot = this.selectedSlot();
+    if (!slot || slot.mass <= 0) return null;
+    slot.mass = Math.max(0, slot.mass - amount);
+    if (slot.mass <= 0) this.slots[this.selected] = null;
+    return { substance: slot.substance, mass: amount };
+  }
+
+  clearSelected() {
+    this.slots[this.selected] = null;
+  }
+}
+
+class Player extends Obj {
+  constructor({
+    x, y,
+    substance = CFG.player.defaultSubstance,
+    mass = null, // null=未给（w/h 像素模式或默认血量）
+    w, h,
+    moveSpeed = CFG.player.moveSpeed,
+    jumpVel = CFG.player.jumpVel,
+    ...rest
+  } = {}) {
+    // 显式 w/h 且未给质量 → 按像素建矩形网格（编辑器像素模式，血量=网格真实质量）；
+    // 否则质量（缺省 30）→ 矩形格网（格数=mass/0.1）
+    const manual = !!(w && h && (mass == null || mass <= 0));
+    const m = (mass == null || mass <= 0) ? CFG.player.defaultMass : mass;
+    const grid = manual ? MaterialGrid.rect(w, h, substance) : MaterialGrid.rectForMass(m, substance);
+    const aabb = grid.minAABB();
+    const bodyMass = manual ? grid.totalMass() : m;
+    super({
+      x, y, w: aabb.w, h: aabb.h,
+      solid: true, pushable: false, gravity: 1, autoStep: true,
+      physicsKind: 'dynamic',
+      mass: bodyMass,
+      ...rest,
+    });
+    this.substance = substance;
+    this.maxHp = bodyMass; // 初始血量（药瓶填充参照）
+    this.grid = grid;
+    this.gridOrigin = { x, y };
+    this.gridOrigins = new Map([[substance, { kind: 'level' }]]); // 网格内每种物质的来源（核心=关卡生成）
+    this.moveSpeed = moveSpeed;
+    this.jumpVel = jumpVel;
+    this.mat = new SolidMaterial(this);
+    this.inventory = new Inventory();
+    this.burning = false;
+    this._grainResist = 0; // 颗粒堆阻力（0..1），由容器 lateUpdate 计算、update 读取
+    this.reactions = []; // 最近发生在玩家身上的反应（HUD 日志）
+  }
+
+  get material() {
+    return this.mat;
+  }
+
+  get isPlayerObj() {
+    return true;
+  }
+
+  get hoverLabel() {
+    return '玩家';
+  }
+
+  get hp() {
+    return this.grid.avail(this.substance);
+  }
+
+  get isBurning() {
+    return this.burning;
+  }
+
+  get containerMaterial() {
+    return this._container ? this._container.material : null;
+  }
+
+  get center() {
+    return { x: this.x + this.w / 2, y: this.y + this.h / 2 };
+  }
+
+  syncGrid() {
+    if (this.grid._dirty) {
+      this.grid.collapseHollowRows();
+      this.grid._dirty = false;
+    }
+    const aabb = this.grid.minAABB();
+    if (!aabb) {
+      this.w = 0;
+      this.h = 0;
+      this._shapeOffsets = [];
+      return;
+    }
+    this.w = aabb.w;
+    this.h = aabb.h;
+    this.gridOrigin.x = this.x - aabb.x;
+    this.gridOrigin.y = this.y - aabb.y;
+    this._shapeOffsets = this._buildShapeOffsets();
+  }
+
+  /** 按网格非空列生成碰撞形状（相对 body 左上角；相邻同高列合并）。腐蚀掉的部分不占碰撞箱 */
+  _buildShapeOffsets() {
+    const grid = this.grid;
+    const offsets = [];
+    let col = 0;
+    while (col < grid.cols) {
+      let top = -1, bottom = -1;
+      for (let y = 0; y < grid.rows; y++) {
+        if (grid.cells[y][col]) { if (top < 0) top = y; bottom = y; }
+      }
+      if (top < 0) { col++; continue; }
+      let end = col;
+      while (end + 1 < grid.cols) {
+        let t = -1, b = -1;
+        for (let y = 0; y < grid.rows; y++) {
+          if (grid.cells[y][end + 1]) { if (t < 0) t = y; b = y; }
+        }
+        if (t < 0 || t !== top || b !== bottom) break;
+        end++;
+      }
+      const sx = this.gridOrigin.x + col * CELL_SIZE;
+      const sy = this.gridOrigin.y + top * CELL_SIZE;
+      offsets.push({
+        x: sx - this.x,
+        y: sy - this.y,
+        w: (end - col + 1) * CELL_SIZE,
+        h: (bottom - top + 1) * CELL_SIZE,
+      });
+      col = end + 1;
+    }
+    return offsets;
+  }
+
+  /** 世界坐标碰撞形状（body 移动时自动跟随） */
+  getShapes() {
+    if (!this._shapeOffsets || this._shapeOffsets.length === 0) return [this.collider()];
+    return this._shapeOffsets.map((s) => ({
+      x: this.x + s.x,
+      y: this.y + s.y,
+      w: s.w,
+      h: s.h,
+    }));
+  }
+
+  update(dt, scene) {
+    const c = scene.control;
+    // 上一帧沉淀颗粒算出的阻力：命令速度按 (1-阻力) 衰减（密集堆拖慢/挡路，稀疏可穿）
+    const resist = Math.min(0.9, this._grainResist ?? 0);
+    this._grainResist = 0;
+    // 水平控制：有输入时设定速度；无输入时**保留当前速度**（爆炸冲击等外力不被抹掉，
+    // 由地面摩擦逐渐减速——否则爆炸永远炸不动玩家）
+    const input = (c.has('right') ? 1 : 0) - (c.has('left') ? 1 : 0);
+    if (input !== 0) this.vel.x = input * this.moveSpeed * (1 - resist);
+    if (c.has('jump') && this.onGround) this.vel.y = -this.jumpVel;
+    if (scene.pressed.has('place')) this.tryPlace(scene);
+    if (scene.pressed.has('collect')) this.tryCollect(scene);
+    // 移动时冲刷表面壳（贴地摩擦）：非核心物质按浓度脱落成沉淀粒子。
+    // 空中/游泳不脱落（不与地面接触就没有摩擦）。
+    if (this.grid && this.onGround && (Math.abs(this.vel.x) > 50 || Math.abs(this.vel.y) > 50)) {
+      this.shedShell(scene, dt);
+    }
+    // 接触同核心物质 → 缓慢吸收回血（沉淀粒子/物块；速率慢，不影响垫脚玩法）
+    this.absorbCore(scene, dt);
+  }
+
+  /** 吸收附近同核心物质的粒子/物块（0.5g/s）——"接触同类物质补血" */
+  absorbCore(scene, dt) {
+    if (!this.grid) return;
+    let rest = 0.5 * dt;
+    if (rest <= 0) return;
+    // 沉淀粒子（含放置的实心沉淀）
+    for (const pt of scene.particles.slice()) {
+      if (rest <= 0) break;
+      if (pt.substance !== this.substance || !pt.collectible || pt.amount <= 1e-9) continue;
+      if (pt.right < this.left || pt.left > this.right || pt.bottom < this.top || pt.top > this.bottom) continue;
+      const take = Math.min(pt.amount, rest);
+      pt.amount -= take;
+      this.grid.add(this.substance, take);
+      rest -= take;
+      if (pt.amount <= 1e-9) scene.removeObject(pt);
+    }
+    // 接触的物块（按接触对）
+    if (rest > 0) {
+      for (const [a, b] of scene.contactPairs) {
+        const block = a === this ? b : b === this ? a : null;
+        if (!block || !block.grid) continue;
+        if (block.avail?.(this.substance) ?? block.grid.avail(this.substance) <= 1e-9) continue;
+        const avail = block.grid.avail(this.substance);
+        const take = Math.min(avail, rest);
+        block.grid.consume(this.substance, take);
+        this.grid.add(this.substance, take);
+        rest -= take;
+        if (rest <= 0) break;
+      }
+    }
+  }
+
+  /**
+   * 贴地摩擦脱落表面壳（非玩家核心物质）：每格单独运算。
+   * 规则（用户明确）：
+   *  - 前提：玩家与地面接触（onGround，由调用方保证）且移动中（摩擦）
+   *  - 脱落对象：**玩家表面（暴露格）**中非玩家核心物质的格——表面所有位置都会
+   *    被摩擦蹭到（不只底部）
+   *  - 每格速率 = 脱落系数 × (格内该物质浓度 / 满格浓度)：浓度越高越容易脱落，
+   *    满格（0.1g）时达到脱落系数上限（可溶物 0.01、不溶物 0.005 g/格/s，按物质
+   *    表 shedCoeff 可覆盖）；浓度低于阈值（0.01g，与碰撞/渲染阈值一致）彻底不再脱落
+   *  - 脱落量**累积**：攒够 SHED_BURST（0.5g）才生成一小簇粒子——走路是"走一段
+   *    偶尔掉一下"，不是每帧冒微量渣（连续细流视觉上像"一直掉"）
+   * 脱落物成沉淀粒子（可收集）。
+   */
+  shedShell(scene, dt) {
+    if (!this.grid || dt <= 0) return 0;
+    const g = this.grid;
+    const SHED_MIN = 0.01; // g/格：低于此浓度不再脱落
+    const SHED_BURST = 2; // g：累积到这一块才生成粒子（"走一段路偶尔掉一下"——表面格多时总量 ~0.6g/s，阈值 2g ≈ 每 3-4 秒掉一小坨）
+    this._shedAcc = this._shedAcc || {};
+    for (let y = 0; y < g.rows; y++) {
+      for (let x = 0; x < g.cols; x++) {
+        const m = g.cells[y][x];
+        if (!m) continue;
+        if (g._openSides(x, y) <= 0) continue; // 只处理表面格
+        for (const [id, mass] of [...m]) {
+          if (id === this.substance) continue; // 玩家自身物质不脱落
+          if (!(mass >= SHED_MIN)) continue; // 低浓度彻底不脱落
+          const rateMax = shedCoeffOf(id); // 脱落系数（可溶 0.01 / 不溶 0.005）
+          const rate = Math.min(rateMax, rateMax * (mass / CELL_MASS)); // 浓度越高越容易
+          const take = Math.min(mass, rate * dt);
+          if (take <= 1e-12) continue;
+          m.set(id, mass - take);
+          if (mass - take <= 1e-9) m.delete(id);
+          this._shedAcc[id] = (this._shedAcc[id] ?? 0) + take;
+        }
+        if (m.size === 0) {
+          g.cells[y][x] = null;
+          g._dirty = true;
+        }
+      }
+    }
+    if (g._invalidateTotals) g._invalidateTotals(); // 玩家表面壳脱落：总量缓存失效
+    // 结算：攒够一块才掉（偶尔掉一下，而不是每帧冒渣）
+    let total = 0;
+    for (const id of Object.keys(this._shedAcc)) {
+      const acc = this._shedAcc[id];
+      if (acc >= SHED_BURST) {
+        scene.spawnParticles(id, acc, { x: this.x + Math.random() * this.w, y: this.bottom - 2 }, true, false, {
+          kind: 'shell',
+        });
+        total += acc;
+        delete this._shedAcc[id];
+      }
+    }
+    return total;
+  }
+
+  tryPlace(scene) {
+    const amount = CFG.placeAmount;
+    const res = this.inventory.place(amount);
+    if (!res) return;
+    // 就近放置：脚下容器优先于附近酒精灯（灯只在脚下无容器时接物）
+    // 修复：玩家站在化学开关上时，物质应进开关而不是跑到旁边的灯上
+    const lamp = scene.findLampNear(this);
+    const container = scene.containerUnderFeet(this);
+    const placeOrigin = { kind: 'place' };
+    if (container) {
+      // 可溶物质放进液体容器（池）→ 溶解进溶液（CuSO4 不会变成永不溶解的沉淀颗粒）；
+      // 不溶物（Cu(OH)2 等）才作为沉淀放置
+      if (container.solution && container.solution.water > 0 && isSoluble(res.substance)) {
+        container.solution.add(res.substance, amount);
+        if (container.noteSolOrigin) container.noteSolOrigin(res.substance, { kind: 'place' });
+      } else {
+        container.addPrecipitate(res.substance, amount, null, placeOrigin);
+      }
+      return;
+    }
+    if (lamp) {
+      lamp.addPrecipitate(res.substance, amount, null, placeOrigin);
+      return;
+    }
+    // 地面：生成"放置的沉淀"（实心、可垫脚、只能被重新收集）
+    scene.spawnParticles(res.substance, amount, { x: this.x + this.w / 2, y: this.bottom + 1 }, true, true, placeOrigin);
+  }
+
+  tryCollect(scene) {
+    const me = this.center;
+    // 自由沉淀粒子（按剩余容量部分收集，放不下的留在原地）
+    for (const p of scene.particles.slice()) {
+      if (!p.collectible) continue;
+      const dx = p.x + p.w / 2 - me.x;
+      const dy = p.y + p.h / 2 - me.y;
+      if (Math.hypot(dx, dy) > CFG.collectRadius) continue;
+      const room = this.inventory.roomFor(p.substance);
+      if (room <= 0) continue;
+      const put = this.inventory.add(p.substance, Math.min(p.amount, room));
+      p.amount -= put;
+      if (p.amount <= 1e-9) scene.removeObject(p);
+    }
+    // 容器内沉淀（池/烧杯/开关等，任意位置）；只取能放下的量，放不下的留在容器里
+    for (const c of scene.containers) {
+      const cx = c.x + (c.w ?? 0) / 2;
+      const cy = c.y + (c.h ?? 0) / 2;
+      if (Math.hypot(cx - me.x, cy - me.y) > CFG.collectRadius + (c.w ?? 0)) continue;
+      for (const [id, mass] of [...c.precipitates]) {
+        if (mass <= 0) continue;
+        const room = this.inventory.roomFor(id);
+        if (room <= 0) continue;
+        const taken = c.takePrecipitate(id, Math.min(mass, room));
+        this.inventory.add(id, taken);
+      }
+    }
+  }
+
+  adhereMaterial(id, mass) {
+    // 产物盈余长在所有暴露面（与大气/液体接触的面），所有位置同时渐进生长
+    const added = this.grid.growExposed(id, mass);
+    this.syncGrid();
+    return added;
+  }
+
+  render(ctx) {
+    const grid = this.grid;
+    const aabb = grid.minAABB();
+    if (!aabb) return;
+    const ox = this.gridOrigin.x;
+    const oy = this.gridOrigin.y;
+    const sub = getSubstance(this.substance);
+    const color = sub?.solid?.[0] ?? '#7fe0ff';
+    const bx = ox + aabb.x;
+    const by = oy + aabb.y;
+    // 元素光晕（透明填充只投影发光）
+    ctx.save();
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 16;
+    ctx.fillStyle = 'rgba(0,0,0,0)';
+    rr(ctx, bx, by, aabb.w, aabb.h, 9);
+    ctx.fill();
+    ctx.restore();
+    // 网格本体
+    renderGrid(ctx, grid, ox, oy);
+    // 角色轮廓（深色物质用白色辉光轮廓，浅色用深描边）
+    ctx.save();
+    ctx.strokeStyle = luminance(color) < 110 ? 'rgba(255,255,255,0.75)' : contrastEdge(color);
+    ctx.lineWidth = 2;
+    if (luminance(color) < 110) {
+      ctx.shadowColor = 'rgba(255,255,255,0.6)';
+      ctx.shadowBlur = 8;
+    }
+    rr(ctx, bx, by, aabb.w, aabb.h, 9);
+    ctx.stroke();
+    ctx.restore();
+    // 表情（只留眼睛；随移动方向微调视线）
+    const cx = bx + aabb.w / 2;
+    const cy = by + aabb.h * 0.42;
+    const eye = Math.max(2, aabb.w * 0.06);
+    const gap = aabb.w * 0.17;
+    const lookX = Math.max(-1, Math.min(1, this.vel.x / this.moveSpeed)) * gap * 0.45;
+    const lookY = Math.max(-1, Math.min(1, this.vel.y / 600)) * aabb.h * 0.05;
+    const lx = cx + lookX;
+    const ly = cy + lookY;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(lx - gap, ly, eye, 0, Math.PI * 2);
+    ctx.arc(lx + gap, ly, eye, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#141426';
+    ctx.beginPath();
+    ctx.arc(lx - gap + eye * 0.32, ly, eye * 0.45, 0, Math.PI * 2);
+    ctx.arc(lx + gap + eye * 0.32, ly, eye * 0.45, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+exports.Inventory = Inventory;
+exports.Player = Player;
+
+  };
+  __modules["src/objects/switch.js"] = function (module, exports, __require) {
+// ============================================================================
+// 开关：容器子类，存放"开启物质"（由玩家把沉淀放置进去）。
+//   mode='chemical'：开启物质质量 > 0 即开，按 consumeRate g/s 消耗，耗尽自动关
+//   mode='pressure'：有玩家/物块站在其上即开（不消耗）
+// 打开/关闭时触发 onOpen/onClose（关卡接线联动门、灯等）。
+// ============================================================================
+
+const { Container } = __require('src/objects/container.js');;
+const { THEME, rr, glowText } = __require('src/render/theme.js');;
+
+class Switch extends Container {
+  get hoverLabel() {
+    return '开关';
+  }
+
+  constructor({
+    x, y, w = 40, h = 22,
+    opening = null, consumeRate = 0, mode = 'chemical',
+    color = '#d8b000', and = null, deleteId = null, showId = null, igniteId = null, extinguishId = null, openId = null, onOpen, onClose, ...rest
+  } = {}) {
+    // 开关是干式机构（存放"开启物质"），内部不应有液体水（否则放进去的盐会被溶解掉、开关失效）
+    super({ x, y, w, h, solid: true, physicsKind: 'static', water: 0, volume: 0, ...rest });
+    this.opening = opening; // 开启物质 id
+    this.consumeRate = consumeRate; // g/s（0 = 不消耗）
+    this.mode = mode;
+    this.color = color;
+    this.and = and; // "&"联锁：另一个开关的 id，两个都开才输出开
+    this.deleteId = deleteId; // 开启瞬间删除的物体 id（如移开挡路的墙）
+    this.showId = showId; // 开启瞬间显现的物体 id（初始隐藏的物体在此刻出现）
+    this.igniteId = igniteId; // 开启瞬间点燃的酒精灯 id
+    this.extinguishId = extinguishId; // 关闭瞬间熄灭的酒精灯 id
+    this.openId = openId; // 开启瞬间打开的门 id（钥匙开锁门）
+    this.open = false; // 物理状态（压力/化学/气体检测）
+    this._lastEff = false; // 上次输出的有效开启态（初始=关，触发 onOpen/onClose）
+    this._handlers = {};
+    if (onOpen) this._handlers.open = onOpen;
+    if (onClose) this._handlers.close = onClose;
+  }
+
+  get isSwitch() {
+    return true;
+  }
+
+  openingMass() {
+    return this.opening ? this.precipitates.get(this.opening) ?? 0 : 0;
+  }
+
+  on(name, fn) {
+    this._handlers[name] = fn;
+    return this;
+  }
+
+  /** 打开时触发（快捷方法） */
+  onOpen(fn) {
+    this._handlers.open = fn;
+    return this;
+  }
+
+  /** 关闭时触发（快捷方法） */
+  onClose(fn) {
+    this._handlers.close = fn;
+    return this;
+  }
+
+  fire(name) {
+    this._handlers[name]?.();
+  }
+
+  update(dt, scene) {
+    this.setOpen(this._isOpenTarget(scene));
+    // 输出按"有效开启态"变化触发："&"联锁时需两个开关都开才输出开
+    const eff = this.effectiveOpen(scene);
+    if (eff !== this._lastEff) {
+      this._lastEff = eff;
+      this.fire(eff ? 'open' : 'close');
+      // 开启瞬间：删除物体 / 显现隐藏物体 / 点燃灯（只触发一次）
+      if (eff) {
+        if (this.deleteId) {
+          const target = scene.byId[this.deleteId];
+          if (target) scene.removeObject(target);
+        }
+        if (this.showId) scene.reveal(this.showId);
+        if (this.igniteId) {
+          const lamp = scene.byId[this.igniteId];
+          if (lamp && typeof lamp.ignite === 'function') lamp.ignite();
+        }
+        if (this.openId) {
+          const door = scene.byId[this.openId];
+          if (door && typeof door.open === 'function') door.open();
+        }
+      } else if (this.extinguishId) {
+        const lamp = scene.byId[this.extinguishId];
+        if (lamp && typeof lamp.extinguish === 'function') lamp.extinguish();
+      }
+    }
+    if (this.open && this.consumeRate > 0 && this.opening) {
+      this.takePrecipitate(this.opening, this.consumeRate * dt);
+    }
+  }
+
+  /** 物理开态检测（子类可覆写：压力/化学/气体检测等） */
+  _isOpenTarget(scene) {
+    return this.mode === 'pressure' ? this._onTop(scene) : this.openingMass() > 0;
+  }
+
+  /** 物理状态：检测结果（不直接触发输出） */
+  setOpen(v) {
+    this.open = v;
+  }
+
+  /** 有效开启态：无 and → 自身 open；有 and → 自身 && 关联开关均开 */
+  effectiveOpen(scene) {
+    if (!this.and) return this.open;
+    const other = scene ? scene.byId[this.and] : null;
+    return this.open && !!(other && other.open);
+  }
+
+  _onTop(scene) {
+    for (const obj of scene.objects) {
+      if (obj === this || !obj.solid || obj.physicsKind !== 'dynamic') continue; // 排除自身与静态物
+      if (obj.amount !== undefined) continue; // 沉淀粒子不压压力开关（只有玩家/物块能压）
+      // 重叠开关区域，且脚底贴近开关顶（站在其上/压在开关上；站在下方地面不算）
+      if (obj.right > this.x && obj.left < this.x + this.w &&
+          obj.bottom >= this.y - 2 && obj.bottom <= this.y + 8) return true;
+    }
+    return false;
+  }
+
+  /** 标注开启物质 + 剩余量（钥匙等子类复用） */
+  renderLabel(ctx) {
+    if (this.opening) {
+      glowText(ctx, this.opening, this.x, this.y - 4, THEME.gold.text, 'bold 10px monospace', 4);
+    } else if (this.mode === 'chemical') {
+      // 化学开关没设开启物质：提示需要设置（否则永远不会开）
+      glowText(ctx, '未设开启物', this.x, this.y - 4, 'rgba(170,158,120,0.55)', 'bold 9px monospace', 3);
+    }
+    const m = this.openingMass();
+    if (m > 0) {
+      glowText(ctx, `${m.toFixed(1)}g`, this.x + this.w / 2, this.y + this.h + 12, '#ffffff', 'bold 10px monospace', 4);
+    }
+  }
+
+  render(ctx, opts) {
+    const scene = opts?.scene ?? null;
+    const eff = this._lastEff ?? this.effectiveOpen(scene); // 有效输出态（& 双开）
+    const phys = this.open; // 物理激活态（自身被按下）
+    // 三态：金色=输出开；橙色=已按下但等待"&"配对开关；暗=未按下
+    const waiting = this.and && phys && !eff;
+    const glowColor = eff ? THEME.gold.light : waiting ? '#ffb340' : 'rgba(90,80,60,0.6)';
+    const glowBlur = eff ? 16 : waiting ? 12 : 3;
+    ctx.save();
+    // 石台底座
+    const g = ctx.createLinearGradient(this.x, this.y, this.x, this.y + this.h);
+    g.addColorStop(0, eff ? '#565c80' : '#4a4f70');
+    g.addColorStop(1, '#22263f');
+    ctx.fillStyle = g;
+    rr(ctx, this.x, this.y, this.w, this.h, 6);
+    ctx.fill();
+    // 边框：开=金发光，等=橙，关=暗（一眼可辨）
+    const frame = eff ? THEME.gold.light : waiting ? '#ffb340' : '#151830';
+    ctx.strokeStyle = frame;
+    ctx.lineWidth = eff ? 2 : waiting ? 1.5 : 1;
+    ctx.shadowColor = eff ? THEME.gold.light : waiting ? '#ffb340' : 'transparent';
+    ctx.shadowBlur = eff ? 14 : waiting ? 8 : 0;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // 顶部符文珠（物理按下就亮：金=双开输出，橙=已按下等配对，暗=未按下）
+    const cx = this.x + this.w / 2;
+    const cy = this.y + 7;
+    ctx.shadowColor = glowColor;
+    ctx.shadowBlur = glowBlur;
+    ctx.fillStyle = eff ? THEME.gold.light : waiting ? '#ffb340' : 'rgba(120,110,90,0.55)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, Math.min(this.w, 20) / 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = eff ? '#3a2a08' : waiting ? '#4a2a08' : 'rgba(150,140,110,0.6)';
+    ctx.font = 'bold 9px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(eff ? '开' : waiting ? '等' : '关', cx, cy + 3);
+    ctx.textAlign = 'left';
+    ctx.restore();
+    this.renderLabel(ctx);
+    // "&" 联锁连线（若配置了 and）
+    if (this.and && scene) this.renderAndLink(ctx, scene, eff, waiting);
+  }
+
+  /** 与另一个 "&" 开关画连接线 + 标记（金=双开，橙=已按下等配对，暗=未按下） */
+  renderAndLink(ctx, scene, eff, waiting) {
+    const other = scene.byId[this.and];
+    if (!other) return;
+    const ax = this.x + this.w / 2;
+    const ay = this.y + this.h / 2;
+    const bx = other.x + other.w / 2;
+    const by = other.y + other.h / 2;
+    const color = eff ? THEME.gold.light : waiting ? '#ffb340' : 'rgba(150,140,110,0.35)';
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.shadowColor = eff || waiting ? color : 'transparent';
+    ctx.shadowBlur = eff || waiting ? 6 : 0;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // "&" 标记（居中于连线）
+    ctx.fillStyle = color;
+    ctx.font = 'bold 12px serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('&', (ax + bx) / 2, (ay + by) / 2 - 4);
+    ctx.textAlign = 'left';
+    ctx.restore();
+  }
+}
+
+exports.Switch = Switch;
+
+  };
+  __modules["src/objects/key.js"] = function (module, exports, __require) {
+// ============================================================================
+// 钥匙：开关子类，开启物质不消耗（一旦开启永久打开）。
+// 渲染为神话金钥匙（开启时发光）。
+// 开启后通常联动打开通关口（关卡接线 key.onOpen(() => door.open())）。
+// ============================================================================
+
+const { Switch } = __require('src/objects/switch.js');;
+const { THEME } = __require('src/render/theme.js');;
+
+class Key extends Switch {
+  get hoverLabel() {
+    return '钥匙';
+  }
+  constructor({ color = '#ff6a3d', consumeRate = 0, ...rest } = {}) {
+    super({ consumeRate, color, ...rest });
+  }
+
+  render(ctx) {
+    const cx = this.x + this.w / 2;
+    const cy = this.y + this.h / 2;
+    ctx.save();
+    ctx.shadowColor = this.open ? THEME.gold.light : '#a9722a';
+    ctx.shadowBlur = this.open ? 18 : 6;
+    ctx.strokeStyle = this.open ? THEME.gold.light : '#c9a45a';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    // 钥匙杆
+    ctx.beginPath();
+    ctx.moveTo(this.x + 6, cy);
+    ctx.lineTo(this.x + this.w, cy);
+    ctx.stroke();
+    // 齿
+    ctx.beginPath();
+    ctx.moveTo(this.x + this.w * 0.72, cy);
+    ctx.lineTo(this.x + this.w * 0.72, cy + 8);
+    ctx.moveTo(this.x + this.w * 0.9, cy);
+    ctx.lineTo(this.x + this.w * 0.9, cy + 9);
+    ctx.stroke();
+    // 圆环（钥匙头）
+    ctx.beginPath();
+    ctx.arc(this.x + 6, cy, 9, 0, Math.PI * 2);
+    ctx.stroke();
+    // 钥匙头内亮
+    ctx.fillStyle = this.open ? 'rgba(255,240,190,0.35)' : 'rgba(120,90,40,0.25)';
+    ctx.beginPath();
+    ctx.arc(this.x + 6, cy, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    this.renderLabel(ctx);
+  }
+}
+
+exports.Key = Key;
+
+  };
+  __modules["src/objects/door.js"] = function (module, exports, __require) {
+// ============================================================================
+// 通关口：钥匙开启后由关卡接线 open()。玩家靠近且门开 → 通关。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+const { THEME } = __require('src/render/theme.js');;
+
+class Door extends Obj {
+  get hoverLabel() {
+    return '门';
+  }
+  constructor({ x, y, w = 30, h = 80, color = '#ff6a3d', ...rest } = {}) {
+    super({ x, y, w, h, solid: false, physicsKind: 'none', ...rest });
+    this.color = color;
+    this.isOpen = false;
+    this.key = null; // 关联钥匙（可选，供检查）
+  }
+
+  get isDoor() {
+    return true;
+  }
+
+  open() {
+    this.isOpen = true;
+  }
+
+  render(ctx, opts) {
+    const t = opts?.time ?? 0;
+    ctx.save();
+    const W = this.w;
+    const H = this.h;
+    const cx = this.x + W / 2;
+    const cy = this.y + H / 2;
+    // 石拱门框 + 砖纹
+    const g = ctx.createLinearGradient(this.x, this.y, this.x, this.y + H);
+    g.addColorStop(0, '#545a80');
+    g.addColorStop(1, '#262a44');
+    ctx.fillStyle = g;
+    this._arch(ctx, 0);
+    ctx.fill();
+    ctx.save();
+    this._arch(ctx, 0);
+    ctx.clip();
+    ctx.strokeStyle = 'rgba(0,0,0,0.20)';
+    ctx.lineWidth = 1;
+    for (let ty = this.y + 12; ty < this.y + H; ty += 13) {
+      ctx.beginPath();
+      ctx.moveTo(this.x + 2, ty);
+      ctx.lineTo(this.x + W - 2, ty);
+      ctx.stroke();
+    }
+    ctx.restore();
+    // 拱框描边
+    ctx.strokeStyle = '#12152a';
+    ctx.lineWidth = 2;
+    this._arch(ctx, 0);
+    ctx.stroke();
+    // 金色拱沿
+    ctx.strokeStyle = THEME.gold.deep;
+    ctx.lineWidth = 1.6;
+    ctx.shadowColor = THEME.gold.light;
+    ctx.shadowBlur = 6;
+    this._arch(ctx, 3);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // 拱心石
+    ctx.fillStyle = '#6a6f96';
+    ctx.fillRect(cx - 3, this.y + 1, 6, 7);
+    ctx.strokeStyle = THEME.gold.deep;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(cx - 3, this.y + 1, 6, 7);
+    // 门内
+    if (this.isOpen) {
+      const rg = ctx.createRadialGradient(cx, cy, 2, cx, cy, H * 0.6);
+      rg.addColorStop(0, '#f2e6ff');
+      rg.addColorStop(0.45, THEME.portal.base);
+      rg.addColorStop(1, 'rgba(90,42,154,0)');
+      ctx.save();
+      this._arch(ctx, 5);
+      ctx.clip();
+      ctx.fillStyle = rg;
+      ctx.fillRect(this.x, this.y, W, H);
+      // 旋转符文粒子
+      const n = 9;
+      for (let i = 0; i < n; i++) {
+        const a = t * 1.3 + (i / n) * Math.PI * 2;
+        const rr = 5 + ((i * 37) % 22);
+        const px = cx + Math.cos(a) * rr;
+        const py = cy + Math.sin(a) * rr * 0.72;
+        ctx.fillStyle = 'rgba(242,230,255,0.85)';
+        ctx.beginPath();
+        ctx.arc(px, py, 1.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+      // 门口光晕
+      ctx.shadowColor = THEME.portal.base;
+      ctx.shadowBlur = 22;
+      ctx.strokeStyle = 'rgba(199,139,255,0.7)';
+      ctx.lineWidth = 2;
+      this._arch(ctx, 5);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    } else {
+      ctx.fillStyle = 'rgba(6,6,18,0.92)';
+      this._arch(ctx, 4);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /** 拱形路径；inset 为向内的缩进 */
+  _arch(ctx, inset) {
+    const x = this.x + inset;
+    const y = this.y + inset;
+    const w = this.w - inset * 2;
+    const h = this.h - inset * 2;
+    const r = w / 2;
+    ctx.beginPath();
+    ctx.moveTo(x, y + h);
+    ctx.lineTo(x, y + r);
+    ctx.arcTo(x, y, x + r, y, r);
+    ctx.arcTo(x + w, y, x + w, y + r, r);
+    ctx.lineTo(x + w, y + h);
+    ctx.closePath();
+  }
+}
+
+exports.Door = Door;
+
+  };
+  __modules["src/objects/lamp.js"] = function (module, exports, __require) {
+// ============================================================================
+// 酒精灯：容器子类。点燃时在其 range 内提供"加热"与"点燃源"；灯上可放置沉淀。
+// 由开关控制（关卡接线 switch.onOpen(() => lamp.ignite())）。
+// 焰色反应：火焰区域物体的表层物质（灯上沉淀/物块/玩家）含 Na/K/Ca/Ba/Cu/Li
+// 等元素时，火焰染上特征色（物理变化，不消耗物质）；移开恢复。
+// ============================================================================
+
+const { Container } = __require('src/objects/container.js');;
+const { THEME, rr, drawFlame } = __require('src/render/theme.js');;
+const { flameColorOf } = __require('src/chem/substances.js');;
+const { CFG } = __require('src/core/config.js');;
+
+class Lamp extends Container {
+  constructor({ x, y, w = 40, h = 40, autoOn = false, range = CFG.lampRange, lightRange = CFG.lampLightRange, highTemp = false, ...rest } = {}) {
+    // 灯/喷灯是干燥加热台：内部不应有液体水（否则 CaO+H2O、Na+H2O 等在灯上凭空发生，
+    // 且 CaCO3 分解出的 CaO 会被灯水消耗掉）。water=0 由 …rest 之后显式覆盖保证。
+    super({ x, y, w, h, solid: true, physicsKind: 'static', water: 0, volume: 0, ...rest });
+    this.lit = autoOn;
+    this.flameLevel = this.lit ? 1 : 0; // 火焰淡入淡出（0..1）
+    this.range = range;
+    this.lightRange = lightRange; // 提供"光照"条件的半径（见光分解 HClO 等）
+    this.highTemp = highTemp; // 酒精喷灯 = true
+    this.spillSides = false; // 灯上颗粒留在灯顶堆成小山，不滚落
+    this.clipGrains = false; // 灯上颗粒不裁剪，自然堆成小山
+    this.grainG = 0.35; // 灯上颗粒更重更大（更少颗粒，堆更干净、不重叠）
+    this.flameTint = null; // 焰色反应：当前特征色（null = 默认橙/蓝）
+    this.flameTintCur = null; // 缓动中的颜色（避免闪烁）
+  }
+
+  get isLamp() {
+    return true;
+  }
+
+  get hoverLabel() {
+    return '灯';
+  }
+
+  /** 灯是台子不是液体容器：玩家/物块不会"浸入灯"（避免站灯旁被误判浸入而与灯上粉末反应） */
+  containsObj() {
+    return false;
+  }
+
+  ignite() {
+    this.lit = true;
+  }
+
+  extinguish() {
+    this.lit = false;
+  }
+
+  /** 灯面可容纳的沉淀质量上限（g）：按灯面区域面积估算，防止粉末全部挤在灯框里 */
+  plateCapacity() {
+    const r = this.grainRegion();
+    return Math.max(2, (r.w * r.h) / 36 * 0.2); // 约每 36px² 放一颗（0.2g）
+  }
+
+  /** 火焰动画：点燃快速淡入、熄灭缓慢淡出；灯上沉淀颗粒照常沉降（不再滑落） */
+  update(dt, scene) {
+    super.update(dt, scene);
+    const target = this.lit ? 1 : 0;
+    const k = this.lit ? 11 : 4.5;
+    this.flameLevel += (target - this.flameLevel) * Math.min(1, k * dt);
+    if (Math.abs(this.flameLevel - target) < 0.01) this.flameLevel = target;
+    // 焰色反应检测：火焰区域物体的表层物质（灯上沉淀 → 灯焰上物块/玩家）
+    const tint = this.lit ? this._detectFlameTint(scene) : null;
+    if (tint !== this.flameTint) this.flameTint = tint;
+    if (this.flameTint && this.flameTint !== this.flameTintCur) {
+      // 颜色缓动过渡（新色淡入，避免瞬间跳变）
+      if (!this.flameTintCur) this.flameTintCur = this.flameTint;
+      else this.flameTintCur = mixHex(this.flameTintCur, this.flameTint, Math.min(1, 6 * dt));
+      if (hexDist(this.flameTintCur, this.flameTint) < 0.02) this.flameTintCur = this.flameTint;
+    } else if (!this.flameTint && this.flameTintCur) {
+      // 移开物体：颜色淡出回默认
+      this.flameTintCur = null;
+    }
+  }
+
+  /**
+   * 焰色检测（多源合并）：灯上沉淀 + 火焰区域物体的表层物质，按"暴露质量"加权混色。
+   * 多种含焰色物质同时存在（多种盐、物块+沉淀）时不再只取第一种：
+   * 按各物质的暴露质量加权平均 RGB（同色物质权重合并）——火焰呈现混合色调；
+   * 只有一种焰色物质时返回其原色（与单盐行为一致）。
+   */
+  _detectFlameTint(scene) {
+    const acc = new Map(); // hex → 总权重（g）
+    const add = (id, w) => {
+      if (!(w > 0)) return;
+      const c = flameColorOf(id);
+      if (c) acc.set(c, (acc.get(c) ?? 0) + w);
+    };
+    for (const [id, m] of this.precipitates) add(id, m);
+    const fx = this.x + this.w / 2;
+    const fy = this.flameY();
+    const probe = { x: fx - 26, y: fy - 34, w: 52, h: 68 };
+    for (const o of scene.objects) {
+      if (o === this || o.isLamp) continue;
+      if (!o.solid && !o.isPlayerObj) continue;
+      if (o.right < probe.x || o.left > probe.x + probe.w || o.bottom < probe.y || o.top > probe.y + probe.h) continue;
+      const exp = o.grid && o.grid.exposedMasses ? o.grid.exposedMasses() : null;
+      if (!exp) continue;
+      for (const id of Object.keys(exp)) add(id, exp[id]);
+    }
+    if (acc.size === 0) return null;
+    if (acc.size === 1) return [...acc.keys()][0];
+    let r = 0, g = 0, b = 0, total = 0;
+    for (const [hex, w] of acc) {
+      const c = hexToRgb(hex);
+      r += c.r * w; g += c.g * w; b += c.b * w; total += w;
+    }
+    return rgbToHex(r / total, g / total, b / total);
+  }
+
+  /** 火焰 Y（矮炉条喷灯的火焰浮在顶部上方） */
+  flameY() {
+    return this.h < 20 ? this.y - 16 : this.y + this.h - 30;
+  }
+
+  /** 颗粒沉降区：火焰上方一个较高区域，颗粒自然堆成小山（不裁剪、不滚落） */
+  grainRegion() {
+    const bx = this.x + this.w / 2;
+    const fy = this.flameY();
+    const w = this.h < 20 ? this.w * 0.9 : Math.min(44, this.w);
+    const h = this.h < 20 ? 34 : 42;
+    return { x: bx - w / 2, y: fy - h + 2, w, h };
+  }
+
+  render(ctx, opts) {
+    const t = opts?.time ?? 0;
+    const thin = this.h < 20;
+    const bx = this.x + this.w / 2;
+    const fy = this.flameY();
+    if (thin) {
+      // 喷灯：青铜炉条 + 一排火焰
+      ctx.save();
+      const g = ctx.createLinearGradient(this.x, this.y, this.x, this.y + this.h);
+      g.addColorStop(0, '#8a6420');
+      g.addColorStop(1, '#4a3410');
+      ctx.fillStyle = g;
+      rr(ctx, this.x, this.y, this.w, this.h, 4);
+      ctx.fill();
+      ctx.strokeStyle = '#2a1c08';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      // 炉口纹
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      for (let i = 0; i < Math.floor(this.w / 12); i++) {
+        ctx.fillRect(this.x + 4 + i * 12, this.y + 2, 5, this.h - 4);
+      }
+      ctx.restore();
+      if (this.flameLevel > 0.01) {
+        const fc = this.flameTintCur ?? (this.highTemp ? '#4fb6ff' : '#ff7a3d');
+        const inner = this.flameTintCur ? lightenHex(fc, 0.55) : (this.highTemp ? '#d8f6ff' : '#fff3c4');
+        const n = Math.max(2, Math.floor(this.w / 26));
+        const grow = 0.25 + 0.75 * this.flameLevel;
+        for (let i = 0; i < n; i++) {
+          const fx = this.x + (i + 0.5) * (this.w / n);
+          ctx.save();
+          ctx.globalAlpha = this.flameLevel;
+          drawFlame(ctx, fx, fy + 2, (17 + Math.sin(t * 11 + i * 1.9) * 2) * grow, fc, inner, t + i * 1.7);
+          ctx.restore();
+        }
+      }
+    } else {
+      // 酒精灯：青铜灯身
+      ctx.save();
+      const g = ctx.createLinearGradient(this.x, this.y, this.x, this.y + this.h);
+      g.addColorStop(0, '#c9932f');
+      g.addColorStop(0.5, '#8a6420');
+      g.addColorStop(1, '#4a3410');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(this.x + 5, this.y + this.h - 6);
+      ctx.lineTo(this.x + this.w - 5, this.y + this.h - 6);
+      ctx.lineTo(this.x + this.w - 10, this.y + this.h - 22);
+      ctx.lineTo(this.x + 10, this.y + this.h - 22);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = '#2a1c08';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      // 灯芯
+      ctx.fillStyle = '#2a2418';
+      ctx.fillRect(bx - 2, this.y + this.h - 27, 4, 8);
+      ctx.restore();
+      if (this.flameLevel > 0.01) {
+        const fc = this.flameTintCur ?? (this.highTemp ? '#4fb6ff' : '#ff7a3d');
+        const inner = this.flameTintCur ? lightenHex(fc, 0.55) : (this.highTemp ? '#d8f6ff' : '#fff3c4');
+        const grow = 0.25 + 0.75 * this.flameLevel;
+        ctx.save();
+        ctx.globalAlpha = this.flameLevel;
+        drawFlame(ctx, bx, fy + 2, (20 + Math.sin(t * 13) * 2) * grow, fc, inner, t);
+        ctx.restore();
+      }
+    }
+    // 焰色反应：火焰区域铺一层特征色柔光（物体也在光里，视觉上"发同色的光"）
+    if (this.flameTintCur && this.flameLevel > 0.01) {
+      ctx.save();
+      const g = ctx.createRadialGradient(bx, fy, 4, bx, fy, 56);
+      g.addColorStop(0, hexRgba(this.flameTintCur, 0.34 * this.flameLevel));
+      g.addColorStop(1, hexRgba(this.flameTintCur, 0));
+      ctx.fillStyle = g;
+      ctx.fillRect(bx - 60, fy - 60, 120, 120);
+      ctx.restore();
+    }
+    this.renderContentsLabel(ctx);
+    // 灯上放置的沉淀：颗粒从火焰附近生成并物理堆叠（不再均匀悬空）
+    this.renderGrains(ctx);
+  }
+}
+
+// ---- 颜色工具（焰色缓动/提亮）----
+function hexToRgb(hex) {
+  const h = hex.replace('#', '');
+  return {
+    r: parseInt(h.slice(0, 2), 16),
+    g: parseInt(h.slice(2, 4), 16),
+    b: parseInt(h.slice(4, 6), 16),
+  };
+}
+
+function rgbToHex(r, g, b) {
+  const c = (v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0');
+  return `#${c(r)}${c(g)}${c(b)}`;
+}
+
+function mixHex(a, b, t) {
+  const ca = hexToRgb(a);
+  const cb = hexToRgb(b);
+  return rgbToHex(ca.r + (cb.r - ca.r) * t, ca.g + (cb.g - ca.g) * t, ca.b + (cb.b - ca.b) * t);
+}
+
+function hexDist(a, b) {
+  const ca = hexToRgb(a);
+  const cb = hexToRgb(b);
+  return (Math.abs(ca.r - cb.r) + Math.abs(ca.g - cb.g) + Math.abs(ca.b - cb.b)) / 765;
+}
+
+function lightenHex(hex, t) {
+  const c = hexToRgb(hex);
+  return rgbToHex(c.r + (255 - c.r) * t, c.g + (255 - c.g) * t, c.b + (255 - c.b) * t);
+}
+
+function hexRgba(hex, a) {
+  const c = hexToRgb(hex);
+  return `rgba(${c.r},${c.g},${c.b},${a})`;
+}
+
+exports.Lamp = Lamp;
+
+  };
+  __modules["src/objects/blastlamp.js"] = function (module, exports, __require) {
+// ============================================================================
+// 酒精喷灯：酒精灯子类，提供"高温"（且隐式满足"加热"）与点燃源。
+// 造型（卡通化挂式酒精喷灯）：黄铜底座罐 → 预热盘 → 中央喷管（火焰出口）→
+// 侧立汽化管 + 银管与黑色旋钮；点燃时从喷管口冒出狭长高温蓝焰。
+// 风格与游戏一致的"玩具感"：统一深色描边 + 平涂渐变 + 一两笔高光，舍去写实细节
+// （滚花/多道高光/支架等）。宽炉条款（h<20）沿用老样式。
+// ============================================================================
+
+const { Lamp } = __require('src/objects/lamp.js');;
+const { rr } = __require('src/render/theme.js');;
+
+class BlastLamp extends Lamp {
+  constructor({ highTemp = true, color = '#8fd8ff', ...rest } = {}) {
+    super({ highTemp, ...rest });
+    this.color = color;
+  }
+
+  get hoverLabel() {
+    return '喷灯';
+  }
+
+  render(ctx, opts) {
+    const t = opts?.time ?? 0;
+    const bx = this.x + this.w / 2;
+    const fy = this.flameY();
+    if (this.h < 20) {
+      // 宽炉条款（解谜关卡的整排炉条）：沿用酒精灯样式（蓝色喷焰由 highTemp 决定）
+      super.render(ctx, opts);
+      return;
+    }
+    // ---- 卡通挂式酒精喷灯 ----
+    const x = this.x, y = this.y, w = this.w, h = this.h;
+    const baseTop = y + h - 18; // 底座罐体顶
+    ctx.save();
+    // 底座罐体
+    const g = ctx.createLinearGradient(x, baseTop, x, y + h);
+    g.addColorStop(0, '#c9932f');
+    g.addColorStop(1, '#6e4e14');
+    ctx.fillStyle = g;
+    rr(ctx, x + 3, baseTop, w - 6, y + h - baseTop, 5);
+    ctx.fill();
+    ctx.strokeStyle = '#2a1c08';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // 顶盖（椭圆圆盘）
+    ctx.fillStyle = '#b5882a';
+    ctx.beginPath();
+    ctx.ellipse(bx, baseTop, (w - 6) / 2, 4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#2a1c08';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    // 盖子左侧一笔高光（卡通感）
+    ctx.strokeStyle = 'rgba(255,240,190,0.5)';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.ellipse(bx - 2, baseTop - 0.6, (w - 6) / 2 - 7, 2.2, 0, Math.PI * 1.08, Math.PI * 1.75);
+    ctx.stroke();
+    // 调节旋钮（底座右侧：圆钮 + 6 道齿痕）
+    const kx = x + w - 9, ky = baseTop + 8;
+    ctx.fillStyle = '#c9932f';
+    ctx.beginPath();
+    ctx.arc(kx, ky, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#2a1c08';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(42,28,8,0.55)';
+    ctx.lineWidth = 0.9;
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + 0.26;
+      ctx.beginPath();
+      ctx.moveTo(kx + Math.cos(a) * 2.4, ky + Math.sin(a) * 2.4);
+      ctx.lineTo(kx + Math.cos(a) * 4.6, ky + Math.sin(a) * 4.6);
+      ctx.stroke();
+    }
+    // 预热盘（小碟）
+    ctx.fillStyle = '#c9932f';
+    ctx.strokeStyle = '#2a1c08';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.ellipse(bx, baseTop - 1, 14, 3.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#3a2c10';
+    ctx.beginPath();
+    ctx.ellipse(bx, baseTop - 1.2, 7, 1.6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // 中央喷管（汽化管：火焰出口在顶部）
+    const cw = 11;
+    const cg = ctx.createLinearGradient(bx - cw / 2, 0, bx + cw / 2, 0);
+    cg.addColorStop(0, '#8a6420');
+    cg.addColorStop(0.35, '#c9932f');
+    cg.addColorStop(1, '#6e4e14');
+    ctx.fillStyle = cg;
+    rr(ctx, bx - cw / 2, fy, cw, baseTop - 1 - fy, 2.5);
+    ctx.fill();
+    ctx.strokeStyle = '#2a1c08';
+    ctx.lineWidth = 1.3;
+    ctx.stroke();
+    // 喷口（顶部暗口 + 亮缘）
+    ctx.fillStyle = '#171208';
+    ctx.beginPath();
+    ctx.ellipse(bx, fy + 0.6, cw / 2 - 0.8, 1.7, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,235,170,0.8)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.ellipse(bx, fy + 0.4, cw / 2 - 0.4, 1.9, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    // 侧立汽化管（右侧较高，顶端开口）
+    const tw = 7, tX = bx + cw / 2 + 0.5;
+    const tg = ctx.createLinearGradient(tX, 0, tX + tw, 0);
+    tg.addColorStop(0, '#a97a24');
+    tg.addColorStop(0.4, '#c9932f');
+    tg.addColorStop(1, '#6e4e14');
+    ctx.fillStyle = tg;
+    rr(ctx, tX, fy - 5, tw, baseTop - 1 - (fy - 5), 2);
+    ctx.fill();
+    ctx.strokeStyle = '#2a1c08';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    ctx.fillStyle = '#221a0a';
+    ctx.beginPath();
+    ctx.ellipse(tX + tw / 2, fy - 4.6, tw / 2 - 0.8, 1.3, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // 银色侧管（单笔粗线）+ 黑色旋钮
+    ctx.strokeStyle = '#b8c4cc';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 3.2;
+    ctx.beginPath();
+    ctx.moveTo(bx - cw / 2, fy + 7);
+    ctx.lineTo(x - 8, fy + 7);
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+    ctx.fillStyle = '#1a1a1a';
+    rr(ctx, x - 17, fy + 2, 10, 10, 3.5);
+    ctx.fill();
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    ctx.strokeStyle = '#3c3c3c';
+    ctx.lineWidth = 0.9;
+    for (let i = 0; i < 4; i++) {
+      ctx.beginPath();
+      ctx.moveTo(x - 14.5 + i * 2.4, fy + 3.5);
+      ctx.lineTo(x - 14.5 + i * 2.4, fy + 10.5);
+      ctx.stroke();
+    }
+    // 旋钮左上小高光
+    ctx.fillStyle = 'rgba(255,255,255,0.22)';
+    ctx.beginPath();
+    ctx.ellipse(x - 13.5, fy + 4.4, 2.6, 1.4, -0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    // 喷焰：喷管口冒出的狭长高温蓝焰（窄焰 + 白热内芯）
+    if (this.flameLevel > 0.01) {
+      const fc = this.flameTintCur ?? '#4fb6ff';
+      const inner = this.flameTintCur ? lightenHex(fc, 0.6) : '#eaf8ff';
+      const grow = 0.25 + 0.75 * this.flameLevel;
+      ctx.save();
+      ctx.globalAlpha = this.flameLevel;
+      drawJet(ctx, bx, fy + 2.5, (19 + Math.sin(t * 14) * 1.8) * grow, fc, inner, t);
+      ctx.restore();
+    }
+    // 焰色反应：火焰区域铺一层特征色柔光（与酒精灯一致）
+    if (this.flameTintCur && this.flameLevel > 0.01) {
+      ctx.save();
+      const g2 = ctx.createRadialGradient(bx, fy, 4, bx, fy, 56);
+      g2.addColorStop(0, hexRgba(this.flameTintCur, 0.34 * this.flameLevel));
+      g2.addColorStop(1, hexRgba(this.flameTintCur, 0));
+      ctx.fillStyle = g2;
+      ctx.fillRect(bx - 60, fy - 60, 120, 120);
+      ctx.restore();
+    }
+    this.renderContentsLabel(ctx);
+    this.renderGrains(ctx);
+  }
+}
+
+/** 狭长喷焰（卡通版）：细长外焰 + 白热内芯 + 轻轻摆动 */
+function drawJet(ctx, x, y, h, color, innerColor, t) {
+  const wob = Math.sin(t * 13) * 0.08 + Math.sin(t * 20 + 1.7) * 0.05;
+  const w = Math.max(4.5, h * 0.36); // 比写实版稍宽，更"玩具"
+  ctx.save();
+  // 外辉光
+  ctx.shadowColor = color;
+  ctx.shadowBlur = h * 1.4;
+  ctx.globalAlpha = 0.85;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(x - w / 2, y);
+  ctx.quadraticCurveTo(x - w * 0.3, y - h * 0.52 + wob * 3, x + w * 0.12, y - h * (0.88 + wob));
+  ctx.quadraticCurveTo(x + w * 0.36, y - h * 0.48 - wob * 2.5, x + w / 2, y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 1;
+  // 白热内芯
+  ctx.fillStyle = innerColor;
+  ctx.beginPath();
+  ctx.moveTo(x - w * 0.22, y - h * 0.03);
+  ctx.quadraticCurveTo(x - w * 0.06, y - h * 0.4 - wob * 1.2, x + w * 0.05, y - h * 0.5);
+  ctx.quadraticCurveTo(x + w * 0.16, y - h * 0.36, x + w * 0.22, y - h * 0.03);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+// ---- 颜色工具（与 lamp.js 一致）----
+function hexToRgb(hex) {
+  const h0 = hex.replace('#', '');
+  return {
+    r: parseInt(h0.slice(0, 2), 16),
+    g: parseInt(h0.slice(2, 4), 16),
+    b: parseInt(h0.slice(4, 6), 16),
+  };
+}
+
+function lightenHex(hex, t) {
+  const c = hexToRgb(hex);
+  return `#${rgb2(c.r + (255 - c.r) * t)}${rgb2(c.g + (255 - c.g) * t)}${rgb2(c.b + (255 - c.b) * t)}`;
+}
+
+function hexRgba(hex, a) {
+  const c = hexToRgb(hex);
+  return `rgba(${c.r},${c.g},${c.b},${a})`;
+}
+
+function rgb2(v) {
+  return Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0');
+}
+
+exports.BlastLamp = BlastLamp;
+
+  };
+  __modules["src/objects/beaker.js"] = function (module, exports, __require) {
+// ============================================================================
+// 烧杯：可承载任何物质（含玩家）的容器。杯壁（左/右/底）为实心碰撞体：
+//   - 不能从侧面走进，只能跳过杯口进入；玩家太宽会卡在杯口下不去
+//   - 受重力：无支撑时下落
+//   - 玩家在杯内 → 跟随移动；玩家在杯外贴杯壁 → 推动
+// ============================================================================
+
+const { Container } = __require('src/objects/container.js');;
+const { getSubstance } = __require('src/chem/substances.js');;
+const { Obj } = __require('src/objects/obj.js');;
+const { renderLiquid } = __require('src/render/liquidrender.js');;
+const { rr } = __require('src/render/theme.js');;
+
+class Beaker extends Container {
+  get hoverLabel() {
+    return '烧杯';
+  }
+  constructor({ x, y, w = 60, h = 70, wall = 5, ...rest } = {}) {
+    super({ x, y, w, h, ...rest });
+    this.wall = wall;
+    this.vy = 0;
+    // 实心杯壁（左/右/底），跟随烧杯移动；顶口敞开（可跳入）
+    this.subBodies = [
+      new Obj({ id: 'bk_l', x, y, w: wall, h, solid: true, physicsKind: 'dynamic', gravity: 0, mass: 1 }),
+      new Obj({ id: 'bk_r', x: x + w - wall, y, w: wall, h, solid: true, physicsKind: 'dynamic', gravity: 0, mass: 1 }),
+      new Obj({ id: 'bk_b', x, y: y + h - wall, w, h: wall, solid: true, physicsKind: 'dynamic', gravity: 0, mass: 1 }),
+    ];
+  }
+
+  innerRect() {
+    return {
+      x: this.x + this.wall,
+      y: this.y + this.wall,
+      w: this.w - 2 * this.wall,
+      h: this.h - 2 * this.wall,
+    };
+  }
+
+  /** 杯壁跟随烧杯位置 */
+  syncWalls() {
+    const [l, r, b] = this.subBodies;
+    l.x = this.x;
+    l.y = this.y;
+    r.x = this.x + this.w - this.wall;
+    r.y = this.y;
+    b.x = this.x;
+    b.y = this.y + this.h - this.wall;
+  }
+
+  /** 无支撑时受重力下落，落到下方支撑面停住 */
+  applyGravity(dt, scene) {
+    let support = 0;
+    for (const s of scene.statics) {
+      if (!s.solid) continue;
+      if (s.y >= this.y + this.h - 2 && s.y <= this.y + this.h + 40 && s.x < this.x + this.w && s.x + s.w > this.x) {
+        support = Math.max(support, s.y);
+      }
+    }
+    if (support > 0) {
+      // 已陷入支撑面：顶回表面
+      if (this.y + this.h > support) {
+        this.y = support - this.h;
+        this.vy = 0;
+      } else {
+        // 在支撑面上方：继续下落直到贴合
+        this.vy = Math.min(400, this.vy + 600 * dt);
+        this.y += this.vy * dt;
+        if (this.y + this.h >= support) {
+          this.y = support - this.h;
+          this.vy = 0;
+        }
+      }
+    } else {
+      this.vy = Math.min(400, this.vy + 600 * dt);
+      this.y += this.vy * dt;
+    }
+  }
+
+  update(dt, scene) {
+    super.update(dt, scene); // 颗粒沉降等容器逻辑
+    this.applyGravity(dt, scene);
+    const p = scene.player;
+    if (!p) return;
+    const inner = this.innerRect();
+    // 玩家在杯外贴杯壁朝内移动 → 推动烧杯（杯内携带放到 lateUpdate，按实际位移）
+    if (!this.containsObj(p) && Math.abs(p.vel.x) > 0.1) {
+      const push = p.vel.x * dt;
+      const aligned = p.bottom > inner.y && p.top < inner.y + inner.h;
+      if (push > 0 && p.right >= this.x - 2 && p.right <= this.x + this.wall + 2 && aligned) {
+        this.x += push;
+      } else if (push < 0 && p.left <= this.x + this.w + 2 && p.left >= this.x + this.w - this.wall - 2 && aligned) {
+        this.x += push;
+      }
+    }
+  }
+
+  /** 物理结算后：杯内玩家与烧杯互相带动——烧杯跟随玩家的水平位移；玩家跟随烧杯的竖直位移 */
+  lateUpdate(dt, scene) {
+    const p = scene.player;
+    if (p && this.containsObj(p)) {
+      // 烧杯跟随玩家的水平位移（杯壁挡住时玩家不移动 → 烧杯也不动，不甩出）
+      const dx = p.x - (this._prevPx ?? p.x);
+      if (Math.abs(dx) > 0.01) this.x += dx;
+      // 玩家跟随烧杯的竖直位移（烧杯下落/被抬起时玩家一起移动，不脱离）
+      const dy = this.y - (this._prevBy ?? this.y);
+      if (Math.abs(dy) > 0.01) p.y += dy;
+    }
+    this._prevPx = p ? p.x : this._prevPx;
+    this._prevBy = this.y;
+    this.syncWalls();
+  }
+
+  render(ctx, scene) {
+    // 液体（元素发光液面）
+    const inner = this.innerRect();
+    if (inner.w > 0 && inner.h > 0) renderLiquid(ctx, inner.x, inner.y, inner.w, inner.h, this.solution, scene.time ?? 0);
+    // 沉淀：从反应位置生成的视觉颗粒，物理堆叠成堆
+    this.renderGrains(ctx);
+    // 玻璃杯（U 形，半透明 + 亮边 + 高光）
+    ctx.save();
+    ctx.fillStyle = 'rgba(210,240,255,0.12)';
+    rr(ctx, this.x, this.y, this.w, this.h, 7);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(225,245,255,0.8)';
+    ctx.lineWidth = 2;
+    ctx.shadowColor = 'rgba(180,230,255,0.6)';
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    ctx.moveTo(this.x, this.y);
+    ctx.lineTo(this.x, this.y + this.h - 7);
+    ctx.arcTo(this.x, this.y + this.h, this.x + 7, this.y + this.h, 7);
+    ctx.lineTo(this.x + this.w - 7, this.y + this.h);
+    ctx.arcTo(this.x + this.w, this.y + this.h, this.x + this.w, this.y + this.h - 7, 7);
+    ctx.lineTo(this.x + this.w, this.y);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // 左侧高光
+    ctx.fillStyle = 'rgba(255,255,255,0.16)';
+    ctx.fillRect(this.x + 1, this.y + 2, 2, this.h - 4);
+    ctx.restore();
+    this.renderContentsLabel(ctx);
+  }
+}
+
+exports.Beaker = Beaker;
+
+  };
+  __modules["src/objects/sign.js"] = function (module, exports, __require) {
+// ============================================================================
+// 文字标签：关卡内显示说明文字（帮助玩家理解每个区域的机制）
+// 渲染为神秘石板 + 金色发光文字。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+const { rr } = __require('src/render/theme.js');;
+
+class Sign extends Obj {
+  get hoverLabel() {
+    return '路标';
+  }
+  constructor({ x, y, text, color = '#ffe9b0', size = 12, ...rest } = {}) {
+    // 石板尺寸按文字估算（构造期无 ctx 测量；中文字符宽≈size，西文字符≈0.6×size）
+    const lines = String(text ?? '').split('\n');
+    let maxChars = 0;
+    for (const l of lines) maxChars = Math.max(maxChars, l.length);
+    super({
+      x, y,
+      w: Math.max(14, Math.round(maxChars * size * 0.68) + 14),
+      h: lines.length * (size + 6) + 18,
+      solid: false,
+      physicsKind: 'none',
+      ...rest,
+    });
+    this.text = text;
+    this.color = color;
+    this.size = size;
+  }
+
+  render(ctx) {
+    const lines = this.text.split('\n');
+    const size = this.size;
+    const lh = size + 6;
+    ctx.save();
+    ctx.font = `${size}px "Segoe UI", sans-serif`;
+    const maxW = Math.max(...lines.map((ln) => ctx.measureText(ln).width));
+    // 盒模型：this.y = 石板顶（与编辑器选中框一致）；文字基线 = 顶 + size + 8
+    const baseY = this.y + size + 8;
+    ctx.save();
+    // 石板底：顶边在文字上方留出 padding
+    ctx.fillStyle = 'rgba(14,10,38,0.74)';
+    rr(ctx, this.x - 7, this.y, maxW + 14, lines.length * lh + 18, 9);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(232,184,75,0.55)';
+    ctx.lineWidth = 1.2;
+    ctx.shadowColor = 'rgba(232,184,75,0.4)';
+    ctx.shadowBlur = 5;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // 金色发光文字
+    ctx.fillStyle = this.color;
+    ctx.shadowColor = this.color;
+    ctx.shadowBlur = 6;
+    lines.forEach((ln, i) => ctx.fillText(ln, this.x, baseY + i * lh));
+    ctx.restore();
+  }
+}
+
+exports.Sign = Sign;
+
+  };
+  __modules["src/objects/gasdetector.js"] = function (module, exports, __require) {
+// ============================================================================
+// 气体探测器：和开关同理，但"开启条件"是大气中某气体含量超过阈值。
+// 复用 Switch 的 onOpen/onClose 接线与 effectiveOpen（"&"联锁）逻辑。
+// ============================================================================
+
+const { Switch } = __require('src/objects/switch.js');;
+const { THEME, rr, glowText } = __require('src/render/theme.js');;
+
+class GasDetector extends Switch {
+  get hoverLabel() {
+    return '气体探测器';
+  }
+
+  constructor({
+    x, y, w = 40, h = 22,
+    gas = 'H2', threshold = 0.5,
+    color = '#3fa8e0', onOpen, onClose, ...rest
+  } = {}) {
+    super({ x, y, w, h, mode: 'chemical', color, onOpen, onClose, ...rest });
+    this.gas = gas; // 检测的气体 id
+    this.threshold = threshold; // 触发阈值（g）
+  }
+
+  /** 检测开态：只有"反应产生的气体"超标 或 放入开启物质（任一满足即开；其余复用 Switch.update + "&"联锁）。
+   *  不检测大气里预置的气体（如初始 atmosphere.add('H2', 8)），只检测反应正在产生的那种气体。 */
+  _isOpenTarget(scene) {
+    const gasOn = this.gas ? !!(scene._reactGas && scene._reactGas[this.gas] > this.threshold) : false;
+    const openingOn = this.opening ? this.openingMass() > 0 : false;
+    return gasOn || openingOn;
+  }
+
+  renderLabel(ctx) {
+    glowText(ctx, `${this.gas} > ${this.threshold}g`, this.x, this.y - 4, THEME.water.light, 'bold 10px monospace', 4);
+    // 开启物质（若有）：显示在下方，剩余量实时更新（同开关）
+    if (this.opening) {
+      const m = this.openingMass();
+      glowText(ctx, `${this.opening}${m > 0 ? ` ${m.toFixed(1)}g` : ''}`, this.x + this.w / 2, this.y + this.h + 12, THEME.gold.text, 'bold 10px monospace', 4);
+    }
+  }
+
+  render(ctx, opts) {
+    const scene = opts?.scene ?? null;
+    const eff = this._lastEff ?? this.effectiveOpen(scene); // 有效输出态
+    const phys = this.open; // 物理检测态（气体超标）
+    const waiting = this.and && phys && !eff; // 已检测到气体但等待"&"配对
+    const cx = this.x + this.w / 2;
+    const cy = this.y + this.h / 2;
+    ctx.save();
+    // 蓝宝石底座（区别于普通金开关）
+    const g = ctx.createLinearGradient(this.x, this.y, this.x, this.y + this.h);
+    g.addColorStop(0, eff ? '#3a5a82' : '#2c4a6e');
+    g.addColorStop(1, '#16263c');
+    ctx.fillStyle = g;
+    rr(ctx, this.x, this.y, this.w, this.h, 6);
+    ctx.fill();
+    // 边框：开=亮蓝发光，等=橙，关=暗（一眼可辨）
+    const frame = eff ? THEME.water.light : waiting ? '#ffb340' : '#0e1a2c';
+    ctx.strokeStyle = frame;
+    ctx.lineWidth = eff ? 2 : waiting ? 1.5 : 1;
+    ctx.shadowColor = eff ? THEME.water.light : waiting ? '#ffb340' : 'transparent';
+    ctx.shadowBlur = eff ? 14 : waiting ? 8 : 0;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // 状态珠：开=亮蓝白实心发光，等=橙，关=暗灰空心
+    ctx.beginPath();
+    ctx.arc(cx, cy, Math.min(this.w, 20) / 2, 0, Math.PI * 2);
+    if (!eff && !waiting) {
+      ctx.strokeStyle = 'rgba(130,160,200,0.6)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = eff ? '#bfe6ff' : '#ffb340';
+      ctx.shadowColor = eff ? THEME.water.light : '#ffb340';
+      ctx.shadowBlur = eff ? 16 : waiting ? 12 : 0;
+      ctx.fill();
+    }
+    ctx.shadowBlur = 0;
+    // 状态字：开 / 等 / 关（直接标在珠上）
+    ctx.fillStyle = eff ? '#062a44' : waiting ? '#4a2a08' : 'rgba(150,180,210,0.6)';
+    ctx.font = 'bold 9px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(eff ? '开' : waiting ? '等' : '关', cx, cy + 3);
+    ctx.textAlign = 'left';
+    ctx.restore();
+    this.renderLabel(ctx);
+    // "&" 联锁连线（若配置了 and）
+    if (this.and && scene) this.renderAndLink(ctx, scene, eff, waiting);
+  }
+
+  /** 与另一个 "&" 开关画连接线（金/蓝=双开，橙=已检测等配对，暗=未检测） */
+  renderAndLink(ctx, scene, eff, waiting) {
+    const other = scene.byId[this.and];
+    if (!other) return;
+    const ax = this.x + this.w / 2;
+    const ay = this.y + this.h / 2;
+    const bx = other.x + other.w / 2;
+    const by = other.y + other.h / 2;
+    const color = eff ? THEME.water.light : waiting ? '#ffb340' : 'rgba(120,140,170,0.35)';
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.shadowColor = eff || waiting ? color : 'transparent';
+    ctx.shadowBlur = eff || waiting ? 6 : 0;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // "&" 标记
+    ctx.fillStyle = color;
+    ctx.font = 'bold 12px serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('&', (ax + bx) / 2, (ay + by) / 2 - 4);
+    ctx.textAlign = 'left';
+    ctx.restore();
+  }
+}
+
+exports.GasDetector = GasDetector;
+
+  };
+  __modules["src/objects/extractor.js"] = function (module, exports, __require) {
+// ============================================================================
+// 物质提取器：地表小矩形 + 地下 L 形管道接对应的药品池。
+// 配一个开关（switchId）；开关有效开启时，池内"能以固体形式出现"的物质
+// （state==='solid'，如盐/金属/氧化物）会被**缓慢**提取为沉淀粒子，从地表矩形冒出。
+// 液体/气体（HCl、H2SO4、H2CO3 等 state==='liquid'/'gas'）无法被提取。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+const { getSubstance } = __require('src/chem/substances.js');;
+const { CFG } = __require('src/core/config.js');;
+const { THEME, rr, glowText } = __require('src/render/theme.js');;
+
+class Extractor extends Obj {
+  get hoverLabel() {
+    return '提取器';
+  }
+
+  constructor({
+    x, y, w = 50, h = 14,
+    poolId = null, switchId = null, rate = 0.25,
+    ...rest
+  } = {}) {
+    super({ x, y, w, h, solid: true, physicsKind: 'static', ...rest });
+    this.poolId = poolId; // 对应的药品池 id
+    this.switchId = switchId; // 激活开关 id
+    this.rate = rate; // 提取速率 g/s（缓慢冒出）
+    this._acc = {}; // 每种物质的提取质量累积器（攒满 0.1g 才吐一个粒子，严格守恒）
+  }
+
+  update(dt, scene) {
+    const pool = scene.byId[this.poolId];
+    const sw = scene.byId[this.switchId];
+    if (!pool || !pool.material || !sw) return;
+    // 有效开启（支持开关"&"联锁）
+    const active = typeof sw.effectiveOpen === 'function' ? sw.effectiveOpen(scene) : sw.open;
+    if (!active) return;
+    // 池内所有物质：只提取能以固体形式出现的（state==='solid'）
+    for (const id of pool.material.ids()) {
+      const sub = getSubstance(id);
+      if (!sub || sub.state !== 'solid') continue;
+      const avail = pool.material.avail(id);
+      const take = Math.min(avail, this.rate * dt);
+      if (take <= 1e-9) continue;
+      pool.material.consume(id, take);
+      // 质量累积：每攒满一个粒子（0.1g）才吐出一个，避免小量提取被 spawnParticles
+      // 的取整放大（round(0.01/0.1)=1 → 凭空多出 10 倍质量）。
+      this._acc[id] = (this._acc[id] ?? 0) + take;
+      while (this._acc[id] >= CFG.cellMass) {
+        this._acc[id] -= CFG.cellMass;
+        // 从地表矩形顶部冒出可收集沉淀（可溶的也能收；实心 false）
+        scene.spawnParticles(id, CFG.cellMass, { x: this.x + Math.random() * this.w, y: this.y + 2 }, true, false, {
+          kind: 'extract',
+          text: `${id} 提取`,
+        });
+      }
+    }
+  }
+
+  render(ctx, scene) {
+    const pool = scene?.byId?.[this.poolId];
+    const sw = scene?.byId?.[this.switchId];
+    const active = sw ? (sw._lastEff ?? sw.open) : false;
+    ctx.save();
+    // 地表矩形（金属台，激活时发光）
+    const g = ctx.createLinearGradient(this.x, this.y, this.x, this.y + this.h);
+    g.addColorStop(0, active ? '#4a6a8a' : '#3a3f5c');
+    g.addColorStop(1, '#22263f');
+    ctx.fillStyle = g;
+    rr(ctx, this.x, this.y, this.w, this.h, 4);
+    ctx.fill();
+    ctx.strokeStyle = active ? THEME.water.light : '#151830';
+    ctx.lineWidth = 1.5;
+    ctx.shadowColor = active ? THEME.water.light : 'transparent';
+    ctx.shadowBlur = active ? 10 : 0;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // 台面网格线
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    ctx.lineWidth = 1;
+    for (let gx = this.x + 6; gx < this.x + this.w; gx += 7) {
+      ctx.beginPath();
+      ctx.moveTo(gx, this.y + 2);
+      ctx.lineTo(gx, this.y + this.h - 2);
+      ctx.stroke();
+    }
+    // L 形地下管道：表面底中心 → 向下 → 横向到池中心 → 向上接入池
+    if (pool) {
+      const startX = this.x + this.w / 2;
+      const startY = this.y + this.h;
+      const depth = Math.min(startY + 70, Math.max(pool.y + 10, startY + 40));
+      const endX = pool.x + pool.w / 2;
+      ctx.strokeStyle = active ? '#7fe0ff' : '#4a4f70';
+      ctx.lineWidth = 5;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(startX, startY);
+      ctx.lineTo(startX, depth);
+      ctx.lineTo(endX, depth);
+      ctx.lineTo(endX, pool.y + pool.h);
+      ctx.stroke();
+      ctx.lineCap = 'butt';
+      // 管道内衬高光
+      ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(startX, startY);
+      ctx.lineTo(startX, depth);
+      ctx.lineTo(endX, depth);
+      ctx.lineTo(endX, pool.y + pool.h);
+      ctx.stroke();
+    }
+    // 标注
+    glowText(ctx, '提取', this.x + this.w / 2, this.y - 4, active ? THEME.water.light : '#9fb2c8', 'bold 10px monospace', 3);
+    ctx.restore();
+  }
+}
+
+exports.Extractor = Extractor;
+
+  };
+  __modules["src/objects/dropper.js"] = function (module, exports, __require) {
+// ============================================================================
+// 滴管（Dropper）：编辑器原版物体——玩家左键单击即向正下方容器滴加液体。
+// ----------------------------------------------------------------------------
+// - 可设置管内物质（液体/可溶物质 id）、容量（g）、每滴量（g）；
+// - 只滴不吸：液体用尽为止（编辑器重设/重开局 = 满管）；
+// - 外观 = 玻璃滴管 + 橡皮胶头 + 锥形滴嘴，管内液体颜色与溶液取色一致
+//   （solutionColor：离子颜色/指示剂 pH 显色），液面随剩余量下降；
+// - 点击命中由共享点击管线 handleSceneClick 触发（编辑试玩/导出关卡同一套）。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+const { getSubstance } = __require('src/chem/substances.js');;
+const { Solution } = __require('src/chem/solution.js');;
+const { solutionColor } = __require('src/render/liquidrender.js');;
+
+const DROPPER_W = 11;
+const DROPPER_H = 52;
+
+class Dropper extends Obj {
+  constructor({ x, y, substance = 'H2O', capacity = 50, drop = 0.5, liquid, ...rest } = {}) {
+    super({
+      x, y, w: DROPPER_W, h: DROPPER_H,
+      solid: false, physicsKind: 'none', noLift: true,
+      ...rest,
+    });
+    this.substance = substance;
+    this.capacity = Math.max(0.1, capacity);
+    this.drop = Math.max(0.01, drop);
+    this.liquid = liquid == null ? this.capacity : Math.min(this.capacity, liquid);
+  }
+
+  get hoverLabel() {
+    const sub = getSubstance(this.substance);
+    const name = sub ? (sub.name ?? this.substance) : this.substance;
+    return this.liquid > 1e-9 ? `滴管·${name}（${this.liquid.toFixed(1)}g）` : `滴管·${name}（空）`;
+  }
+
+  /** 管内液体颜色：与烧杯/池同一套溶液取色（离子颜色/指示剂 pH 显色） */
+  liquidColor() {
+    const m = Math.max(1e-6, this.liquid);
+    const sol = new Solution({
+      volume: this.capacity,
+      solutes: this.liquid > 1e-9 ? { [this.substance]: m } : {},
+      water: this.liquid > 1e-9 ? m : 0,
+    });
+    return solutionColor(sol);
+  }
+
+  /** 玩家左键单击：向正下方容器滴一滴（下方无容器/已滴空则不滴） */
+  onTap(scene) {
+    if (!scene || this.liquid <= 1e-9) return false;
+    const c = this._containerBelow(scene);
+    if (!c) return false;
+    const take = Math.min(this.drop, this.liquid);
+    c.solutionMat.add(this.substance, take); // H2O 走"水"字段，其它走溶质
+    if (this.substance !== 'H2O') c.noteSolOrigin(this.substance, { kind: 'dropper', text: '滴管滴入' });
+    this.liquid -= take;
+    return true;
+  }
+
+  /** 正下方的容器（水平中心在口内；口沿到滴管底：悬在口上方 0~70px，
+   *  或滴管底已伸入容器（内深 > 8px）也算——滴管常插在池/烧杯口上）；取最近的一个 */
+  _containerBelow(scene) {
+    const cx = this.x + this.w / 2;
+    let best = null;
+    let bestDy = Infinity;
+    for (const c of scene.containers ?? []) {
+      const r = c.innerRect();
+      if (cx < r.x || cx > r.x + r.w) continue;
+      const dy = r.y - this.bottom; // 口沿到滴管底（正值=滴管底在口沿上方）
+      if (dy >= -r.h - 8 && dy <= 90 && dy < bestDy) {
+        best = c;
+        bestDy = dy;
+      }
+    }
+    return best;
+  }
+
+  render(ctx) {
+    const x = this.x;
+    const y = this.y;
+    const w = this.w;
+    const h = this.h;
+    // 橡皮胶头（红色泪滴形：大头在上，下缘收进管口）——参照真实胶头滴管
+    const hx = x + w / 2;
+    const bulbY = y + 4.5;
+    ctx.fillStyle = '#c0303a';
+    ctx.beginPath();
+    ctx.ellipse(hx, bulbY, w * 0.44, 6.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // 胶头高光（左上亮斑 + 下棱线）
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.beginPath();
+    ctx.ellipse(hx - 1.6, bulbY - 2, 1.6, 2.6, -0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(120,20,24,0.5)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(hx - 3.4, bulbY + 5.4);
+    ctx.quadraticCurveTo(hx, bulbY + 6.8, hx + 3.4, bulbY + 5.4);
+    ctx.stroke();
+    // 玻璃管（细长）：管口从胶头垂到细管口
+    const gx = hx - w * 0.14;
+    const gw = w * 0.28;
+    const gy = y + 10;
+    const gh = h - 14 - 8; // 上到锥尖
+    ctx.fillStyle = 'rgba(215,235,255,0.16)';
+    ctx.fillRect(gx, gy, gw, gh);
+    ctx.strokeStyle = 'rgba(215,235,255,0.85)';
+    ctx.lineWidth = 1.2;
+    ctx.strokeRect(gx, gy, gw, gh);
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.fillRect(gx + 0.6, gy, 0.7, gh); // 左侧玻璃高光
+    // 管内液体（颜色与溶液取色一致；液面随剩余比例下降）
+    const frac = Math.max(0, Math.min(1, this.liquid / this.capacity));
+    const innerY = gy + 1;
+    const innerH = gh - 2;
+    const lh = innerH * frac;
+    if (lh > 0.6) {
+      const { color, alpha } = this.liquidColor();
+      ctx.globalAlpha = Math.max(alpha, 0.45);
+      ctx.fillStyle = color;
+      ctx.fillRect(gx + 0.6, innerY + innerH - lh, gw - 1.2, lh);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.moveTo(gx + 0.8, innerY + innerH - lh);
+      ctx.lineTo(gx + gw - 0.8, innerY + innerH - lh);
+      ctx.stroke();
+    }
+    // 锥形滴嘴（细管下端收尖）
+    ctx.fillStyle = 'rgba(215,235,255,0.2)';
+    ctx.beginPath();
+    ctx.moveTo(gx, gy + gh);
+    ctx.lineTo(hx, y + h);
+    ctx.lineTo(gx + gw, gy + gh);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(215,235,255,0.7)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+}
+
+exports.DROPPER_W = DROPPER_W;
+exports.DROPPER_H = DROPPER_H;
+exports.Dropper = Dropper;
+
+  };
+  __modules["src/level/click.js"] = function (module, exports, __require) {
+// ============================================================================
+// 场景点击管线（编辑器试玩 / 导出关卡 / Multiscene 共用同一套）：
+//  1. 右上「提示」按钮（HUD）；
+//  2. 右下物品栏选格；
+//  3. 场景内可点击物体（实现 onTap 的对象，如滴管——左键单击滴液）。
+// ============================================================================
+
+/** 屏幕坐标 → 世界坐标（与 Renderer.frame 同口径：跟随玩家/居中） */
+function screenToWorld(scene, canvas, sx, sy) {
+  const c = scene.camera;
+  if (!c) return { x: sx, y: sy };
+  const { scale, offsetX, offsetY } = c.compute(canvas.width, canvas.height, scene.player ?? null);
+  return { x: (sx - offsetX) / scale, y: (sy - offsetY) / scale };
+}
+
+/**
+ * 处理一次画布点击（sx/sy 为画布像素坐标）。
+ * hud 可为空（无 HUD 时只处理物体点击）。返回 true = 已消费。
+ */
+function handleSceneClick(scene, hud, canvas, sx, sy) {
+  if (!scene) return false;
+  // 1) 提示按钮（右上）
+  if (sx > canvas.width - 68 && sx < canvas.width - 8 && sy > 8 && sy < 34) {
+    if (hud) hud.showTip = !hud.showTip;
+    return true;
+  }
+  // 2) 物品栏选格（右下）
+  const p = scene.player;
+  if (p && p.inventory && hud) {
+    const { slotSize } = hud;
+    const slots = p.inventory.slots;
+    const n = slots.length;
+    const gap = 4;
+    const total = n * slotSize + (n - 1) * gap;
+    const sx0 = canvas.width - total - 10;
+    const sy0 = canvas.height - slotSize - 10;
+    for (let i = 0; i < n; i++) {
+      const bx = sx0 + i * (slotSize + gap);
+      if (sx >= bx && sx <= bx + slotSize && sy >= sy0 && sy <= sy0 + slotSize) {
+        p.inventory.selected = i;
+        return true;
+      }
+    }
+  }
+  // 3) 可点击物体（onTap）：从上层往下命中 bbox（±6px 宽容——滴管等细长物体好点中）
+  const w = screenToWorld(scene, canvas, sx, sy);
+  for (let i = scene.objects.length - 1; i >= 0; i--) {
+    const o = scene.objects[i];
+    if (typeof o.onTap !== 'function') continue;
+    if (w.x >= o.x - 6 && w.x <= o.x + o.w + 6 && w.y >= o.y - 6 && w.y <= o.y + o.h + 6) {
+      o.onTap(scene, w);
+      return true;
+    }
+  }
+  return false;
+}
+
+/** 给画布绑定点击（getScreenPos / getActive 由调用方提供：单场景/多场景都行） */
+function bindSceneClick(canvas, getScreenPos, getActive) {
+  canvas.addEventListener('click', (e) => {
+    const a = getActive();
+    if (!a || !a.scene) return;
+    const { x, y } = getScreenPos(e);
+    handleSceneClick(a.scene, a.hud ?? null, canvas, x, y);
+  });
+}
+
+exports.screenToWorld = screenToWorld;
+exports.handleSceneClick = handleSceneClick;
+exports.bindSceneClick = bindSceneClick;
+
+  };
+  __modules["src/level/multiscene.js"] = function (module, exports, __require) {
+// ============================================================================
+// Multiscene：多场景（章节）关卡管理器。
+// ----------------------------------------------------------------------------
+// 一个关卡 = 多个独立 Scene（各自世界尺寸/物体/反应/插件），共享一条主循环，
+// 任一时刻只推进/渲染"当前激活"的场景；切换即热切换（旧场景状态完整保留，
+// 切回去时原样恢复——章节推进语义）。
+//
+// 用法（关卡脚本）：
+//   const M = new Chezzle.Multiscene(container, { width:1100, height:700 });
+//   M.scene('a').floor(...).player(...)...;        // 每个场景独立链式构建
+//   M.scene('b').floor(...)...;
+//   M.buildAll();                                   // 全部构建（含各场景插件注入）
+//   M.byId('a','sw').onOpen(() => M.switchTo('b', { spawn:{x:60, y:100} }));
+//   M.start('a');
+//
+// switchTo 语义：
+//   - 默认 carryPlayer（把玩家对象搬去新场景：物品栏/身上物质/血量都保留；
+//     新场景若自己摆了玩家则替换之，spawn 给坐标则重定位）；
+//   - 旧场景完整保留，切回去即回到离开时的状态。
+// ============================================================================
+
+const { LevelBuilder } = __require('src/level/builder.js');;
+const { startLoop } = __require('src/core/loop.js');;
+const { bindKeyboard } = __require('src/core/input.js');;
+const { Plugins } = __require('src/level/plugins.js');;
+const { handleSceneClick } = __require('src/level/click.js');;
+
+class Multiscene {
+  /**
+   * @param container 容器元素（div 等），每个场景会获得一个叠放的 canvas（当前场景可见）
+   * @param opts { width, height, plugins: [{name,cfg}]  全局注入每个场景的插件 }
+   */
+  constructor(container, opts = {}) {
+    if (!container || typeof container !== 'object') throw new Error('Multiscene 需要容器元素');
+    this.container = container;
+    this.width = opts.width ?? 1100;
+    this.height = opts.height ?? 700;
+    this.plugins = opts.plugins ?? []; // 全局插件（注入每个场景）
+    this.scenes = new Map();           // name -> { name, builder, scene, canvas, renderer, hud, plugins, built, active }
+    this.current = null;               // 当前激活场景名
+    this.switches = 0;                 // 切换计数（调试/插件用）
+    this.hold = {};                    // 跨场景共享状态（关卡脚本/插件自由使用）
+    this._stop = null;
+    this._unbindKeys = null;
+    this.onSwitch = null;              // (fromName, toName) => void（可再赋值）
+    this._canvasFactory = opts.canvasFactory ?? null; // 测试注入
+  }
+
+  /** 创建/获取一个场景，返回其 LevelBuilder（链式 .floor(...).player(...)...） */
+  scene(name, opts = {}) {
+    if (this.scenes.has(name)) return this.scenes.get(name).builder;
+    const canvas = this._makeCanvas();
+    const builder = new LevelBuilder(canvas, { worldW: opts.worldW, worldH: opts.worldH });
+    const entry = {
+      name,
+      builder,
+      scene: null,
+      canvas,
+      renderer: builder.renderer,
+      hud: builder.hud,
+      plugins: opts.plugins ?? null, // null = 用全局 this.plugins
+      built: false,
+      active: false,
+    };
+    this.scenes.set(name, entry);
+    this._bindClick(entry); // 每个场景画布的鼠标（提示按钮/物品栏选格/调试悬停）
+    return builder;
+  }
+
+  /** 与 LevelBuilder.bindClick 一致：提示按钮（右上）+ 物品栏选格（右下）+ 调试悬停 */
+  _bindClick(entry) {
+    const canvas = entry.canvas;
+    const screenPos = (e) => {
+      const r = canvas.getBoundingClientRect();
+      return {
+        x: (e.clientX - r.left) * (canvas.width / r.width),
+        y: (e.clientY - r.top) * (canvas.height / r.height),
+      };
+    };
+    const activeOf = () => (this.current === entry.name && entry.active ? entry : null);
+    const onMove = (e) => {
+      const cur = activeOf();
+      if (!cur?.scene?.debugMode) return;
+      cur.scene.mouse = { ...screenPos(e), on: true };
+    };
+    const onLeave = () => {
+      const cur = activeOf();
+      if (cur?.scene?.mouse) cur.scene.mouse.on = false;
+    };
+    canvas.addEventListener('mousemove', onMove);
+    canvas.addEventListener('mouseleave', onLeave);
+    canvas.addEventListener('click', (e) => {
+      const cur = activeOf();
+      if (!cur || !cur.hud) return;
+      const { x, y } = screenPos(e);
+      // 提示按钮 / 物品栏选格 / 场景内可点击物体（滴管等 onTap）——与单场景同一管线
+      handleSceneClick(cur.scene, cur.hud, canvas, x, y);
+    });
+  }
+
+  _makeCanvas() {
+    const canvas = this._canvasFactory
+      ? this._canvasFactory()
+      : document.createElement('canvas');
+    canvas.width = this.width;
+    canvas.height = this.height;
+    canvas.style.position = 'absolute';
+    canvas.style.inset = '0';
+    canvas.style.display = 'none';
+    this.container.appendChild(canvas);
+    return canvas;
+  }
+
+  /** 构建全部场景（build + 插件注入）。返回 name -> scene 映射。 */
+  buildAll() {
+    const out = {};
+    for (const [name, e] of this.scenes) {
+      if (e.built) continue;
+      e.scene = e.builder.build();
+      e.scene.status = 'running';
+      // 插件注入：场景级（scene(name,{plugins})) 优先于全局
+      const entries = e.plugins ?? this.plugins;
+      Plugins.inject(e.scene, entries);
+      e.built = true;
+      out[name] = e.scene;
+    }
+    return out;
+  }
+
+  byName(name) {
+    return this.scenes.get(name)?.scene ?? null;
+  }
+
+  /** 便捷：取场景内物体 scene.byId */
+  byId(name, id) {
+    return this.scenes.get(name)?.scene?.byId?.[id] ?? null;
+  }
+
+  /** 启动：从指定场景开始（共享主循环） */
+  start(name) {
+    this.buildAll();
+    const e = this.scenes.get(name);
+    if (!e) throw new Error(`场景不存在: ${name}`);
+    e.canvas.style.display = 'block';
+    e.active = true;
+    this.current = name;
+    this._unbindKeys = bindKeyboard(e.scene);
+    this._stop = startLoop(() => {
+      const a = this.scenes.get(this.current);
+      return a && a.active ? { scene: a.scene, renderer: a.renderer, hud: a.hud } : null;
+    });
+    return this;
+  }
+
+  /** 切换到场景 name */
+  switchTo(name, opts = {}) {
+    const e = this.scenes.get(name);
+    if (!e || !e.built) throw new Error(`场景不存在或未构建: ${name}`);
+    if (this.current === name && e.active) return this;
+    const from = this.scenes.get(this.current);
+    if (from && from.active) from.active = false;
+    if (from) from.canvas.style.display = 'none';
+
+    if (opts.carryPlayer !== false) {
+      const carriedObj = from?.scene?.player ?? null;
+      if (carriedObj) {
+        // 玩家对象整体搬移：物品栏/身上物质/血量全保留
+        const target = e.scene.player;
+        if (target && target !== carriedObj) e.scene.removeObject(target); // 替换占位玩家
+        if (e.scene.byId[carriedObj.id] && e.scene.byId[carriedObj.id] !== carriedObj) {
+          carriedObj.id = `${carriedObj.id}_carry${this.switches}`;
+        }
+        from.scene.removeObject(carriedObj);
+        if (opts.spawn) {
+          carriedObj.x = opts.spawn.x;
+          carriedObj.y = opts.spawn.y;
+          if (carriedObj.vel) { carriedObj.vel.x = 0; carriedObj.vel.y = 0; }
+        }
+        e.scene.addObject(carriedObj);
+      }
+    } else if (opts.spawn && e.scene.player) {
+      e.scene.player.x = opts.spawn.x;
+      e.scene.player.y = opts.spawn.y;
+    }
+
+    e.canvas.style.display = 'block';
+    e.active = true;
+    this.current = name;
+    this.switches++;
+    // 键盘事件转发切换（bindKeyboard 绑定的是旧场景）
+    if (this._unbindKeys) this._unbindKeys();
+    this._unbindKeys = bindKeyboard(e.scene);
+    e.scene.fire('enter', { from: from?.name ?? null, switches: this.switches });
+    if (this.onSwitch) this.onSwitch(from?.name ?? null, name);
+    return this;
+  }
+
+  /** 关闭管理器（停止循环、解除键盘绑定） */
+  stop() {
+    if (this._stop) this._stop();
+    this._stop = null;
+    if (this._unbindKeys) this._unbindKeys();
+    this._unbindKeys = null;
+  }
+}
+
+exports.Multiscene = Multiscene;
+
+  };
+  global.Chezzle = __require("src/index.js");
+})(typeof window !== 'undefined' ? window : globalThis);

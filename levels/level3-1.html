@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Chezzle 关卡</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0e28; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { background: #0b0e28; box-shadow: 0 0 60px rgba(120,90,220,0.25); }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script src="../dist/chezzle.js"></script>
+<script src="report.js"></script>
+<script>
+const canvas = document.getElementById('game');
+canvas.width = 1100;
+canvas.height = 700;
+const L = new Chezzle.LevelBuilder(canvas, { worldW: 950, worldH: 800 });
+L
+  .debugmode()
+  .floor(49, 676, 229, 94, { id: 'floor15' })
+  .player(81, 577, { substance: 'Cu', mass: 30, id: 'player2' })
+  .block(217, 624, { substance: 'KMnO4', w: 40, h: 45, id: 'block5' })
+  .pool(271, 678, 216, 62, { volume: 500, solutes: {"HCl":30}, gasHeight: 900, id: 'pool6' })
+  .floor(482, 679, 308, 80, { id: 'floor16' })
+  .gasdetector(507, 658, { gas: 'Cl2', threshold: 0.5, opening: 'Cl2', id: 'gasdetector3' })
+  .portal(585, 614, { w: 44, h: 64, color: '#c78bff', uses: 1, switchId: 'gasdetector3', id: 'portal9' })
+  .floor(458, 418, 303, 48, { id: 'floor17' })
+  .portal(684, 350, { w: 44, h: 64, color: '#c78bff', uses: 1, switchId: 'gasdetector3', id: 'portal10' })
+  .block(508, 333, { substance: 'Zn', w: 80, h: 80, id: 'block6' })
+  .floor(17, 280, 311, 62, { id: 'floor18' })
+  .lamp(173, 241, { autoOn: true, id: 'lamp1' })
+  .key(108, 253, { opening: 'FeS', openId: 'door1', id: 'key1' })
+  .door(35, 210, 42, 73, { id: 'door1' })
+  .sign(834, 769, 'level 3-1 Easy!', { id: 'sign1' })
+  .pool(2400, 540, 255, 63, { volume: 200, solutes: {}, id: 'pool7' })
+  .sign(2510, 652, '放水！！:D', { id: 'sign2' })
+  .block(2470, 367, { substance: 'H2O', w: 110, h: 115, pushable: false, id: 'block7' })
+  .block(180, 72, { substance: 'Fe', w: 35, h: 35, id: 'block8' })
+  .floor(157, 116, 81, 20, { id: 'floor19' })
+  .switch(262, 256, { mode: 'pressure', deleteId: 'floor19', id: 'switch1' })
+  .deposit(2490, 315, { substance: 'H2O', w: 70, h: 30, id: 'deposit1' })
+  .reaction('H2O + H2O -> 2H2O')
+;
+
+const scene = L.build();
+scene.byId['lamp1'].addPrecipitate('S', 3);
+
+// ⚡ 接线（示例，按需取消注释）：
+// scene.byId['sw'].onOpen(() => scene.byId['lamp'].ignite());
+// scene.byId['sw'].onClose(() => scene.byId['lamp'].extinguish());
+// scene.byId['key'].onOpen(() => scene.byId['door'].open());
+// scene.atmosphere.add('CO2', 8); // 可选：初始大气 CO2（碳化玩法）
+
+L.start();
+ChezzleReport.bind(scene, 'Li-1'); // 选关系统：通关上报
+</script>
+</body>
+</html>
