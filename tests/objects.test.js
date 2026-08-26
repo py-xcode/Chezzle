@@ -153,6 +153,29 @@ test('物品栏快满时收集自由粒子不丢失：粒子保留剩余量', ()
   assert.ok(Math.abs(particle.amount) < 1e-6, `粒子应收完（跨格收集），实际 ${particle.amount}`);
 });
 
+test('容器沉淀按边沿距离拾取：远处收不到、贴边可收（旧=中心+容器宽，大池隔着老远能收）', () => {
+  // 远：玩家中心 (140,585)，池 (300,600,200,60) —— 边沿距 160px > 70；旧逻辑中心距 ≈264 ≤ 270（能收到＝bug）
+  const scene1 = flatScene();
+  const p1 = new Player({ x: 100, y: 540 });
+  scene1.addObject(p1);
+  const pool1 = new Pool({ x: 300, y: 600, w: 200, h: 60, volume: 100 });
+  scene1.addObject(pool1);
+  pool1.addPrecipitate('Cu(OH)2', 3);
+  scene1.pressed.add('collect');
+  scene1.step(TICK);
+  assert.ok(Math.abs((pool1.precipitates.get('Cu(OH)2') ?? 0) - 3) < 1e-9, '远距离不应收到（容器沉淀留在池里）');
+  // 近：玩家贴池边（玩家右缘 ≈ 池左缘）
+  const scene2 = flatScene();
+  const p2 = new Player({ x: 250, y: 540 });
+  scene2.addObject(p2);
+  const pool2 = new Pool({ x: 300, y: 600, w: 200, h: 60, volume: 100 });
+  scene2.addObject(pool2);
+  pool2.addPrecipitate('Cu(OH)2', 3);
+  scene2.pressed.add('collect');
+  scene2.step(TICK);
+  assert.ok((pool2.precipitates.get('Cu(OH)2') ?? 0) < 1e-9, '贴池边应能收到');
+});
+
 // ---- 4. 放置沉淀（地面） -----------------------------------------------------
 test('玩家放置沉淀到脚下地面', () => {
   const scene = flatScene();

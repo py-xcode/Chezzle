@@ -9347,11 +9347,15 @@ class Player extends Obj {
       p.amount -= put;
       if (p.amount <= 1e-9) scene.removeObject(p);
     }
-    // 容器内沉淀（池/烧杯/开关等，任意位置）；只取能放下的量，放不下的留在容器里
+    // 容器内沉淀（池/烧杯/开关等）：玩家**身体边缘**到容器边缘的距离 ≤ 拾取半径
+    //（与自由粒子同一半径；贴在池边/池内才算够得着）。旧逻辑按"容器中心 + 容器宽"
+    // 判定——大池隔着大半个屏幕就能收到（用户反馈）。
     for (const c of scene.containers) {
-      const cx = c.x + (c.w ?? 0) / 2;
-      const cy = c.y + (c.h ?? 0) / 2;
-      if (Math.hypot(cx - me.x, cy - me.y) > CFG.collectRadius + (c.w ?? 0)) continue;
+      const cw = c.w ?? 0;
+      const ch = c.h ?? 0;
+      const nx = Math.max(c.x - (this.x + this.w), 0, this.x - (c.x + cw));
+      const ny = Math.max(c.y - this.bottom, 0, this.top - (c.y + ch));
+      if (Math.hypot(nx, ny) > CFG.collectRadius) continue;
       for (const [id, mass] of [...c.precipitates]) {
         if (mass <= 0) continue;
         const room = this.inventory.roomFor(id);
