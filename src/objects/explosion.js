@@ -147,7 +147,7 @@ export class Explosion extends Obj {
       const x1 = x + Math.cos(ang) * d1;
       const y1 = y + Math.sin(ang) * d1 * 0.88 + fall;
       const a = Math.max(0, alpha * (1 - t * 0.8));
-      const isFlame = flame && i % 3 === 0; // 1/3 火星带焰色
+      const isFlame = flame && i % 2 === 0; // 1/2 火星带焰色（比重高一点）
       ctx.globalAlpha = a;
       if (isFlame) ctx.strokeStyle = flame;
       else ctx.strokeStyle = i % 2 ? 'rgba(255,220,160,1)' : 'rgba(255,120,40,1)';
@@ -181,7 +181,7 @@ export class Explosion extends Obj {
     }
     // ---- 焰色残余辉光（火团消退后，一层反应物焰色薄光慢慢散开——焰色反应的"余韵"） ----
     if (flame && t > 0.22) {
-      const fa = alpha * 0.22 * Math.min(1, (t - 0.22) / 0.18);
+      const fa = alpha * 0.3 * Math.min(1, (t - 0.22) / 0.18);
       ctx.globalAlpha = fa;
       ctx.fillStyle = flame;
       ctx.beginPath();
@@ -202,7 +202,7 @@ export class Explosion extends Obj {
       const ex = x + Math.sin(rnd[20 + i] * 20 + t * 4) * R * 0.8;
       const ey = y - 8 + t * t * R * 1.1;
       ctx.globalAlpha = alpha * (0.6 + 0.4 * Math.sin(t * 30 + i * 7));
-      ctx.fillStyle = flame && i === 0 ? flame : '#ffcf7a';
+      ctx.fillStyle = flame ? flame : '#ffcf7a'; // 余烬也带焰色
       ctx.beginPath();
       ctx.arc(ex, ey, Math.max(0.6, 1.8 - t), 0, Math.PI * 2);
       ctx.fill();

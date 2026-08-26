@@ -693,7 +693,7 @@ export class Scene {
       const faceW = eb ? eb.x1 - eb.x0 : (srcObj?.w ?? emit.container?.w ?? 48) * 0.6;
       const w = Math.max(40, Math.min(180, faceW * 0.85));
       plume = new GasColumn({
-        x: center.x - w / 2, y: center.y - gh, w, h: gh,
+        x: center.x - w / 2, y: point.y - gh, w, h: gh,
         dir, accel, maxSpeed, life: 2.5, gasId: id,
         source: srcObj, // 产气源（自身不被自己的气流托起）
         origin: ctx ? { kind: 'reaction', text: ctx.lastRxText ?? '' } : null, // 来源方程式（调试悬停显示）
