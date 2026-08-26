@@ -751,6 +751,28 @@ class Scene {
    *    玩家/物块施力。同一产气点只保留一个气流，持续刷新、反应停则消散。
    *  - 气泡（Bubble）纯视觉反馈，被地板阻断消失。
    */
+  /** 暴露面外包（世界坐标 x/y 范围）：大柱覆盖整个反应面（"合并成的大柱"），
+   *  微观点位由每 tick 的 reactionPoint 提供（气泡/标签/产物在热点冒出） */
+  _exposedBounds(obj) {
+    const pts = obj.grid?.exposedCells ? obj.grid.exposedCells() : [];
+    if (!pts.length) return null;
+    let x0 = Infinity;
+    let x1 = -Infinity;
+    let y0 = Infinity;
+    let y1 = -Infinity;
+    const ox = obj.gridOrigin?.x ?? obj.x;
+    const oy = obj.gridOrigin?.y ?? obj.y;
+    for (const c of pts) {
+      const px = ox + c.x * CELL_SIZE + CELL_SIZE / 2;
+      const py = oy + c.y * CELL_SIZE + CELL_SIZE / 2;
+      if (px < x0) x0 = px;
+      if (px > x1) x1 = px;
+      if (py < y0) y0 = py;
+      if (py > y1) y1 = py;
+    }
+    return { x0, x1, y0, y1 };
+  }
+
   onGas(id, mass, ctx) {
     // 记录"反应产生的气体"（气体探测器只检测这个，不检测预置大气气体）
     this._reactGas[id] = (this._reactGas[id] ?? 0) + mass;
@@ -760,27 +782,31 @@ class Scene {
     // 气流强度随产气量增强（基础 > 重力，使小反应也有明显上浮/下沉）
     const accel = Math.max(1300, 1100 + mass * 130);
     const maxSpeed = Math.min(300, 150 + mass * 18);
+    const emit = this._emitCtx ?? {};
+    const srcObj = emit.obj ?? null;
+    // 柱的位置=**反应暴露面外包**（合并成一条稳定大柱：覆盖整个反应面，不再每条
+    // 小柱四处跳——用户反馈"零零散散"）；微观点位（气泡/标签/产物）仍按热点走。
+    const eb = srcObj ? this._exposedBounds(srcObj) : null;
+    const center = eb
+      ? { x: (eb.x0 + eb.x1) / 2, y: (Math.max(eb.y1, point.y)) }
+      : point;
     let plume = null;
     for (const o of this.objects) {
-      // 同一产气点、同方向、同气体才共柱（不同气体各显各的标签）
-      if (o instanceof GasColumn && o.life > 0 && o.dir === dir && o.gasId === id && Math.abs(o.x + o.w / 2 - point.x) < 30) {
+      // 同一产气源、同方向、同气体共柱（源变（被溶窄等）时柱自然跟随；不同源各显各的）
+      if (o instanceof GasColumn && o.life > 0 && o.dir === dir && o.gasId === id && o.source === srcObj) {
         plume = o;
         break;
       }
     }
     if (!plume) {
-      // 气泡柱高度：用产气源对象配置的 gasHeight，默认 80。产气源多数是池溶液
-      // 反应的固体反应物（无 gasHeight）——此时回退读容器（池/烧杯）的配置，
-      // 否则编辑器里设置的"气泡柱高度"永远不生效。
-      const emit = this._emitCtx ?? {};
-      const srcObj = emit.obj ?? null;
+      // 气泡柱高度：用产气源对象配置的 gasHeight，默认 80；不配则读容器（池/烧杯）
       const ghSrc = srcObj && srcObj.gasHeight ? srcObj : (emit.container ?? null);
       const gh = ghSrc && ghSrc.gasHeight ? ghSrc.gasHeight : 80;
-      // 柱宽随产气源尺寸（物块/容器宽）：小反应细柱，宽反应面宽柱（不再 48px 恒定）
-      const srcW = (srcObj && srcObj.w) || (emit.container && emit.container.w) || 48;
-      const w = Math.max(36, Math.min(110, srcW * 0.3));
+      // 柱宽 = 反应面（暴露面）宽 × 0.5（30~130px）；无暴露面回退"源宽×0.3"
+      const faceW = eb ? eb.x1 - eb.x0 : (srcObj?.w ?? emit.container?.w ?? 48) * 0.6;
+      const w = Math.max(34, Math.min(130, faceW * 0.5));
       plume = new GasColumn({
-        x: point.x - w / 2, y: point.y - gh / 2, w, h: gh,
+        x: center.x - w / 2, y: center.y - gh / 2, w, h: gh,
         dir, accel, maxSpeed, life: 2.5, gasId: id,
         source: srcObj, // 产气源（自身不被自己的气流托起）
         origin: ctx ? { kind: 'reaction', text: ctx.lastRxText ?? '' } : null, // 来源方程式（调试悬停显示）
@@ -791,11 +817,11 @@ class Scene {
     plume.life = 2.5;
     if (accel > plume.accel) plume.accel = accel;
     if (maxSpeed > plume.maxSpeed) plume.maxSpeed = maxSpeed;
-    // 气泡视觉
-    const n = Math.max(1, Math.min(8, Math.round(mass * 1.5)));
+    // 气泡视觉：在**当前反应热点**冒出（每 tick 热点在暴露面随机换位 → 气泡沿整个反应面分布）
+    const n = Math.max(1, Math.min(6, Math.round(mass * 1.2)));
     for (let i = 0; i < n; i++) {
-      const x = point.x + (Math.random() - 0.5) * 40;
-      const y = point.y + (dir < 0 ? -(4 + i * 5) : 4 + i * 5);
+      const x = point.x + (Math.random() - 0.5) * 22;
+      const y = point.y + (dir < 0 ? -(3 + i * 4) : 3 + i * 4);
       this.addObject(new Bubble({ x, y, dir }));
     }
   }
@@ -6184,21 +6210,38 @@ exports.GasColumn = GasColumn;
   };
   __modules["src/objects/explosion.js"] = function (module, exports, __require) {
 // ============================================================================
-// 爆炸视觉：多层火球（白核→橙→暗红）+ 双层冲击环 + 径向拖尾火星 + 上升烟尘。
-// 半径/亮度均按 ease-out 曲线推进（瞬间炸开、缓慢消散），0.5s 后自动移除。
+// 爆炸视觉 v2（从头构思）：
+//  阶段1 白热闪核 → 阶段2 火团（12 片火焰瓣组成的翻涌边缘，非正圆）暖色渐变
+//  阶段3 撕裂冲击环（快白环+慢橙环+径向光纹）→ 阶段4 带下坠的拖尾火星
+//  全程 烟尘/余烬淡出。0.5s 后移除。
 // 物理冲击（炸飞/碎裂）由 Scene.explode 处理；本对象只负责视觉反馈。
 // ============================================================================
 
 const { Obj } = __require('src/objects/obj.js');;
+
+/** 确定性伪随机（mulberry32）：同一 Explosion 实例内每次渲染形状一致；不同实例不同形 */
+function mulberry32(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s |= 0;
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 class Explosion extends Obj {
   constructor({ x, y, strength = 10, cause = null, flip = false }) {
     super({ x, y, w: 0, h: 0, solid: false, physicsKind: 'none', noLift: true });
     this.strength = strength;
     this.cause = cause; // 爆炸原因文本（调试：爆炸发生时显示）
-    this.flip = flip;   // 多样化的相位（同一物体连续爆炸时角度/形状不雷同）
     this.age = 0;
     this.life = 0.5;
+    // 每次爆炸生成一套确定性形状参数（角度偏置/瓣数/火星轨迹），连续爆炸不雷同
+    const rnd = mulberry32((flip ? 0x9e37 : 0x85eb) + (strength * 7919 | 0));
+    this.rnd = [];
+    for (let i = 0; i < 40; i++) this.rnd.push(rnd());
   }
 
   update(dt, scene) {
@@ -6207,76 +6250,129 @@ class Explosion extends Obj {
   }
 
   render(ctx, scene) {
+    const rnd = this.rnd;
     const t = Math.min(1, this.age / this.life); // 0..1
-    // ease-out：瞬间炸开（前 30% 完成 70% 半径），之后缓慢收尾
-    const e = 1 - Math.pow(1 - Math.min(1, t / 0.45), 2.2);
-    const R = (16 + this.strength * 2.4) * (0.25 + 0.75 * e);
+    // 爆发曲线：前 35% 完成 ~80% 半径（瞬间炸开、缓慢收尾）
+    const ease = 1 - Math.pow(1 - Math.min(1, t / 0.38), 2.1);
+    const R = (16 + this.strength * 2.4) * (0.25 + 0.75 * ease);
     const alpha = Math.max(0, 1 - t);
-    const seed = this.flip ? 1.7 : 0;
+    const x = this.x;
+    const y = this.y;
     ctx.save();
-    // ---- 主体火球：多层径向渐变（白核 → 橙 → 暗红 → 透明），带轻微火焰抖动 ----
-    const wob = 1 + 0.06 * Math.sin((t * 14 + seed * 9) * 3); // 边界轻微波动，不死板
-    const layers = [
-      [2.2, 'rgba(255,255,245,ALPHA)', 0.95], // 白核
-      [0.62, 'rgba(255,190,90,ALPHA)', 0.75],
-      [0.34, 'rgba(255,110,30,ALPHA)', 0.5],
-    ];
-    for (const [rr, col, strength] of layers) {
-      const g = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, Math.max(2, R * rr * wob));
-      g.addColorStop(0, col.replace('ALPHA', (alpha * strength).toFixed(3)));
-      g.addColorStop(1, col.replace('ALPHA', '0'));
+    // ---- 白热闪核（前 18% 最亮，快速熄灭） ----
+    const flash = Math.max(0, 1 - t / 0.18);
+    if (flash > 0.02) {
+      const g = ctx.createRadialGradient(x, y, 0, x, y, R * 1.15);
+      g.addColorStop(0, `rgba(255,255,252,${(flash * 0.95).toFixed(3)})`);
+      g.addColorStop(0.35, `rgba(255,236,190,${(flash * 0.55).toFixed(3)})`);
+      g.addColorStop(1, 'rgba(255,160,60,0)');
       ctx.fillStyle = g;
       ctx.beginPath();
-      ctx.arc(this.x, this.y, Math.max(2, R * rr * wob), 0, Math.PI * 2);
+      ctx.arc(x, y, R * 1.15, 0, Math.PI * 2);
       ctx.fill();
     }
-    // ---- 双层冲击环：白色细环（快）+ 橙色宽环（慢），r 间推开 ----
-    ctx.lineCap = 'round';
-    const rings = [
-      { r0: 0.55, r1: 1.18, w: (1 - t) * 4 + 0.8, color: 'rgba(255,233,190,ALPHA)' },
-      { r0: 0.25, r1: 0.85, w: (1 - t) * 2.4 + 0.6, color: 'rgba(255,150,60,ALPHA)' },
-    ];
-    for (let i = 0; i < rings.length; i++) {
-      const rg = rings[i];
-      const rr = R * (rg.r1 + (rg.r0 - rg.r1) * e);
-      ctx.globalAlpha = alpha * (0.9 - i * 0.25);
-      ctx.strokeStyle = rg.color.replace('ALPHA', '1');
-      ctx.lineWidth = rg.w;
-      ctx.shadowColor = 'rgba(255,140,60,0.8)';
-      ctx.shadowBlur = 12;
-      ctx.beginPath();
-      ctx.arc(this.x, this.y, Math.max(1, rr), 0, Math.PI * 2);
-      ctx.stroke();
+    // ---- 火团：12 片火焰瓣拼成翻涌边缘（非正圆，慢速旋转） ----
+    const lobes = 12;
+    const spin = t * 0.9 + (rnd[0] - 0.5) * 2;
+    const wob = 1 + 0.05 * Math.sin(t * 9 + rnd[1] * 6); // 整体轻微呼吸
+    ctx.beginPath();
+    for (let i = 0; i < lobes; i++) {
+      const ang = spin + (i / lobes) * Math.PI * 2;
+      const rr = R * (0.6 + rnd[2 + i] * 0.34) * wob
+        * (0.72 + 0.28 * Math.sin(t * 12 + rnd[2 + i] * 9)); // 每瓣自己抖动（火舌感）
+      const px = x + Math.cos(ang) * rr * 0.92;
+      const py = y + Math.sin(ang) * rr * 0.8; // 略扁：贴近地面的爆燃
+      ctx.moveTo(px + R * 0.3, py);
+      ctx.arc(px, py, R * 0.3, 0, Math.PI * 2);
     }
+    const fireG = ctx.createRadialGradient(x, y, 0, x, y, R);
+    fireG.addColorStop(0, `rgba(255,246,225,${(alpha * 0.95).toFixed(3)})`);
+    fireG.addColorStop(0.45, `rgba(255,180,80,${(alpha * 0.7).toFixed(3)})`);
+    fireG.addColorStop(0.8, `rgba(255,105,30,${(alpha * 0.4).toFixed(3)})`);
+    fireG.addColorStop(1, 'rgba(180,60,20,0)');
+    ctx.fillStyle = fireG;
+    ctx.shadowColor = 'rgba(255,130,40,0.9)';
+    ctx.shadowBlur = 24;
+    ctx.fill();
     ctx.shadowBlur = 0;
-    // ---- 径向拖尾火星（线段：从内到外，随 t 拉长变暗） ----
-    const n = 14;
+    // ---- 撕裂冲击环：快白内环 + 慢橙外环（宽度逐帧收细、外环带"撕裂"缺口） ----
+    ctx.lineCap = 'round';
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = 'rgba(255,240,215,0.9)';
+    ctx.lineWidth = (1 - t) * 3.2 + 0.7;
+    ctx.shadowColor = 'rgba(255,150,60,0.8)';
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.arc(x, y, R * (0.45 + 0.75 * ease), 0, Math.PI * 2);
+    ctx.stroke();
+    // 外环：一段段弧（撕裂感——按 rnd 开出 1~2 个缺口，随 t 旋转）
+    const gapA = rnd[14] * Math.PI * 2 + t * 1.4;
+    const gapB = gapA + 0.6 + rnd[15] * 0.9;
+    ctx.strokeStyle = `rgba(255,150,70,${(alpha * 0.75).toFixed(3)})`;
+    ctx.lineWidth = (1 - t) * 4.5 + 0.9;
+    ctx.beginPath();
+    ctx.arc(x, y, R * (0.75 + 1.05 * ease), gapB, gapA + Math.PI * 2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // ---- 径向光纹（爆炸方向的"刀光"，只在前 35% 短暂出现） ----
+    if (t < 0.35) {
+      const streakA = alpha * (1 - t / 0.35);
+      ctx.strokeStyle = `rgba(255,210,150,${(streakA * 0.85).toFixed(3)})`;
+      ctx.lineWidth = 1.6;
+      for (let i = 0; i < 7; i++) {
+        const ang = rnd[16 + i] * Math.PI * 2 + t * 0.6;
+        const d0 = R * (0.62 + rnd[24 + i] * 0.2);
+        const d1 = d0 + R * (0.3 + rnd[31 + i] * 0.35);
+        ctx.beginPath();
+        ctx.moveTo(x + Math.cos(ang) * d0, y + Math.sin(ang) * d0 * 0.9);
+        ctx.lineTo(x + Math.cos(ang) * d1, y + Math.sin(ang) * d1 * 0.9);
+        ctx.stroke();
+      }
+    }
+    // ---- 拖尾火星：带下坠感（传播方向 + 重力偏移） ----
+    ctx.globalAlpha = 1;
+    const n = 13;
     for (let i = 0; i < n; i++) {
-      const ang = (i / n) * Math.PI * 2 + seed * 2 + t * 1.1;
-      const d0 = R * (0.25 + t * 0.8);
-      const d1 = R * (0.35 + t * 1.5);
-      const dark = Math.max(0, alpha * (1 - t * 0.8));
-      ctx.globalAlpha = dark;
-      ctx.strokeStyle = i % 2 ? 'rgba(255,216,160,1)' : 'rgba(255,120,40,1)';
-      ctx.lineWidth = 2.2 - t * 1.4;
+      const ang = rnd[16 + i % 8] * Math.PI * 2 + t * 0.8;
+      const fall = t * t * R * 1.35; // 越飞越坠
+      const d0 = R * (0.3 + t * 0.9);
+      const d1 = R * (0.4 + t * 1.35);
+      const x0 = x + Math.cos(ang) * d0;
+      const y0 = y + Math.sin(ang) * d0 * 0.88 + fall * 0.4;
+      const x1 = x + Math.cos(ang) * d1;
+      const y1 = y + Math.sin(ang) * d1 * 0.88 + fall;
+      const a = Math.max(0, alpha * (1 - t * 0.8));
+      ctx.globalAlpha = a;
+      ctx.strokeStyle = i % 2 ? 'rgba(255,220,160,1)' : 'rgba(255,120,40,1)';
+      ctx.lineWidth = 2.3 - t * 1.5;
       ctx.beginPath();
-      ctx.moveTo(this.x + Math.cos(ang) * d0, this.y + Math.sin(ang) * d0);
-      ctx.lineTo(this.x + Math.cos(ang) * d1, this.y + Math.sin(ang) * d1);
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(x1, y1);
       ctx.stroke();
-      // 火星头
-      ctx.fillStyle = i % 2 ? '#ffe9c0' : '#ff8c3d';
+      // 火星头（亮点）
+      ctx.fillStyle = i % 2 ? '#fff3d8' : '#ff8c3d';
       ctx.beginPath();
-      ctx.arc(this.x + Math.cos(ang) * d1, this.y + Math.sin(ang) * d1, 2.4 - t, 0, Math.PI * 2);
+      ctx.arc(x1, y1, Math.max(0.8, 2.6 - t * 2), 0, Math.PI * 2);
       ctx.fill();
     }
-    // ---- 上升烟尘（几团灰点，慢慢上飘淡出） ----
-    for (let i = 0; i < 4; i++) {
-      const py = this.y - (6 + i * 9) * (0.3 + t * 0.9);
-      const px = this.x + Math.sin(seed * 5 + i * 2.1 + t * 2) * (R * 0.5 + i * 3);
-      ctx.globalAlpha = alpha * 0.28 * (1 - t * 0.6);
-      ctx.fillStyle = '#5a5f70';
+    // ---- 烟尘：深灰蓝团上升 + 余烬小亮点 ----
+    for (let i = 0; i < 5; i++) {
+      const px = x + Math.sin(rnd[5 + i] * 9 + t * 1.5) * R * (0.5 + rnd[10 + i] * 0.4);
+      const py = y - (4 + i * 8) * (0.4 + t * 1.2);
+      ctx.globalAlpha = alpha * 0.3 * (1 - t * 0.55);
+      ctx.fillStyle = '#54596b';
       ctx.beginPath();
-      ctx.arc(px, py, 3 + t * 7, 0, Math.PI * 2);
+      ctx.arc(px, py, 2.6 + t * 8.5 + rnd[i] * 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // 余烬：2 颗在下坠火星间闪烁
+    for (let i = 0; i < 2; i++) {
+      const ex = x + Math.sin(rnd[20 + i] * 20 + t * 4) * R * 0.8;
+      const ey = y - 8 + t * t * R * 1.1;
+      ctx.globalAlpha = alpha * (0.6 + 0.4 * Math.sin(t * 30 + i * 7));
+      ctx.fillStyle = '#ffcf7a';
+      ctx.beginPath();
+      ctx.arc(ex, ey, Math.max(0.6, 1.8 - t), 0, Math.PI * 2);
       ctx.fill();
     }
     // ---- 爆炸原因文本（调试）：炸点上方弹出，逐帧上浮淡出 ----
@@ -6285,13 +6381,13 @@ class Explosion extends Obj {
       ctx.font = 'bold 12px "Segoe UI", "Microsoft YaHei", monospace';
       ctx.textAlign = 'center';
       ctx.fillStyle = 'rgba(8,14,26,0.72)';
-      const ty = this.y - R * 0.9 - 10;
+      const ty = y - R * 0.9 - 10;
       const tw = ctx.measureText(this.cause).width;
       ctx.beginPath();
-      ctx.roundRect(this.x - tw / 2 - 6, ty - 14, tw + 12, 20, 6);
+      ctx.roundRect(x - tw / 2 - 6, ty - 14, tw + 12, 20, 6);
       ctx.fill();
       ctx.fillStyle = '#ffe9b0';
-      ctx.fillText(this.cause, this.x, ty - 1);
+      ctx.fillText(this.cause, x, ty - 1);
       ctx.textAlign = 'left';
     }
     ctx.restore();

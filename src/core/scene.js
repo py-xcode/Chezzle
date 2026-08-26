@@ -626,6 +626,28 @@ export class Scene {
    *    玩家/物块施力。同一产气点只保留一个气流，持续刷新、反应停则消散。
    *  - 气泡（Bubble）纯视觉反馈，被地板阻断消失。
    */
+  /** 暴露面外包（世界坐标 x/y 范围）：大柱覆盖整个反应面（"合并成的大柱"），
+   *  微观点位由每 tick 的 reactionPoint 提供（气泡/标签/产物在热点冒出） */
+  _exposedBounds(obj) {
+    const pts = obj.grid?.exposedCells ? obj.grid.exposedCells() : [];
+    if (!pts.length) return null;
+    let x0 = Infinity;
+    let x1 = -Infinity;
+    let y0 = Infinity;
+    let y1 = -Infinity;
+    const ox = obj.gridOrigin?.x ?? obj.x;
+    const oy = obj.gridOrigin?.y ?? obj.y;
+    for (const c of pts) {
+      const px = ox + c.x * CELL_SIZE + CELL_SIZE / 2;
+      const py = oy + c.y * CELL_SIZE + CELL_SIZE / 2;
+      if (px < x0) x0 = px;
+      if (px > x1) x1 = px;
+      if (py < y0) y0 = py;
+      if (py > y1) y1 = py;
+    }
+    return { x0, x1, y0, y1 };
+  }
+
   onGas(id, mass, ctx) {
     // 记录"反应产生的气体"（气体探测器只检测这个，不检测预置大气气体）
     this._reactGas[id] = (this._reactGas[id] ?? 0) + mass;
@@ -635,27 +657,31 @@ export class Scene {
     // 气流强度随产气量增强（基础 > 重力，使小反应也有明显上浮/下沉）
     const accel = Math.max(1300, 1100 + mass * 130);
     const maxSpeed = Math.min(300, 150 + mass * 18);
+    const emit = this._emitCtx ?? {};
+    const srcObj = emit.obj ?? null;
+    // 柱的位置=**反应暴露面外包**（合并成一条稳定大柱：覆盖整个反应面，不再每条
+    // 小柱四处跳——用户反馈"零零散散"）；微观点位（气泡/标签/产物）仍按热点走。
+    const eb = srcObj ? this._exposedBounds(srcObj) : null;
+    const center = eb
+      ? { x: (eb.x0 + eb.x1) / 2, y: (Math.max(eb.y1, point.y)) }
+      : point;
     let plume = null;
     for (const o of this.objects) {
-      // 同一产气点、同方向、同气体才共柱（不同气体各显各的标签）
-      if (o instanceof GasColumn && o.life > 0 && o.dir === dir && o.gasId === id && Math.abs(o.x + o.w / 2 - point.x) < 30) {
+      // 同一产气源、同方向、同气体共柱（源变（被溶窄等）时柱自然跟随；不同源各显各的）
+      if (o instanceof GasColumn && o.life > 0 && o.dir === dir && o.gasId === id && o.source === srcObj) {
         plume = o;
         break;
       }
     }
     if (!plume) {
-      // 气泡柱高度：用产气源对象配置的 gasHeight，默认 80。产气源多数是池溶液
-      // 反应的固体反应物（无 gasHeight）——此时回退读容器（池/烧杯）的配置，
-      // 否则编辑器里设置的"气泡柱高度"永远不生效。
-      const emit = this._emitCtx ?? {};
-      const srcObj = emit.obj ?? null;
+      // 气泡柱高度：用产气源对象配置的 gasHeight，默认 80；不配则读容器（池/烧杯）
       const ghSrc = srcObj && srcObj.gasHeight ? srcObj : (emit.container ?? null);
       const gh = ghSrc && ghSrc.gasHeight ? ghSrc.gasHeight : 80;
-      // 柱宽随产气源尺寸（物块/容器宽）：小反应细柱，宽反应面宽柱（不再 48px 恒定）
-      const srcW = (srcObj && srcObj.w) || (emit.container && emit.container.w) || 48;
-      const w = Math.max(36, Math.min(110, srcW * 0.3));
+      // 柱宽 = 反应面（暴露面）宽 × 0.5（30~130px）；无暴露面回退"源宽×0.3"
+      const faceW = eb ? eb.x1 - eb.x0 : (srcObj?.w ?? emit.container?.w ?? 48) * 0.6;
+      const w = Math.max(34, Math.min(130, faceW * 0.5));
       plume = new GasColumn({
-        x: point.x - w / 2, y: point.y - gh / 2, w, h: gh,
+        x: center.x - w / 2, y: center.y - gh / 2, w, h: gh,
         dir, accel, maxSpeed, life: 2.5, gasId: id,
         source: srcObj, // 产气源（自身不被自己的气流托起）
         origin: ctx ? { kind: 'reaction', text: ctx.lastRxText ?? '' } : null, // 来源方程式（调试悬停显示）
@@ -666,11 +692,11 @@ export class Scene {
     plume.life = 2.5;
     if (accel > plume.accel) plume.accel = accel;
     if (maxSpeed > plume.maxSpeed) plume.maxSpeed = maxSpeed;
-    // 气泡视觉
-    const n = Math.max(1, Math.min(8, Math.round(mass * 1.5)));
+    // 气泡视觉：在**当前反应热点**冒出（每 tick 热点在暴露面随机换位 → 气泡沿整个反应面分布）
+    const n = Math.max(1, Math.min(6, Math.round(mass * 1.2)));
     for (let i = 0; i < n; i++) {
-      const x = point.x + (Math.random() - 0.5) * 40;
-      const y = point.y + (dir < 0 ? -(4 + i * 5) : 4 + i * 5);
+      const x = point.x + (Math.random() - 0.5) * 22;
+      const y = point.y + (dir < 0 ? -(3 + i * 4) : 3 + i * 4);
       this.addObject(new Bubble({ x, y, dir }));
     }
   }
