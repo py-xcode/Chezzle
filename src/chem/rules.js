@@ -167,8 +167,12 @@ export const SPECIAL_PAIR_RULES = [
   { type: 'special', reactants: [{ id: 'CaO', coeff: 1 }, { id: 'H2O', coeff: 1 }], products: [{ id: 'Ca(OH)2', coeff: 1 }], condition: 'normal', rate: RATE.special },
   // 过氧化钠遇水（爆炸，放 O2）：2Na2O2 + 2H2O → 4NaOH + O2↑
   { type: 'special', reactants: [{ id: 'Na2O2', coeff: 2 }, { id: 'H2O', coeff: 2 }], products: [{ id: 'NaOH', coeff: 4 }, { id: 'O2', coeff: 1 }], condition: 'normal', rate: RATE.special * 2, explosive: true },
-  // 氯气歧化（遇水）：Cl2 + H2O ⇌ HCl + HClO（简化单向）
-  { type: 'special', reactants: [{ id: 'Cl2', coeff: 1 }, { id: 'H2O', coeff: 1 }], products: [{ id: 'HCl', coeff: 1 }, { id: 'HClO', coeff: 1 }], condition: 'normal', rate: RATE.special },
+  // 氯气歧化（遇水）：Cl2 + H2O ⇌ HCl + HClO —— **已移除**（用户规则：Cl2 默认
+  // 不溶于水，保持黄绿气体可见；只有集气瓶强行通入（forceDissolve）才溶成氯水）。
+  // 旧实现把它放进"成对反应表"——任何实体浸入含水容器都会触发（玩家跳进纯水池
+  // 就会让大气氯气生成氯水，随后归中再放氯气——纯水池变成氯气泵，用户实测复现），
+  // 与"CO2/SO2/NO2/Cl2 不主动溶解"的既有设计（GAS_WATER 跳过 + 大气可见 +
+  // NaOH 尾气处理）冲突。氯水玩法如需恢复：走 _emitGas 的 forceDissolve 管线。
   // 归中：HCl + HClO → Cl2↑ + H2O（Cl⁻ 与 ClO⁻ 归中为 Cl₂，浓盐酸+漂白液制氯气）
   { type: 'special', reactants: [{ id: 'HCl', coeff: 1 }, { id: 'HClO', coeff: 1 }], products: [{ id: 'Cl2', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'normal', rate: RATE.special },
   // 漂白液遇酸放出氯气（危险）：NaClO + 2HCl → NaCl + Cl2↑ + H2O
