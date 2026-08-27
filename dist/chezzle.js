@@ -61,6 +61,7 @@ Object.assign(exports, __require('src/chem/engine.js'));;
 Object.assign(exports, __require('src/physics/body.js'));;
 Object.assign(exports, __require('src/physics/aabb.js'));;
 Object.assign(exports, __require('src/physics/collision.js'));;
+Object.assign(exports, __require('src/physics/support.js'));;
 
 Object.assign(exports, __require('src/render/renderer.js'));;
 Object.assign(exports, __require('src/render/camera.js'));;
@@ -11747,6 +11748,7 @@ const { Obj } = __require('src/objects/obj.js');;
 const { renderLiquid, solutionColor } = __require('src/render/liquidrender.js');;
 const { rr } = __require('src/render/theme.js');;
 const { flowFx } = __require('src/objects/fx.js');;
+const { shallowestSupportY, settleBodyOnSupport } = __require('src/physics/support.js');;
 
 class Beaker extends Container {
   get hoverLabel() {
@@ -11807,33 +11809,10 @@ class Beaker extends Container {
     });
   }
 
-  /** 无支撑时受重力下落，落到下方支撑面停住 */
+  /** 无支撑时受重力下落，落到**最浅**支撑面停住（statics + 玩家等实心动态体；
+   *  跨在池沿/台阶上不沉入更深的盆底——见 physics/support.js 的语义说明） */
   applyGravity(dt, scene) {
-    let support = 0;
-    for (const s of scene.statics) {
-      if (!s.solid) continue;
-      if (s.y >= this.y + this.h - 2 && s.y <= this.y + this.h + 40 && s.x < this.x + this.w && s.x + s.w > this.x) {
-        support = Math.max(support, s.y);
-      }
-    }
-    if (support > 0) {
-      // 已陷入支撑面：顶回表面
-      if (this.y + this.h > support) {
-        this.y = support - this.h;
-        this.vy = 0;
-      } else {
-        // 在支撑面上方：继续下落直到贴合
-        this.vy = Math.min(400, this.vy + 600 * dt);
-        this.y += this.vy * dt;
-        if (this.y + this.h >= support) {
-          this.y = support - this.h;
-          this.vy = 0;
-        }
-      }
-    } else {
-      this.vy = Math.min(400, this.vy + 600 * dt);
-      this.y += this.vy * dt;
-    }
+    settleBodyOnSupport(this, dt, shallowestSupportY(this, scene));
   }
 
   update(dt, scene) {
@@ -11858,7 +11837,9 @@ class Beaker extends Container {
     }
   }
 
-  /** 物理结算后：杯内玩家与烧杯互相带动——烧杯跟随玩家的水平位移；玩家跟随烧杯的竖直位移 */
+  /** 物理结算后：杯内玩家与烧杯互相带动——烧杯跟随玩家的水平位移；玩家跟随烧杯的竖直位移。
+   *  **下行带动护栏**：玩家跟随下移时不得被压进任何实心静态体（嵌池穿模根因——
+   *  原实现是裸 p.y += dy 瞬移）；脚部将越过原本位于其下方的实心顶面时裁剪到表面。 */
   lateUpdate(dt, scene) {
     const p = scene.player;
     if (p && this.containsObj(p)) {
@@ -11867,7 +11848,18 @@ class Beaker extends Container {
       if (Math.abs(dx) > 0.01) this.x += dx;
       // 玩家跟随烧杯的竖直位移（烧杯下落/被抬起时玩家一起移动，不脱离）
       const dy = this.y - (this._prevBy ?? this.y);
-      if (Math.abs(dy) > 0.01) p.y += dy;
+      if (Math.abs(dy) > 0.01) {
+        let ny = p.y + dy;
+        if (dy > 0) {
+          for (const s of scene.statics) {
+            if (!s.solid) continue;
+            if (!(s.x < p.x + p.w && s.x + s.w > p.x)) continue; // 水平重叠
+            const feet = p.y + p.h;
+            if (feet <= s.y + 0.5 && ny + p.h > s.y) ny = Math.min(ny, s.y - p.h); // 脚下实心顶面：裁到表面
+          }
+        }
+        p.y = ny;
+      }
     }
     this._prevPx = p ? p.x : this._prevPx;
     this._prevBy = this.y;
@@ -11925,6 +11917,70 @@ class Beaker extends Container {
 }
 
 exports.Beaker = Beaker;
+
+  };
+  __modules["src/physics/support.js"] = function (module, exports, __require) {
+// ============================================================================
+// 支撑面查询：容器类物体（烧杯/集气瓶）自带的重力是"手动下落"（主本体不参与
+// 物理积分），需要自己找支撑。这里统一实现"**最浅支撑面**"语义：
+//   - 与其水平重叠、且位于本体底部±容差~span 之下的所有实心静态体 +
+//     实心动态体（玩家头、其他装置壁——但排除自身子体与软体沉淀粒子）；
+//   - 取其中**最高（y 最小）**的顶面作为落点。
+// 关键修复点：
+//   ① 动态体也算竖直落点 —— 修"烧杯从玩家正上方落下穿透玩家"；
+//   ② 取 min 而不是 max —— 修"烧杯跨在池沿上时借更深的盆底沉进池里，
+//      连带着杯内玩家一起嵌入池体"（用户关卡 level (15) 复现）。
+// ============================================================================
+
+const EPS = 2; // 已贴合的容差（沿用旧 applyGravity 的判定宽度）
+
+/**
+ * 返回给定位体正下方最近的实心支撑面顶边 y；找不到返回 Infinity。
+ * span = 探测深度（px）：只在底部下方 span 内找（默认 40，与旧行为一致，
+ * 保证下落逐帧检测不瞬移）；贴合恢复（轻微陷入弹回表面）也靠这个窗口。
+ */
+function shallowestSupportY(body, scene, span = 40) {
+  const l = body.x;
+  const r = body.x + body.w;
+  const b0 = body.y + body.h;
+  let best = Infinity;
+  const scan = (list, skip) => {
+    for (const s of list) {
+      if (!s || !s.solid || (skip && skip(s))) continue;
+      if (!(s.x < r && s.x + s.w > l)) continue; // 水平重叠才算
+      if (s.y >= b0 - EPS && s.y <= b0 + span) best = Math.min(best, s.y);
+    }
+  };
+  if (scene.statics) scan(scene.statics);
+  if (scene.dynamics) {
+    const sub = body.subBodies;
+    scan(scene.dynamics, (d) => d === body || (sub && sub.includes(d)) || typeof d.amount === 'number');
+  }
+  return best;
+}
+
+/** 与作用力无关的通用"落到支撑面停住"推进（重力累加 ≤400，钳位贴合） */
+function settleBodyOnSupport(body, dt, support, accel = 600, maxV = 400) {
+  if (!Number.isFinite(support)) {
+    body.vy = Math.min(maxV, body.vy + accel * dt);
+    body.y += body.vy * dt;
+    return;
+  }
+  if (body.y + body.h > support) {
+    body.y = support - body.h; // 已陷入支撑面：顶回表面
+    body.vy = 0;
+  } else {
+    body.vy = Math.min(maxV, body.vy + accel * dt);
+    body.y += body.vy * dt;
+    if (body.y + body.h >= support) {
+      body.y = support - body.h;
+      body.vy = 0;
+    }
+  }
+}
+
+exports.shallowestSupportY = shallowestSupportY;
+exports.settleBodyOnSupport = settleBodyOnSupport;
 
   };
   __modules["src/objects/sign.js"] = function (module, exports, __require) {
@@ -12515,6 +12571,7 @@ exports.Drip = Drip;
 const { Obj } = __require('src/objects/obj.js');;
 const { getSubstance } = __require('src/chem/substances.js');;
 const { CFG } = __require('src/core/config.js');;
+const { shallowestSupportY, settleBodyOnSupport } = __require('src/physics/support.js');;
 
 const BOTTLE_W = 30;
 const BOTTLE_H = 56;
@@ -12630,31 +12687,10 @@ class GasBottle extends Obj {
     lid.y = this.y - LID_LIFT * this._lidLift - LID_H + 2;
   }
 
-  /** 无支撑时受重力下落，落到下方支撑面停住（与烧杯同款：扫描静态支撑面） */
+  /** 无支撑时受重力下落，落到**最浅**支撑面停住（与烧杯同款：statics + 实心动态体，
+   *  不沉入池盆/高台侧面——见 physics/support.js） */
   applyGravity(dt, scene) {
-    let support = 0;
-    for (const s of scene.statics) {
-      if (!s.solid) continue;
-      if (s.y >= this.y + this.h - 2 && s.y <= this.y + this.h + 40 && s.x < this.x + this.w && s.x + s.w > this.x) {
-        support = Math.max(support, s.y);
-      }
-    }
-    if (support > 0) {
-      if (this.y + this.h > support) {
-        this.y = support - this.h;
-        this.vy = 0;
-      } else {
-        this.vy = Math.min(400, this.vy + 600 * dt);
-        this.y += this.vy * dt;
-        if (this.y + this.h >= support) {
-          this.y = support - this.h;
-          this.vy = 0;
-        }
-      }
-    } else {
-      this.vy = Math.min(400, this.vy + 600 * dt);
-      this.y += this.vy * dt;
-    }
+    settleBodyOnSupport(this, dt, shallowestSupportY(this, scene));
   }
 
   update(dt, scene) {

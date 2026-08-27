@@ -13,6 +13,7 @@
 import { Obj } from './obj.js';
 import { getSubstance } from '../chem/substances.js';
 import { CFG } from '../core/config.js';
+import { shallowestSupportY, settleBodyOnSupport } from '../physics/support.js';
 
 export const BOTTLE_W = 30;
 export const BOTTLE_H = 56;
@@ -128,31 +129,10 @@ export class GasBottle extends Obj {
     lid.y = this.y - LID_LIFT * this._lidLift - LID_H + 2;
   }
 
-  /** 无支撑时受重力下落，落到下方支撑面停住（与烧杯同款：扫描静态支撑面） */
+  /** 无支撑时受重力下落，落到**最浅**支撑面停住（与烧杯同款：statics + 实心动态体，
+   *  不沉入池盆/高台侧面——见 physics/support.js） */
   applyGravity(dt, scene) {
-    let support = 0;
-    for (const s of scene.statics) {
-      if (!s.solid) continue;
-      if (s.y >= this.y + this.h - 2 && s.y <= this.y + this.h + 40 && s.x < this.x + this.w && s.x + s.w > this.x) {
-        support = Math.max(support, s.y);
-      }
-    }
-    if (support > 0) {
-      if (this.y + this.h > support) {
-        this.y = support - this.h;
-        this.vy = 0;
-      } else {
-        this.vy = Math.min(400, this.vy + 600 * dt);
-        this.y += this.vy * dt;
-        if (this.y + this.h >= support) {
-          this.y = support - this.h;
-          this.vy = 0;
-        }
-      }
-    } else {
-      this.vy = Math.min(400, this.vy + 600 * dt);
-      this.y += this.vy * dt;
-    }
+    settleBodyOnSupport(this, dt, shallowestSupportY(this, scene));
   }
 
   update(dt, scene) {

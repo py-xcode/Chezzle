@@ -15,6 +15,7 @@ import { Bubble } from '../src/objects/bubble.js';
 import { Beaker } from '../src/objects/beaker.js';
 import { Pool } from '../src/objects/pool.js';
 import { Deposit } from '../src/objects/deposit.js';
+import { GasBottle } from '../src/objects/gasbottle.js';
 
 const TICK = 1 / 30;
 
@@ -309,4 +310,68 @@ test('玩家站在物块上走动：物块不被带动、不沉地', () => {
   scene.control.delete('right');
   assert.ok(Math.abs(blk.x - x0) < 1, `物块不得被玩家带动，Δx=${(blk.x - x0).toFixed(1)}`);
   assert.equal(blk.top, 670, '物块仍在地板上');
+});
+
+// ============================================================================
+// 烧杯/集气瓶下落穿透回归：①不下穿玩家等动态体 ②跨高低静态体时停在最浅支撑面
+// （不再"取最深支撑"沉进池盆）③杯内玩家被下行带动时不被压进静态体
+// 复现场景 = 用户测试关 level (15)：烧杯悬在玩家正上方开局坠落穿模
+// ============================================================================
+
+function overlaps(a, b, eps = 0.5) {
+  return a.x + a.w > b.x + eps && a.x < b.x + b.w - eps
+    && a.y + a.h > b.y + eps && a.y < b.y + b.h - eps;
+}
+
+test('烧杯从玩家正上方落下应停在头顶，不穿透玩家', () => {
+  const scene = flatScene();
+  const p = new Player({ x: 330, y: 630 });
+  scene.addObject(p);
+  // 烧杯整体悬在玩家身体正上方（水平完全覆盖玩家头部区段）
+  const bk = new Beaker({ x: 336, y: 500, w: 60, h: 70, volume: 120, water: 120 });
+  scene.addObject(bk);
+  run(scene, 150);
+  assert.ok(scene.objects.includes(bk), '烧杯仍在场景中');
+  assert.ok(bk.bottom <= p.top + 1.5,
+    `烧杯底应停在玩家头顶上方，不穿透：bk.bottom=${bk.bottom.toFixed(1)} p.top=${p.top.toFixed(1)}`);
+});
+
+test('烧杯跨在高低两块静态体上时应停在最浅支撑面，不沉入高台', () => {
+  const scene = flatScene();
+  // 高台（顶 688，比地面 720 高 32px）：烧杯横跨其边缘时不得借更深的地面下沉嵌入
+  scene.addObject(new Floor({ x: 600, y: 688, w: 100, h: 112 }));
+  const bk = new Beaker({ x: 672, y: 430, w: 60, h: 70, volume: 120, water: 120 });
+  scene.addObject(bk);
+  run(scene, 200);
+  assert.ok(bk.bottom <= 689.5,
+    `应停在支撑面最浅处（≈688），而不是陷进高台 32px：bottom=${bk.bottom.toFixed(1)}`);
+});
+
+test('杯内玩家随烧杯下行时不会被带进静态体（嵌池根因护栏）', () => {
+  const scene = flatScene();
+  const patch = new Floor({ x: 600, y: 688, w: 100, h: 112 });
+  scene.addObject(patch);
+  const bk = new Beaker({ x: 672, y: 618, w: 60, h: 70, volume: 120, water: 120 });
+  scene.addObject(bk);
+  const p = new Player({ x: 686, y: 640, mass: 8 }); // 小个子，完整站在杯内
+  scene.addObject(p);
+  run(scene, 90); // 落定：烧杯架在高台上、玩家在杯内
+  assert.ok(bk.containsObj(p), `前置：玩家应在杯内（bottom=${p.bottom.toFixed(0)} cup bottom=${bk.bottom.toFixed(0)}）`);
+  const py0 = p.y;
+  bk.y += 30; // 模拟外部下行位移（滑落/挤压路径）；引擎稍后会调 lateUpdate 同步带动
+  bk.lateUpdate(TICK, scene);
+  const moved = { ...p };
+  moved.x = p.x; moved.y = p.y; moved.w = p.w; moved.h = p.h;
+  assert.ok(!overlaps(moved, patch), `杯内玩家下行后不得嵌入静态体：p.y=${p.y.toFixed(1)}（原 ${py0.toFixed(1)}）`);
+});
+
+test('集气瓶同规则：从玩家正上方落下停头顶；跨高台停最浅面', () => {
+  const scene = flatScene();
+  const p = new Player({ x: 330, y: 630 });
+  scene.addObject(p);
+  const bt = new GasBottle({ x: 348, y: 520, id: 'btT' });
+  scene.addObject(bt);
+  run(scene, 150);
+  assert.ok(bt.bottom <= p.top + 1.5,
+    `集气瓶应落在玩家头顶上：bt.bottom=${bt.bottom.toFixed(1)} p.top=${p.top.toFixed(1)}`);
 });

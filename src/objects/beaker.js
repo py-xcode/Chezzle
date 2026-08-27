@@ -11,6 +11,7 @@ import { Obj } from './obj.js';
 import { renderLiquid, solutionColor } from '../render/liquidrender.js';
 import { rr } from '../render/theme.js';
 import { flowFx } from './fx.js';
+import { shallowestSupportY, settleBodyOnSupport } from '../physics/support.js';
 
 export class Beaker extends Container {
   get hoverLabel() {
@@ -71,33 +72,10 @@ export class Beaker extends Container {
     });
   }
 
-  /** 无支撑时受重力下落，落到下方支撑面停住 */
+  /** 无支撑时受重力下落，落到**最浅**支撑面停住（statics + 玩家等实心动态体；
+   *  跨在池沿/台阶上不沉入更深的盆底——见 physics/support.js 的语义说明） */
   applyGravity(dt, scene) {
-    let support = 0;
-    for (const s of scene.statics) {
-      if (!s.solid) continue;
-      if (s.y >= this.y + this.h - 2 && s.y <= this.y + this.h + 40 && s.x < this.x + this.w && s.x + s.w > this.x) {
-        support = Math.max(support, s.y);
-      }
-    }
-    if (support > 0) {
-      // 已陷入支撑面：顶回表面
-      if (this.y + this.h > support) {
-        this.y = support - this.h;
-        this.vy = 0;
-      } else {
-        // 在支撑面上方：继续下落直到贴合
-        this.vy = Math.min(400, this.vy + 600 * dt);
-        this.y += this.vy * dt;
-        if (this.y + this.h >= support) {
-          this.y = support - this.h;
-          this.vy = 0;
-        }
-      }
-    } else {
-      this.vy = Math.min(400, this.vy + 600 * dt);
-      this.y += this.vy * dt;
-    }
+    settleBodyOnSupport(this, dt, shallowestSupportY(this, scene));
   }
 
   update(dt, scene) {
@@ -122,7 +100,9 @@ export class Beaker extends Container {
     }
   }
 
-  /** 物理结算后：杯内玩家与烧杯互相带动——烧杯跟随玩家的水平位移；玩家跟随烧杯的竖直位移 */
+  /** 物理结算后：杯内玩家与烧杯互相带动——烧杯跟随玩家的水平位移；玩家跟随烧杯的竖直位移。
+   *  **下行带动护栏**：玩家跟随下移时不得被压进任何实心静态体（嵌池穿模根因——
+   *  原实现是裸 p.y += dy 瞬移）；脚部将越过原本位于其下方的实心顶面时裁剪到表面。 */
   lateUpdate(dt, scene) {
     const p = scene.player;
     if (p && this.containsObj(p)) {
@@ -131,7 +111,18 @@ export class Beaker extends Container {
       if (Math.abs(dx) > 0.01) this.x += dx;
       // 玩家跟随烧杯的竖直位移（烧杯下落/被抬起时玩家一起移动，不脱离）
       const dy = this.y - (this._prevBy ?? this.y);
-      if (Math.abs(dy) > 0.01) p.y += dy;
+      if (Math.abs(dy) > 0.01) {
+        let ny = p.y + dy;
+        if (dy > 0) {
+          for (const s of scene.statics) {
+            if (!s.solid) continue;
+            if (!(s.x < p.x + p.w && s.x + s.w > p.x)) continue; // 水平重叠
+            const feet = p.y + p.h;
+            if (feet <= s.y + 0.5 && ny + p.h > s.y) ny = Math.min(ny, s.y - p.h); // 脚下实心顶面：裁到表面
+          }
+        }
+        p.y = ny;
+      }
     }
     this._prevPx = p ? p.x : this._prevPx;
     this._prevBy = this.y;

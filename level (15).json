@@ -1,0 +1,314 @@
+{
+  "version": 2,
+  "levelId": "",
+  "plugins": [],
+  "rx": [],
+  "atmosphere": {},
+  "editorState": {
+    "chapters": {
+      "scenes": [
+        {
+          "id": "a",
+          "snap": {
+            "worldW": 3000,
+            "worldH": 800,
+            "rx": [],
+            "atm": {},
+            "objects": [
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 536,
+                  "y": 732,
+                  "w": 1480,
+                  "h": 200,
+                  "id": "floor2"
+                }
+              },
+              {
+                "type": "pool",
+                "opts": {
+                  "x": 2277,
+                  "y": 533,
+                  "w": 419,
+                  "h": 164,
+                  "volume": 200,
+                  "solutes": {
+                    "HCl": 50
+                  },
+                  "gasHeight": 80,
+                  "id": "pool3"
+                }
+              },
+              {
+                "type": "block",
+                "opts": {
+                  "x": 1849,
+                  "y": 309,
+                  "substance": "K",
+                  "mass": 50.6,
+                  "w": 110,
+                  "h": 115,
+                  "pushable": true,
+                  "noLift": false,
+                  "id": "block2"
+                }
+              },
+              {
+                "type": "dropper",
+                "opts": {
+                  "x": 1331,
+                  "y": 388,
+                  "substance": "Na2CO3",
+                  "capacity": 50,
+                  "drop": 0.5,
+                  "liquid": 0,
+                  "id": "dropper1"
+                }
+              },
+              {
+                "type": "pool",
+                "opts": {
+                  "x": 498,
+                  "y": 662,
+                  "w": 397,
+                  "h": 75,
+                  "volume": 200,
+                  "solutes": {
+                    "CaCrO4": 50
+                  },
+                  "gasHeight": 80,
+                  "id": "pool4"
+                }
+              },
+              {
+                "type": "pool",
+                "opts": {
+                  "x": 1156,
+                  "y": 663,
+                  "w": 352,
+                  "h": 57,
+                  "volume": 1000,
+                  "solutes": {
+                    "HCl": 50
+                  },
+                  "gasHeight": 80,
+                  "id": "pool6"
+                }
+              },
+              {
+                "type": "dropper",
+                "opts": {
+                  "x": 633,
+                  "y": 575,
+                  "substance": "AgNO3",
+                  "capacity": 50,
+                  "drop": 0.5,
+                  "liquid": 50,
+                  "id": "dropper2"
+                }
+              },
+              {
+                "type": "player",
+                "opts": {
+                  "x": 920,
+                  "y": 576,
+                  "substance": "NaOH",
+                  "mass": 30,
+                  "noLift": false,
+                  "id": "player1"
+                }
+              },
+              {
+                "type": "beaker",
+                "opts": {
+                  "x": 916,
+                  "y": 404,
+                  "w": 72,
+                  "h": 73,
+                  "volume": 200,
+                  "water": 200,
+                  "solutes": {
+                    "CuSO4": 50
+                  },
+                  "id": "beaker1"
+                }
+              },
+              {
+                "type": "gasbottle",
+                "opts": {
+                  "x": 1086,
+                  "y": 656,
+                  "capacity": 5,
+                  "gases": {},
+                  "id": "gasbottle1"
+                }
+              },
+              {
+                "type": "block",
+                "opts": {
+                  "x": 1214,
+                  "y": 520,
+                  "substance": "Zn",
+                  "mass": 50.6,
+                  "w": 110,
+                  "h": 115,
+                  "pushable": true,
+                  "noLift": false,
+                  "id": "block3"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "current": "a",
+      "start": "a"
+    }
+  },
+  "objects": [
+    {
+      "type": "floor",
+      "opts": {
+        "x": 536,
+        "y": 732,
+        "w": 1480,
+        "h": 200,
+        "id": "floor2"
+      }
+    },
+    {
+      "type": "pool",
+      "opts": {
+        "x": 2277,
+        "y": 533,
+        "w": 419,
+        "h": 164,
+        "volume": 200,
+        "solutes": {
+          "HCl": 50
+        },
+        "gasHeight": 80,
+        "id": "pool3"
+      }
+    },
+    {
+      "type": "block",
+      "opts": {
+        "x": 1849,
+        "y": 309,
+        "substance": "K",
+        "mass": 50.6,
+        "w": 110,
+        "h": 115,
+        "pushable": true,
+        "noLift": false,
+        "id": "block2"
+      }
+    },
+    {
+      "type": "dropper",
+      "opts": {
+        "x": 1331,
+        "y": 388,
+        "substance": "Na2CO3",
+        "capacity": 50,
+        "drop": 0.5,
+        "liquid": 0,
+        "id": "dropper1"
+      }
+    },
+    {
+      "type": "pool",
+      "opts": {
+        "x": 498,
+        "y": 662,
+        "w": 397,
+        "h": 75,
+        "volume": 200,
+        "solutes": {
+          "CaCrO4": 50
+        },
+        "gasHeight": 80,
+        "id": "pool4"
+      }
+    },
+    {
+      "type": "pool",
+      "opts": {
+        "x": 1156,
+        "y": 663,
+        "w": 352,
+        "h": 57,
+        "volume": 1000,
+        "solutes": {
+          "HCl": 50
+        },
+        "gasHeight": 80,
+        "id": "pool6"
+      }
+    },
+    {
+      "type": "dropper",
+      "opts": {
+        "x": 633,
+        "y": 575,
+        "substance": "AgNO3",
+        "capacity": 50,
+        "drop": 0.5,
+        "liquid": 50,
+        "id": "dropper2"
+      }
+    },
+    {
+      "type": "player",
+      "opts": {
+        "x": 916,
+        "y": 583,
+        "substance": "NaOH",
+        "mass": 30,
+        "noLift": false,
+        "id": "player1"
+      }
+    },
+    {
+      "type": "beaker",
+      "opts": {
+        "x": 916,
+        "y": 404,
+        "w": 72,
+        "h": 73,
+        "volume": 200,
+        "water": 200,
+        "solutes": {
+          "CuSO4": 50
+        },
+        "id": "beaker1"
+      }
+    },
+    {
+      "type": "gasbottle",
+      "opts": {
+        "x": 1086,
+        "y": 656,
+        "capacity": 5,
+        "gases": {},
+        "id": "gasbottle1"
+      }
+    },
+    {
+      "type": "block",
+      "opts": {
+        "x": 1214,
+        "y": 520,
+        "substance": "Zn",
+        "mass": 50.6,
+        "w": 110,
+        "h": 115,
+        "pushable": true,
+        "noLift": false,
+        "id": "block3"
+      }
+    }
+  ]
+}
