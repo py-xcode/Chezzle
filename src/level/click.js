@@ -5,11 +5,11 @@
 //  3. 场景内可点击物体（实现 onTap 的对象，如滴管——左键单击滴液）。
 // ============================================================================
 
-/** 屏幕坐标 → 世界坐标（与 Renderer.frame 同口径：跟随玩家/居中） */
+/** 屏幕坐标 → 世界坐标（与 Renderer.frame 同口径：跟随玩家/聚焦内容） */
 export function screenToWorld(scene, canvas, sx, sy) {
   const c = scene.camera;
   if (!c) return { x: sx, y: sy };
-  const { scale, offsetX, offsetY } = c.compute(canvas.width, canvas.height, scene.player ?? null);
+  const { scale, offsetX, offsetY } = c.compute(canvas.width, canvas.height, scene.player ?? scene.cameraFocus ?? null);
   return { x: (sx - offsetX) / scale, y: (sy - offsetY) / scale };
 }
 

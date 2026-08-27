@@ -37,7 +37,7 @@ export function startLoop(scene, renderer, opts = {}) {
         if (acc >= TICK) acc = 0; // 追不上就丢帧
       }
       const R = active.renderer ?? renderer;
-      R.frame(S.objects, { hud: active.hud ?? opts.hud, time: S.time, scene: S, focus: S.player });
+      R.frame(S.objects, { hud: active.hud ?? opts.hud, time: S.time, scene: S, focus: S.player ?? S.cameraFocus ?? null });
     }
     raf = requestAnimationFrame(frame);
   }

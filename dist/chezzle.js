@@ -7565,7 +7565,7 @@ function startLoop(scene, renderer, opts = {}) {
         if (acc >= TICK) acc = 0; // 追不上就丢帧
       }
       const R = active.renderer ?? renderer;
-      R.frame(S.objects, { hud: active.hud ?? opts.hud, time: S.time, scene: S, focus: S.player });
+      R.frame(S.objects, { hud: active.hud ?? opts.hud, time: S.time, scene: S, focus: S.player ?? S.cameraFocus ?? null });
     }
     raf = requestAnimationFrame(frame);
   }
@@ -7729,6 +7729,24 @@ class LevelBuilder {
   build() {
     // 注入相机（爆炸屏幕震动用）
     this.scene.camera = this.renderer.camera;
+    // 无玩家时相机聚焦关卡内容包围盒：否则显示世界中央，物体（滴管等）不在视口
+    // 内——玩家看不到也点不到（"点击没反应"的根源）
+    if (!this.scene.player) {
+      let x0 = Infinity;
+      let x1 = -Infinity;
+      let y0 = Infinity;
+      let y1 = -Infinity;
+      for (const o of this.scene.objects) {
+        if (!(o.w > 0) || !(o.h > 0)) continue;
+        x0 = Math.min(x0, o.x);
+        x1 = Math.max(x1, o.x + o.w);
+        y0 = Math.min(y0, o.y);
+        y1 = Math.max(y1, o.y + o.h);
+      }
+      if (x1 > -Infinity) {
+        this.scene.cameraFocus = { x: x0 - 60, y: y0 - 40, w: x1 - x0 + 120, h: y1 - y0 + 80 };
+      }
+    }
     return this.scene;
   }
 
@@ -11248,11 +11266,11 @@ exports.Dropper = Dropper;
 //  3. 场景内可点击物体（实现 onTap 的对象，如滴管——左键单击滴液）。
 // ============================================================================
 
-/** 屏幕坐标 → 世界坐标（与 Renderer.frame 同口径：跟随玩家/居中） */
+/** 屏幕坐标 → 世界坐标（与 Renderer.frame 同口径：跟随玩家/聚焦内容） */
 function screenToWorld(scene, canvas, sx, sy) {
   const c = scene.camera;
   if (!c) return { x: sx, y: sy };
-  const { scale, offsetX, offsetY } = c.compute(canvas.width, canvas.height, scene.player ?? null);
+  const { scale, offsetX, offsetY } = c.compute(canvas.width, canvas.height, scene.player ?? scene.cameraFocus ?? null);
   return { x: (sx - offsetX) / scale, y: (sy - offsetY) / scale };
 }
 

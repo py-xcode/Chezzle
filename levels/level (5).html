@@ -280,25 +280,16 @@ canvas.height = 700;
 const L = new Chezzle.LevelBuilder(canvas, { worldW: 3000, worldH: 800 });
 L
   .debugmode()
-  .floor(502, 470, 925, 186, { id: 'floor1' })
-  .player(543, 314, { substance: 'NaOH', mass: 30, id: 'player1' })
-  .pool(995, 309, 556, 173, { volume: 200, solutes: {"CuSO4":20,"Fe2(SO4)3":30}, id: 'pool1' })
-  .deposit(674, 176, { substance: 'BaCO3', w: 220, h: 25, id: 'deposit1' })
-  .lamp(246, 337, { autoOn: false, id: 'lamp1' })
-  .blastlamp(159, 421, { autoOn: false, highTemp: true, id: 'blastlamp1' })
-  .switch(265, 596, { mode: 'chemical', id: 'switch1' })
-  .key(514, 659, { id: 'key1' })
-  .key(399, 483, { id: 'key2' })
-  .door(950, 281, 68, 102, { id: 'door1' })
-  .sign(1286, 237, '说明文字', { id: 'sign1' })
-  .dropper(1279, 130, { substance: 'NaOH', capacity: 50, drop: 0.5, id: 'dropper1' })
-  .dropper(944, 214, { substance: 'H2O', capacity: 50, drop: 0.5, id: 'dropper2' })
-  .dropper(903, 196, { substance: 'H2O', capacity: 50, drop: 0.5, id: 'dropper3' })
-  .dropper(950, 174, { substance: 'H2O', capacity: 50, drop: 0.5, id: 'dropper4' })
-  .dropper(1088, 165, { substance: 'H2O', capacity: 50, drop: 0.5, id: 'dropper5' })
+  .floor(536, 732, 1480, 200, { id: 'floor2' })
+  .pool(1148, 564, 419, 164, { volume: 200, solutes: {"CuSO4":50}, id: 'pool3' })
+  .block(1849, 309, { substance: 'K', w: 110, h: 115, id: 'block2' })
+  .blastlamp(735, 686, { autoOn: true, highTemp: true, id: 'blastlamp1' })
+  .dropper(1244, 385, { substance: 'NaOH', capacity: 50, drop: 0.5, id: 'dropper1' })
 ;
 
 const scene = L.build();
+scene.byId['blastlamp1'].addPrecipitate('Fe2O3', 10);
+scene.byId['blastlamp1'].addPrecipitate('Al', 10);
 
 // ⚡ 接线（示例，按需取消注释）：
 // scene.byId['sw'].onOpen(() => scene.byId['lamp'].ignite());

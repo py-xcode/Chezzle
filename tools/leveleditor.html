@@ -1761,6 +1761,20 @@ function togglePlay() {
     const rule = C.parseReactionStr(rx);
     if (rule) scene.customReactions.push(rule);
   }
+  // 无玩家时相机聚焦关卡内容（包围盒）：否则试玩显示世界中央，物体（滴管/池等）
+  // 可能不在视口内——看着"一切正常"但点击没反应（用户反馈）
+  if (!scene.player) {
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const p of state.placed) {
+      const o = p.obj;
+      if (o.w <= 0 || o.h <= 0) continue;
+      x0 = Math.min(x0, o.x); x1 = Math.max(x1, o.x + o.w);
+      y0 = Math.min(y0, o.y); y1 = Math.max(y1, o.y + o.h);
+    }
+    if (x1 > -Infinity) {
+      scene.cameraFocus = { x: x0 - 60, y: y0 - 40, w: x1 - x0 + 120, h: y1 - y0 + 80 };
+    }
+  }
   // 编辑器自带：关卡大气
   for (const [gid, mass] of Object.entries(state.atmosphere ?? {})) {
     if (Number.isFinite(mass) && mass > 0) scene.atmosphere.setGas(gid, mass);
