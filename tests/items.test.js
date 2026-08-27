@@ -1,9 +1,10 @@
 // ============================================================================
 // 可携带物品（集气瓶 / 烧杯 / 滴管）测试
 // 覆盖：物品格不堆叠、C 拾取（含烧杯子体/空格限制）、Shift 放置、
-//       C 吸液（烧杯比例转移/混合/满杯、滴管占优溶质/空管限制）、
-//       X 倒出、按住 C 集气（onGas 截留 + 引擎不放大气）、按住 X 通气
-//       （石灰水鼓泡变浑）、拖动滴管点击管线。
+//       C 吸液（烧杯比例转移/混合/满杯、滴管占优溶质/同液续吸至容量）、
+//       X 倒出（每次 10g）、按住 C 集气（onGas 截留 + 引擎不放大气）、
+//       按住 X 通气（石灰水鼓泡变浑）、拖动滴管点击管线（含抢断）、
+//       集气瓶实体物理（碰撞箱/推动/进不去）。
 // ============================================================================
 
 import { test } from 'node:test';
@@ -157,7 +158,7 @@ test('C 吸液：烧杯按比例吸 20g 可混合；满杯拒绝；总量守恒'
   assert.ok(near(pool.solution.totalMass() + 200, 210, 1e-6), '总量守恒');
 });
 
-test('C 吸液：滴管 5g 占优溶质（纯水=H2O）；已装液拒绝', () => {
+test('C 吸液：滴管 5g 占优溶质（纯水=H2O）；同种液体可续吸，换液体拒绝', () => {
   const scene = flatScene();
   const pool = new Pool({ x: 300, y: 660, w: 260, h: 60, volume: 200, solutes: { NaCl: 10 } });
   scene.addObject(pool);
@@ -172,16 +173,21 @@ test('C 吸液：滴管 5g 占优溶质（纯水=H2O）；已装液拒绝', () =
   assert.equal(dro.substance, 'NaCl', '占优溶质 = 管内物质');
   assert.ok(near(dro.liquid, 5, 1e-6), '5g 入管');
   assert.ok(near(pool.solution.mass('NaCl'), 5, 1e-6), '池中 NaCl 剩 5g');
-  assert.equal(drawLiquid(p, scene), false, '已装液不能再吸（现实如此）');
-  // 放回池上方滴掉 → 空管可再吸（5g ÷ 0.5g/滴 = 10 次）
+  // 同种液体（池里还是 NaCl）→ 续吸成功
+  assert.equal(drawLiquid(p, scene), true, '同种液体可续吸');
+  assert.ok(near(dro.liquid, 10, 1e-6), `管内累积到 10g：${dro.liquid}`);
+  assert.ok(near(pool.solution.mass('NaCl'), 0, 1e-6), '池中 NaCl 耗尽');
+  // 池里 NaCl 没了 → 占优变 H2O ≠ 管内 NaCl → 拒绝（不能装别的液体）
+  assert.equal(drawLiquid(p, scene), false, '换成别的液体不能续吸');
+  // 放回池上方滴掉 → 10g 全回池（0.5g/滴 × 20 滴）
   dro.x = 425; dro.y = 640;
-  for (let i = 0; i < 12 && dro.liquid > 1e-9; i++) assert.equal(dro.onTap(scene), true, '滴出');
+  for (let i = 0; i < 25 && dro.liquid > 1e-9; i++) assert.equal(dro.onTap(scene), true, '滴出');
   assert.ok(dro.liquid < 1e-9, '滴空');
-  assert.ok(near(pool.solution.mass('NaCl'), 10, 1e-6), '5g 全部滴回池（NaCl 10g）');
+  assert.ok(near(pool.solution.mass('NaCl'), 10, 1e-6), '10g 全部滴回池（NaCl 10g）');
   assert.equal(drawLiquid(p, scene), true, '空管可再吸');
   assert.equal(dro.substance, 'NaCl');
   assert.ok(near(dro.liquid, 5, 1e-6));
-  // 纯水池 → H2O
+  // 纯水池 → H2O；同液也可续吸
   const pool2 = new Pool({ x: 700, y: 660, w: 200, h: 60, volume: 200, solutes: {} });
   scene.addObject(pool2);
   const dro2 = new Dropper({ x: 780, y: 700, capacity: 50, liquid: 0 });
@@ -194,10 +200,30 @@ test('C 吸液：滴管 5g 占优溶质（纯水=H2O）；已装液拒绝', () =
   assert.equal(drawLiquid(p, scene), true);
   assert.equal(dro3.substance, 'H2O', '纯水 → 滴管装 H2O');
   assert.ok(near(dro3.liquid, 5, 1e-6));
+  assert.equal(drawLiquid(p, scene), true, '纯水同样可续吸');
+  assert.ok(near(dro3.liquid, 10, 1e-6));
 });
 
-// ---- 6. X 倒出：烧杯全部倒入最近容器；目标容量限制；满杯回退 ------------------
-test('X 倒出：烧杯液体倒入最近的容器；目标有余量则按其剩余空间；无容器不能倒', () => {
+// ---- 5b. 滴管容量上限：同一液体反复吸直到封顶 --------------------------------
+test('C 吸液：滴管同液反复吸至容量上限后拒绝', () => {
+  const scene = flatScene();
+  const pool = new Pool({ x: 300, y: 660, w: 260, h: 60, volume: 200, solutes: { NaCl: 30 } });
+  scene.addObject(pool);
+  const p = withPlayer(scene, 250, 640);
+  const dr = new Dropper({ x: 345, y: 700, capacity: 8, liquid: 0 });
+  scene.addObject(dr);
+  run(scene, 2);
+  p.inventory.selected = 0;
+  pickupItem(p, scene);
+  const dro = p.inventory.selectedItem();
+  assert.equal(drawLiquid(p, scene), true); // 5g
+  assert.equal(drawLiquid(p, scene), true); // 再 3g 到容量 8g
+  assert.ok(near(dro.liquid, 8, 1e-6), `满管 8g：${dro.liquid}`);
+  assert.equal(drawLiquid(p, scene), false, '满管不能再吸');
+});
+
+// ---- 6. X 倒出：每次 10g 分次倒入最近容器；目标容量限制；满杯回退 -------------
+test('X 倒出：每次倒 10g（分次）；目标有余量则按其剩余空间；无容器不能倒', () => {
   const scene = flatScene();
   const pool = new Pool({ x: 300, y: 660, w: 260, h: 60, volume: 200, solutes: { NaCl: 10 } });
   scene.addObject(pool);
@@ -209,10 +235,14 @@ test('X 倒出：烧杯液体倒入最近的容器；目标有余量则按其剩
   pickupItem(p, scene);
   const bko = p.inventory.selectedItem();
   drawLiquid(p, scene); // 20g 入杯
-  assert.equal(pourBeaker(p, scene), true, '应能倒出（回池）');
-  assert.ok(near(bko.solution.totalMass(), 0, 1e-9), '烧杯倒空');
+  assert.equal(pourBeaker(p, scene), true, '第一次倒出');
+  assert.ok(near(bko.solution.totalMass(), 10, 1e-6), `每次只倒 10g，杯剩 10g：${bko.solution.totalMass()}`);
+  assert.ok(near(pool.solution.totalMass(), 200, 1e-6), '池收 10g');
+  assert.equal(pourBeaker(p, scene), true, '第二次倒出');
+  assert.ok(near(bko.solution.totalMass(), 0, 1e-9), '再按一次倒完剩余 10g');
   assert.ok(near(pool.solution.totalMass(), 210, 1e-6), '池恢复 210g');
-  // 半满的烧杯（留 10g 空间）最近 → 只倒 10g
+  assert.equal(pourBeaker(p, scene), false, '空杯不能倒');
+  // 半满的烧杯（留 10g 空间）最近 → 只进得去 10g
   const bk2 = new Beaker({ x: 600, y: 600, w: 60, h: 70, volume: 200, water: 190 });
   scene.addObject(bk2);
   run(scene, 2);
@@ -223,7 +253,7 @@ test('X 倒出：烧杯液体倒入最近的容器；目标有余量则按其剩
   assert.ok(near(bko.solution.totalMass(), 10, 1e-6), `bko 剩 10g：${bko.solution.totalMass()}`);
   // bk2 满杯 → 回退到池（最近的可接收容器）
   assert.equal(pourBeaker(p, scene), true, '满杯回退到池');
-  assert.ok(near(bko.solution.totalMass(), 0, 1e-9), 'bko 倒空进池');
+  assert.ok(near(bko.solution.totalMass(), 0, 1e-9), 'bko 倒完进池');
   assert.ok(near(pool.solution.totalMass(), 200, 1e-6), '池再收 10g');
   // 周围无容器 → false（先装 20g 再离开）
   p.x = 250;
@@ -366,4 +396,88 @@ test('拖动滴管：玩家远离时按下=立即滴（无拖动候选）；长�
   const before = beaker.solution.mass('HCl');
   run(scene, 10);
   assert.ok(near(beaker.solution.mass('HCl'), before, 1e-9), '松开停');
+});
+
+// ---- 12. 拖动与长按冲突修复 ----------------------------------------------------
+test('拖动窗口：按住未到 dripArmDelay 就移动 → 直接拖动，不先滴', () => {
+  const scene = new Scene({ worldW: 1000, worldH: 800 });
+  scene.camera = new Camera({ viewW: 1000, viewH: 800, worldW: 1000, worldH: 800 });
+  scene.status = 'running';
+  scene.addObject(new Floor({ x: -200, y: 720, w: 3000, h: 100 }));
+  const beaker = new Beaker({ x: 400, y: 660, w: 60, h: 60, volume: 150 });
+  scene.addObject(beaker);
+  const dr = new Dropper({ x: 425, y: 640, substance: 'HCl', capacity: 50, drop: 1 });
+  scene.addObject(dr);
+  const p = withPlayer(scene, 400, 630);
+  const canvas = { width: 1000, height: 800 };
+  run(scene, 2);
+  const cam = scene.camera.compute(canvas.width, canvas.height, scene.player ?? null);
+  const toScreen = (wx, wy) => ({ x: wx * cam.scale + cam.offsetX, y: wy * cam.scale + cam.offsetY });
+  const s = toScreen(dr.x + dr.w / 2, dr.y + dr.h / 2);
+  handleScenePressDown(scene, canvas, s.x, s.y);
+  run(scene, 4); // ~0.13s < 0.22s：还在候选期
+  assert.ok(scene._pressCand, '仍在候选（未转长按）');
+  handleScenePressMove(scene, canvas, s.x + 30, s.y + 10);
+  assert.ok(scene._drag && !scene._pressTap, '应转拖动且从未开滴');
+  handleScenePressUp(scene, canvas);
+  assert.ok(near(beaker.solution.mass('HCl'), 0, 1e-9), '全程一滴未滴');
+});
+
+test('抢断：长按已开滴后再拖动 → 停滴转为拖动', () => {
+  const scene = new Scene({ worldW: 1000, worldH: 800 });
+  scene.camera = new Camera({ viewW: 1000, viewH: 800, worldW: 1000, worldH: 800 });
+  scene.status = 'running';
+  scene.addObject(new Floor({ x: -200, y: 720, w: 3000, h: 100 }));
+  const beaker = new Beaker({ x: 400, y: 660, w: 60, h: 60, volume: 150 });
+  scene.addObject(beaker);
+  const dr = new Dropper({ x: 425, y: 640, substance: 'HCl', capacity: 50, drop: 1 });
+  scene.addObject(dr);
+  const p = withPlayer(scene, 400, 630);
+  const canvas = { width: 1000, height: 800 };
+  run(scene, 2);
+  const cam = scene.camera.compute(canvas.width, canvas.height, scene.player ?? null);
+  const toScreen = (wx, wy) => ({ x: wx * cam.scale + cam.offsetX, y: wy * cam.scale + cam.offsetY });
+  const s = toScreen(dr.x + dr.w / 2, dr.y + dr.h / 2);
+  handleScenePressDown(scene, canvas, s.x, s.y);
+  run(scene, 12); // 0.4s > 0.22s：长按已开滴（先滴了一笔，可能带一拍节奏滴）
+  assert.equal(scene._pressTap, dr, '长按应已开始');
+  const dropped = beaker.solution.mass('HCl');
+  assert.ok(dropped >= 1, `开滴应已滴出至少一笔：${dropped}`);
+  // 继续按住但拖出 40px → 停滴、转拖动
+  handleScenePressMove(scene, canvas, s.x + 40, s.y + 15);
+  assert.equal(scene._pressTap, null, '按住滴加应被停掉');
+  assert.ok(scene._drag, '应进入拖动');
+  // 移开玩家：隔离 NaOH 玩家浸酸的中和反应（此处只验证滴加管线已停）
+  p.x = 60;
+  run(scene, 2);
+  const before = beaker.solution.mass('HCl');
+  run(scene, 10); // 继续按住 10 tick：不应再滴
+  assert.ok(near(beaker.solution.mass('HCl'), before, 1e-9), '拖动期间不再滴液');
+  handleScenePressUp(scene, canvas);
+  assert.equal(scene._drag, null);
+});
+
+// ---- 13. 集气瓶物理：碰撞箱/落地/可推动/进不去 ---------------------------------
+test('集气瓶实体化：子体壁落地、玩家贴壁推动整瓶且无法进入瓶内', () => {
+  const scene = flatScene();
+  const bottle = new GasBottle({ x: 420, y: 720 - 56, id: 'bottleA' }); // 底边贴地
+  scene.addObject(bottle);
+  run(scene, 30); // 落定
+  // 子体注册齐全（左/右/底/盖板）
+  for (const suf of ['_l', '_r', '_b', '_lid']) {
+    const sb = scene.byId[`bottleA_gb${suf}`];
+    assert.ok(sb, `子体 ${suf} 应在场景中`);
+    assert.equal(sb.solid, true, `${suf} 应是实心体`);
+  }
+  assert.ok(Math.abs(bottle.bottom - 720) < 2, `应落在地面：${bottle.bottom}`);
+  const lid = scene.byId['bottleA_gb_lid'];
+  assert.ok(lid.y < bottle.y + 4, '盖板应在瓶口上方');
+  // 玩家从左侧走向瓶子：贴外壁推动整瓶，但不能进瓶内
+  const p = withPlayer(scene, 320, 630);
+  run(scene, 5);
+  scene.control.add('right');
+  run(scene, 70);
+  scene.control.delete('right');
+  assert.ok(bottle.x > 420 + 3, `贴壁行走应推动整瓶：${bottle.x.toFixed(1)}`);
+  assert.ok(p.right <= bottle.x + bottle.wall + 1, `玩家应被挡在瓶外：p.right=${p.right} bottle.x=${bottle.x}`);
 });

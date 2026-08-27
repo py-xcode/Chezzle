@@ -64,6 +64,7 @@ export class Scene {
     this._pressTap = null; // 按住的目标（长按持续执行 onTap，如滴管连续滴）
     this._pressTapT = 0; // 距上次触发的时间
     this._pressCand = null; // 按下候选（拖动 vs 点击滴液判定）
+    this._pressHome = null; // 长按开滴时的按下原点（供"再拖动→停滴转拖动"抢断）
     this._drag = null; // 正在拖动的物品（滴管）
     this._gasHold = null; // 按住 C 集气的集气瓶（Player.update 每帧设置）
     this.mouse = null; // 调试模式悬停：{x,y,on}（屏幕坐标，由 builder 鼠标监听写入）

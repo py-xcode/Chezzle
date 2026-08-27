@@ -38,6 +38,7 @@ export * from './objects/gasdetector.js';
 export * from './objects/extractor.js';
 export * from './objects/dropper.js';
 export * from './objects/drip.js';
+export * from './objects/fx.js';
 export * from './objects/gasbottle.js';
 
 export * from './chem/substances.js';

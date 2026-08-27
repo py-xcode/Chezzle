@@ -5,6 +5,8 @@
 // - 只滴不吸：液体用尽为止（编辑器重设/重开局 = 满管）；
 // - 外观 = 玻璃滴管 + 橡皮胶头 + 锥形滴嘴，管内液体颜色与溶液取色一致
 //   （solutionColor：离子颜色/指示剂 pH 显色），液面随剩余量下降；
+// - 拖动平滑：渲染坐标 (rx,ry) 追赶逻辑坐标——拖动时滴管"滑行"跟随指针，
+//   不生硬瞬移（纯表现层，物理/化学仍用精确 x/y）；
 // - 点击命中由共享点击管线 handleSceneClick 触发（编辑试玩/导出关卡同一套）。
 // ============================================================================
 
@@ -28,6 +30,15 @@ export class Dropper extends Obj {
     this.capacity = Math.max(0.1, capacity);
     this.drop = Math.max(0.01, drop);
     this.liquid = liquid == null ? this.capacity : Math.min(this.capacity, liquid);
+    this.rx = x; // 渲染坐标（追赶 x/y，拖动时产生平滑滑行感）
+    this.ry = y;
+  }
+
+  /** 渲染坐标每 tick 向真实坐标收敛（指数趋近，帧率无关） */
+  update(dt) {
+    const k = 1 - Math.exp(-14 * dt);
+    this.rx += (this.x - this.rx) * k;
+    this.ry += (this.y - this.ry) * k;
   }
 
   get hoverLabel() {
@@ -105,8 +116,8 @@ export class Dropper extends Obj {
   }
 
   render(ctx) {
-    const x = this.x;
-    const y = this.y;
+    const x = Number.isFinite(this.rx) ? this.rx : this.x;
+    const y = Number.isFinite(this.ry) ? this.ry : this.y;
     const w = this.w;
     const h = this.h;
     // 橡皮胶头（红色泪滴形：大头在上，下缘收进管口）——参照真实胶头滴管

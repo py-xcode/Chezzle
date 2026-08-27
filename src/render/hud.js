@@ -11,6 +11,7 @@ import { solutionColor } from './liquidrender.js';
 import { CFG } from '../core/config.js';
 import { GasColumn } from '../objects/gascolumn.js';
 import { Block } from '../objects/block.js';
+import { inventorySlotRects } from '../level/click.js';
 
 /** 质量短格式：1.2g / 0.30g / 12g（空气计百分比旁同显质量） */
 function fmtMass(m) {
@@ -34,7 +35,7 @@ export class Hud {
   constructor(scene) {
     this.scene = scene;
     this.showTip = false;
-    this.slotSize = 46; // 与 builder.bindClick 的槽位几何一致（gap=4, 边距 10）
+    this.slotSize = 46; // 旧版统一槽宽（现为兼容字段；实际几何走 inventorySlotRects）
   }
 
   render(ctx, time = 0) {
@@ -514,20 +515,41 @@ export class Hud {
     }
   }
 
-  // ---- 物品栏（宝石槽）----
+  // ---- 物品栏（宝石槽）：装物品的格子放大 + 内容物溶质显示 + 获取弹跳 ----
   inventory(ctx, p, W, H, time) {
     const slots = p.inventory.slots;
-    const n = slots.length;
-    const gap = 4;
-    const total = n * this.slotSize + (n - 1) * gap;
-    const sx = W - total - 10;
-    const sy = H - this.slotSize - 10;
-    for (let i = 0; i < n; i++) {
-      const x = sx + i * (this.slotSize + gap);
+    const rects = inventorySlotRects(W, H, slots);
+    if (!this._pop) this._pop = {}; // 物品格弹跳计时 {i:{sig,t}}
+    let minTop = Infinity;
+    for (let i = 0; i < rects.length; i++) {
+      const r = rects[i];
+      const x = r.x;
+      const sy = r.y;
+      const size = r.size;
+      minTop = Math.min(minTop, sy);
       const sel = i === p.inventory.selected;
+      // 弹跳：物品格内容变化（新装/吸液/倒出/收气）时缩放脉冲一下
+      const s = slots[i];
+      let sc = 1;
+      if (s && s.item) {
+        const o = s.obj;
+        const sig = s.item === 'beaker' ? `${o.solution ? o.solution.totalMass() : 0}`
+          : s.item === 'dropper' ? `${o.liquid}${o.substance}`
+            : `${o.totalGas()}${o.gases.size}`;
+        const rec = this._pop[i];
+        if (!rec || rec.sig !== sig) this._pop[i] = { sig, t: time };
+        const pt = time - this._pop[i].t;
+        sc = 1 + 0.2 * Math.sin(Math.min(1, pt / 0.32) * Math.PI) * (1 - pt / 0.32);
+      }
       ctx.save();
-      rr(ctx, x, sy, this.slotSize, this.slotSize, 12);
-      const g = ctx.createLinearGradient(x, sy, x, sy + this.slotSize);
+      if (sc > 1.001) {
+        ctx.translate(x + size / 2, sy + size / 2);
+        ctx.scale(sc, sc);
+        ctx.translate(-(x + size / 2), -(sy + size / 2));
+      }
+      ctx.save();
+      rr(ctx, x, sy, size, size, 12);
+      const g = ctx.createLinearGradient(x, sy, x, sy + size);
       g.addColorStop(0, sel ? 'rgba(70,50,16,0.96)' : 'rgba(30,26,62,0.92)');
       g.addColorStop(1, sel ? 'rgba(32,22,8,0.96)' : 'rgba(12,9,32,0.92)');
       ctx.fillStyle = g;
@@ -539,41 +561,41 @@ export class Hud {
       ctx.stroke();
       ctx.restore();
 
-      const s = slots[i];
       if (s) {
         if (s.item) {
-          this.drawItemIcon(ctx, s, x, sy, time);
+          this.drawItemIcon(ctx, s, r, time);
         } else {
-          this.drawSubstanceSlot(ctx, s, x, sy, sel);
+          this.drawSubstanceSlot(ctx, s, x, sy, size, sel);
         }
       } else {
         // 空槽：淡符文环
         ctx.strokeStyle = 'rgba(232,184,75,0.22)';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.arc(x + this.slotSize / 2, sy + this.slotSize / 2, 7, 0, Math.PI * 2);
+        ctx.arc(x + size / 2, sy + size / 2, 7, 0, Math.PI * 2);
         ctx.stroke();
       }
+      ctx.restore();
     }
-    // 选中物品时显示操作提示（C 吸液/集气 · X 倒出/通气 · Shift 放置 · 拖动滴管）
+    // 选中物品时显示操作提示（C 吸液 · X 倒出/通气 · Shift 放置 · 拖动滴管）
     const selItem = p.inventory.selectedItem();
     if (selItem) {
       const hints = selItem.isCarryItem === 'beaker'
-        ? 'C吸液20g/次 · X倒入最近容器 · Shift放置'
+        ? 'C吸液20g/次 · X倒出10g/次 · Shift放置'
         : selItem.isCarryItem === 'dropper'
-          ? 'C吸液5g(需空管) · Shift放置 · 点击/按住滴液·拖动移动'
+          ? 'C吸液5g/次·同液续吸至50g · Shift放置 · 点击滴液·附近按住拖动'
           : '按住C收集气泡柱气体 · 按住X通入溶液 · Shift放置';
       ctx.font = 'bold 11px "Segoe UI", "Microsoft YaHei", sans-serif';
       ctx.fillStyle = 'rgba(255,233,176,0.9)';
       ctx.shadowColor = 'rgba(232,184,75,0.6)';
       ctx.shadowBlur = 5;
-      ctx.fillText(hints, sx, sy - 8);
+      ctx.fillText(hints, rects[0].x, minTop - 8);
       ctx.shadowBlur = 0;
     }
   }
 
   /** 物质格：元素色圆点 + 名称 + 质量 */
-  drawSubstanceSlot(ctx, s, x, sy, sel) {
+  drawSubstanceSlot(ctx, s, x, sy, size, sel) {
     const sub = getSubstance(s.substance);
     const c = sub?.solid?.[0] ?? '#c8c8c8';
     ctx.save();
@@ -581,36 +603,51 @@ export class Hud {
     ctx.shadowColor = c;
     ctx.shadowBlur = 6;
     ctx.beginPath();
-    ctx.arc(x + this.slotSize / 2, sy + 22, 5, 0, Math.PI * 2);
+    ctx.arc(x + size / 2, sy + 22, 5, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
     ctx.fillStyle = sel ? '#fff6dd' : THEME.gold.text;
     ctx.font = 'bold 8px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(s.substance, x + this.slotSize / 2, sy + 15);
+    ctx.fillText(s.substance, x + size / 2, sy + 15);
     ctx.font = '10px monospace';
     ctx.fillStyle = '#ffffff';
     const m = Number.isFinite(s.mass) ? s.mass : 0; // NaN 质量显示 0，不显示 NaN
-    ctx.fillText(`${m.toFixed(1)}g`, x + this.slotSize / 2, sy + this.slotSize - 8);
+    ctx.fillText(`${m.toFixed(1)}g`, x + size / 2, sy + size - 8);
     ctx.textAlign = 'left';
   }
 
-  /** 物品格图标（烧杯/滴管/集气瓶——不堆叠，一物一格） */
-  drawItemIcon(ctx, s, x, sy, time) {
+  /** 容器内容物一行字（主要溶质/溶剂），最多 2 种；超出截断加省略号 */
+  _contentLine(entries, emptyText = '') {
+    const list = entries.filter(([, m]) => m > 0.05).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([id]) => id);
+    if (!list.length) return emptyText;
+    let str = list.join('+');
+    if (str.length > 11) str = `${str.slice(0, 10)}…`;
+    return str;
+  }
+
+  /** 物品格图标（烧杯/滴管/集气瓶——不堆叠，一物一格）。
+   *  格子更大（itemSlotPx），并把**里面的液体/气体成分**一并显示出来。 */
+  drawItemIcon(ctx, s, r, time) {
     const o = s.obj;
-    const cx = x + this.slotSize / 2;
-    const cy = sy + this.slotSize / 2;
+    const size = r.size;
+    const k = size / 46; // 相对旧 46 格的放大系数
+    const cx = r.x + size / 2;
+    const cy = r.y + size / 2;
+    const bottomY = r.y + size - 5;
+    const midY = r.y + size - 16; // 内容物行
     ctx.save();
     ctx.textAlign = 'center';
     if (s.item === 'beaker') {
-      // 迷你烧杯：U 形玻璃 + 按液量比例的液面
-      const bw = 18;
-      const bh = 22;
+      // 迷你烧杯：U 形玻璃 + 按液量比例的液面 + 主要溶质
+      const bw = Math.round(18 * Math.max(1, k - 0.15));
+      const bh = Math.round(22 * Math.max(1, k - 0.15));
       const bx = cx - bw / 2;
       const by = cy - bh / 2 + 3;
       const { color, alpha } = o.solution ? solutionColor(o.solution) : { color: '#9adcff', alpha: 0.2 };
       const vol = o.solution && o.solution.volume > 0 ? o.solution.volume : CFG.item.beakerCapacity;
-      const frac = Math.max(0, Math.min(1, (o.solution ? o.solution.totalMass() : 0) / vol));
+      const total = o.solution ? o.solution.totalMass() : 0;
+      const frac = Math.max(0, Math.min(1, total / vol));
       const lh = Math.max(0.01, (bh - 3) * frac);
       if (frac > 0.01) {
         ctx.globalAlpha = Math.max(alpha, 0.35);
@@ -632,19 +669,24 @@ export class Hud {
       ctx.stroke();
       ctx.fillStyle = '#fff6dd';
       ctx.font = 'bold 8px "Microsoft YaHei", sans-serif';
-      ctx.fillText('烧杯', cx, sy + 10);
+      ctx.fillText('烧杯', cx, r.y + 10);
+      // 内容物行：主要溶质（无有效溶质显示"水"，空杯显示"空"）
+      const entries = o.solution ? [...o.solution.solutes.entries()] : [];
+      ctx.font = 'bold 7.5px monospace';
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      ctx.fillText(this._contentLine(entries, total > 0.05 ? '水' : '空'), cx, midY);
       ctx.font = '9px monospace';
       ctx.fillStyle = '#ffffff';
-      ctx.fillText(`${(o.solution ? o.solution.totalMass() : 0).toFixed(0)}g`, cx, sy + this.slotSize - 5);
+      ctx.fillText(`${total.toFixed(0)}g`, cx, bottomY);
     } else if (s.item === 'dropper') {
-      // 迷你滴管：胶头 + 细管 + 管内液体
-      const dw = 6;
-      const dh = 26;
+      // 迷你滴管：胶头 + 细管 + 管内液体 + 管内物质名
+      const dw = 7;
+      const dh = Math.round(26 * Math.max(1, k - 0.15));
       const dx = cx - dw / 2;
       const dy = cy - dh / 2 + 2;
       ctx.fillStyle = '#c0303a';
       ctx.beginPath();
-      ctx.ellipse(cx, dy, 4.4, 4.8, 0, 0, Math.PI * 2);
+      ctx.ellipse(cx, dy, 4.8, 5.2, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.strokeStyle = 'rgba(215,235,255,0.85)';
       ctx.lineWidth = 1.2;
@@ -660,16 +702,20 @@ export class Hud {
       }
       ctx.fillStyle = '#fff6dd';
       ctx.font = 'bold 8px "Microsoft YaHei", sans-serif';
-      ctx.fillText('滴管', cx, sy + 10);
+      ctx.fillText('滴管', cx, r.y + 10);
+      // 管内物质（水→"水"；空管"空"）
+      ctx.font = 'bold 7.5px monospace';
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      ctx.fillText(o.liquid > 1e-9 ? (o.substance === 'H2O' ? '水' : o.substance) : '空', cx, midY);
       ctx.font = '9px monospace';
       ctx.fillStyle = '#ffffff';
-      ctx.fillText(o.liquid > 1e-9 ? `${o.liquid.toFixed(1)}g` : '空', cx, sy + this.slotSize - 5);
+      ctx.fillText(o.liquid > 1e-9 ? `${o.liquid.toFixed(1)}g` : '', cx, bottomY);
     } else if (s.item === 'bottle') {
-      // 迷你集气瓶：玻璃瓶 + 按气体量比例的气体填充
-      const bw = 16;
-      const bh = 24;
+      // 迷你集气瓶：玻璃瓶 + 气体填充 + 盖板线 + 气体成分
+      const bw = Math.round(17 * Math.max(1, k - 0.15));
+      const bh = Math.round(24 * Math.max(1, k - 0.15));
       const bx = cx - bw / 2;
-      const by = cy - bh / 2 + 2;
+      const by = cy - bh / 2 + 3;
       const frac = Math.max(0, Math.min(1, o.totalGas() / o.capacity));
       const color = o.gasColor();
       if (frac > 0.01) {
@@ -698,12 +744,24 @@ export class Hud {
       ctx.lineTo(bx + bw - 5, by - 4);
       ctx.lineTo(bx + bw - 4, by);
       ctx.stroke();
+      // 玻璃盖板（横杠盖在口上）
+      ctx.strokeStyle = 'rgba(240,250,255,0.95)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(bx + 1.5, by - 5);
+      ctx.lineTo(bx + bw - 1.5, by - 5);
+      ctx.stroke();
       ctx.fillStyle = '#fff6dd';
       ctx.font = 'bold 8px "Microsoft YaHei", sans-serif';
-      ctx.fillText(o.totalGas() > 1e-9 ? o.gasLabel() : '集气瓶', cx, sy + 10);
+      ctx.fillText(o.totalGas() > 1e-9 ? o.gasLabel() : '集气瓶', cx, r.y + 10);
+      // 瓶内气体成分（最多 2 种名；混合由 gasLabel 标题给"等"）
+      const entries = [...o.gases.entries()];
+      ctx.font = 'bold 7.5px monospace';
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      ctx.fillText(o.totalGas() > 1e-9 ? this._contentLine(entries, '') : '空', cx, midY);
       ctx.font = '9px monospace';
       ctx.fillStyle = '#ffffff';
-      ctx.fillText(o.totalGas() > 1e-9 ? `${o.totalGas().toFixed(1)}g/${o.capacity.toFixed(0)}g` : '空', cx, sy + this.slotSize - 5);
+      ctx.fillText(o.totalGas() > 1e-9 ? `${o.totalGas().toFixed(1)}g/${o.capacity.toFixed(0)}g` : '', cx, bottomY);
     }
     ctx.restore();
   }

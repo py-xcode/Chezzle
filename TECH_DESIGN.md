@@ -411,6 +411,8 @@ class Obj {
 | `Key`（Switch 子类） | 开启物质不消耗，一旦开启永久；渲染为橙红按钮。 |
 | `Door` | 通关口；`open()` 后渲染开门；与钥匙联动由关卡接线；判定通关见 §10。 |
 | `Beaker`（容器） | 可承载任何物质与玩家；玩家可水平推动（内外皆可），不能抬升；玩家跳跃时跳出。 |
+| `Dropper` | 滴管：左键单击/长按向正下方容器滴液；点击管线支持"移动=拖动、按住=持续滴"（`dripArmDelay` 留拖动窗口，开滴后再移动即抢断转拖动）；无碰撞箱，渲染坐标平滑追赶。 |
+| `GasBottle` | 集气瓶（**实体**）：左右壁+底+玻璃盖板四块子体碰撞箱，受重力、可被玩家贴壁推动、玩家进不去瓶内；按住 C 截留最近气泡柱产气（装气时盖板微顶起），按住 X 向液体容器通气。 |
 | `Rope` | 见 §7.5。 |
 | `Lamp` / `BlastLamp`（容器） | 由开关控制点燃；提供 heat/highTemp 与点燃源；沉淀放置优先落在其上。 |
 | `GasColumn` | 上升气流区域（§7.6）。 |
@@ -518,6 +520,18 @@ init ── start() ──► running ──► win | died ── restart() ─�
 | `collectRadius` | 70 px | 收集半径 |
 | `lampRange` | 70 px | 灯提供条件的半径 |
 | `inventory.slots` / `slotCap` | 5 / 100 g | 物品栏 |
+| `inventory.slotPx` / `itemSlotPx` | 46 / 58 px | HUD 槽宽（装物品的格子放大） |
+| `item.collectRange` | 90 px | C 拾取物品半径（边缘间隙） |
+| `item.liquidRange` | 80 px | 吸液/倒出/通气的目标容器距离（边缘间隙） |
+| `item.dragRange` | 130 px | 可拖动滴管的玩家距离 |
+| `item.beakerCapacity` / `beakerTransfer` | 200 / 20 g | 烧杯容量 / 每次 C 吸液量 |
+| `item.pourStep` | 10 g | 烧杯每次 X 倒出量（分次倒） |
+| `item.dropperCapacity` / `dropperTransfer` | 50 / 5 g | 滴管容量（同液续吸封顶）/ 每次吸液量 |
+| `item.bottleCapacity` / `gasCollectRange` | 5 g / 100 px | 集气瓶容量 / 集气找气泡柱距离 |
+| `item.gasRate` | 0.05 g/s | 集气瓶通气速率 |
+| `item.placeOffset` | 6 px | 放置物品离玩家边缘的间隙 |
+| `item.dragStartPx` / `dripArmDelay` | 6 px / 0.22 s | 移动判定拖动的阈值 / 长按转持续滴的延迟（留拖动窗口） |
+| `item.dripPeriod` / `dragAbortPx` | 0.08 s / 10 px | 长按滴加节奏 / 开滴后再移动转拖动的阈值 |
 | `reaction.rateLL/SL/SS` | 40 / 20 / 6 g/s | 液液/固液/固固基准速率 |
 | `reaction.dissolveRate` | 5 g/s | 可溶固体溶解速率 |
 | `reaction.rateCombustion` | 8 g/s | 燃烧速率 |

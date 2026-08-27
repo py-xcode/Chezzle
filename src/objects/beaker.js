@@ -8,8 +8,9 @@
 import { Container } from './container.js';
 import { getSubstance } from '../chem/substances.js';
 import { Obj } from './obj.js';
-import { renderLiquid } from '../render/liquidrender.js';
+import { renderLiquid, solutionColor } from '../render/liquidrender.js';
 import { rr } from '../render/theme.js';
+import { flowFx } from './fx.js';
 
 export class Beaker extends Container {
   get hoverLabel() {
@@ -51,6 +52,25 @@ export class Beaker extends Container {
     b.y = this.y + this.h - this.wall;
   }
 
+  /**
+   * 倾倒动画（X 倒出时由 items.pourBeaker 调用，纯视觉）：
+   * 杯身向目标一侧倾斜 ~0.55s 再回弹；同时从杯口沿出一条液流弧线落向目标液面。
+   */
+  pourFx(scene, target) {
+    if (!scene || typeof scene.addObject !== 'function') return;
+    const dir = (target.x + (target.w ?? 0) / 2) >= (this.x + this.w / 2) ? 1 : -1;
+    this._tilt = { t: 0, dur: 0.55, dir };
+    const lipX = dir > 0 ? this.x + this.w - 3 : this.x + 3; // 倾斜侧的杯口沿
+    const lipY = this.y + 6;
+    const tr = target.innerRect ? target.innerRect() : { x: target.x + 4, y: target.y + 4, w: target.w - 8, h: target.h - 8 };
+    const tx = Math.max(tr.x + 3, Math.min(tr.x + tr.w - 3, this.x + this.w / 2));
+    flowFx(scene, {
+      x0: lipX, y0: lipY, x1: tx, y1: tr.y,
+      color: solutionColor(this.solution).color,
+      life: 0.55, n: 9, bend: 0.18,
+    });
+  }
+
   /** 无支撑时受重力下落，落到下方支撑面停住 */
   applyGravity(dt, scene) {
     let support = 0;
@@ -83,6 +103,10 @@ export class Beaker extends Container {
   update(dt, scene) {
     super.update(dt, scene); // 颗粒沉降等容器逻辑
     this.applyGravity(dt, scene);
+    if (this._tilt) {
+      this._tilt.t += dt;
+      if (this._tilt.t >= this._tilt.dur) this._tilt = null;
+    }
     const p = scene.player;
     if (!p) return;
     const inner = this.innerRect();
@@ -115,6 +139,19 @@ export class Beaker extends Container {
   }
 
   render(ctx, scene) {
+    // 倾倒动画：整杯（液体+颗粒+杯体）绕底部中心向目标侧旋转 ≈16°，快倾慢回
+    ctx.save();
+    if (this._tilt) {
+      const { t, dur, dir } = this._tilt;
+      const p = Math.min(1, t / 0.12);
+      const back = t < dur * 0.55 ? 1 : Math.max(0, 1 - (t - dur * 0.55) / (dur * 0.45));
+      const ang = 0.28 * p * back;
+      const cx = this.x + this.w / 2;
+      const cy = this.y + this.h;
+      ctx.translate(cx, cy);
+      ctx.rotate(dir * ang);
+      ctx.translate(-cx, -cy);
+    }
     // 液体（元素发光液面；液面高度 = 实际液体量/容量——吸液/倒出后可见升降）
     const inner = this.innerRect();
     if (inner.w > 0 && inner.h > 0) {
@@ -146,6 +183,7 @@ export class Beaker extends Container {
     ctx.fillStyle = 'rgba(255,255,255,0.16)';
     ctx.fillRect(this.x + 1, this.y + 2, 2, this.h - 4);
     ctx.restore();
+    ctx.restore(); // 倾旋包裹结束
     this.renderContentsLabel(ctx);
   }
 }

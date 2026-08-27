@@ -38,18 +38,24 @@ export const CFG = {
     dragRange: 130,        // 可拖动滴管的玩家最大距离（中心距离，滴管细长）
     beakerCapacity: 200,   // 标准烧杯容量（g；与编辑器烧杯默认 volume 一致）
     beakerTransfer: 20,    // 烧杯每次 C 吸液量（g）
+    pourStep: 10,          // 烧杯每次 X 倒出量（g）——分次倒，不再一次全倒
     dropperCapacity: 50,   // 滴管容量（g）
     dropperTransfer: 5,    // 滴管每次 C 吸液量（g）
     bottleCapacity: 5,     // 集气瓶最大集气量（g）
     gasCollectRange: 100,  // 按住 C 集气：找最近气泡柱的距离
     gasRate: 0.05,         // 通入气体速率（g/s）
     placeOffset: 6,        // 放置物品离玩家边缘的间隙（px）
+    dragStartPx: 6,        // 按住后移动超过该屏幕距离 → 判定为拖动（不滴）
+    dripArmDelay: 0.22,    // 按住多久转"长按持续滴"（s）——留出拖动判定窗口，
+                           // 之前 0.08s 几乎必然先开滴，拖不动（用户反馈）
+    dripPeriod: 0.08,      // 长按持续滴的节奏（s/滴；0fd5314 调定的手感值保留）
+    dragAbortPx: 10,       // 长按已开滴后再移动超过该距离 → 停滴转为拖动
   },
 
   lampRange: 70, // px（灯提供加热/点燃的半径）
   lampLightRange: 180, // px（灯提供"光照"条件的半径——见光分解如 HClO）
   placeLampRange: 120, // px（放置沉淀到灯上的半径）
-  inventory: { slots: 5, capacity: 100 }, // g/格
+  inventory: { slots: 5, capacity: 100, slotPx: 46, itemSlotPx: 58 }, // 物品格在 HUD 中放大（装烧杯/滴管/集气瓶看得清）
 
   doorWinRadius: 80, // px
   worldMargin: 200, // px（出界判定）

@@ -2,8 +2,11 @@
 // 场景点击管线（编辑器试玩 / 导出关卡 / Multiscene 共用同一套）：
 //  - 点击：右上「提示」按钮、右下物品栏选格（HUD）；
 //  - 按下（mousedown）：场景内可点击物体（onTap，如滴管）——滴管在玩家附近时
-//    进入"点击/长按/拖动"候选：移动>6px = 拖动改变位置；按住 0.08s = 长按持续滴；
-//    快速抬起 = 单击滴一滴。其它可点击物体 = 立即触发 + 长按（与旧行为一致）；
+//    进入"点击/长按/拖动"候选：移动>dragStartPx = 拖动改变位置；
+//    按住 dripArmDelay(0.22s，留出拖动窗口) = 长按持续滴；快速抬起 = 单击滴一滴。
+//    **长按已开滴后再拖出 dragAbortPx → 停滴转拖动**（修"长按与拖动冲突"：
+//    原来 0.08s 就开滴，鼠标一动之前已经在滴水，几乎无法拖动——用户反馈）；
+//    其它可点击物体 = 立即触发 + 长按（与旧行为一致）；
 //  - 抬起（mouseup）：清除按住/拖动标记。
 // ============================================================================
 
@@ -15,6 +18,23 @@ export function screenToWorld(scene, canvas, sx, sy) {
   if (!c) return { x: sx, y: sy };
   const { scale, offsetX, offsetY } = c.compute(canvas.width, canvas.height, scene.player ?? scene.cameraFocus ?? null);
   return { x: (sx - offsetX) / scale, y: (sy - offsetY) / scale };
+}
+
+/** 物品栏槽位几何（HUD 渲染与点击命中**共用这一套数字**，保证点哪是哪）：
+ *  普通格 CFG.inventory.slotPx，装物品的格子放大为 itemSlotPx；底边对齐、右缘贴边。 */
+export function inventorySlotRects(W, H, slots) {
+  const gap = 4;
+  const margin = 10;
+  const n = slots.length;
+  const rects = new Array(n);
+  let right = W - margin;
+  for (let i = n - 1; i >= 0; i--) {
+    const size = slots[i] && slots[i].item ? CFG.inventory.itemSlotPx : CFG.inventory.slotPx;
+    right -= size;
+    rects[i] = { x: right, y: H - margin - size, size };
+    right -= gap;
+  }
+  return rects;
 }
 
 /** 命中可点击物体（onTap；bbox ±6px 宽容——滴管等细长物体好点中） */
@@ -50,19 +70,13 @@ export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
     onInfo?.({ type: 'tip' });
     return true;
   }
-  // 2) 物品栏选格（右下）
+  // 2) 物品栏选格（右下；几何与 HUD 渲染共用 inventorySlotRects）
   const p = scene.player;
-  if (p && p.inventory && hud) {
-    const { slotSize } = hud;
-    const slots = p.inventory.slots;
-    const n = slots.length;
-    const gap = 4;
-    const total = n * slotSize + (n - 1) * gap;
-    const sx0 = canvas.width - total - 10;
-    const sy0 = canvas.height - slotSize - 10;
-    for (let i = 0; i < n; i++) {
-      const bx = sx0 + i * (slotSize + gap);
-      if (sx >= bx && sx <= bx + slotSize && sy >= sy0 && sy <= sy0 + slotSize) {
+  if (p && p.inventory) {
+    const rects = inventorySlotRects(canvas.width, canvas.height, p.inventory.slots);
+    for (let i = 0; i < rects.length; i++) {
+      const r = rects[i];
+      if (sx >= r.x && sx <= r.x + r.size && sy >= r.y && sy <= r.y + r.size) {
         p.inventory.selected = i;
         onInfo?.({ type: 'slot' });
         return true;
@@ -80,6 +94,7 @@ export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
  */
 export function handleSceneTapDown(scene, canvas, sx, sy, onInfo = null) {
   if (!scene) return false;
+  scene._pressHome = null;
   const hit = hitTap(scene, canvas, sx, sy);
   if (!hit) {
     scene._pressTap = null;
@@ -100,15 +115,17 @@ export function handleSceneTapUp(scene) {
   if (!scene) return;
   scene._pressTap = null;
   scene._pressTapT = 0;
+  scene._pressHome = null;
 }
 
 /**
- * 按下（可拖动物体，如滴管）：先进入候选——移动 >6px = 拖动（不滴）；
- * 按住 0.08s = 长按开始滴；快速抬起 = 单击滴一滴（在按下位置补滴）。
+ * 按下（可拖动物体，如滴管）：先进入候选——移动 >dragStartPx = 拖动（不滴）；
+ * 按住 dripArmDelay = 长按开始滴；快速抬起 = 单击滴一滴（在按下位置补滴）。
  * 仅当玩家在 dragRange 内时才候选（远离玩家的滴管 = 普通点击滴液）。
  */
 export function handleScenePressDown(scene, canvas, sx, sy, onInfo = null) {
   if (!scene) return false;
+  scene._pressHome = null;
   const hit = hitTap(scene, canvas, sx, sy);
   if (hit && hit.obj.isDraggable && scene.player && dist(scene.player, hit.obj) <= CFG.item.dragRange) {
     scene._pressCand = { obj: hit.obj, startX: sx, startY: sy, world: hit.world, downT: 0, moved: false };
@@ -121,16 +138,28 @@ export function handleScenePressDown(scene, canvas, sx, sy, onInfo = null) {
   return handleSceneTapDown(scene, canvas, sx, sy, onInfo);
 }
 
-/** 移动（按住期间）：拖动 = 移动滴管位置（取消潜在长按滴加） */
+/** 移动（按住期间）：拖动 = 移动滴管位置（取消潜在长按滴加）；
+ *  **已开滴的长按**再拖出 dragAbortPx → 停滴转拖动（修长按/拖动冲突） */
 export function handleScenePressMove(scene, canvas, sx, sy) {
   if (!scene) return;
   const c = scene._pressCand;
-  if (c && !c.moved && Math.hypot(sx - c.startX, sy - c.startY) > 6) {
+  if (c && !c.moved && Math.hypot(sx - c.startX, sy - c.startY) > CFG.item.dragStartPx) {
     c.moved = true; // 进入拖动：取消按住滴加（偏移取按下点，避免"先跳一下"）
     scene._pressTap = null;
     scene._pressTapT = 0;
     const w0 = screenToWorld(scene, canvas, c.startX, c.startY);
     scene._drag = { obj: c.obj, ox: c.obj.x - w0.x, oy: c.obj.y - w0.y };
+  }
+  // 长按滴加进行中（候选已被消费）又拖出 abort 距离 → 停滴、转为拖动同一物体
+  const h = scene._pressHome;
+  if (!c && !scene._drag && scene._pressTap && h && h.obj.isDraggable
+      && Math.hypot(sx - h.sx, sy - h.sy) > CFG.item.dragAbortPx
+      && scene.player && dist(scene.player, h.obj) <= CFG.item.dragRange) {
+    scene._pressTap = null;
+    scene._pressTapT = 0;
+    scene._pressHome = null;
+    const w0 = screenToWorld(scene, canvas, h.sx, h.sy);
+    scene._drag = { obj: h.obj, ox: h.obj.x - w0.x, oy: h.obj.y - w0.y };
   }
   if (scene._drag) {
     const w = screenToWorld(scene, canvas, sx, sy);
@@ -149,26 +178,28 @@ export function handleScenePressUp(scene, canvas = null) {
   }
   scene._pressCand = null;
   scene._drag = null;
+  scene._pressHome = null;
   handleSceneTapUp(scene);
 }
 
-/** 每 tick 推进：候选长按转换 + 按住持续执行（0.08s/次） */
+/** 每 tick 推进：候选长按转换（dripArmDelay 留出拖动窗口）+ 按住持续执行 */
 export function stepPressTap(scene, dt) {
   if (!scene) return;
   const c = scene._pressCand;
   if (c && !c.moved) {
     c.downT = (c.downT ?? 0) + dt;
-    if (c.downT >= 0.08) {
-      // 长按开始：转换为按住滴加（滴一笔 + 进入 0.08s 节奏）
+    if (c.downT >= CFG.item.dripArmDelay) {
+      // 长按开始：转换为按住滴加（滴一笔 + 进入节奏）；记录按下原点供"拖动抢断"
       scene._pressCand = null;
       const ok = c.obj.onTap(scene);
       scene._pressTap = ok ? c.obj : null;
       scene._pressTapT = 0;
+      if (ok) scene._pressHome = { obj: c.obj, sx: c.startX, sy: c.startY };
     }
   }
   if (scene._pressTap) {
     scene._pressTapT = (scene._pressTapT ?? 0) + dt;
-    if (scene._pressTapT >= 0.08) {
+    if (scene._pressTapT >= CFG.item.dripPeriod) {
       scene._pressTapT = 0;
       const o = scene._pressTap;
       if (!scene.objects.includes(o) || typeof o.onTap !== 'function' || !o.onTap(scene)) {
