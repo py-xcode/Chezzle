@@ -11168,8 +11168,9 @@ class Dropper extends Obj {
     return true;
   }
 
-  /** 正下方的容器（水平中心在口内；口沿到滴管底：悬在口上方 0~70px，
-   *  或滴管底已伸入容器（内深 > 8px）也算——滴管常插在池/烧杯口上）；取最近的一个 */
+  /** 正下方的容器：水平中心在容器口内即可（**高度不限**——用户要求"只要下面有
+   *  就可以"；滴管底可悬在口上方任意高度，伸入容器（内深 ≤ 容器深+8）也接受）。
+   *  取离口最近的一个（水平不重叠的容器不算）。 */
   _containerBelow(scene) {
     const cx = this.x + this.w / 2;
     let best = null;
@@ -11178,7 +11179,7 @@ class Dropper extends Obj {
       const r = c.innerRect();
       if (cx < r.x || cx > r.x + r.w) continue;
       const dy = r.y - this.bottom; // 口沿到滴管底（正值=滴管底在口沿上方）
-      if (dy >= -r.h - 8 && dy <= 90 && dy < bestDy) {
+      if (dy >= -r.h - 8 && dy < bestDy) {
         best = c;
         bestDy = dy;
       }

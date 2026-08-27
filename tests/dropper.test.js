@@ -87,14 +87,20 @@ test('滴管下方无容器不滴；滴空后不再滴', () => {
   assert.ok(Math.abs(beaker.solution.mass('HCl') - 1) < 1e-9, '总量 1g 守恒');
 });
 
-// ---- 4. 容器判定边界：滴管离口太远不算 -------------------------------------
-test('滴管离容器口超过 90px 不判定为下方容器', () => {
+// ---- 4. 容器判定边界：水平不对齐不算；高度不限（下面有即可滴） -------------
+test('容器判定：水平不在口内不算；悬在口上方任意高度都判定（用户要求）', () => {
   const scene = flatScene();
   scene.addObject(new Beaker({ x: 400, y: 660, w: 60, h: 60, volume: 150 }));
-  const dr = new Dropper({ x: 425, y: 500, substance: 'HCl', capacity: 10, drop: 0.5 }); // top 500,bottom 552 → 距口 108px
-  scene.addObject(dr);
+  // 水平不对齐（x=200，不在杯口 400-460 内）→ 不算
+  const drOff = new Dropper({ x: 200, y: 500, substance: 'HCl', capacity: 10, drop: 0.5 });
+  scene.addObject(drOff);
   run(scene, 2);
-  assert.equal(dr._containerBelow(scene), null);
+  assert.equal(drOff._containerBelow(scene), null, '水平不对齐不应判定');
+  // 悬在口上方很高（距口 108px）→ 仍然判定（高度不限）
+  const drHi = new Dropper({ x: 425, y: 500, substance: 'HCl', capacity: 10, drop: 0.5 });
+  scene.addObject(drHi);
+  run(scene, 2);
+  assert.equal(drHi._containerBelow(scene), scene.containers[0], '高度不应限制（下面有即可）');
 });
 
 // ---- 5. 管内颜色（溶液取色：水无色、有色溶质显色） --------------------------
