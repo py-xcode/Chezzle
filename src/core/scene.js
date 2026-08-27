@@ -252,6 +252,18 @@ export class Scene {
       if (typeof obj.update === 'function') obj.update(dt, this);
     }
 
+    // 1.2 长按持续操作（按住滴管=持续滴加，直到松开/用完/失败）
+    if (this._pressTap) {
+      this._pressTapT = (this._pressTapT ?? 0) + dt;
+      if (this._pressTapT >= 0.18) {
+        this._pressTapT = 0;
+        const o = this._pressTap;
+        if (!this.objects.includes(o) || typeof o.onTap !== 'function' || !o.onTap(this)) {
+          this._pressTap = null; // 用完/失败/已移除 → 停止
+        }
+      }
+    }
+
     // 1.5 网格形状 → 物理体（上一帧化学后的形状；物理必须用最新尺寸，
     //     否则消耗/生长后碰撞箱持续滞后一帧——"碰撞箱显示已缩小但旧边界仍挡人"）
     for (const obj of this.objects) {
@@ -723,9 +735,9 @@ export class Scene {
       // 气泡柱高度：用产气源对象配置的 gasHeight，默认 80；不配则读容器（池/烧杯）
       const ghSrc = srcObj && srcObj.gasHeight ? srcObj : (emit.container ?? null);
       const gh = ghSrc && ghSrc.gasHeight ? ghSrc.gasHeight : 80;
-      // 柱宽 ≈ 整个反应暴露面（0.85×，40~180px）——气泡柱覆盖整个反应面，不再"只生成一部分"
+      // 柱宽 = 反应面（暴露面）宽 × 0.6（36~130px）——覆盖反应面但不过分宽大
       const faceW = eb ? eb.x1 - eb.x0 : (srcObj?.w ?? emit.container?.w ?? 48) * 0.6;
-      const w = Math.max(40, Math.min(180, faceW * 0.85));
+      const w = Math.max(36, Math.min(130, faceW * 0.6));
       plume = new GasColumn({
         x: center.x - w / 2, y: point.y - gh, w, h: gh,
         dir, accel, maxSpeed, life: 2.5, gasId: id,
@@ -742,7 +754,7 @@ export class Scene {
     // 否则旧柱停在原地，形成"空中旧柱 + 液面新柱"的双柱悬空（用户反馈）
     const gh = (srcObj && srcObj.gasHeight) || (emit.container && emit.container.gasHeight) || 80;
     const faceW = eb ? eb.x1 - eb.x0 : (srcObj?.w ?? emit.container?.w ?? 48) * 0.6;
-    const w = Math.max(40, Math.min(180, faceW * 0.85));
+    const w = Math.max(36, Math.min(130, faceW * 0.6));
     plume.x = center.x - w / 2;
     plume.y = point.y - gh;
     plume.w = w;

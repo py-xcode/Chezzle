@@ -85,6 +85,44 @@ test('溶解度判定（初中规则）', () => {
   assert.equal(solubilityOf('Cu2+', 'OH-'), 'insoluble');
   assert.equal(solubilityOf('Na+', 'OH-'), 'soluble');
   assert.equal(solubilityOf('K+', 'NO3-'), 'soluble');
+  // CrO4^2- 铬酸盐：Ba/Pb/Sr/Ag 难溶（BaCrO4 黄、PbCrO4 铬黄、SrCrO4 黄、Ag2CrO4 砖红），其余溶
+  assert.equal(solubilityOf('Ba2+', 'CrO4^2-'), 'insoluble');
+  assert.equal(solubilityOf('Pb2+', 'CrO4^2-'), 'insoluble');
+  assert.equal(solubilityOf('Sr2+', 'CrO4^2-'), 'insoluble');
+  assert.equal(solubilityOf('Ag+', 'CrO4^2-'), 'insoluble');
+  assert.equal(solubilityOf('K+', 'CrO4^2-'), 'soluble');
+  // 铬酸盐沉淀有注册、有颜色（PbCrO4 铬黄 / Ag2CrO4 砖红）
+  assert.equal(getSubstance('PbCrO4').solid[0], '#ffc93d');
+  assert.equal(getSubstance('Ag2CrO4').solid[0], '#b8563a');
+  assert.equal(getSubstance('SrCrO4').soluble, 'insoluble');
+  // 铅/锶硝酸盐已注册（离子双置换的"可溶盐源"，可电离）
+  assert.equal(getSubstance('Pb(NO3)2').soluble, 'soluble');
+  assert.equal(getSubstance('Sr(NO3)2').soluble, 'soluble');
+});
+
+// ---- 2.5 微溶物质：过饱和析出（用户需求：CaCl2 持续滴 NaOH → Ca(OH)2 浑浊）----
+test('Solution 饱和析出：超过溶解度上限 → onOversaturate + 溶液锁定饱和浓度', () => {
+  const sol = new Solution({ volume: 200 }); // Ca(OH)2 上限 = 1.7g/L × 0.2L = 0.34g
+  let out = 0;
+  sol.onOversaturate = (id, excess) => { out += excess; };
+  sol.add('Ca(OH)2', 0.1);
+  assert.equal(out, 0, '低于饱和不析出');
+  assert.ok(Math.abs(sol.mass('Ca(OH)2') - 0.1) < 1e-9);
+  sol.add('Ca(OH)2', 0.4); // 0.5 > 0.34 → 析出 0.16
+  assert.ok(Math.abs(out - 0.16) < 1e-9, `析出 ${out.toFixed(3)}`);
+  assert.ok(Math.abs(sol.mass('Ca(OH)2') - 0.34) < 1e-9, '溶液应锁定饱和浓度');
+});
+
+test('微溶驱动：CaCl2+NaOH 同池 → Ca(OH)2 生成并过饱和析出（浑浊）', () => {
+  const mat = new SolutionMaterial(new Solution({ volume: 200, solutes: { CaCl2: 20, NaOH: 20 } }));
+  let precipitated = 0;
+  mat.solution.onOversaturate = (id, excess) => { precipitated += excess; };
+  const engine = new ChemistryEngine();
+  const env = makeEnv();
+  for (let i = 0; i < 600; i++) engine.reactSelf(mat, TICK, env, { skipDissolution: true });
+  assert.ok(precipitated > 1, `应析出 Ca(OH)2（浑浊）：${precipitated.toFixed(2)}g`);
+  assert.ok(Math.abs(mat.solution.mass('Ca(OH)2') - 0.34) < 0.02, `溶液应保持饱和：${mat.solution.mass('Ca(OH)2').toFixed(3)}`);
+  assert.ok(mat.solution.mass('NaCl') > 5, `副产物 NaCl：${mat.solution.mass('NaCl').toFixed(2)}`);
 });
 
 // ---- 3. 中和反应与质量守恒 --------------------------------------------------

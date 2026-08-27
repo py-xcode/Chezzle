@@ -378,6 +378,18 @@ class Scene {
       if (typeof obj.update === 'function') obj.update(dt, this);
     }
 
+    // 1.2 长按持续操作（按住滴管=持续滴加，直到松开/用完/失败）
+    if (this._pressTap) {
+      this._pressTapT = (this._pressTapT ?? 0) + dt;
+      if (this._pressTapT >= 0.18) {
+        this._pressTapT = 0;
+        const o = this._pressTap;
+        if (!this.objects.includes(o) || typeof o.onTap !== 'function' || !o.onTap(this)) {
+          this._pressTap = null; // 用完/失败/已移除 → 停止
+        }
+      }
+    }
+
     // 1.5 网格形状 → 物理体（上一帧化学后的形状；物理必须用最新尺寸，
     //     否则消耗/生长后碰撞箱持续滞后一帧——"碰撞箱显示已缩小但旧边界仍挡人"）
     for (const obj of this.objects) {
@@ -849,9 +861,9 @@ class Scene {
       // 气泡柱高度：用产气源对象配置的 gasHeight，默认 80；不配则读容器（池/烧杯）
       const ghSrc = srcObj && srcObj.gasHeight ? srcObj : (emit.container ?? null);
       const gh = ghSrc && ghSrc.gasHeight ? ghSrc.gasHeight : 80;
-      // 柱宽 ≈ 整个反应暴露面（0.85×，40~180px）——气泡柱覆盖整个反应面，不再"只生成一部分"
+      // 柱宽 = 反应面（暴露面）宽 × 0.6（36~130px）——覆盖反应面但不过分宽大
       const faceW = eb ? eb.x1 - eb.x0 : (srcObj?.w ?? emit.container?.w ?? 48) * 0.6;
-      const w = Math.max(40, Math.min(180, faceW * 0.85));
+      const w = Math.max(36, Math.min(130, faceW * 0.6));
       plume = new GasColumn({
         x: center.x - w / 2, y: point.y - gh, w, h: gh,
         dir, accel, maxSpeed, life: 2.5, gasId: id,
@@ -868,7 +880,7 @@ class Scene {
     // 否则旧柱停在原地，形成"空中旧柱 + 液面新柱"的双柱悬空（用户反馈）
     const gh = (srcObj && srcObj.gasHeight) || (emit.container && emit.container.gasHeight) || 80;
     const faceW = eb ? eb.x1 - eb.x0 : (srcObj?.w ?? emit.container?.w ?? 48) * 0.6;
-    const w = Math.max(40, Math.min(180, faceW * 0.85));
+    const w = Math.max(36, Math.min(130, faceW * 0.6));
     plume.x = center.x - w / 2;
     plume.y = point.y - gh;
     plume.w = w;
@@ -1722,7 +1734,9 @@ class ChemistryEngine {
     if (catId === 'Fe3+' && anId === 'SCN-') return { drives: true, products: [{ id: 'Fe(SCN)3', coeff: 1 }] };
     const salt = ensureSalt(catId, anId);
     if (salt.id === idA || salt.id === idB) return { drives: false, products: [] };
-    return { drives: salt.soluble !== 'soluble', products: [{ id: salt.id, coeff: 1 }] };
+    // 驱动判据：不溶 → 沉淀；**微溶**（solubilityLimit，如 Ca(OH)2/Ag2SO4/CaSO4/PbCl2）
+    // → 也生成（进溶液，超过饱和浓度时析出——"滴到一定量后溶液变浑浊"）
+    return { drives: salt.soluble !== 'soluble' || salt.solubilityLimit > 0, products: [{ id: salt.id, coeff: 1 }] };
   }
 
   // ===========================================================================
@@ -2240,6 +2254,8 @@ const IONS = {
   'Al3+':    { symbol: 'Al',  poly: false, charge:  3, mass: 27   },
   'Ag+':     { symbol: 'Ag',  poly: false, charge:  1, mass: 108  },
   'Ba2+':    { symbol: 'Ba',  poly: false, charge:  2, mass: 137  },
+  'Pb2+':    { symbol: 'Pb',  poly: false, charge:  2, mass: 207  }, // 铅（PbCrO4 铬黄检验铬酸根）
+  'Sr2+':    { symbol: 'Sr',  poly: false, charge:  2, mass: 88   }, // 锶（SrCrO4 黄）
   'Cl-':     { symbol: 'Cl',  poly: false, charge: -1, mass: 35.5 },
   'SO4^2-':  { symbol: 'SO4', poly: true,  charge: -2, mass: 96   },
   'NO3-':    { symbol: 'NO3', poly: true,  charge: -1, mass: 62   },
@@ -2326,7 +2342,10 @@ function solubilityOf(catId, anId) {
   if (anId === 'SO4^2-') return catId === 'Ba2+' ? 'insoluble' : 'soluble';    // 硫酸盐除 BaSO4（CaSO4/PbSO4 微溶省略）
   if (anId === 'CO3^2-' || anId === 'SO3^2-') return 'insoluble';              // 碳酸盐/亚硫酸盐不溶（碱金属铵盐已在上面返回）
   if (anId === 'S2-') return 'insoluble';                      // 硫化物：碱金属/铵盐溶（上面返回），其余 FeS/CuS/ZnS 不溶
-  if (anId === 'CrO4^2-') return catId === 'Ba2+' ? 'insoluble' : 'soluble';   // 铬酸盐：BaCrO4↓(黄) 其余溶
+  if (anId === 'CrO4^2-') {
+    // 铬酸盐：Ba/Pb/Sr/Ag 难溶（BaCrO4 黄、PbCrO4 铬黄、SrCrO4 黄、Ag2CrO4 砖红），其余溶
+    return ['Ba2+', 'Pb2+', 'Sr2+', 'Ag+'].includes(catId) ? 'insoluble' : 'soluble';
+  }
   if (anId === 'HCO3-' || anId === 'AlO2-' || anId === 'SCN-' || anId === 'ClO-') return 'soluble'; // 碳酸氢盐/偏铝酸盐/硫氰酸盐/次氯酸盐可溶
   if (anId === 'OH-') {
     if (catId === 'Na+' || catId === 'K+' || catId === 'Ba2+' || catId === 'Ca2+') return 'soluble';
@@ -2399,7 +2418,7 @@ SUBSTANCES['CH3COOH'] = { id: 'CH3COOH', mm: 60, state: 'liquid', kind: 'acid', 
 // --- 碱（acidStrength 同用于碱的电离强弱）---
 SUBSTANCES['NaOH'] = { id: 'NaOH', mm: 40, state: 'solid', kind: 'base', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'Na+', an: 'OH-', catCount: 1, anCount: 1 }, solid: ['#ffffff'] };
 SUBSTANCES['KOH'] = { id: 'KOH', mm: 56, state: 'solid', kind: 'base', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'K+', an: 'OH-', catCount: 1, anCount: 1 }, solid: ['#ffffff'] };
-SUBSTANCES['Ca(OH)2'] = { id: 'Ca(OH)2', mm: 74, state: 'solid', kind: 'base', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'Ca2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#f4f4f4'] };
+SUBSTANCES['Ca(OH)2'] = { id: 'Ca(OH)2', mm: 74, state: 'solid', kind: 'base', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'Ca2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#f4f4f4'], solubilityLimit: 1.7 }; // 微溶（20°C ≈1.7g/L：持续滴碱会过饱和析出——石灰乳浑浊）
 SUBSTANCES['Cu(OH)2'] = { id: 'Cu(OH)2', mm: 98, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Cu2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#00afff'] };
 SUBSTANCES['Fe(OH)3'] = { id: 'Fe(OH)3', mm: 107, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Fe3+', an: 'OH-', catCount: 1, anCount: 3 }, solid: ['#002929'] };
 SUBSTANCES['Mg(OH)2'] = { id: 'Mg(OH)2', mm: 58, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Mg2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#f2f2f2'] };
@@ -2417,7 +2436,7 @@ defineSalt('Zn2+', 'Cl-', { solid: ['#ffffff'] });
 defineSalt('Mg2+', 'Cl-', { solid: ['#ffffff'] });
 defineSalt('Ca2+', 'Cl-', { solid: ['#ffffff'] });
 defineSalt('Ba2+', 'Cl-', { solid: ['#ffffff'] });
-defineSalt('Ca2+', 'SO4^2-', { solid: ['#ffffff'] });
+defineSalt('Ca2+', 'SO4^2-', { solid: ['#ffffff'], solubilityLimit: 2 }); // CaSO4 微溶（-2g/L）
 defineSalt('Na+', 'CO3^2-', { solid: ['#ffffff'], dense: true }); // Na2CO3 致密晶形壳：碳化壳真正保护内核——挡 CO2 继续碳化（自限）、挡酸蚀从外到内逐层剥壳（否则盐酸穿透壳掏空内核成碎片）
 defineSalt('Ca2+', 'CO3^2-', { solid: ['#f2f2f2'], dense: true });   // CaCO3 晶形致密（石灰水检验）
 defineSalt('Ba2+', 'SO4^2-', { solid: ['#ffffff'], dense: true });  // BaSO4 致密（检验硫酸根）
@@ -2425,6 +2444,10 @@ defineSalt('Ag+', 'Cl-', { solid: ['#ffffff'], dense: true });      // AgCl 致�
 defineSalt('Ag+', 'Br-', { solid: ['#f2e3b0'] });                   // AgBr 淡黄↓（检验溴离子）
 defineSalt('Ag+', 'I-', { solid: ['#ffe98a'] });                    // AgI 黄↓（检验碘离子）
 defineSalt('Ag+', 'NO3-', { solid: ['#ffffff'] });
+defineSalt('Ag+', 'SO4^2-', { solid: ['#ffffff'], solubilityLimit: 8 }); // Ag2SO4 微溶（≈8g/L，中等浓度即析出）
+defineSalt('Pb2+', 'NO3-', { solid: ['#ffffff'] });  // Pb(NO3)2 硝酸铅（离子双置换的铅源）
+defineSalt('Pb2+', 'Cl-', { solid: ['#ffffff'], solubilityLimit: 10 }); // PbCl2 微溶（冷水中难溶）
+defineSalt('Sr2+', 'NO3-', { solid: ['#ffffff'] });  // Sr(NO3)2 硝酸锶
 defineSalt('Cu2+', 'NO3-', { solid: ['#b7e4ff'] });
 defineSalt('Fe3+', 'NO3-', { solid: ['#ffd9a8'] });
 defineSalt('Al3+', 'Cl-', { solid: ['#ffffff'] });
@@ -2455,6 +2478,9 @@ defineSalt('K+', 'CrO4^2-', { solid: ['#ffd23f'] });   // K2CrO4 黄
 defineSalt('Ca2+', 'Cr2O7^2-', { solid: ['#ff6a3d'] });// CaCr2O7 橙红（重铬酸钙）
 defineSalt('Ca2+', 'CrO4^2-', { solid: ['#ffd23f'] }); // CaCrO4 黄（铬酸钙）
 defineSalt('Ba2+', 'CrO4^2-', { solid: ['#ffd23f'], dense: true }); // BaCrO4 黄↓（检验铬酸根，致密）
+defineSalt('Pb2+', 'CrO4^2-', { solid: ['#ffc93d'], dense: true }); // PbCrO4 铬黄↓（经典检验铬酸根）
+defineSalt('Sr2+', 'CrO4^2-', { solid: ['#ffe066'] }); // SrCrO4 黄↓
+defineSalt('Ag+',  'CrO4^2-', { solid: ['#b8563a'], dense: true }); // Ag2CrO4 砖红↓（微溶→按难溶处理）
 defineSalt('Ba2+', 'CO3^2-', { solid: ['#ffffff'], dense: true });  // BaCO3 白↓（致密晶形：附着后阻断反应）
 defineSalt('Ba2+', 'OH-', { acidStrength: 'strong', solid: ['#f4f4f4'] }); // Ba(OH)2 强碱
 defineSalt('Na+', 'HCO3-', { solid: ['#ffffff'] });    // NaHCO3
@@ -2760,7 +2786,9 @@ class Solution {
 
   /** 增加溶质（负值按移除处理）；id 归一化（NH4OH → NH3·H2O）。
    *  总量仍低于 MIN_ENTRY 的微量入账直接丢弃（不建立条目）；
-   *  非有限质量（NaN/Infinity）直接忽略（防反应异常污染溶液）。 */
+   *  非有限质量（NaN/Infinity）直接忽略（防反应异常污染溶液）。
+   *  微溶物质（solubilityLimit g/L）：超过饱和浓度 → 超出部分析出（onOversaturate 钩子，
+   *  容器把它变成可见沉淀——"滴到一定量后溶液浑浊"）。 */
   add(id, m) {
     id = normId(id);
     if (!Number.isFinite(m) || m === 0) return;
@@ -2770,6 +2798,17 @@ class Solution {
     }
     const next = (this.solutes.get(id) ?? 0) + m;
     if (next < MIN_ENTRY) return; // 微量不入账：防"0.000g ↔ 不显示"的条目抖动
+    // 微溶饱和：超出的部分析出（溶液保持饱和浓度；析出的量进容器沉淀）
+    const sub = getSubstance(id);
+    if (sub && sub.solubilityLimit > 0 && this.volume > 0 && typeof this.onOversaturate === 'function') {
+      const limitMass = sub.solubilityLimit * (this.volume / 1000);
+      if (next > limitMass) {
+        const excess = next - limitMass;
+        this.solutes.set(id, limitMass);
+        this.onOversaturate(id, excess);
+        return;
+      }
+    }
     this.solutes.set(id, next);
   }
 
@@ -6586,6 +6625,10 @@ class Container extends Obj {
   constructor({ x, y, w, h, volume, solutes, water, ...rest } = {}) {
     super({ x, y, w, h, solid: false, physicsKind: 'none', ...rest });
     this.solution = new Solution({ volume: volume ?? 100, solutes: solutes ?? {}, water: water ?? volume ?? 100 });
+    // 微溶物质超过饱和浓度 → 析出为容器沉淀（"滴到一定量后溶液变浑浊"）
+    this.solution.onOversaturate = (id, excess) => {
+      this.addPrecipitate(id, excess, null, { kind: 'saturate', text: '过饱和析出' });
+    };
     this.solutionMat = new SolutionMaterial(this.solution, this);
     this.mat = new ContainerMaterial(this); // 溶液 + 沉淀的完整材料（沉淀可参与反应）
     this.precipitates = new Map(); // substanceId → g（沉淀/内含物，化学真相）
@@ -11248,23 +11291,46 @@ class Dropper extends Obj {
     ctx.strokeRect(gx, gy, gw, gh);
     ctx.fillStyle = 'rgba(255,255,255,0.5)';
     ctx.fillRect(gx + 0.6, gy, 0.7, gh); // 左侧玻璃高光
-    // 管内液体（颜色与溶液取色一致；液面随剩余比例下降）
+    // 管内液体（颜色与溶液取色一致；液面随剩余比例下降；液体**贯穿到锥形滴嘴**——
+    // 滴嘴也是玻璃腔的一部分，装的是同一管液体，不该是空的）
     const frac = Math.max(0, Math.min(1, this.liquid / this.capacity));
     const innerY = gy + 1;
     const innerH = gh - 2;
     const lh = innerH * frac;
     if (lh > 0.6) {
       const { color, alpha } = this.liquidColor();
+      const bodyTop = innerY + innerH - lh; // 液面 y（管内部）
+      const tipBase = gy + gh; // 管底 → 滴嘴起
       ctx.globalAlpha = Math.max(alpha, 0.45);
       ctx.fillStyle = color;
-      ctx.fillRect(gx + 0.6, innerY + innerH - lh, gw - 1.2, lh);
-      ctx.globalAlpha = 1;
-      ctx.strokeStyle = 'rgba(255,255,255,0.7)';
-      ctx.lineWidth = 0.8;
       ctx.beginPath();
-      ctx.moveTo(gx + 0.8, innerY + innerH - lh);
-      ctx.lineTo(gx + gw - 0.8, innerY + innerH - lh);
-      ctx.stroke();
+      ctx.moveTo(gx + 0.6, bodyTop);
+      ctx.lineTo(gx + gw - 0.6, bodyTop);
+      // 沿管向下 → 两侧收进锥形滴嘴（液体充满到尖端）
+      ctx.lineTo(gx + gw - 0.6, tipBase);
+      ctx.lineTo(hx, y + h - 1);
+      ctx.lineTo(gx + 0.6, tipBase);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      // 液面线（只在管内部分显示）
+      if (bodyTop >= innerY + 1) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        ctx.moveTo(gx + 0.8, bodyTop);
+        ctx.lineTo(gx + gw - 0.8, bodyTop);
+        ctx.stroke();
+      }
+      // 液面下"尖嘴"与管交界的光泽（液体连贯感）
+      ctx.fillStyle = 'rgba(255,255,255,0.18)';
+      ctx.beginPath();
+      ctx.moveTo(gx + 0.6, tipBase - 1);
+      ctx.lineTo(gx + gw - 0.6, tipBase - 1);
+      ctx.lineTo(hx + 0.5, y + h - 2.5);
+      ctx.lineTo(hx - 0.5, y + h - 2.5);
+      ctx.closePath();
+      ctx.fill();
     }
     // 锥形滴嘴（细管下端收尖）
     ctx.fillStyle = 'rgba(215,235,255,0.2)';
@@ -11292,7 +11358,6 @@ exports.Dropper = Dropper;
 // ============================================================================
 
 const { Obj } = __require('src/objects/obj.js');;
-const { renderPrecipitateBall } = __require('src/objects/particle.js');;
 
 class Drip extends Obj {
   constructor({ x, y, targetY, color = '#9fd8ff', ...rest }) {
@@ -11310,10 +11375,28 @@ class Drip extends Obj {
   }
 
   render(ctx) {
-    // 液滴形：小圆球 + 顶部细小（简单：上小下大的两椭圆）
+    // 泪滴形（上尖下圆）：上端尖锥收拢、下端圆胖——下坠中的液滴
     const cx = this.x + this.w / 2;
-    const cy = this.y + this.h / 2;
-    renderPrecipitateBall(ctx, cx, cy, Math.max(7, this.h + this.w), this.color);
+    const top = this.y;
+    const bottom = this.y + this.h;
+    const r = Math.max(3, this.h * 0.62); // 下部圆球半径
+    ctx.save();
+    ctx.shadowColor = this.color;
+    ctx.shadowBlur = 7;
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.moveTo(cx, top); // 尖端
+    ctx.bezierCurveTo(cx + r * 0.5, top + r * 0.8, cx + r, bottom - r * 0.7, cx, bottom);
+    ctx.bezierCurveTo(cx - r, bottom - r * 0.7, cx - r * 0.5, top + r * 0.8, cx, top);
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    // 下部高光（左上方）
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.beginPath();
+    ctx.ellipse(cx - r * 0.28, bottom - r * 0.62, r * 0.2, r * 0.32, -0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 }
 
@@ -11323,9 +11406,10 @@ exports.Drip = Drip;
   __modules["src/level/click.js"] = function (module, exports, __require) {
 // ============================================================================
 // 场景点击管线（编辑器试玩 / 导出关卡 / Multiscene 共用同一套）：
-//  1. 右上「提示」按钮（HUD）；
-//  2. 右下物品栏选格；
-//  3. 场景内可点击物体（实现 onTap 的对象，如滴管——左键单击滴液）。
+//  - 点击：右上「提示」按钮、右下物品栏选格（HUD）；
+//  - 按下（mousedown）：场景内可点击物体（onTap，如滴管）——**按下一次滴一滴并
+//    标记"按住"**，按住期间 Scene 每 0.18s 持续触发（长按=持续滴加，松开/用完即停）；
+//  - 抬起（mouseup）：清除按住标记。
 // ============================================================================
 
 /** 屏幕坐标 → 世界坐标（与 Renderer.frame 同口径：跟随玩家/聚焦内容） */
@@ -11336,10 +11420,22 @@ function screenToWorld(scene, canvas, sx, sy) {
   return { x: (sx - offsetX) / scale, y: (sy - offsetY) / scale };
 }
 
+/** 命中可点击物体（onTap；bbox ±6px 宽容——滴管等细长物体好点中） */
+function hitTap(scene, canvas, sx, sy) {
+  const w = screenToWorld(scene, canvas, sx, sy);
+  for (let i = scene.objects.length - 1; i >= 0; i--) {
+    const o = scene.objects[i];
+    if (typeof o.onTap !== 'function') continue;
+    if (w.x >= o.x - 6 && w.x <= o.x + o.w + 6 && w.y >= o.y - 6 && w.y <= o.y + o.h + 6) {
+      return { obj: o, world: w };
+    }
+  }
+  return null;
+}
+
 /**
- * 处理一次画布点击（sx/sy 为画布像素坐标）。
- * hud 可为空（无 HUD 时只处理物体点击）。返回 true = 已消费。
- * onInfo（可选）诊断回调：{type:'tap'|'miss'|'tip'|'slot', ...}——编辑器调试显示用。
+ * 处理一次"点击"（提示按钮 / 物品栏选格）。
+ * hjude 可为空。返回 true = 已消费。onInfo（可选）诊断回调。
  */
 function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   if (!scene) return false;
@@ -11368,26 +11464,62 @@ function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
       }
     }
   }
-  // 3) 可点击物体（onTap）：从上层往下命中 bbox（±6px 宽容——滴管等细长物体好点中）
-  const w = screenToWorld(scene, canvas, sx, sy);
-  for (let i = scene.objects.length - 1; i >= 0; i--) {
-    const o = scene.objects[i];
-    if (typeof o.onTap !== 'function') continue;
-    if (w.x >= o.x - 6 && w.x <= o.x + o.w + 6 && w.y >= o.y - 6 && w.y <= o.y + o.h + 6) {
-      const ok = o.onTap(scene, w);
-      onInfo?.({ type: 'tap', object: o, success: !!ok, world: w });
-      return true;
-    }
-  }
-  onInfo?.({ type: 'miss', world: w });
+  onInfo?.({ type: 'miss', world: screenToWorld(scene, canvas, sx, sy) });
   return false;
 }
 
-/** 给画布绑定点击（getScreenPos / getActive 由调用方提供：单场景/多场景都行） */
+/**
+ * 处理一次"按下"：命中 onTap 物体 → 立即触发一次（返回 true）并标记"按住目标"；
+ * 按住期间 Scene.step 会以 0.18s 间隔持续触发（长按=持续滴加）。
+ * 未命中 → 清除按住标记并返回 false。
+ */
+function handleSceneTapDown(scene, canvas, sx, sy, onInfo = null) {
+  if (!scene) return false;
+  const hit = hitTap(scene, canvas, sx, sy);
+  if (!hit) {
+    scene._pressTap = null;
+    scene._pressTapT = 0;
+    onInfo?.({ type: 'miss', world: screenToWorld(scene, canvas, sx, sy) });
+    return false;
+  }
+  const ok = hit.obj.onTap(scene, hit.world);
+  scene._pressTap = ok ? hit.obj : null; // 失败（无容器/已空）→ 不进入长按
+  scene._pressTapT = 0;
+  onInfo?.({ type: 'tap', object: hit.obj, success: !!ok, world: hit.world });
+  return true;
+}
+
+/** 抬起：清除按住标记（长按停止） */
+function handleSceneTapUp(scene) {
+  if (!scene) return;
+  scene._pressTap = null;
+  scene._pressTapT = 0;
+}
+
+/** 给画布绑定交互（getScreenPos / getActive 由调用方提供：单场景/多场景都行）：
+ *  mousedown=tapDown（滴+按住持续），click=HUD（提示/选格），mouseup=tapUp */
 function bindSceneClick(canvas, getScreenPos, getActive) {
-  canvas.addEventListener('click', (e) => {
+  const active = () => {
     const a = getActive();
-    if (!a || !a.scene) return;
+    return a && a.scene ? a : null;
+  };
+  canvas.addEventListener('mousedown', (e) => {
+    const a = active();
+    if (!a) return;
+    const { x, y } = getScreenPos(e);
+    handleSceneTapDown(a.scene, canvas, x, y);
+  });
+  canvas.addEventListener('mouseup', () => {
+    const a = active();
+    if (a) handleSceneTapUp(a.scene);
+  });
+  window.addEventListener('mouseup', () => {
+    const a = active();
+    if (a) handleSceneTapUp(a.scene);
+  });
+  canvas.addEventListener('click', (e) => {
+    const a = active();
+    if (!a) return;
     const { x, y } = getScreenPos(e);
     handleSceneClick(a.scene, a.hud ?? null, canvas, x, y);
   });
@@ -11395,6 +11527,8 @@ function bindSceneClick(canvas, getScreenPos, getActive) {
 
 exports.screenToWorld = screenToWorld;
 exports.handleSceneClick = handleSceneClick;
+exports.handleSceneTapDown = handleSceneTapDown;
+exports.handleSceneTapUp = handleSceneTapUp;
 exports.bindSceneClick = bindSceneClick;
 
   };

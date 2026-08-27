@@ -16,6 +16,10 @@ export class Container extends Obj {
   constructor({ x, y, w, h, volume, solutes, water, ...rest } = {}) {
     super({ x, y, w, h, solid: false, physicsKind: 'none', ...rest });
     this.solution = new Solution({ volume: volume ?? 100, solutes: solutes ?? {}, water: water ?? volume ?? 100 });
+    // 微溶物质超过饱和浓度 → 析出为容器沉淀（"滴到一定量后溶液变浑浊"）
+    this.solution.onOversaturate = (id, excess) => {
+      this.addPrecipitate(id, excess, null, { kind: 'saturate', text: '过饱和析出' });
+    };
     this.solutionMat = new SolutionMaterial(this.solution, this);
     this.mat = new ContainerMaterial(this); // 溶液 + 沉淀的完整材料（沉淀可参与反应）
     this.precipitates = new Map(); // substanceId → g（沉淀/内含物，化学真相）

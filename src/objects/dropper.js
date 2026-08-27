@@ -130,23 +130,46 @@ export class Dropper extends Obj {
     ctx.strokeRect(gx, gy, gw, gh);
     ctx.fillStyle = 'rgba(255,255,255,0.5)';
     ctx.fillRect(gx + 0.6, gy, 0.7, gh); // 左侧玻璃高光
-    // 管内液体（颜色与溶液取色一致；液面随剩余比例下降）
+    // 管内液体（颜色与溶液取色一致；液面随剩余比例下降；液体**贯穿到锥形滴嘴**——
+    // 滴嘴也是玻璃腔的一部分，装的是同一管液体，不该是空的）
     const frac = Math.max(0, Math.min(1, this.liquid / this.capacity));
     const innerY = gy + 1;
     const innerH = gh - 2;
     const lh = innerH * frac;
     if (lh > 0.6) {
       const { color, alpha } = this.liquidColor();
+      const bodyTop = innerY + innerH - lh; // 液面 y（管内部）
+      const tipBase = gy + gh; // 管底 → 滴嘴起
       ctx.globalAlpha = Math.max(alpha, 0.45);
       ctx.fillStyle = color;
-      ctx.fillRect(gx + 0.6, innerY + innerH - lh, gw - 1.2, lh);
-      ctx.globalAlpha = 1;
-      ctx.strokeStyle = 'rgba(255,255,255,0.7)';
-      ctx.lineWidth = 0.8;
       ctx.beginPath();
-      ctx.moveTo(gx + 0.8, innerY + innerH - lh);
-      ctx.lineTo(gx + gw - 0.8, innerY + innerH - lh);
-      ctx.stroke();
+      ctx.moveTo(gx + 0.6, bodyTop);
+      ctx.lineTo(gx + gw - 0.6, bodyTop);
+      // 沿管向下 → 两侧收进锥形滴嘴（液体充满到尖端）
+      ctx.lineTo(gx + gw - 0.6, tipBase);
+      ctx.lineTo(hx, y + h - 1);
+      ctx.lineTo(gx + 0.6, tipBase);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      // 液面线（只在管内部分显示）
+      if (bodyTop >= innerY + 1) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        ctx.moveTo(gx + 0.8, bodyTop);
+        ctx.lineTo(gx + gw - 0.8, bodyTop);
+        ctx.stroke();
+      }
+      // 液面下"尖嘴"与管交界的光泽（液体连贯感）
+      ctx.fillStyle = 'rgba(255,255,255,0.18)';
+      ctx.beginPath();
+      ctx.moveTo(gx + 0.6, tipBase - 1);
+      ctx.lineTo(gx + gw - 0.6, tipBase - 1);
+      ctx.lineTo(hx + 0.5, y + h - 2.5);
+      ctx.lineTo(hx - 0.5, y + h - 2.5);
+      ctx.closePath();
+      ctx.fill();
     }
     // 锥形滴嘴（细管下端收尖）
     ctx.fillStyle = 'rgba(215,235,255,0.2)';

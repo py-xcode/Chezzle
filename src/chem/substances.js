@@ -28,6 +28,8 @@ export const IONS = {
   'Al3+':    { symbol: 'Al',  poly: false, charge:  3, mass: 27   },
   'Ag+':     { symbol: 'Ag',  poly: false, charge:  1, mass: 108  },
   'Ba2+':    { symbol: 'Ba',  poly: false, charge:  2, mass: 137  },
+  'Pb2+':    { symbol: 'Pb',  poly: false, charge:  2, mass: 207  }, // 铅（PbCrO4 铬黄检验铬酸根）
+  'Sr2+':    { symbol: 'Sr',  poly: false, charge:  2, mass: 88   }, // 锶（SrCrO4 黄）
   'Cl-':     { symbol: 'Cl',  poly: false, charge: -1, mass: 35.5 },
   'SO4^2-':  { symbol: 'SO4', poly: true,  charge: -2, mass: 96   },
   'NO3-':    { symbol: 'NO3', poly: true,  charge: -1, mass: 62   },
@@ -114,7 +116,10 @@ export function solubilityOf(catId, anId) {
   if (anId === 'SO4^2-') return catId === 'Ba2+' ? 'insoluble' : 'soluble';    // 硫酸盐除 BaSO4（CaSO4/PbSO4 微溶省略）
   if (anId === 'CO3^2-' || anId === 'SO3^2-') return 'insoluble';              // 碳酸盐/亚硫酸盐不溶（碱金属铵盐已在上面返回）
   if (anId === 'S2-') return 'insoluble';                      // 硫化物：碱金属/铵盐溶（上面返回），其余 FeS/CuS/ZnS 不溶
-  if (anId === 'CrO4^2-') return catId === 'Ba2+' ? 'insoluble' : 'soluble';   // 铬酸盐：BaCrO4↓(黄) 其余溶
+  if (anId === 'CrO4^2-') {
+    // 铬酸盐：Ba/Pb/Sr/Ag 难溶（BaCrO4 黄、PbCrO4 铬黄、SrCrO4 黄、Ag2CrO4 砖红），其余溶
+    return ['Ba2+', 'Pb2+', 'Sr2+', 'Ag+'].includes(catId) ? 'insoluble' : 'soluble';
+  }
   if (anId === 'HCO3-' || anId === 'AlO2-' || anId === 'SCN-' || anId === 'ClO-') return 'soluble'; // 碳酸氢盐/偏铝酸盐/硫氰酸盐/次氯酸盐可溶
   if (anId === 'OH-') {
     if (catId === 'Na+' || catId === 'K+' || catId === 'Ba2+' || catId === 'Ca2+') return 'soluble';
@@ -187,7 +192,7 @@ SUBSTANCES['CH3COOH'] = { id: 'CH3COOH', mm: 60, state: 'liquid', kind: 'acid', 
 // --- 碱（acidStrength 同用于碱的电离强弱）---
 SUBSTANCES['NaOH'] = { id: 'NaOH', mm: 40, state: 'solid', kind: 'base', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'Na+', an: 'OH-', catCount: 1, anCount: 1 }, solid: ['#ffffff'] };
 SUBSTANCES['KOH'] = { id: 'KOH', mm: 56, state: 'solid', kind: 'base', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'K+', an: 'OH-', catCount: 1, anCount: 1 }, solid: ['#ffffff'] };
-SUBSTANCES['Ca(OH)2'] = { id: 'Ca(OH)2', mm: 74, state: 'solid', kind: 'base', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'Ca2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#f4f4f4'] };
+SUBSTANCES['Ca(OH)2'] = { id: 'Ca(OH)2', mm: 74, state: 'solid', kind: 'base', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'Ca2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#f4f4f4'], solubilityLimit: 1.7 }; // 微溶（20°C ≈1.7g/L：持续滴碱会过饱和析出——石灰乳浑浊）
 SUBSTANCES['Cu(OH)2'] = { id: 'Cu(OH)2', mm: 98, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Cu2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#00afff'] };
 SUBSTANCES['Fe(OH)3'] = { id: 'Fe(OH)3', mm: 107, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Fe3+', an: 'OH-', catCount: 1, anCount: 3 }, solid: ['#002929'] };
 SUBSTANCES['Mg(OH)2'] = { id: 'Mg(OH)2', mm: 58, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Mg2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#f2f2f2'] };
@@ -205,7 +210,7 @@ defineSalt('Zn2+', 'Cl-', { solid: ['#ffffff'] });
 defineSalt('Mg2+', 'Cl-', { solid: ['#ffffff'] });
 defineSalt('Ca2+', 'Cl-', { solid: ['#ffffff'] });
 defineSalt('Ba2+', 'Cl-', { solid: ['#ffffff'] });
-defineSalt('Ca2+', 'SO4^2-', { solid: ['#ffffff'] });
+defineSalt('Ca2+', 'SO4^2-', { solid: ['#ffffff'], solubilityLimit: 2 }); // CaSO4 微溶（-2g/L）
 defineSalt('Na+', 'CO3^2-', { solid: ['#ffffff'], dense: true }); // Na2CO3 致密晶形壳：碳化壳真正保护内核——挡 CO2 继续碳化（自限）、挡酸蚀从外到内逐层剥壳（否则盐酸穿透壳掏空内核成碎片）
 defineSalt('Ca2+', 'CO3^2-', { solid: ['#f2f2f2'], dense: true });   // CaCO3 晶形致密（石灰水检验）
 defineSalt('Ba2+', 'SO4^2-', { solid: ['#ffffff'], dense: true });  // BaSO4 致密（检验硫酸根）
@@ -213,6 +218,10 @@ defineSalt('Ag+', 'Cl-', { solid: ['#ffffff'], dense: true });      // AgCl 致�
 defineSalt('Ag+', 'Br-', { solid: ['#f2e3b0'] });                   // AgBr 淡黄↓（检验溴离子）
 defineSalt('Ag+', 'I-', { solid: ['#ffe98a'] });                    // AgI 黄↓（检验碘离子）
 defineSalt('Ag+', 'NO3-', { solid: ['#ffffff'] });
+defineSalt('Ag+', 'SO4^2-', { solid: ['#ffffff'], solubilityLimit: 8 }); // Ag2SO4 微溶（≈8g/L，中等浓度即析出）
+defineSalt('Pb2+', 'NO3-', { solid: ['#ffffff'] });  // Pb(NO3)2 硝酸铅（离子双置换的铅源）
+defineSalt('Pb2+', 'Cl-', { solid: ['#ffffff'], solubilityLimit: 10 }); // PbCl2 微溶（冷水中难溶）
+defineSalt('Sr2+', 'NO3-', { solid: ['#ffffff'] });  // Sr(NO3)2 硝酸锶
 defineSalt('Cu2+', 'NO3-', { solid: ['#b7e4ff'] });
 defineSalt('Fe3+', 'NO3-', { solid: ['#ffd9a8'] });
 defineSalt('Al3+', 'Cl-', { solid: ['#ffffff'] });
@@ -243,6 +252,9 @@ defineSalt('K+', 'CrO4^2-', { solid: ['#ffd23f'] });   // K2CrO4 黄
 defineSalt('Ca2+', 'Cr2O7^2-', { solid: ['#ff6a3d'] });// CaCr2O7 橙红（重铬酸钙）
 defineSalt('Ca2+', 'CrO4^2-', { solid: ['#ffd23f'] }); // CaCrO4 黄（铬酸钙）
 defineSalt('Ba2+', 'CrO4^2-', { solid: ['#ffd23f'], dense: true }); // BaCrO4 黄↓（检验铬酸根，致密）
+defineSalt('Pb2+', 'CrO4^2-', { solid: ['#ffc93d'], dense: true }); // PbCrO4 铬黄↓（经典检验铬酸根）
+defineSalt('Sr2+', 'CrO4^2-', { solid: ['#ffe066'] }); // SrCrO4 黄↓
+defineSalt('Ag+',  'CrO4^2-', { solid: ['#b8563a'], dense: true }); // Ag2CrO4 砖红↓（微溶→按难溶处理）
 defineSalt('Ba2+', 'CO3^2-', { solid: ['#ffffff'], dense: true });  // BaCO3 白↓（致密晶形：附着后阻断反应）
 defineSalt('Ba2+', 'OH-', { acidStrength: 'strong', solid: ['#f4f4f4'] }); // Ba(OH)2 强碱
 defineSalt('Na+', 'HCO3-', { solid: ['#ffffff'] });    // NaHCO3

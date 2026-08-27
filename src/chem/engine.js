@@ -671,7 +671,9 @@ export class ChemistryEngine {
     if (catId === 'Fe3+' && anId === 'SCN-') return { drives: true, products: [{ id: 'Fe(SCN)3', coeff: 1 }] };
     const salt = ensureSalt(catId, anId);
     if (salt.id === idA || salt.id === idB) return { drives: false, products: [] };
-    return { drives: salt.soluble !== 'soluble', products: [{ id: salt.id, coeff: 1 }] };
+    // 驱动判据：不溶 → 沉淀；**微溶**（solubilityLimit，如 Ca(OH)2/Ag2SO4/CaSO4/PbCl2）
+    // → 也生成（进溶液，超过饱和浓度时析出——"滴到一定量后溶液变浑浊"）
+    return { drives: salt.soluble !== 'soluble' || salt.solubilityLimit > 0, products: [{ id: salt.id, coeff: 1 }] };
   }
 
   // ===========================================================================

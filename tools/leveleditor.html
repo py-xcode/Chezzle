@@ -1076,7 +1076,21 @@ function canvasPos(e) {
   return { x: (e.clientX - r.left) * (canvas.width / r.width), y: (e.clientY - r.top) * (canvas.height / r.height) };
 }
 canvas.addEventListener('mousedown', (e) => {
-  if (state.playing) return;
+  if (state.playing) {
+    // 试玩中按下：点中滴管 → 滴一滴并标记"按住"（长按持续滴，松开停）
+    const sp = canvasPos(e);
+    if (e.button === 0 && playScene) {
+      C.handleSceneTapDown(playScene, canvas, sp.x, sp.y, (info) => {
+        const wx = Math.round(info.world?.x ?? 0);
+        const wy = Math.round(info.world?.y ?? 0);
+        const o = info.object;
+        $('status').textContent = info.type === 'tap'
+          ? `试玩中｜按下→世界(${wx},${wy}) 命中：${o.hoverLabel ?? o.constructor.name} ${info.success ? '→ 已滴液（按住可连续滴）' : '→ 未滴（下方无容器或已滴空）'}`
+          : `试玩中｜按下→世界(${wx},${wy}) 未命中可交互物体`;
+      });
+    }
+    return;
+  }
   const sp = canvasPos(e);
   const w = screenToWorld(sp.x, sp.y);
   if (e.button === 1) { drag = { mode: 'pan', sx: sp.x, sy: sp.y }; e.preventDefault(); return; }
@@ -1711,6 +1725,7 @@ function togglePlay() {
     if (playUnbind) playUnbind();
     if (playMouseClean) playMouseClean();
     playStop = playUnbind = playMouseClean = null;
+    if (playScene) C.handleSceneTapUp(playScene); // 清按住（长按滴加停止）
     playScene = null;
     state.playing = false;
     $('btnPlay').textContent = '▶ 试玩';
@@ -1829,9 +1844,12 @@ function togglePlay() {
     const sx = (e.clientX - rect.left) * (canvas.width / rect.width);
     const sy = (e.clientY - rect.top) * (canvas.height / rect.height);
     const w = C.screenToWorld(scene, canvas, sx, sy);
-    $('status').textContent = `试玩中｜悬停世界(${Math.round(w.x)},${Math.round(w.y)})｜点击滴管可滴液`;
+    $('status').textContent = `试玩中｜悬停世界(${Math.round(w.x)},${Math.round(w.y)})｜点击/按住滴管可滴液`;
   };
   canvas.addEventListener('mousemove', onPlayMoveDiag);
+  // 松开鼠标准确停（长按滴加在 mouseup 停止；窗口级兜底）
+  const onPlayTapUp = () => { C.handleSceneTapUp(scene); };
+  window.addEventListener('mouseup', onPlayTapUp);
   state.playing = true;
   $('btnPlay').textContent = '⏹ 退出试玩';
   canvas.style.cursor = 'default';
@@ -1841,10 +1859,11 @@ function togglePlay() {
     canvas.removeEventListener('mouseleave', onPlayLeave);
     canvas.removeEventListener('click', onPlayClick);
     canvas.removeEventListener('mousemove', onPlayMoveDiag);
+    window.removeEventListener('mouseup', onPlayTapUp);
   };
   playStop = C.startLoop(scene, renderer, { hud });
   playScene = scene; // 调试/测试可访问当前试玩场景
-  $('status').textContent = '试玩中：A/D 移动 · 空格跳 · Q 收集 · Shift 放置 · 点击滴管滴液 · 悬停查来源 · F5暂停';
+  $('status').textContent = '试玩中：A/D 移动 · 空格跳 · Q 收集 · Shift 放置 · 点击/按住滴管滴液 · 悬停查来源 · F5暂停';
   notifyPlayState(true);
 }
 

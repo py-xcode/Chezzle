@@ -64,7 +64,9 @@ export class Solution {
 
   /** 增加溶质（负值按移除处理）；id 归一化（NH4OH → NH3·H2O）。
    *  总量仍低于 MIN_ENTRY 的微量入账直接丢弃（不建立条目）；
-   *  非有限质量（NaN/Infinity）直接忽略（防反应异常污染溶液）。 */
+   *  非有限质量（NaN/Infinity）直接忽略（防反应异常污染溶液）。
+   *  微溶物质（solubilityLimit g/L）：超过饱和浓度 → 超出部分析出（onOversaturate 钩子，
+   *  容器把它变成可见沉淀——"滴到一定量后溶液浑浊"）。 */
   add(id, m) {
     id = normId(id);
     if (!Number.isFinite(m) || m === 0) return;
@@ -74,6 +76,17 @@ export class Solution {
     }
     const next = (this.solutes.get(id) ?? 0) + m;
     if (next < MIN_ENTRY) return; // 微量不入账：防"0.000g ↔ 不显示"的条目抖动
+    // 微溶饱和：超出的部分析出（溶液保持饱和浓度；析出的量进容器沉淀）
+    const sub = getSubstance(id);
+    if (sub && sub.solubilityLimit > 0 && this.volume > 0 && typeof this.onOversaturate === 'function') {
+      const limitMass = sub.solubilityLimit * (this.volume / 1000);
+      if (next > limitMass) {
+        const excess = next - limitMass;
+        this.solutes.set(id, limitMass);
+        this.onOversaturate(id, excess);
+        return;
+      }
+    }
     this.solutes.set(id, next);
   }
 

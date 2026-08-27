@@ -4,7 +4,6 @@
 // ============================================================================
 
 import { Obj } from './obj.js';
-import { renderPrecipitateBall } from './particle.js';
 
 export class Drip extends Obj {
   constructor({ x, y, targetY, color = '#9fd8ff', ...rest }) {
@@ -22,9 +21,27 @@ export class Drip extends Obj {
   }
 
   render(ctx) {
-    // 液滴形：小圆球 + 顶部细小（简单：上小下大的两椭圆）
+    // 泪滴形（上尖下圆）：上端尖锥收拢、下端圆胖——下坠中的液滴
     const cx = this.x + this.w / 2;
-    const cy = this.y + this.h / 2;
-    renderPrecipitateBall(ctx, cx, cy, Math.max(7, this.h + this.w), this.color);
+    const top = this.y;
+    const bottom = this.y + this.h;
+    const r = Math.max(3, this.h * 0.62); // 下部圆球半径
+    ctx.save();
+    ctx.shadowColor = this.color;
+    ctx.shadowBlur = 7;
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.moveTo(cx, top); // 尖端
+    ctx.bezierCurveTo(cx + r * 0.5, top + r * 0.8, cx + r, bottom - r * 0.7, cx, bottom);
+    ctx.bezierCurveTo(cx - r, bottom - r * 0.7, cx - r * 0.5, top + r * 0.8, cx, top);
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    // 下部高光（左上方）
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.beginPath();
+    ctx.ellipse(cx - r * 0.28, bottom - r * 0.62, r * 0.2, r * 0.32, -0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
   }
 }

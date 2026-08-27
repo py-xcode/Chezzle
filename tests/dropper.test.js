@@ -12,7 +12,7 @@ import { Beaker } from '../src/objects/beaker.js';
 import { Floor } from '../src/objects/floor.js';
 import { Pool } from '../src/objects/pool.js';
 import { Camera } from '../src/render/camera.js';
-import { handleSceneClick } from '../src/level/click.js';
+import { handleSceneClick, handleSceneTapDown, handleSceneTapUp } from '../src/level/click.js';
 
 const TICK = 1 / 30;
 function run(scene, n) {
@@ -133,8 +133,8 @@ test('管内液体颜色与溶液取色一致（H2O 淡、CuSO4 有色）', () =
   assert.notEqual(c1.color, c2.color, '颜色应不同');
 });
 
-// ---- 6. 点击管线：提示按钮 / 物品栏 / 物体命中 -------------------------------
-test('handleSceneClick：提示按钮切换、点中滴管触发 onTap', () => {
+// ---- 6. 按压管线：按下滴液 + 长按持续 + 松开停止 + HUD 点击 ----------------
+test('handleSceneTapDown/Up + 长按：按下滴一滴并标记按住，按住持续滴，松开停', () => {
   const scene = new Scene({ worldW: 1000, worldH: 800 });
   scene.camera = new Camera({ viewW: 1000, viewH: 800, worldW: 1000, worldH: 800 });
   scene.status = 'running';
@@ -145,17 +145,28 @@ test('handleSceneClick：提示按钮切换、点中滴管触发 onTap', () => {
   scene.addObject(dr);
   const hud = { showTip: false, slotSize: 36 };
   const canvas = { width: 1000, height: 800 };
-  // 世界 (430, 630) → 屏幕 (430, 630)（等比例 1:1、无缩放时）
-  const hit = handleSceneClick(scene, hud, canvas, 430, 630);
-  assert.equal(hit, true, '点击滴管应被消费');
-  assert.ok(Math.abs(beaker.solution.mass('HCl') - 1) < 1e-9, '点击滴管后溶液增加');
-  // 提示按钮
+  // 按下（世界 430,630）→ 滴一滴 + 进入长按
+  assert.equal(handleSceneTapDown(scene, canvas, 430, 630), true, '按下应命中滴管');
+  assert.equal(scene._pressTap, dr, '应标记按住目标');
+  assert.ok(Math.abs(beaker.solution.mass('HCl') - 1) < 1e-9, '按下即滴一滴');
+  // 按住：每 0.18s 一滴（≈每 6 tick 一滴：20 tick 内第 6/11/16 tick 再滴 3 滴 → 共 4g）
+  for (let i = 0; i < 20; i++) scene.step(TICK);
+  assert.ok(Math.abs(beaker.solution.mass('HCl') - 4) < 1e-9, `按住应持续滴（0.67s→+3滴）：${beaker.solution.mass('HCl')}`);
+  // 松开 → 停止
+  handleSceneTapUp(scene);
+  assert.equal(scene._pressTap, null, '松开应清除按住');
+  const before = beaker.solution.mass('HCl');
+  for (let i = 0; i < 10; i++) scene.step(TICK);
+  assert.ok(Math.abs(beaker.solution.mass('HCl') - before) < 1e-9, '松开后不再滴');
+  // HUD 点击（单击提示按钮/物品栏/空白）
   handleSceneClick(scene, hud, canvas, canvas.width - 40, 20);
   assert.equal(hud.showTip, true, '提示按钮切换');
   handleSceneClick(scene, hud, canvas, canvas.width - 40, 20);
   assert.equal(hud.showTip, false);
-  // 空白处：不消费错误物体
   assert.equal(handleSceneClick(scene, hud, canvas, 900, 700), false, '空白点击不消费');
+  // 未命中按下：不进入长按
+  assert.equal(handleSceneTapDown(scene, canvas, 900, 700), false);
+  assert.equal(scene._pressTap, null);
 });
 
 // ---- 7. camera 跟随时的屏幕→世界换算 ----------------------------------------
