@@ -12,6 +12,7 @@ import { Obj } from './obj.js';
 import { getSubstance } from '../chem/substances.js';
 import { Solution } from '../chem/solution.js';
 import { solutionColor } from '../render/liquidrender.js';
+import { Drip } from './drip.js';
 
 export const DROPPER_W = 11;
 export const DROPPER_H = 52;
@@ -55,6 +56,23 @@ export class Dropper extends Obj {
     c.solutionMat.add(this.substance, take); // H2O 走"水"字段，其它走溶质
     if (this.substance !== 'H2O') c.noteSolOrigin(this.substance, { kind: 'dropper', text: '滴管滴入' });
     this.liquid -= take;
+    // 记录落点：化学/气泡/沉淀围绕"滴入处"发生（不再默认容器中心）
+    const r = c.innerRect();
+    const dx = Math.max(r.x + 4, Math.min(r.x + r.w - 4, this.x + this.w / 2));
+    const dy = Math.max(r.y + 4, Math.min(r.y + r.h - 6, this.bottom + 30));
+    c.depositAt = { x: dx, y: dy };
+    // 液滴下坠动画（从滴管口到液面；带滴管液体颜色）
+    if (typeof scene.addObject === 'function') {
+      const { color } = this.liquidColor();
+      scene._dripSeq = (scene._dripSeq ?? 0) + 1;
+      scene.addObject(new Drip({
+        x: dx - 2,
+        y: this.bottom + 2,
+        targetY: r.y + 6,
+        color,
+        id: `drip${scene._dripSeq}`,
+      }));
+    }
     return true;
   }
 

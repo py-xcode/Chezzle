@@ -329,6 +329,9 @@ export class Player extends Obj {
     const container = scene.containerUnderFeet(this);
     const placeOrigin = { kind: 'place' };
     if (container) {
+      // 落点=玩家脚下（反应/气泡围绕玩家放下的位置，不再默认容器中心）
+      const ir = typeof container.innerRect === 'function' ? container.innerRect() : null;
+      if (ir) container.depositAt = { x: this.x + this.w / 2, y: Math.max(ir.y + 4, this.bottom - 6) };
       // 可溶物质放进液体容器（池）→ 溶解进溶液（CuSO4 不会变成永不溶解的沉淀颗粒）；
       // 不溶物（Cu(OH)2 等）才作为沉淀放置
       if (container.solution && container.solution.water > 0 && isSoluble(res.substance)) {

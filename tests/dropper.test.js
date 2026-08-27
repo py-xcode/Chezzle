@@ -103,7 +103,26 @@ test('容器判定：水平不在口内不算；悬在口上方任意高度都�
   assert.equal(drHi._containerBelow(scene), scene.containers[0], '高度不应限制（下面有即可）');
 });
 
-// ---- 5. 管内颜色（溶液取色：水无色、有色溶质显色） --------------------------
+// ---- 5. 滴液动画与落点 -------------------------------------------------------
+test('滴管滴液：生成液滴动画对象 + 在容器上记录落点（化学围绕滴入处）', () => {
+  const scene = flatScene();
+  scene.addObject(new Beaker({ x: 400, y: 660, w: 60, h: 60, volume: 150 }));
+  const dr = new Dropper({ x: 425, y: 615, substance: 'CuSO4', capacity: 50, drop: 1 });
+  scene.addObject(dr);
+  run(scene, 2);
+  dr.onTap(scene);
+  const bk = scene.objects.find((o) => o.constructor.name === 'Beaker');
+  assert.ok(bk.depositAt, '应记录容器落点');
+  assert.ok(Math.abs(bk.depositAt.x - (425 + dr.w / 2)) < 60, `落点 x≈${(425 + dr.w / 2)}：${bk.depositAt.x.toFixed(0)}`);
+  assert.ok(Math.abs(bk.depositAt.y - 660) < 60, `落点 y≈660：${bk.depositAt.y.toFixed(0)}`);
+  const drips = scene.objects.filter((o) => o.constructor.name === 'Drip');
+  assert.ok(drips.length >= 1, '应生成液滴动画对象');
+  // 液滴随重力下坠到液面后移除
+  run(scene, 120);
+  assert.ok(scene.objects.filter((o) => o.constructor.name === 'Drip').length === 0, '液滴应到达液面消失');
+});
+
+// ---- 6. 管内颜色（溶液取色：水无色、有色溶质显色） --------------------------
 test('管内液体颜色与溶液取色一致（H2O 淡、CuSO4 有色）', () => {
   const w = new Dropper({ x: 0, y: 0, substance: 'H2O', capacity: 50 });
   const c1 = w.liquidColor();

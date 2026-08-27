@@ -36,6 +36,7 @@ export * from './objects/portal.js';
 export * from './objects/gasdetector.js';
 export * from './objects/extractor.js';
 export * from './objects/dropper.js';
+export * from './objects/drip.js';
 
 export * from './chem/substances.js';
 export * from './chem/solution.js';

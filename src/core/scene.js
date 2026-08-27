@@ -440,6 +440,8 @@ export class Scene {
         return { x: ox + c.x * CELL_SIZE + CELL_SIZE / 2, y: oy + c.y * CELL_SIZE + CELL_SIZE / 2 };
       }
     }
+    // 容器（池/烧杯）无网格：反应点=最近落点（滴入/产物/玩家放置处）——不再默认容器中心
+    if (obj && !obj.grid && obj.depositAt) return { x: obj.depositAt.x, y: obj.depositAt.y };
     const base = obj ? { x: obj.x + obj.w / 2, y: obj.isLamp ? obj.flameY() : obj.bottom } : null;
     return base ?? { x: this.worldW / 2, y: this.worldH / 2 };
   }
@@ -836,7 +838,9 @@ export class Scene {
     }
     if (product.phase === 'precipitate') {
       if (ctx.container) {
-        // 在反应位置附近生成沉淀颗粒（物理堆叠），记录生成来源（调试悬停显示）
+        // 在反应位置附近生成沉淀颗粒（物理堆叠），记录生成来源（调试悬停显示）；
+        // 产物落点成为容器"最近落点"——后续反应/气泡/沉淀围绕它（不再回池中央）
+        if (ctx.point) ctx.container.depositAt = { x: ctx.point.x, y: ctx.point.y };
         ctx.container.addPrecipitate(product.id, product.mass, ctx.point, origin);
         return;
       }

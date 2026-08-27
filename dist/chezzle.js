@@ -47,6 +47,7 @@ Object.assign(exports, __require('src/objects/portal.js'));;
 Object.assign(exports, __require('src/objects/gasdetector.js'));;
 Object.assign(exports, __require('src/objects/extractor.js'));;
 Object.assign(exports, __require('src/objects/dropper.js'));;
+Object.assign(exports, __require('src/objects/drip.js'));;
 
 Object.assign(exports, __require('src/chem/substances.js'));;
 Object.assign(exports, __require('src/chem/solution.js'));;
@@ -565,6 +566,8 @@ class Scene {
         return { x: ox + c.x * CELL_SIZE + CELL_SIZE / 2, y: oy + c.y * CELL_SIZE + CELL_SIZE / 2 };
       }
     }
+    // 容器（池/烧杯）无网格：反应点=最近落点（滴入/产物/玩家放置处）——不再默认容器中心
+    if (obj && !obj.grid && obj.depositAt) return { x: obj.depositAt.x, y: obj.depositAt.y };
     const base = obj ? { x: obj.x + obj.w / 2, y: obj.isLamp ? obj.flameY() : obj.bottom } : null;
     return base ?? { x: this.worldW / 2, y: this.worldH / 2 };
   }
@@ -961,7 +964,9 @@ class Scene {
     }
     if (product.phase === 'precipitate') {
       if (ctx.container) {
-        // 在反应位置附近生成沉淀颗粒（物理堆叠），记录生成来源（调试悬停显示）
+        // 在反应位置附近生成沉淀颗粒（物理堆叠），记录生成来源（调试悬停显示）；
+        // 产物落点成为容器"最近落点"——后续反应/气泡/沉淀围绕它（不再回池中央）
+        if (ctx.point) ctx.container.depositAt = { x: ctx.point.x, y: ctx.point.y };
         ctx.container.addPrecipitate(product.id, product.mass, ctx.point, origin);
         return;
       }
@@ -9627,6 +9632,9 @@ class Player extends Obj {
     const container = scene.containerUnderFeet(this);
     const placeOrigin = { kind: 'place' };
     if (container) {
+      // 落点=玩家脚下（反应/气泡围绕玩家放下的位置，不再默认容器中心）
+      const ir = typeof container.innerRect === 'function' ? container.innerRect() : null;
+      if (ir) container.depositAt = { x: this.x + this.w / 2, y: Math.max(ir.y + 4, this.bottom - 6) };
       // 可溶物质放进液体容器（池）→ 溶解进溶液（CuSO4 不会变成永不溶解的沉淀颗粒）；
       // 不溶物（Cu(OH)2 等）才作为沉淀放置
       if (container.solution && container.solution.water > 0 && isSoluble(res.substance)) {
@@ -11122,6 +11130,7 @@ const { Obj } = __require('src/objects/obj.js');;
 const { getSubstance } = __require('src/chem/substances.js');;
 const { Solution } = __require('src/chem/solution.js');;
 const { solutionColor } = __require('src/render/liquidrender.js');;
+const { Drip } = __require('src/objects/drip.js');;
 
 const DROPPER_W = 11;
 const DROPPER_H = 52;
@@ -11165,6 +11174,23 @@ class Dropper extends Obj {
     c.solutionMat.add(this.substance, take); // H2O 走"水"字段，其它走溶质
     if (this.substance !== 'H2O') c.noteSolOrigin(this.substance, { kind: 'dropper', text: '滴管滴入' });
     this.liquid -= take;
+    // 记录落点：化学/气泡/沉淀围绕"滴入处"发生（不再默认容器中心）
+    const r = c.innerRect();
+    const dx = Math.max(r.x + 4, Math.min(r.x + r.w - 4, this.x + this.w / 2));
+    const dy = Math.max(r.y + 4, Math.min(r.y + r.h - 6, this.bottom + 30));
+    c.depositAt = { x: dx, y: dy };
+    // 液滴下坠动画（从滴管口到液面；带滴管液体颜色）
+    if (typeof scene.addObject === 'function') {
+      const { color } = this.liquidColor();
+      scene._dripSeq = (scene._dripSeq ?? 0) + 1;
+      scene.addObject(new Drip({
+        x: dx - 2,
+        y: this.bottom + 2,
+        targetY: r.y + 6,
+        color,
+        id: `drip${scene._dripSeq}`,
+      }));
+    }
     return true;
   }
 
@@ -11257,6 +11283,41 @@ class Dropper extends Obj {
 exports.DROPPER_W = DROPPER_W;
 exports.DROPPER_H = DROPPER_H;
 exports.Dropper = Dropper;
+
+  };
+  __modules["src/objects/drip.js"] = function (module, exports, __require) {
+// ============================================================================
+// 液滴（Drip）：滴管滴液的下坠视觉（带滴管液体颜色；到达液面即消失）。
+// 只有视觉反馈——化学由溶液模型处理（落点记录在容器 depositAt）。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+const { renderPrecipitateBall } = __require('src/objects/particle.js');;
+
+class Drip extends Obj {
+  constructor({ x, y, targetY, color = '#9fd8ff', ...rest }) {
+    super({ x, y, w: 4, h: 6, solid: false, physicsKind: 'none', noLift: true, ...rest });
+    this.targetY = targetY;
+    this.color = color;
+    this.vy = 0;
+    this.life = 2;
+  }
+
+  update(dt, scene) {
+    this.vy += 900 * dt; // 重力加速下坠
+    this.y += this.vy * dt;
+    if (this.y >= this.targetY) scene.removeObject(this);
+  }
+
+  render(ctx) {
+    // 液滴形：小圆球 + 顶部细小（简单：上小下大的两椭圆）
+    const cx = this.x + this.w / 2;
+    const cy = this.y + this.h / 2;
+    renderPrecipitateBall(ctx, cx, cy, Math.max(7, this.h + this.w), this.color);
+  }
+}
+
+exports.Drip = Drip;
 
   };
   __modules["src/level/click.js"] = function (module, exports, __require) {
