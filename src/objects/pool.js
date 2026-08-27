@@ -32,7 +32,10 @@ export class Pool extends Container {
   render(ctx, scene) {
     const r = this.innerRect();
     if (r.w <= 0 || r.h <= 0) return;
-    renderLiquid(ctx, r.x, r.y, r.w, r.h, this.solution, scene.time ?? 0);
+    // 液面高度 = 实际液体量/容量（吸液后池面下降；默认满池=容积 → 与旧版无异）
+    const vol = this.solution.volume > 0 ? this.solution.volume : Infinity;
+    const lh = r.h * Math.max(0, Math.min(1, this.solution.totalMass() / vol));
+    if (lh > 2) renderLiquid(ctx, r.x, r.y + r.h - lh, r.w, lh, this.solution, scene.time ?? 0);
 
     // 沉淀：从反应位置生成的视觉颗粒，物理堆叠成堆
     this.renderGrains(ctx);

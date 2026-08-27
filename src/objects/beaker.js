@@ -15,15 +15,19 @@ export class Beaker extends Container {
   get hoverLabel() {
     return '烧杯';
   }
+  get isCarryItem() {
+    return 'beaker';
+  }
   constructor({ x, y, w = 60, h = 70, wall = 5, ...rest } = {}) {
     super({ x, y, w, h, ...rest });
     this.wall = wall;
     this.vy = 0;
     // 实心杯壁（左/右/底），跟随烧杯移动；顶口敞开（可跳入）
+    // noLift：杯壁不被气泡柱气流托起（通入气体时气泡柱紧贴杯壁，不能把杯子顶飞）
     this.subBodies = [
-      new Obj({ id: 'bk_l', x, y, w: wall, h, solid: true, physicsKind: 'dynamic', gravity: 0, mass: 1 }),
-      new Obj({ id: 'bk_r', x: x + w - wall, y, w: wall, h, solid: true, physicsKind: 'dynamic', gravity: 0, mass: 1 }),
-      new Obj({ id: 'bk_b', x, y: y + h - wall, w, h: wall, solid: true, physicsKind: 'dynamic', gravity: 0, mass: 1 }),
+      new Obj({ id: 'bk_l', x, y, w: wall, h, solid: true, physicsKind: 'dynamic', gravity: 0, mass: 1, noLift: true }),
+      new Obj({ id: 'bk_r', x: x + w - wall, y, w: wall, h, solid: true, physicsKind: 'dynamic', gravity: 0, mass: 1, noLift: true }),
+      new Obj({ id: 'bk_b', x, y: y + h - wall, w, h: wall, solid: true, physicsKind: 'dynamic', gravity: 0, mass: 1, noLift: true }),
     ];
   }
 
@@ -111,9 +115,13 @@ export class Beaker extends Container {
   }
 
   render(ctx, scene) {
-    // 液体（元素发光液面）
+    // 液体（元素发光液面；液面高度 = 实际液体量/容量——吸液/倒出后可见升降）
     const inner = this.innerRect();
-    if (inner.w > 0 && inner.h > 0) renderLiquid(ctx, inner.x, inner.y, inner.w, inner.h, this.solution, scene.time ?? 0);
+    if (inner.w > 0 && inner.h > 0) {
+      const vol = this.solution.volume > 0 ? this.solution.volume : Infinity;
+      const lh = inner.h * Math.max(0, Math.min(1, this.solution.totalMass() / vol));
+      if (lh > 2) renderLiquid(ctx, inner.x, inner.y + inner.h - lh, inner.w, lh, this.solution, scene.time ?? 0);
+    }
     // 沉淀：从反应位置生成的视觉颗粒，物理堆叠成堆
     this.renderGrains(ctx);
     // 玻璃杯（U 形，半透明 + 亮边 + 高光）

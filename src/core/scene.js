@@ -21,6 +21,7 @@ import { Container } from '../objects/container.js';
 import { Portal } from '../objects/portal.js';
 import { Rope } from '../objects/rope.js';
 import { CFG } from './config.js';
+import { stepPressTap } from '../level/click.js';
 
 export class Scene {
   constructor({ worldW = CFG.worldW, worldH = CFG.worldH, physics = {} } = {}) {
@@ -55,11 +56,16 @@ export class Scene {
     this.debugPaused = false; // 暂停 tick 推进
     this.debugStepOnce = false; // 手动步进一 tick
 
-    this.control = new Set(); // 长按（left/right/jump/place/collect）
+    this.control = new Set(); // 长按（left/right/jump/place/collect/grab/use）
     this.pressed = new Set(); // 本刻刚按下（边缘触发）
     this._events = {};
     this._emitCtx = null;
     this._plumeSeq = 0;
+    this._pressTap = null; // 按住的目标（长按持续执行 onTap，如滴管连续滴）
+    this._pressTapT = 0; // 距上次触发的时间
+    this._pressCand = null; // 按下候选（拖动 vs 点击滴液判定）
+    this._drag = null; // 正在拖动的物品（滴管）
+    this._gasHold = null; // 按住 C 集气的集气瓶（Player.update 每帧设置）
     this.mouse = null; // 调试模式悬停：{x,y,on}（屏幕坐标，由 builder 鼠标监听写入）
     this._rxLogT = {}; // 玩家反应日志限频：规范化反应式 → 上次记录时刻（防"反应抖动"）
 
@@ -232,6 +238,17 @@ export class Scene {
     if (this.player === obj) this.player = null; // 玩家被移除/搬走：清引用（跨场景搬运）
   }
 
+  /** 拾取物品：连同其子体（烧杯杯壁）一起移出场景（背包携带时不在世界上） */
+  removeItem(obj) {
+    this.removeObject(obj);
+    if (obj.subBodies) for (const sb of obj.subBodies) this.removeObject(sb);
+  }
+
+  /** 放置物品回场景（子体随 addObject 一并注册；烧杯晚帧 syncWalls 对齐位置） */
+  addItem(obj) {
+    this.addObject(obj);
+  }
+
   // ===========================================================================
   // 主刻
   // ===========================================================================
@@ -252,17 +269,8 @@ export class Scene {
       if (typeof obj.update === 'function') obj.update(dt, this);
     }
 
-    // 1.2 长按持续操作（按住滴管=持续滴加，直到松开/用完/失败；0.08s/滴）
-    if (this._pressTap) {
-      this._pressTapT = (this._pressTapT ?? 0) + dt;
-      if (this._pressTapT >= 0.08) {
-        this._pressTapT = 0;
-        const o = this._pressTap;
-        if (!this.objects.includes(o) || typeof o.onTap !== 'function' || !o.onTap(this)) {
-          this._pressTap = null; // 用完/失败/已移除 → 停止
-        }
-      }
-    }
+    // 1.2 长按持续操作（点击管线：按住滴管=持续滴加直到松开/用完；拖动滴管=改变位置）
+    stepPressTap(this, dt);
 
     // 1.5 网格形状 → 物理体（上一帧化学后的形状；物理必须用最新尺寸，
     //     否则消耗/生长后碰撞箱持续滞后一帧——"碰撞箱显示已缩小但旧边界仍挡人"）
@@ -317,6 +325,7 @@ export class Scene {
 
     // 8. 清空边缘触发
     this.pressed.clear();
+    this._gasHold = null; // 集气瓶按住的标记只在本 tick 有效（Player.update 每帧重设）
   }
 
   updateContainment() {
@@ -766,6 +775,54 @@ export class Scene {
       const y = point.y + (dir < 0 ? -(3 + i * 4) : 3 + i * 4);
       this.addObject(new Bubble({ x, y, dir }));
     }
+    // 集气瓶截留：按住 C 且背包选中集气瓶时，**距离玩家最近的一处气泡柱**产生的
+    // 气体不进大气，直接装入集气瓶（按产气速度收集，5g 封顶；瓶满后恢复正常管线）。
+    // 返回"已截留质量"：引擎把它从后续吸收/大气份额中扣除。
+    let captured = 0;
+    const bottle = this._gasHold;
+    if (bottle && this.player && bottle.totalGas() < bottle.capacity - 1e-9 && this._nearestPlume() === plume) {
+      captured = bottle.addGas(id, mass);
+    }
+    return captured;
+  }
+
+  /** 距离玩家最近的气泡柱（反应产气的气流；边缘间隙 > 范围返回 null） */
+  _nearestPlume() {
+    const p = this.player;
+    if (!p) return null;
+    let best = null;
+    let bd = Infinity;
+    for (const o of this.objects) {
+      if (!(o instanceof GasColumn) || !(o.life > 0)) continue;
+      const dx = Math.max(p.x - o.right, o.x - p.right, 0);
+      const dy = Math.max(p.y - o.bottom, o.y - p.bottom, 0);
+      const d = Math.hypot(dx, dy);
+      if (d < bd) {
+        bd = d;
+        best = o;
+      }
+    }
+    if (!best || bd > CFG.item.gasCollectRange) return null;
+    return best;
+  }
+
+  /**
+   * 向容器溶液通入气体（集气瓶 → 最近的烧杯/池）：气泡从注入点冒出，
+   * 气体走"碱吸收 → 水溶解 → 剩余进大气"整条管线（forceDissolve 让
+   * CO2/SO2/NO2/Cl2 在主动鼓泡时也溶进水——与被动大气吸收的限制不同）。
+   */
+  bubbleGas(container, id, mass, dt) {
+    if (!container || !container.solution || !(mass > 1e-9)) return 0;
+    const pt = container.depositAt
+      && container.depositAt.x > container.x && container.depositAt.x < container.x + container.w
+      && container.depositAt.y > container.y && container.depositAt.y < container.y + container.h
+      ? container.depositAt
+      : { x: container.x + container.w / 2, y: container.y + Math.min(24, container.h / 2) };
+    this._emitCtx = { obj: null, container, player: this.player, point: pt, spread: 14 };
+    const env = this.makeEnv(container);
+    const ctx = this.chem._ctxOf(container.solutionMat, container.solutionMat, dt, env);
+    this.chem._emitGas(id, mass, ctx, { forceDissolve: true });
+    return 1;
   }
 
   /** 接触对 env：条件取双方并集（任一方受热即视为接触处受热） */

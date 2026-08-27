@@ -124,6 +124,40 @@ export class Solution {
     return this.solutes.has(normId(id));
   }
 
+  /** 溶液总质量（水 + 全部溶质，g） */
+  totalMass() {
+    let s = this.water;
+    for (const m of this.solutes.values()) s += m;
+    return s;
+  }
+
+  /**
+   * 取走一份"同比例样品"（质量 ≤ mass，不足取全部）——水和各溶质按原比例一起
+   * 转移（玩家用烧杯/滴管从药品池吸液：吸走的是整份溶液，不是提纯后的一种）。
+   * 返回 { water, solutes } 或 null（无液体可取/非法参数）。
+   */
+  takeSample(mass) {
+    if (!(mass > 0)) return null;
+    const total = this.totalMass();
+    if (total <= 1e-9) return null;
+    const m = Math.min(mass, total);
+    const f = m / total;
+    const out = { water: this.water * f, solutes: {} };
+    for (const [id, v] of this.solutes) out.solutes[id] = v * f;
+    this.water -= out.water;
+    for (const [id, v] of Object.entries(out.solutes)) this.remove(id, v);
+    return out;
+  }
+
+  /** 把 takeSample 得到的样品并入本溶液（水进"水"字段，溶质按 add 规则入账） */
+  addSample(sample) {
+    if (!sample) return;
+    if (sample.water > 0) this.water += sample.water;
+    for (const [id, v] of Object.entries(sample.solutes ?? {})) {
+      if (v > 0) this.add(id, v);
+    }
+  }
+
   clone() {
     const c = new Solution({ volume: this.volume, water: this.water });
     for (const [id, m] of this.solutes) c.solutes.set(id, m);

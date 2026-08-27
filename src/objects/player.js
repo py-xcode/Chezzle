@@ -11,10 +11,14 @@ import { MaterialGrid, renderGrid, CELL_SIZE, CELL_MASS } from '../render/gridre
 import { THEME, rr, contrastEdge, luminance } from '../render/theme.js';
 import { getSubstance, isSoluble, shedCoeffOf } from '../chem/substances.js';
 import { CFG } from '../core/config.js';
+import { pickupItem, placeCarriedItem, drawLiquid, pourBeaker, injectBottleGas } from '../level/items.js';
 
 export class Inventory {
   constructor({ slots = CFG.inventory.slots, capacity = CFG.inventory.capacity } = {}) {
-    this.slots = new Array(slots).fill(null); // {substance, mass} | null
+    // 格子内容：null | {substance, mass}（物质，按种类分格） |
+    //        {item:'beaker'|'dropper'|'bottle', obj}（可携带物品：集气瓶/烧杯/滴管——
+    //        一物一格，**不堆叠**，哪怕都是空的）
+    this.slots = new Array(slots).fill(null);
     this.capacity = capacity;
     this.selected = 0;
   }
@@ -23,10 +27,18 @@ export class Inventory {
     return this.slots[this.selected];
   }
 
-  /** 该物质还能装下的质量（g）：同物质格剩余 + 每个空格一满格（跨格收集） */
+  /** 选中格里的可携带物品（无则 null） */
+  selectedItem() {
+    const s = this.selectedSlot();
+    return s && s.item ? s.obj : null;
+  }
+
+  /** 该物质还能装下的质量（g）：同物质格剩余 + 每个空格一满格（跨格收集）；
+   *  物品格不给物质留空间（不堆叠）。 */
   roomFor(substance) {
     let room = 0;
     for (const s of this.slots) {
+      if (s && s.item) continue;
       if (s && s.substance === substance) room += this.capacity - (Number.isFinite(s.mass) ? s.mass : 0);
       else if (s === null) room += this.capacity;
     }
@@ -40,6 +52,7 @@ export class Inventory {
   /**
    * 收集某物质，返回实际放入质量。跨格：先装满同物质格，再用空格
    * （否则 100g 封顶后即使有空格也捡不了——用户反馈）。
+   * 物品格一律跳过（物品不堆叠、不与物质混装）。
    */
   add(substance, mass) {
     if (!Number.isFinite(mass) || mass <= 0) return 0; // 挡住 NaN/非法质量
@@ -47,6 +60,7 @@ export class Inventory {
     let put = 0;
     for (const s of this.slots) {
       if (rest <= 1e-9) break;
+      if (s && s.item) continue;
       if (s && s.substance === substance) {
         const room = this.capacity - (Number.isFinite(s.mass) ? s.mass : 0);
         if (room <= 1e-9) continue;
@@ -66,10 +80,12 @@ export class Inventory {
     return put;
   }
 
-  /** 从选中格放置 amount g（不足也按 amount 扣到 0），返回 {substance, mass} 或 null */
+  /** 从选中格放置 amount g（不足也按 amount 扣到 0），返回 {substance, mass} 或 null。
+   *  物品格不通过 place 放置（Shift 走物品放置流程），返回 null。 */
   place(amount) {
     const slot = this.selectedSlot();
-    if (!slot || slot.mass <= 0) return null;
+    if (!slot || slot.item) return null;
+    if (slot.mass <= 0) return null;
     slot.mass = Math.max(0, slot.mass - amount);
     if (slot.mass <= 0) this.slots[this.selected] = null;
     return { substance: slot.substance, mass: amount };
@@ -221,6 +237,18 @@ export class Player extends Obj {
     if (c.has('jump') && this.onGround) this.vel.y = -this.jumpVel;
     if (scene.pressed.has('place')) this.tryPlace(scene);
     if (scene.pressed.has('collect')) this.tryCollect(scene);
+    // 可携带物品（集气瓶/烧杯/滴管）：
+    //  - C 按下：拾取物品（空格）或从液体容器吸液（烧杯/空滴管）；
+    //  - C 按住（集气瓶格）：标记集气瓶 → Scene.onGas 把最近气泡柱的产气截留进瓶；
+    //  - X 按下：烧杯倒入最近的烧杯/药品池；
+    //  - X 按住（集气瓶格）：向最近液体容器通入气体（连续，0.05g/s）。
+    if (scene.pressed.has('grab')) {
+      if (!pickupItem(this, scene)) drawLiquid(this, scene);
+    }
+    const selSlotNow = this.inventory.selectedSlot();
+    scene._gasHold = scene.control.has('grab') && selSlotNow && selSlotNow.item === 'bottle' ? selSlotNow.obj : null;
+    if (scene.pressed.has('use')) pourBeaker(this, scene);
+    if (scene.control.has('use')) injectBottleGas(this, scene, dt);
     // 移动时冲刷表面壳（贴地摩擦）：非核心物质按浓度脱落成沉淀粒子。
     // 空中/游泳不脱落（不与地面接触就没有摩擦）。
     if (this.grid && this.onGround && (Math.abs(this.vel.x) > 50 || Math.abs(this.vel.y) > 50)) {
@@ -320,6 +348,8 @@ export class Player extends Obj {
   }
 
   tryPlace(scene) {
+    // 选中格是可携带物品（集气瓶/烧杯/滴管）→ 放到玩家身旁（shift 放置）
+    if (placeCarriedItem(this, scene)) return;
     const amount = CFG.placeAmount;
     const res = this.inventory.place(amount);
     if (!res) return;

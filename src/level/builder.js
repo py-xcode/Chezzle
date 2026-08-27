@@ -27,6 +27,7 @@ import { Portal } from '../objects/portal.js';
 import { GasDetector } from '../objects/gasdetector.js';
 import { Extractor } from '../objects/extractor.js';
 import { Dropper } from '../objects/dropper.js';
+import { GasBottle } from '../objects/gasbottle.js';
 import { bindSceneClick } from './click.js';
 
 export class LevelBuilder {
@@ -78,8 +79,8 @@ export class LevelBuilder {
     return this.add(new BlastLamp({ x, y, ...opts }));
   }
 
-  beaker(x, y, opts = {}) {
-    return this.add(new Beaker({ x, y, ...opts }));
+  beaker(x, y, w, h, opts = {}) {
+    return this.add(new Beaker({ x, y, w, h, ...opts }));
   }
 
   rope(x, y, opts = {}) {
@@ -108,6 +109,10 @@ export class LevelBuilder {
 
   dropper(x, y, opts = {}) {
     return this.add(new Dropper({ x, y, ...opts }));
+  }
+
+  gasbottle(x, y, opts = {}) {
+    return this.add(new GasBottle({ x, y, ...opts }));
   }
 
   add(obj) {

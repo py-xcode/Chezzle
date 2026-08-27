@@ -36,6 +36,15 @@ export class Dropper extends Obj {
     return this.liquid > 1e-9 ? `滴管·${name}（${this.liquid.toFixed(1)}g）` : `滴管·${name}（空）`;
   }
 
+  get isCarryItem() {
+    return 'dropper';
+  }
+
+  /** 玩家附近可拖动（改变位置，无碰撞箱） */
+  get isDraggable() {
+    return true;
+  }
+
   /** 管内液体颜色：与烧杯/池同一套溶液取色（离子颜色/指示剂 pH 显色） */
   liquidColor() {
     const m = Math.max(1e-6, this.liquid);

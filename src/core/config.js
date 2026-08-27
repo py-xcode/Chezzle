@@ -31,6 +31,21 @@ export const CFG = {
   placeAmount: 0.5, // g/次
   collectRadius: 70, // px
 
+  // 可携带物品（集气瓶/烧杯/滴管）交互参数（距离一律为**边缘间隙**：贴边就算，宽池不显远）
+  item: {
+    collectRange: 90,      // C 拾取物品半径
+    liquidRange: 80,       // C 吸液 / X 倒出 / 通入气体的目标容器距离
+    dragRange: 130,        // 可拖动滴管的玩家最大距离（中心距离，滴管细长）
+    beakerCapacity: 200,   // 标准烧杯容量（g；与编辑器烧杯默认 volume 一致）
+    beakerTransfer: 20,    // 烧杯每次 C 吸液量（g）
+    dropperCapacity: 50,   // 滴管容量（g）
+    dropperTransfer: 5,    // 滴管每次 C 吸液量（g）
+    bottleCapacity: 5,     // 集气瓶最大集气量（g）
+    gasCollectRange: 100,  // 按住 C 集气：找最近气泡柱的距离
+    gasRate: 0.05,         // 通入气体速率（g/s）
+    placeOffset: 6,        // 放置物品离玩家边缘的间隙（px）
+  },
+
   lampRange: 70, // px（灯提供加热/点燃的半径）
   lampLightRange: 180, // px（灯提供"光照"条件的半径——见光分解如 HClO）
   placeLampRange: 120, // px（放置沉淀到灯上的半径）

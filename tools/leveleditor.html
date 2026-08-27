@@ -224,13 +224,23 @@ const CATALOG = [
     collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, poolId: o.poolId, switchId: o.switchId, rate: o.rate, id: o.id }),
     fields: [F.num('x'), F.num('y'), F.num('w', '宽'), F.num('h', '高'), F.txt('poolId', '池id'), F.txt('switchId', '开关id'), F.num('rate', '速率g/s', 0.25), F.txt('id', 'id')] },
   { type: 'beaker', label: '烧杯', dsl: 'beaker', color: '#9adcff', rect: true,
-    construct: (o) => new C.Beaker({ x: o.x, y: o.y, w: o.w ?? 60, h: o.h ?? 80, volume: o.volume ?? 150, solutes: o.solutes, id: o.id }),
-    collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, volume: o.solution.volume, solutes: mapToObj(o.solution.solutes), id: o.id }),
-    fields: [F.num('x'), F.num('y'), F.num('w', '宽'), F.num('h', '高'), F.num('volume', '容量ml'), F.sol('solutes'), F.txt('id', 'id')] },
+    construct: (o) => new C.Beaker({ x: o.x, y: o.y, w: o.w ?? 60, h: o.h ?? 80, volume: o.volume ?? 200, water: o.water !== undefined ? o.water : undefined, solutes: o.solutes, id: o.id }),
+    collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, volume: o.solution.volume, water: o.solution.water, solutes: mapToObj(o.solution.solutes), id: o.id }),
+    fields: [F.num('x'), F.num('y'), F.num('w', '宽'), F.num('h', '高'), F.num('volume', '容量g'), F.num('water', '水量g(=容量=满杯)'), F.sol('solutes'), F.txt('id', 'id')] },
   { type: 'dropper', label: '滴管', dsl: 'dropper', color: '#9fd8ff',
     construct: (o) => new C.Dropper({ x: o.x, y: o.y, substance: o.substance ?? 'H2O', capacity: o.capacity ?? 50, drop: o.drop ?? 0.5, liquid: o.liquid, id: o.id }),
     collect: (o) => ({ x: o.x, y: o.y, substance: o.substance ?? 'H2O', capacity: o.capacity ?? 50, drop: o.drop ?? 0.5, liquid: o.liquid, id: o.id }),
-    fields: [F.num('x'), F.num('y'), F.dropsub('substance', '液体物质'), F.num('capacity', '容量g', 50), F.num('drop', '滴量g/次', 0.5), F.txt('id', 'id')] },
+    fields: [F.num('x'), F.num('y'), F.dropsub('substance', '液体物质'), F.num('capacity', '容量g', 50), F.num('liquid', '初始液量g(0=空管)', 50), F.num('drop', '滴量g/次', 0.5), F.txt('id', 'id')] },
+  { type: 'gasbottle', label: '集气瓶', dsl: 'gasbottle', color: '#b0e8ff',
+    construct: (o) => {
+      let gases = null;
+      if (o.gases) {
+        try { gases = typeof o.gases === 'string' ? JSON.parse(o.gases) : o.gases; } catch (e) { gases = null; }
+      }
+      return new C.GasBottle({ x: o.x, y: o.y, capacity: o.capacity ?? 5, gases, id: o.id });
+    },
+    collect: (o) => ({ x: o.x, y: o.y, capacity: o.capacity, gases: mapToObj(o.gases), id: o.id }),
+    fields: [F.num('x'), F.num('y'), F.num('capacity', '容量g', 5), F.txt('gases', '初始气体(如 {CO2:2})'), F.txt('id', 'id')] },
   { type: 'gas', label: '气流柱', dsl: 'gas', color: '#78dcff', rect: true,
     construct: (o) => new C.GasColumn({ x: o.x, y: o.y, w: o.w ?? 48, h: o.h ?? 80, gasId: o.gasId, label: o.label, dir: o.dir ?? -1, id: o.id }),
     collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, gasId: o.gasId, label: o.label ?? '', dir: o.dir, id: o.id }),
@@ -1077,16 +1087,20 @@ function canvasPos(e) {
 }
 canvas.addEventListener('mousedown', (e) => {
   if (state.playing) {
-    // 试玩中按下：点中滴管 → 滴一滴并标记"按住"（长按持续滴，松开停）
+    // 试玩中按下：点中滴管 → 单击滴一滴/长按持续滴/拖动移动（玩家附近）；其它同旧
     const sp = canvasPos(e);
     if (e.button === 0 && playScene) {
-      C.handleSceneTapDown(playScene, canvas, sp.x, sp.y, (info) => {
+      C.handleScenePressDown(playScene, canvas, sp.x, sp.y, (info) => {
         const wx = Math.round(info.world?.x ?? 0);
         const wy = Math.round(info.world?.y ?? 0);
         const o = info.object;
-        $('status').textContent = info.type === 'tap'
-          ? `试玩中｜按下→世界(${wx},${wy}) 命中：${o.hoverLabel ?? o.constructor.name} ${info.success ? '→ 已滴液（按住可连续滴）' : '→ 未滴（下方无容器或已滴空）'}`
-          : `试玩中｜按下→世界(${wx},${wy}) 未命中可交互物体`;
+        if (info.type === 'tap') {
+          $('status').textContent = `试玩中｜按下→世界(${wx},${wy}) 命中：${o.hoverLabel ?? o.constructor.name} ${info.success ? '→ 已滴液（按住可连续滴）' : '→ 未滴（下方无容器或已滴空）'}`;
+        } else if (info.type === 'press') {
+          $('status').textContent = `试玩中｜按下→世界(${wx},${wy}) 命中：${o.hoverLabel ?? o.constructor.name}（拖动=移动位置，按住=连滴）`;
+        } else {
+          $('status').textContent = `试玩中｜按下→世界(${wx},${wy}) 未命中可交互物体`;
+        }
       });
     }
     return;
@@ -1126,7 +1140,7 @@ canvas.addEventListener('mousedown', (e) => {
     state.sel = new Set(items);
     state.selected = hit;
     if (!group && state.placed[hit].type === 'dropper') {
-      $('status').textContent = '滴管：按「▶ 试玩」进入试玩后左键点击滴液（编辑模式点击=选中/拖动，不会滴）';
+      $('status').textContent = '滴管：试玩中左键点击滴液 / 按住连滴 / 拖动移动（玩家附近）；编辑模式点击=选中/拖动';
     }
     drag = { mode: 'move', items, sx: sp.x, sy: sp.y, oxs: {}, oys: {} };
     for (const i of items) { drag.oxs[i] = state.placed[i].obj.x; drag.oys[i] = state.placed[i].obj.y; }
@@ -1458,13 +1472,20 @@ function dslLine(item) {
     case 'gasdetector': return `.gasdetector(${pos}, ${fmtOpts({ gas: o.gas, threshold: o.threshold, opening: o.opening, and: o.and, deleteId: o.deleteId || undefined, showId: o.showId || undefined, igniteId: o.igniteId || undefined, extinguishId: o.extinguishId || undefined, openId: o.openId || undefined, hidden: HID, id: o.id })})`;
     case 'extractor': return `.extractor(${pos}, ${fmtOpts({ w: o.w, h: o.h, poolId: o.poolId, switchId: o.switchId, rate: o.rate, hidden: HID, id: o.id })})`;
     case 'beaker': {
-      const opts = { volume: o.solution.volume, solutes: mapToObj(o.solution.solutes), hidden: HID, id: o.id };
+      // water = 容量时为满杯（旧默认）；只在实际水量 ≠ 容量时导出（空杯/半杯）
+      const water = Math.round(o.solution.water * 10) / 10;
+      const opts = { volume: o.solution.volume, water: water !== o.solution.volume ? water : undefined, solutes: mapToObj(o.solution.solutes), hidden: HID, id: o.id };
       return `.beaker(${pos}, ${R(o.w)}, ${R(o.h)}${fmtOpts(opts) ? ', ' + fmtOpts(opts) : ''})`;
     }
     case 'dropper': {
-      // 开局满管（不导出当前剩余量；用过的液面只在编辑器里保留）
-      const opts = { substance: o.substance, capacity: o.capacity, drop: o.drop, hidden: HID, id: o.id };
+      // 满管（=容量）不导出（开局满管默认）；空管/部分导出 liquid
+      const liquid = o.liquid !== o.capacity ? Math.round(o.liquid * 10) / 10 : undefined;
+      const opts = { substance: o.substance, capacity: o.capacity, drop: o.drop, liquid, hidden: HID, id: o.id };
       return `.dropper(${pos}, ${fmtOpts(opts)})`;
+    }
+    case 'gasbottle': {
+      const opts = { capacity: o.capacity !== 5 ? o.capacity : undefined, gases: mapToObj(o.gases), hidden: HID, id: o.id };
+      return `.gasbottle(${pos}, ${fmtOpts(opts)})`;
     }
     case 'gas': return `.gas(${pos}, ${R(o.w)}, ${R(o.h)}, ${fmtOpts({ gasId: o.gasId, label: o.label, dir: o.dir, hidden: HID, id: o.id })})`;
     default: return '';
@@ -1725,7 +1746,7 @@ function togglePlay() {
     if (playUnbind) playUnbind();
     if (playMouseClean) playMouseClean();
     playStop = playUnbind = playMouseClean = null;
-    if (playScene) C.handleSceneTapUp(playScene); // 清按住（长按滴加停止）
+    if (playScene) C.handleScenePressUp(playScene); // 清按住/拖动（长按滴加停止）
     playScene = null;
     state.playing = false;
     $('btnPlay').textContent = '▶ 试玩';
@@ -1848,8 +1869,22 @@ function togglePlay() {
   };
   canvas.addEventListener('mousemove', onPlayMoveDiag);
   // 松开鼠标准确停（长按滴加在 mouseup 停止；窗口级兜底）
-  const onPlayTapUp = () => { C.handleSceneTapUp(scene); };
+  const onPlayTapUp = (e) => {
+    if (!state.playing) return;
+    if (e && e.target === canvas) C.handleScenePressUp(scene, canvas);
+    else C.handleScenePressUp(scene);
+  };
   window.addEventListener('mouseup', onPlayTapUp);
+  // 拖动滴管（按下后移动>6px = 拖动改变位置；窗口级：拖出画布不丢）
+  const onPlayPressMove = (e) => {
+    if (!state.playing || !playScene) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+    const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+    C.handleScenePressMove(playScene, canvas, x, y);
+    if (playScene._drag) $('status').textContent = '试玩中｜拖动滴管（松开停在位置）';
+  };
+  window.addEventListener('mousemove', onPlayPressMove);
   state.playing = true;
   $('btnPlay').textContent = '⏹ 退出试玩';
   canvas.style.cursor = 'default';
@@ -1860,10 +1895,11 @@ function togglePlay() {
     canvas.removeEventListener('click', onPlayClick);
     canvas.removeEventListener('mousemove', onPlayMoveDiag);
     window.removeEventListener('mouseup', onPlayTapUp);
+    window.removeEventListener('mousemove', onPlayPressMove);
   };
   playStop = C.startLoop(scene, renderer, { hud });
   playScene = scene; // 调试/测试可访问当前试玩场景
-  $('status').textContent = '试玩中：A/D 移动 · 空格跳 · Q 收集 · Shift 放置 · 点击/按住滴管滴液 · 悬停查来源 · F5暂停';
+  $('status').textContent = '试玩中：A/D 移动 · 空格跳 · Q 收集 · Shift 放置 · C 拾取物品/吸液/按住集气 · X 倒出/按住通气 · 点击/按住滴管滴液·拖动移动 · 悬停查来源 · F5暂停';
   notifyPlayState(true);
 }
 

@@ -10,6 +10,8 @@ const KEYMAP = {
   ShiftLeft: 'place',
   ShiftRight: 'place',
   KeyQ: 'collect',
+  KeyC: 'grab', // 拾取物品/吸液/（按住）集气
+  KeyX: 'use', // 烧杯倒入 /（按住）集气瓶通气
 };
 
 export function bindKeyboard(scene) {
@@ -40,9 +42,14 @@ export function bindKeyboard(scene) {
         return;
       }
       if (e.code === 'KeyX') {
-        scene.debugHoverCycle = true;
-        e.preventDefault();
-        return;
+        // 选中格是可携带物品时，X = 倒出/通气（物品交互优先）；仅普通物质时
+        // 才用作"悬停重叠循环"调试键（试玩常开调试模式，不能抢玩家的 X）
+        const slot = scene.player?.inventory?.selectedSlot?.();
+        if (!slot || !slot.item) {
+          scene.debugHoverCycle = true;
+          e.preventDefault();
+          return;
+        }
       }
     }
     const c = KEYMAP[e.code];

@@ -11,6 +11,7 @@ export * from './level/builder.js';
 export * from './level/plugins.js';
 export * from './level/multiscene.js';
 export * from './level/click.js';
+export * from './level/items.js';
 
 export * from './objects/obj.js';
 export * from './objects/material.js';
@@ -37,6 +38,7 @@ export * from './objects/gasdetector.js';
 export * from './objects/extractor.js';
 export * from './objects/dropper.js';
 export * from './objects/drip.js';
+export * from './objects/gasbottle.js';
 
 export * from './chem/substances.js';
 export * from './chem/solution.js';

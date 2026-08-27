@@ -993,10 +993,16 @@ export class ChemistryEngine {
     ctx.env.emit({ id, mass, phase: 'particle' }, ctx.lastRxText);
   }
 
-  /** 气体产物：碱/酸吸收 → 水溶解成酸 → 剩余进大气 */
-  _emitGas(id, mass, ctx) {
+  /** 气体产物：碱/酸吸收 → 水溶解成酸 → 剩余进大气。
+   *  onGas 返回"已截留质量"（集气瓶收集）——截留部分不再走吸收/水溶/大气；
+   *  opts.forceDissolve（向溶液通入气体）：CO2/SO2/NO2/Cl2 也能溶进水（主动鼓泡）。 */
+  _emitGas(id, mass, ctx, opts = {}) {
     if (!Number.isFinite(mass) || mass <= 1e-9) return;
-    if (ctx.env.onGas) ctx.env.onGas(id, mass, ctx);
+    if (ctx.env.onGas) {
+      const captured = ctx.env.onGas(id, mass, ctx) || 0;
+      mass -= captured;
+      if (mass <= 1e-9) return;
+    }
     let leftover = mass;
     const baseMat = ctx.inContainer ? ctx.containerMat : null;
     // 1. 碱吸收酸性气体 / 酸吸收 NH3（尾气处理、石灰水检验等）
@@ -1028,7 +1034,10 @@ export class ChemistryEngine {
         // CO2/SO2/NO2/Cl2 不主动溶进水：否则 CO2 形成 H2CO3→CO2 零净循环无限冒泡、
         // NO2 被水转成 NO 逃不出来（浓硝酸红棕变无色）、Cl2 溶成氯水看不到黄绿气体。
         // 它们与碱/水的反应由被动吸收（_tryGasWaterAbsorb/碱吸收）按大气浓度慢慢进行。
-        if (gw.gas === 'CO2' || gw.gas === 'SO2' || gw.gas === 'NO2' || gw.gas === 'Cl2') continue;
+        // 主动通入气体（forceDissolve）时除外：玩家把气鼓进水里，就是要它溶解。
+        if (gw.gas === 'CO2' || gw.gas === 'SO2' || gw.gas === 'NO2' || gw.gas === 'Cl2') {
+          if (!opts.forceDissolve) continue;
+        }
         const gasMM = getSubstance(id).mm;
         const diss = Math.min(leftover, RATE.acidGas * ctx.dt * 0.15);
         if (diss <= 1e-9) break;
