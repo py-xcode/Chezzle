@@ -17,6 +17,8 @@ Object.assign(exports, __require('src/core/config.js'));;
 Object.assign(exports, __require('src/core/scene.js'));;
 Object.assign(exports, __require('src/core/input.js'));;
 Object.assign(exports, __require('src/core/loop.js'));;
+Object.assign(exports, __require('src/core/touch.js'));;
+Object.assign(exports, __require('src/core/recorder.js'));;
 
 Object.assign(exports, __require('src/level/builder.js'));;
 Object.assign(exports, __require('src/level/plugins.js'));;
@@ -136,6 +138,17 @@ const CFG = {
   placeLampRange: 120, // px（放置沉淀到灯上的半径）
   inventory: { slots: 5, capacity: 100, slotPx: 46, itemSlotPx: 58 }, // 物品格在 HUD 中放大（装烧杯/滴管/集气瓶看得清）
 
+  // 移动端（触屏/小屏；桌面 fine-pointer 完全不受影响）
+  touch: {
+    viewH: 560,    // 移动端相机视野高度（世界坐标；宽度按屏幕比例推出——玩家更大更清晰）
+    joyR: 105,     // 摇杆基座半径（px）
+    joyDead: 0.22, // 摇杆死区（半径比例；死区内不触发任何方向）
+    horizDead: 0.14, // 水平方向死区（半径比例：小幅下倾/抖动不会误触左右）
+    btnSize: 58,   // 右下状态按钮边长（px）
+    btnGap: 10,    // 按钮间距
+    pad: 10,       // 控件到屏幕边距（安全区之外再留）
+  },
+
   doorWinRadius: 80, // px
   worldMargin: 200, // px（出界判定）
 
@@ -240,8 +253,10 @@ class Scene {
 
   /** 每帧执行 fn(dt, time)：返回 true 则卸载；返回 deregister 函数可手动卸载 */
   onTick(fn) {
+    fn._czlDead = false; // 取消标记：回调内部调用取消函数时由 runner 读取
     this._tickFns.push(fn);
     return () => {
+      fn._czlDead = true;
       const i = this._tickFns.indexOf(fn);
       if (i >= 0) this._tickFns.splice(i, 1);
     };
@@ -310,9 +325,17 @@ class Scene {
     const after = this._afterFns;
     this._afterFns = [];
     for (const fn of after) fn();
-    this._tickFns = this._tickFns.filter((fn) => {
-      try { return fn(dt, this.time) !== true; } catch (err) { return false; }
-    });
+    // 快照当前 tick 函数集，结果收集到新数组——回调内部调用"取消函数"（splice）
+    // 才能生效（旧写法 filter 在迭代中把 splice 掉的函数又收回结果，取消形同虚设；
+    // onTick 返回的取消在回调里调用是插件常用语义——回放驱动、一次性钩子都依赖它）
+    const fns = this._tickFns;
+    this._tickFns = [];
+    for (const fn of fns) {
+      try {
+        // 回调内取消（标记 _czlDead）优先于返回值；跨帧取消走 splice
+        if (fn(dt, this.time) !== true && !fn._czlDead) this._tickFns.push(fn);
+      } catch (err) { /* 插件回调异常不拖垮游戏循环 */ }
+    }
     if (this._timers.length) {
       this._timers = this._timers.filter((t) => {
         if (this.time < t.at) return true;
@@ -1061,11 +1084,14 @@ class Scene {
       return;
     }
     if (product.phase === 'precipitate') {
-      if (ctx.container) {
+      // 优先取反应上下文容器（干式台子落回台面时显式携带 container——避免
+      // _emitCtx 已被后续反应覆盖/大气反应无目标容器时落错地方）
+      const cont = product.container ?? (ctx && ctx.container);
+      if (cont) {
         // 在反应位置附近生成沉淀颗粒（物理堆叠），记录生成来源（调试悬停显示）；
         // 产物落点成为容器"最近落点"——后续反应/气泡/沉淀围绕它（不再回池中央）
-        if (ctx.point) ctx.container.depositAt = { x: ctx.point.x, y: ctx.point.y };
-        ctx.container.addPrecipitate(product.id, product.mass, ctx.point, origin);
+        if (ctx.point) cont.depositAt = { x: ctx.point.x, y: ctx.point.y };
+        cont.addPrecipitate(product.id, product.mass, ctx.point, origin);
         return;
       }
     }
@@ -1544,8 +1570,13 @@ class ChemistryEngine {
     for (const c of cands) this._runRedox(c, dt, env, ctx);
   }
 
-  /** 收集氧化剂×还原剂候选，按氧化剂强度/还原性排序（强氧化剂优先消耗共享还原剂） */
+  /** 收集氧化剂×还原剂候选，按氧化剂强度/还原性排序（强氧化剂优先消耗共享还原剂）
+   *  干式台子（无水容器）：通用离子氧化还原（金属+盐/酸的置换）不放行——
+   *  离子反应需要溶液介质（Fe + FeCl3 → FeCl2 只在**水溶液**中发生；干灯上
+   *  铁粉被氯气点燃只会烧到 FeCl3 为止）。设计内的固-固反应（铝热、CuO+碳
+   *  还原、金属+卤素化合等）走各自的专用规则表，不经此处，不受影响。 */
   _redoxCandidates(matA, matB, env, ctx) {
+    if (ctx.inContainer && !ctx.inLiquid) return [];
     const out = [];
     const oxIdsOf = (mat) => {
       const list = [];
@@ -2059,6 +2090,11 @@ class ChemistryEngine {
       env,
       dt,
       inContainer: !!containerMat,
+      // 真液介质：容器确实装着液体（容积>0——与 H2O 特例/cond.solution 同一惯例）。
+      // 干式台子（灯/开关 volume=0）只是"承载面"——可溶产物**不能**进它的溶液
+      // （幽灵溶质：不可见、不可收集、质量凭空消失——用户确认的根因），
+      // 要落回台面成固体粉末。
+      inLiquid: !!(containerMat && containerMat.solution && containerMat.solution.volume > 0),
       containerMat,
       playerInvolved: matA.isPlayer || matB.isPlayer,
       solidObj,
@@ -2100,8 +2136,14 @@ class ChemistryEngine {
       // 玩家参与：可溶产物（非玩家核心）直接进溶液（ZnCl2 溶于盐酸，不堆积在身上）；
       // 核心物质（NaOH 再生回血）与不溶物（BaCO3 壳阻断）附着玩家
       if (isSoluble(id) && id !== ctx.playerCore) {
-        if (ctx.inContainer) {
+        if (ctx.inLiquid) {
           ctx.containerMat.add(id, mass, ctx.lastRxText);
+          return;
+        }
+        if (ctx.inContainer) {
+          // 干式台子（无水容器）：可溶产物留不下溶液——落回台面成固体粉末
+          // （FeCl3/FeCl2 在喷灯上，和铝热的 Fe/Al2O3 一样留在灯上；不留幽灵溶质）
+          ctx.env.emit({ id, mass, phase: 'precipitate', container: ctx.containerMat.owner ?? null }, ctx.lastRxText);
           return;
         }
         ctx.env.emit({ id, mass, phase: 'particle' }, ctx.lastRxText);
@@ -2118,8 +2160,13 @@ class ChemistryEngine {
     if (ctx.solidObj && sub.state === 'solid') {
       // 有固体反应物参与：可溶产物直接进溶液（ZnCl2 不附着在锌块上），
       // 不溶产物附着在反应物表面（Fe 浸 CuSO4 表面就地变铜）
-      if (ctx.inContainer && isSoluble(id)) {
+      if (ctx.inLiquid && isSoluble(id)) {
         ctx.containerMat.add(id, mass, ctx.lastRxText);
+        return;
+      }
+      // 干式台子：可溶产物落回台面（无水溶液可进）
+      if (ctx.inContainer && isSoluble(id)) {
+        ctx.env.emit({ id, mass, phase: 'precipitate', container: ctx.containerMat.owner ?? null }, ctx.lastRxText);
         return;
       }
       // 粉末沉淀 + 物块反应：固体产物以沉淀形式生成（不附着到物块表面）
@@ -2130,9 +2177,14 @@ class ChemistryEngine {
       ctx.env.emit({ id, mass, phase: 'adhere', target: ctx.solidObj }, ctx.lastRxText);
       return;
     }
-    if (ctx.inContainer) {
+    if (ctx.inLiquid) {
       if (isSoluble(id)) ctx.containerMat.add(id, mass, ctx.lastRxText);
       else ctx.env.emit({ id, mass, phase: 'precipitate' }, ctx.lastRxText);
+      return;
+    }
+    if (ctx.inContainer) {
+      // 干式台子（无水）：可溶产物落回台面成固体粉末（不留幽灵溶液）
+      ctx.env.emit({ id, mass, phase: 'precipitate', container: ctx.containerMat.owner ?? null }, ctx.lastRxText);
       return;
     }
     if (ctx.playerInvolved) {
@@ -3197,8 +3249,12 @@ const SPECIAL_PAIR_RULES = [
   { type: 'special', reactants: [{ id: 'CaO', coeff: 1 }, { id: 'H2O', coeff: 1 }], products: [{ id: 'Ca(OH)2', coeff: 1 }], condition: 'normal', rate: RATE.special },
   // 过氧化钠遇水（爆炸，放 O2）：2Na2O2 + 2H2O → 4NaOH + O2↑
   { type: 'special', reactants: [{ id: 'Na2O2', coeff: 2 }, { id: 'H2O', coeff: 2 }], products: [{ id: 'NaOH', coeff: 4 }, { id: 'O2', coeff: 1 }], condition: 'normal', rate: RATE.special * 2, explosive: true },
-  // 氯气歧化（遇水）：Cl2 + H2O ⇌ HCl + HClO（简化单向）
-  { type: 'special', reactants: [{ id: 'Cl2', coeff: 1 }, { id: 'H2O', coeff: 1 }], products: [{ id: 'HCl', coeff: 1 }, { id: 'HClO', coeff: 1 }], condition: 'normal', rate: RATE.special },
+  // 氯气歧化（遇水）：Cl2 + H2O ⇌ HCl + HClO —— **已移除**（用户规则：Cl2 默认
+  // 不溶于水，保持黄绿气体可见；只有集气瓶强行通入（forceDissolve）才溶成氯水）。
+  // 旧实现把它放进"成对反应表"——任何实体浸入含水容器都会触发（玩家跳进纯水池
+  // 就会让大气氯气生成氯水，随后归中再放氯气——纯水池变成氯气泵，用户实测复现），
+  // 与"CO2/SO2/NO2/Cl2 不主动溶解"的既有设计（GAS_WATER 跳过 + 大气可见 +
+  // NaOH 尾气处理）冲突。氯水玩法如需恢复：走 _emitGas 的 forceDissolve 管线。
   // 归中：HCl + HClO → Cl2↑ + H2O（Cl⁻ 与 ClO⁻ 归中为 Cl₂，浓盐酸+漂白液制氯气）
   { type: 'special', reactants: [{ id: 'HCl', coeff: 1 }, { id: 'HClO', coeff: 1 }], products: [{ id: 'Cl2', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'normal', rate: RATE.special },
   // 漂白液遇酸放出氯气（危险）：NaClO + 2HCl → NaCl + Cl2↑ + H2O
@@ -7657,29 +7713,42 @@ function pushNotice(scene, text) {
 }
 
 /** 物品栏槽位几何（HUD 渲染与点击命中**共用这一套数字**，保证点哪是哪）：
- *  普通格 CFG.inventory.slotPx，装物品的格子放大为 itemSlotPx；底边对齐、右缘贴边。 */
-function inventorySlotRects(W, H, slots) {
+ *  普通格 CFG.inventory.slotPx，装物品的格子放大为 itemSlotPx；底边对齐、右缘贴边。
+ *  margins：触屏设备传 {bottom, right}（含安全区），桌面默认 10。 */
+function inventorySlotRects(W, H, slots, margins = { bottom: 10, right: 10 }) {
   const gap = 4;
   const margin = 10;
   const n = slots.length;
   const rects = new Array(n);
-  let right = W - margin;
+  let right = W - (margins.right ?? 10);
   for (let i = n - 1; i >= 0; i--) {
     const size = slots[i] && slots[i].item ? CFG.inventory.itemSlotPx : CFG.inventory.slotPx;
     right -= size;
-    rects[i] = { x: right, y: H - margin - size, size };
+    rects[i] = { x: right, y: H - (margins.bottom ?? 10) - size, size };
     right -= gap;
   }
   return rects;
 }
 
-/** 命中可点击物体（onTap；bbox ±6px 宽容——滴管等细长物体好点中） */
-function hitTap(scene, canvas, sx, sy) {
+/** 触屏设备上的物品栏边距（安全区 + 固定边距）；桌面=默认值。
+ *  HUD 渲染 / touch 命中 / 物品栏点击共用，保证"点哪是哪"。 */
+function uiMargins(scene) {
+  const t = scene && scene._touchUI;
+  if (t && t.enabled()) {
+    const i = t.insets;
+    return { bottom: (i.bottom ?? 0) + 10, right: (i.right ?? 0) + 10 };
+  }
+  return { bottom: 10, right: 10 };
+}
+
+/** 命中可点击物体（onTap；bbox ±pad 宽容——滴管等细长物体好点中；
+ *   desktop 默认 6，触屏手指传 14（由 touchui 管线传入）） */
+function hitTap(scene, canvas, sx, sy, pad = 6) {
   const w = screenToWorld(scene, canvas, sx, sy);
   for (let i = scene.objects.length - 1; i >= 0; i--) {
     const o = scene.objects[i];
     if (typeof o.onTap !== 'function') continue;
-    if (w.x >= o.x - 6 && w.x <= o.x + o.w + 6 && w.y >= o.y - 6 && w.y <= o.y + o.h + 6) {
+    if (w.x >= o.x - pad && w.x <= o.x + o.w + pad && w.y >= o.y - pad && w.y <= o.y + o.h + pad) {
       return { obj: o, world: w };
     }
   }
@@ -7709,7 +7778,7 @@ function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   // 2) 物品栏选格（右下；几何与 HUD 渲染共用 inventorySlotRects）
   const p = scene.player;
   if (p && p.inventory) {
-    const rects = inventorySlotRects(canvas.width, canvas.height, p.inventory.slots);
+    const rects = inventorySlotRects(canvas.width, canvas.height, p.inventory.slots, uiMargins(scene));
     for (let i = 0; i < rects.length; i++) {
       const r = rects[i];
       if (sx >= r.x && sx <= r.x + r.size && sy >= r.y && sy <= r.y + r.size) {
@@ -7728,10 +7797,10 @@ function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
  * 按住期间 stepPressTap 会以 0.08s 间隔持续触发（长按=持续滴加）。
  * 未命中 → 清除按住标记并返回 false。
  */
-function handleSceneTapDown(scene, canvas, sx, sy, onInfo = null) {
+function handleSceneTapDown(scene, canvas, sx, sy, onInfo = null, pad = 6) {
   if (!scene) return false;
   scene._pressHome = null;
-  const hit = hitTap(scene, canvas, sx, sy);
+  const hit = hitTap(scene, canvas, sx, sy, pad);
   if (!hit) {
     scene._pressTap = null;
     scene._pressTapT = 0;
@@ -7762,10 +7831,10 @@ function handleSceneTapUp(scene) {
  * ③ 其它可点击物体（非可拖动类）：立即触发 + 长按（旧行为）。
  * 落在滴管玻璃段但玩家太远 / 无容器等 → 未命中（不滴也不拖）。
  */
-function handleScenePressDown(scene, canvas, sx, sy, onInfo = null) {
+function handleScenePressDown(scene, canvas, sx, sy, onInfo = null, pad = 6) {
   if (!scene) return false;
   scene._pressHome = null;
-  const hit = hitTap(scene, canvas, sx, sy);
+  const hit = hitTap(scene, canvas, sx, sy, pad);
   if (!hit) {
     scene._pressCand = null;
     onInfo?.({ type: 'miss', world: screenToWorld(scene, canvas, sx, sy) });
@@ -7790,7 +7859,7 @@ function handleScenePressDown(scene, canvas, sx, sy, onInfo = null) {
   // ③ 其它可点击物体（非可拖动物）：立即触发 + 长按（旧行为）
   scene._pressCand = null;
   if (typeof hit.obj.onTap === 'function' && !hit.obj.isDraggable) {
-    return handleSceneTapDown(scene, canvas, sx, sy, onInfo);
+    return handleSceneTapDown(scene, canvas, sx, sy, onInfo, pad);
   }
   onInfo?.({ type: 'miss', world: hit.world });
   return false;
@@ -7854,12 +7923,12 @@ function handleScenePressMove(scene, canvas, sx, sy) {
 
 /** 抬起：快速单击胶头 = 滴一滴（长按/液下吸取已在 stepPressTap 觉醒）；
  *  玻璃段候选不滴（松开即完成，仅拖动会移动位置）；结束一切按住状态 */
-function handleScenePressUp(scene, canvas = null) {
+function handleScenePressUp(scene, canvas = null, pad = 6) {
   if (!scene) return;
   const c = scene._pressCand;
   if (c && c.mode === 'bulb' && !c.moved && c.downT < CFG.item.dripArmDelay && canvas) {
     scene._pressCand = null;
-    handleSceneTapDown(scene, canvas, c.startX, c.startY); // 单击：在按下位置滴一滴
+    handleSceneTapDown(scene, canvas, c.startX, c.startY, null, pad); // 单击：在按下位置滴一滴
   }
   scene._pressCand = null;
   scene._drag = null;
@@ -7958,6 +8027,7 @@ function bindSceneClick(canvas, getScreenPos, getActive) {
 exports.screenToWorld = screenToWorld;
 exports.pushNotice = pushNotice;
 exports.inventorySlotRects = inventorySlotRects;
+exports.uiMargins = uiMargins;
 exports.handleSceneClick = handleSceneClick;
 exports.handleSceneTapDown = handleSceneTapDown;
 exports.handleSceneTapUp = handleSceneTapUp;
@@ -8104,6 +8174,993 @@ function startLoop(scene, renderer, opts = {}) {
 exports.startLoop = startLoop;
 
   };
+  __modules["src/core/touch.js"] = function (module, exports, __require) {
+// ============================================================================
+// 移动端触控（仅触屏设备/小屏；桌面 `pointer:fine` 完全不受影响，逻辑全部走
+// isTouchDevice() 门槛，宽松鼠标/触控笔照旧走 bindSceneClick 的鼠标管线）：
+//
+//  - 左下：半透明半圆摇杆基座 + 摇杆球。方向**5 向吸附**（上/左上/右上/左/右，
+//    下半圆一律不触发）：向左=左走、左上=左跳、上=跳、右上=右跳、右=右走。
+//    摇杆语义与键盘完全一致（写入 scene.control 的 left/right/jump）。
+//  - 右下：Q 收集 / ⇧ 放置 / C 拾取… / X 倒出… 四键（C/X 支持**按住**：
+//    与键盘 keydown/keyup 完全同语义——C 按住收气、X 按住通气），下方是物品栏。
+//  - 场景内：与鼠标同一套"按下/拖动/抬起"管线（滴管点击滴液、长按持续滴、
+//    液下吸取、拖动），触点落在 UI 控件外即进入该管线。
+//  - 竖屏：HUD 层画"请旋转设备"提示（游戏照常运行）。
+//
+// 几何约定：所有触控按钮/摇杆命中区 = 画布坐标（同 palette.js 的 inventorySlotRects），
+// HUD 渲染与命中**共用同一套几何函数**（joyGeom/touchButtonRects），保证点哪是哪。
+// ============================================================================
+
+const { CFG } = __require('src/core/config.js');;
+const { handleSceneClick, handleScenePressDown, handleScenePressMove, handleScenePressUp, inventorySlotRects, uiMargins } = __require('src/level/click.js');;
+
+// ---------------------------------------------------------------------------
+// 设备检测
+// ---------------------------------------------------------------------------
+
+/** 是否移动端（触屏为主要输入）。可被 forceTouch() 覆盖（E2E/调试用）：
+ *  - URL `?touch=1` / `?touch=0` 优先；
+ *  - 全局 `__chezzleTouchMode`（forceTouch 写入）次之；
+ *  - 未标注时：coarse 指针 或（有触摸点且屏幕很小）= 移动端。
+ *    触屏笔记本（fine 指针 + 大屏）保持桌面逻辑。 */
+function isTouchDevice() {
+  if (typeof window === 'undefined') return !!globalThis.__chezzleTouchMode;
+  const q = /[?&]touch=([01])/.exec(location.search || '');
+  if (q) return q[1] === '1';
+  if (globalThis.__chezzleTouchMode !== undefined) return !!globalThis.__chezzleTouchMode;
+  if (window.__chezzleTouch !== undefined) return window.__chezzleTouch;
+  const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+  const tiny = navigator.maxTouchPoints > 0 && Math.min(innerWidth, innerHeight) < 500;
+  window.__chezzleTouch = coarse || tiny;
+  return window.__chezzleTouch;
+}
+
+/** 强制覆盖移动端判定（true/false）；已绑定的 TouchUI 立即刷新画面/相机/布局 */
+function forceTouch(v) {
+  globalThis.__chezzleTouchMode = !!v;
+  for (const ui of UIS) ui.refresh();
+}
+
+/** 现役 TouchUI 列表（forceTouch 刷新用） */
+const UIS = [];
+
+// ---------------------------------------------------------------------------
+// 几何（HUD 渲染与触控命中共用）——画布坐标
+// ---------------------------------------------------------------------------
+
+/** 摇杆：左下角半圆（直径贴底边，圆心即摇杆原点），cx/cy = 圆心，R = 半径。
+ *  半圆 = { dist ≤ R 且 y ≤ cy }（上部半圆）。 */
+function joyGeom(W, H, insets = {}) {
+  const R = CFG.touch.joyR;
+  const cx = (insets.left ?? 0) + 14 + R;
+  const cy = H - (insets.bottom ?? 0) - 12;
+  return { cx, cy, R };
+}
+
+/** 右下按钮：2×2 块（C 上左 / X 上右 / Q 下左 / ⇧ 下右），下方是物品栏。
+ *  与物品栏几何（inventorySlotRects，触屏边距版）共用坐标，按钮块贴着物品栏上沿。 */
+function touchButtonRects(W, H, slots, insets = {}) {
+  if (!slots || slots.length === 0) return [];
+  const btn = CFG.touch.btnSize;
+  const gap = CFG.touch.btnGap;
+  const margins = { bottom: (insets.bottom ?? 0) + CFG.touch.pad, right: (insets.right ?? 0) + CFG.touch.pad };
+  const inv = inventorySlotRects(W, H, slots, margins);
+  let invTop = Infinity;
+  let invRight = 0;
+  for (const r of inv) {
+    if (r.y < invTop) invTop = r.y;
+    if (r.x + r.size > invRight) invRight = r.x + r.size;
+  }
+  const bw = btn * 2 + gap;
+  const bx = invRight - bw;
+  const by = invTop - 12 - (btn * 2 + gap);
+  return [
+    { key: 'grab', x: bx, y: by, size: btn },
+    { key: 'use', x: bx + btn + gap, y: by, size: btn },
+    { key: 'collect', x: bx, y: by + btn + gap, size: btn },
+    { key: 'place', x: bx + btn + gap, y: by + btn + gap, size: btn },
+  ];
+}
+
+/** 点在矩形内（含手指容差 pad） */
+function hitRect(r, x, y, pad = 6) {
+  return x >= r.x - pad && x <= r.x + r.size + pad && y >= r.y - pad && y <= r.y + r.size + pad;
+}
+
+/**
+ * 摇杆 5 向吸附输入：给定相对圆心的位移 (dx, dy)（画布坐标，y 向下），
+ * 返回 {left, right, jump, sx, sy}（sx/sy = 吸附后的单位方向，供画摇杆球；中性为 0）。
+ * 方向只有 5 个：上 / 左上 / 右上 / 左 / 右——下半圆（含下倾）一律不触发。
+ * 上半区按最近扇区吸附：右 [0°,22.5°] / 右上 [22.5°,67.5°] / 上 [67.5°,112.5°] /
+ * 左上 [112.5°,157.5°] / 左 [157.5°,180°]（角度以竖直向上为 90°）。
+ * 其余（下半区）→ 仅水平方向（左/右），水平死区内中性。
+ */
+function joyInput(dx, dy, R) {
+  const mag = Math.hypot(dx, dy);
+  const dead = R * CFG.touch.joyDead;
+  if (mag < dead) return { left: false, right: false, jump: false, sx: 0, sy: 0 };
+  const dyUp = -dy; // y 向下 → 向上为负
+  if (dyUp > 0) {
+    // 上半区：按角度就近吸附到 5 向
+    const ang = Math.atan2(dyUp, dx); // 0..PI（竖直向上=PI/2）
+    const deg = (ang * 180) / Math.PI;
+    if (deg < 22.5) return { left: false, right: true, jump: false, sx: 1, sy: 0 };
+    if (deg < 67.5) return { left: false, right: true, jump: true, sx: 0.7071, sy: -0.7071 };
+    if (deg < 112.5) return { left: false, right: false, jump: true, sx: 0, sy: -1 };
+    if (deg < 157.5) return { left: true, right: false, jump: true, sx: -0.7071, sy: -0.7071 };
+    return { left: true, right: false, jump: false, sx: -1, sy: 0 };
+  }
+  // 下半区：仅水平方向；小水平分量（水平死区半径比例）中性
+  const hd = R * CFG.touch.horizDead;
+  if (dx > hd) return { left: false, right: true, jump: false, sx: 1, sy: 0 };
+  if (dx < -hd) return { left: true, right: false, jump: false, sx: -1, sy: 0 };
+  return { left: false, right: false, jump: false, sx: 0, sy: 0 };
+}
+
+// ---------------------------------------------------------------------------
+// 屏幕适配（画布铺满窗口 + 安全区 + 防止浏览器手势）
+// ---------------------------------------------------------------------------
+
+const STYLE_ID = 'czl-touch-style';
+
+function ensureBaseStyle() {
+  if (typeof document === 'undefined') return;
+  // viewport meta：现有关卡页没有 → 注入（禁止缩放/双击缩放；覆盖刘海区）
+  if (!document.querySelector('meta[name="viewport"]')) {
+    const m = document.createElement('meta');
+    m.name = 'viewport';
+    m.content = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover';
+    document.head.appendChild(m);
+  }
+  if (document.getElementById(STYLE_ID)) return;
+  const st = document.createElement('style');
+  st.id = STYLE_ID;
+  st.textContent = [
+    'html,body{overflow:hidden!important;overscroll-behavior:none!important;',
+    '-webkit-user-select:none!important;user-select:none!important;',
+    '-webkit-touch-callout:none!important;}',
+  ].join('');
+  document.head.appendChild(st);
+}
+
+/** 读取安全区（刘海/圆角/Home 指示条）：CSS env() → 计算值。缓存，resize 时刷新 */
+function safeInsets() {
+  if (typeof document === 'undefined') return { top: 0, bottom: 0, left: 0, right: 0 };
+  const cached = document.documentElement.getAttribute('data-czl-insets');
+  if (cached) try { return JSON.parse(cached); } catch (e) { /* 重新计算 */ }
+  const cs = window.getComputedStyle(document.documentElement);
+  const num = (v, d = 0) => {
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : d;
+  };
+  const v = (n) => cs.getPropertyValue(`--czl-sa${n}`);
+  const out = {
+    top: num(v('t')),
+    bottom: num(v('b')),
+    left: num(v('l')),
+    right: num(v('r')),
+  };
+  document.documentElement.setAttribute('data-czl-insets', JSON.stringify(out));
+  return out;
+}
+
+function clearInsetsCache() {
+  if (typeof document !== 'undefined') {
+    document.documentElement.removeAttribute('data-czl-insets');
+  }
+}
+
+function ensureInsetVars() {
+  if (typeof document === 'undefined') return;
+  if (document.getElementById('czl-inset-vars')) return;
+  const st = document.createElement('style');
+  st.id = 'czl-inset-vars';
+  st.textContent =
+    ':root{--czl-sat:env(safe-area-inset-top,0px);--czl-sab:env(safe-area-inset-bottom,0px);' +
+    '--czl-sal:env(safe-area-inset-left,0px);--czl-sar:env(safe-area-inset-right,0px);}';
+  document.head.appendChild(st);
+}
+
+/** 画布铺满窗口（触屏端） */
+function fitCanvas(canvas) {
+  if (typeof document === 'undefined') return;
+  const w = Math.max(1, Math.round(document.documentElement.clientWidth || window.innerWidth || 0));
+  const h = Math.max(1, Math.round(document.documentElement.clientHeight || window.innerHeight || 0));
+  if (canvas.width !== w) canvas.width = w;
+  if (canvas.height !== h) canvas.height = h;
+  canvas.style.position = 'fixed';
+  canvas.style.inset = '0';
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  canvas.style.display = 'block';
+  canvas.style['z-index'] = '1';
+  canvas.style.touchAction = 'none';
+}
+
+// ---------------------------------------------------------------------------
+// TouchUI：触控控制器（每个画布一个；多场景 = 每场景画布各一个）
+// ---------------------------------------------------------------------------
+
+const JOY_KEYS = ['left', 'right', 'jump'];
+
+class TouchUI {
+  /**
+   * @param canvas 游戏画布（触屏端铺满窗口）
+   * @param getActive () => {scene, hud} | null —— 单场景/多场景共用（取"当前激活"）
+   */
+  constructor(canvas, getActive) {
+    this.canvas = canvas;
+    this.getActive = getActive;
+    this.insets = { top: 0, bottom: 0, left: 0, right: 0 };
+    this.joy = null; // { id, x, y, sx, sy, dir }（sx/sy 为吸附后单位方向）
+    this.buttons = new Map(); // touchId → key（按下中的按键）
+    this.uiTouches = new Set(); // 被 HUD UI（提示/物品栏）消费的触点
+    this.sceneTouch = null; // { id }：进入场景按下/拖动管线的触点（单指）
+    this._ctlScene = null; // 摇杆控制写入的 scene（切场景时释放旧场景的按键）
+    this._bound = false;
+  }
+
+  enabled() {
+    return isTouchDevice();
+  }
+
+  /** 竖屏（触屏端）？HUD 画旋转提示 */
+  isPortrait() {
+    return this.enabled() && this.canvas.width < this.canvas.height;
+  }
+
+  /** 某按键当前是否被按住（HUD 高亮用） */
+  isPressed(key) {
+    for (const k of this.buttons.values()) if (k === key) return true;
+    return false;
+  }
+
+  /** 摇杆几何（画布坐标） */
+  geom() {
+    return joyGeom(this.canvas.width, this.canvas.height, this.insets);
+  }
+
+  /** 按钮矩形（画布坐标） */
+  buttonRects() {
+    const act = this.getActive();
+    const slots = act && act.scene && act.scene.player ? act.scene.player.inventory.slots : [];
+    return touchButtonRects(this.canvas.width, this.canvas.height, slots, this.insets);
+  }
+
+  /** 设备/布局刷新：安全区、画布铺满、相机移动端视野（forceTouch / resize 时调用） */
+  refresh() {
+    if (!this.enabled()) return;
+    ensureBaseStyle();
+    ensureInsetVars();
+    clearInsetsCache();
+    this.insets = safeInsets();
+    fitCanvas(this.canvas);
+    const act = this.getActive();
+    if (act && act.scene && act.scene.camera) {
+      act.scene.camera.mobileViewH = CFG.touch.viewH;
+      act.scene._touchUI = this;
+    }
+  }
+
+  /** 释放某场景里摇杆写入的控制键（切场景/抬指时） */
+  _releaseJoyControl(scene) {
+    if (!scene) return;
+    for (const k of JOY_KEYS) scene.control.delete(k);
+  }
+
+  /** 摇杆触点移动 → 写入当前激活场景的 control（5 向吸附） */
+  _applyJoy(x, y) {
+    const act = this.getActive();
+    if (!act || !act.scene) return;
+    const scene = act.scene;
+    if (scene !== this._ctlScene) {
+      // 按住摇杆切换场景：旧场景的按键释放干净（否则切回去玩家自动跑/跳）
+      this._releaseJoyControl(this._ctlScene);
+      this._ctlScene = scene;
+    }
+    const joy = this.joy;
+    if (!joy) return;
+    const g = this.geom();
+    const inp = joyInput(x - g.cx, y - g.cy, g.R);
+    joy.x = x;
+    joy.y = y;
+    // 摇杆球视觉位置：吸附方向 → 沿吸附单位方向推到实际幅度；中性 → 实际位置
+    const dx = x - g.cx;
+    const dy = y - g.cy;
+    const mag = Math.hypot(dx, dy);
+    const d = Math.min(mag, g.R);
+    if (inp.sx || inp.sy) {
+      joy.sx = inp.sx * d;
+      joy.sy = inp.sy * d;
+    } else {
+      joy.sx = mag > 1e-6 ? (dx / mag) * d : 0;
+      joy.sy = mag > 1e-6 ? (dy / mag) * d : 0;
+    }
+    for (const k of JOY_KEYS) {
+      const on = !!inp[k];
+      if (on && !joy.dir[k]) scene.control.add(k);
+      if (!on && joy.dir[k]) scene.control.delete(k);
+    }
+    joy.dir = inp;
+  }
+
+  // ---- 单点管线（触点按下/移动/抬起 → 分派角色） ----
+
+  /** 触点按下（画布坐标）。返回 'joy' | 'btn' | 'ui' | 'scene' | null */
+  down(id, x, y) {
+    const act = this.getActive();
+    if (!act || !act.scene) return null;
+    const scene = act.scene;
+    const hud = act.hud ?? null;
+    // 死亡：轻触重开（桌面按 R）
+    if (scene.status === 'died') {
+      scene.restart();
+      return 'died';
+    }
+    // ① 摇杆：左下半圆（上半部 hit；手指可从半圆上方/左右进入）
+    const g = this.geom();
+    if (!this.joy && y <= g.cy + 14 && Math.hypot(x - g.cx, y - g.cy) <= g.R + 14) {
+      this.joy = { id, x, y, sx: 0, sy: 0, dir: { left: false, right: false, jump: false } };
+      this._applyJoy(x, y);
+      return 'joy';
+    }
+    // ② 右下按钮（Q/⇧/C/X）：按下 = keydown（pressed + control），抬起 = keyup
+    for (const r of this.buttonRects()) {
+      if (hitRect(r, x, y)) {
+        this.buttons.set(id, r.key);
+        scene.pressed.add(r.key);
+        scene.control.add(r.key);
+        return 'btn';
+      }
+    }
+    // ③ HUD：提示按钮 / 物品栏选格（与桌面同一命中几何；hud 可空，showTip 跳过）
+    if (handleSceneClick(scene, hud, this.canvas, x, y)) {
+      this.uiTouches.add(id);
+      return 'ui';
+    }
+    // ④ 场景：同一套按下/拖动管线（滴管点击/长按/拖动；选中格物品栏已处理）。
+    //    手指容差 14px（桌面 6px）——滴管玻璃段只有 11px 宽，手指要点得中
+    if (this.sceneTouch && this.sceneTouch.id !== id) return null; // 场景多指：只认第一指
+    this.sceneTouch = { id };
+    handleScenePressDown(scene, this.canvas, x, y, null, 14);
+    return 'scene';
+  }
+
+  /** 触点移动 */
+  move(id, x, y) {
+    const act = this.getActive();
+    if (!act || !act.scene) return;
+    const scene = act.scene;
+    if (this.joy && this.joy.id === id) {
+      this._applyJoy(x, y);
+      return;
+    }
+    if (this.buttons.has(id)) return; // 按钮按住不动（滑出也算按住，同按钮语义）
+    if (this.uiTouches.has(id)) return;
+    if (this.sceneTouch && this.sceneTouch.id === id) {
+      handleScenePressMove(scene, this.canvas, x, y);
+    }
+  }
+
+  /** 触点抬起/取消 */
+  up(id) {
+    const act = this.getActive();
+    const scene = act && act.scene ? act.scene : null;
+    if (this.joy && this.joy.id === id) {
+      this._releaseJoyControl(this._ctlScene ?? scene);
+      this._ctlScene = null;
+      this.joy = null;
+      return;
+    }
+    if (this.buttons.has(id)) {
+      const key = this.buttons.get(id);
+      this.buttons.delete(id);
+      if (scene) scene.control.delete(key);
+      return;
+    }
+    if (this.uiTouches.has(id)) {
+      this.uiTouches.delete(id);
+      return;
+    }
+    if (this.sceneTouch && this.sceneTouch.id === id) {
+      this.sceneTouch = null;
+      if (scene) handleScenePressUp(scene, this.canvas, 14);
+    }
+  }
+
+  /** 抬起所有触点（页面失焦/切场景兜底）：等价于全部 keyup + 取消摇杆/拖动 */
+  releaseAll() {
+    const act = this.getActive();
+    const scene = act && act.scene ? act.scene : null;
+    this._releaseJoyControl(this._ctlScene ?? scene);
+    this._ctlScene = null;
+    this.joy = null;
+    for (const key of this.buttons.values()) {
+      if (scene) scene.control.delete(key);
+    }
+    this.buttons.clear();
+    this.uiTouches.clear();
+    this.sceneTouch = null;
+    if (scene) handleScenePressUp(scene, this.canvas, 14);
+  }
+
+  // ---- DOM 绑定 ----
+
+  bind() {
+    if (this._bound) return () => {};
+    // 无 DOM 环境（node 测试/库内嵌入）不绑定
+    if (typeof window === 'undefined' || typeof document === 'undefined') return () => {};
+    this._bound = true;
+    const canvas = this.canvas;
+    const pos = (t) => {
+      const r = canvas.getBoundingClientRect();
+      const kx = canvas.width / Math.max(1, r.width);
+      const ky = canvas.height / Math.max(1, r.height);
+      return { x: (t.clientX - r.left) * kx, y: (t.clientY - r.top) * ky };
+    };
+    const enabled = () => isTouchDevice();
+    const onStart = (e) => {
+      if (!enabled()) return;
+      for (const t of e.changedTouches) {
+        const p = pos(t);
+        this.down(t.identifier, p.x, p.y);
+      }
+      if (e.cancelable) e.preventDefault();
+    };
+    const onMove = (e) => {
+      if (!enabled()) return;
+      for (const t of e.changedTouches) {
+        const p = pos(t);
+        this.move(t.identifier, p.x, p.y);
+      }
+      if (e.cancelable) e.preventDefault(); // 阻止下拉刷新/页面滚动
+    };
+    const onEnd = (e) => {
+      if (!enabled()) return;
+      for (const t of e.changedTouches) this.up(t.identifier);
+      if (e.cancelable) e.preventDefault();
+    };
+    const onCancel = (e) => {
+      if (!enabled()) return;
+      for (const t of e.changedTouches) this.up(t.identifier);
+    };
+    const onCtx = (e) => {
+      if (enabled()) e.preventDefault(); // 长按不弹系统菜单/选择
+    };
+    const onClear = () => this.releaseAll();
+    canvas.addEventListener('touchstart', onStart, { passive: false });
+    canvas.addEventListener('touchend', onEnd, { passive: false });
+    window.addEventListener('touchmove', onMove, { passive: false });
+    canvas.addEventListener('touchcancel', onCancel);
+    canvas.addEventListener('contextmenu', onCtx);
+    window.addEventListener('blur', onClear);
+    document.addEventListener('visibilitychange', onClear);
+    return () => {
+      canvas.removeEventListener('touchstart', onStart);
+      canvas.removeEventListener('touchend', onEnd);
+      window.removeEventListener('touchmove', onMove);
+      canvas.removeEventListener('touchcancel', onCancel);
+      canvas.removeEventListener('contextmenu', onCtx);
+      window.removeEventListener('blur', onClear);
+      document.removeEventListener('visibilitychange', onClear);
+      this._bound = false;
+    };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 绑定入口（LevelBuilder.start / Multiscene 各画布调用）
+// ---------------------------------------------------------------------------
+
+/**
+ * 给画布绑定触控（getScreenPos/getActive 语义同 bindSceneClick）。
+ * 返回 { ui, unbind }：ui 供 HUD 渲染读取（scene._touchUI）；unbind 解除全部监听。
+ */
+function bindTouchUI(canvas, getActive) {
+  const ui = new TouchUI(canvas, getActive);
+  const unbind = ui.bind();
+  const onLayout = () => ui.refresh();
+  const debounce = () => {
+    clearTimeout(onLayout._t);
+    onLayout._t = setTimeout(onLayout, 90);
+  };
+  if (typeof window !== 'undefined') {
+    window.addEventListener('resize', debounce);
+    window.addEventListener('orientationchange', debounce);
+  }
+  UIS.push(ui);
+  const act = getActive();
+  if (act && act.scene) act.scene._touchUI = ui;
+  if (ui.enabled()) ui.refresh();
+  return {
+    ui,
+    unbind: () => {
+      unbind();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('resize', debounce);
+        window.removeEventListener('orientationchange', debounce);
+      }
+      const i = UIS.indexOf(ui);
+      if (i >= 0) UIS.splice(i, 1);
+    },
+  };
+}
+
+exports.isTouchDevice = isTouchDevice;
+exports.forceTouch = forceTouch;
+exports.joyGeom = joyGeom;
+exports.touchButtonRects = touchButtonRects;
+exports.joyInput = joyInput;
+exports.TouchUI = TouchUI;
+exports.bindTouchUI = bindTouchUI;
+
+  };
+  __modules["src/core/recorder.js"] = function (module, exports, __require) {
+// ============================================================================
+// 操作录制/回放工具（开发用）：
+//  ├─ 录制：关卡 URL 加 `?record=1` → 页面浮出录制面板。自动记录玩家全部
+//  │   操作（键盘 keydown/keyup、触摸 down/move/up、鼠标按下/拖动/抬起/点击），
+//  │   坐标一律记**画布坐标**（回放时屏幕尺寸不同也照常）；按 R 重开局自动
+//  │   分"段"（每次挑战内独立回放）。停止后下载为 JSON 文件；
+//  ├─ 回放：把录制的 .json 拖回（或文件选择）关卡页 → 页面自动重载 →
+//  │   按录制时的操作序列回放；`Math.random` 用录制时的种子重装——
+//  │   游戏内随机数序列与录制完全一致（操作 + 随机双重还原，可稳定复现）；
+//  │   每段结束自动切下一段（重载推进），全部回放完给出提示。
+// 用法（无需改关卡文件）：
+//   levels/xxx.html?record=1          —— 录制
+//   levels/xxx.html + 拖入录制的文件   —— 回放
+// ============================================================================
+
+const { CFG } = __require('src/core/config.js');;
+
+// ---------------------------------------------------------------------------
+// 种子随机（mulberry32）：回放时用同一种子，游戏内 Math.random 序列一致
+// ---------------------------------------------------------------------------
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** 把 Math.random 换成同种子 PRNG（返回被替换的旧函数） */
+function installSeed(seed) {
+  const old = Math.random;
+  Math.random = mulberry32(seed);
+  return old;
+}
+
+// ---------------------------------------------------------------------------
+// 录制器
+// ---------------------------------------------------------------------------
+// 事件格式（k 为类型；x/y 为画布坐标；t 为 scene.time）：
+//   {t, k:'kd'|'ku', code}                      键盘按下/抬起
+//   {t, k:'td'|'tm'|'tu', x, y, id}             触摸 down/move/up（含 cancel→tu）
+//   {t, k:'md'|'mm'|'mu'|'cl', x, y, btn}       鼠标按下/移动/抬起/点击
+
+class GameRecorder {
+  /**
+   * @param getScene () => Scene|null —— 录制时间源（单场景/多场景活跃场景）
+   * @param surface  事件表面（单场景=canvas；多场景=容器 div）
+   */
+  constructor(getScene, surface) {
+    this.getScene = getScene;
+    this.surface = surface;
+    this.runs = []; // 完成的段：[{t0,t1,events:[...]}]
+    this.records = null; // 录制中的段事件
+    this.seed = 0;
+    this._listeners = null;
+    this._ctx = {
+      toCanvasX: 0, // 正在改的触点坐标缓存（一次 touch 事件多触点 → 逐点记录）
+      toCanvasY: 0,
+    };
+  }
+
+  get on() {
+    return !!this.records;
+  }
+
+  _now() {
+    const s = typeof this.getScene === 'function' ? this.getScene() : null;
+    return s && Number.isFinite(s.time) ? s.time : 0;
+  }
+
+  // ---- 录制核心（事件处理器直接写入；DOM 监听器只是翻译坐标后的薄壳） ----
+
+  /** 键盘（down=true 按下 / false 抬起）；R 重开局 → 结束当前段 */
+  key(code, down) {
+    if (!this.on) return;
+    this.records.push({ t: this._now(), k: down ? 'kd' : 'ku', code });
+    if (down && code === 'KeyR') this._endRun();
+  }
+
+  /** 触摸（kind: 'td'|'tm'|'tu'） */
+  touch(kind, x, y, id) {
+    if (!this.on) return;
+    this.records.push({ t: this._now(), k: kind, x, y, id });
+  }
+
+  /** 鼠标（kind: 'md'|'mm'|'mu'|'cl'） */
+  mouse(kind, x, y, btn = 0) {
+    if (!this.on) return;
+    const e = { t: this._now(), k: kind, x, y, btn };
+    if (kind === 'md' || kind === 'cl') e.btn = btn;
+    this.records.push(e);
+  }
+
+  // ---- 生命周期 ----
+
+  /** 开始录制：种子随机 + 绑定 DOM 监听（node/无 DOM 环境仅设状态） */
+  start() {
+    if (this.on) return;
+    this.seed = ((Date.now() & 0x7fffffff) ^ ((Math.random() * 0x7fffffff) | 0)) >>> 0;
+    installSeed(this.seed);
+    this.records = [];
+    this._bind();
+  }
+
+  /** 停止录制（结束当前段 + 解绑）→ 返回段数据 */
+  stop() {
+    if (!this.on) return [];
+    this._endRun();
+    this._unbind();
+    return this.runs;
+  }
+
+  _endRun() {
+    if (!this.records || this.records.length === 0) return;
+    const ev = this.records;
+    this.runs.push({ t0: ev[0].t, t1: ev[ev.length - 1].t, events: ev });
+    this.records = [];
+  }
+
+  /** 文件数据（JSON-ready） */
+  data() {
+    const lastRun = this.on ? [...this.records] : [];
+    return {
+      version: 1,
+      url: typeof location !== 'undefined' ? location.href.split('?')[0] : '',
+      seed: this.seed,
+      tickRate: CFG.tickRate,
+      runs: lastRun.length
+        ? [...this.runs, { t0: lastRun[0].t, t1: lastRun[lastRun.length - 1].t, events: lastRun }]
+        : this.runs,
+    };
+  }
+
+  _bind() {
+    if (this._listeners || typeof window === 'undefined' || !this.surface) return;
+    const s = this.surface;
+    const toCanvas = (e) => {
+      const r = s.getBoundingClientRect ? s.getBoundingClientRect() : { left: 0, top: 0, width: s.width, height: s.height };
+      const kx = s.width / Math.max(1, r.width);
+      const ky = s.height / Math.max(1, r.height);
+      return { x: (e.clientX - r.left) * kx, y: (e.clientY - r.top) * ky };
+    };
+    const kd = (e) => this.key(e.code, true);
+    const ku = (e) => this.key(e.code, false);
+    const ts = (e) => {
+      for (const t of e.changedTouches) this.touch('td', ...this._tp(t, toCanvas, e), t.identifier);
+    };
+    const tm = (e) => {
+      for (const t of e.changedTouches) this.touch('tm', ...this._tp(t, toCanvas, e), t.identifier);
+    };
+    const te = (e) => {
+      for (const t of e.changedTouches) this.touch('tu', ...this._tp(t, toCanvas, e), t.identifier);
+    };
+    const md = (e) => this.mouse('md', ...Object.values(toCanvas(e)), e.button ?? 0);
+    const mm = (e) => this.mouse('mm', ...Object.values(toCanvas(e)));
+    const mu = (e) => this.mouse('mu', ...Object.values(toCanvas(e)), e.button ?? 0);
+    const cl = (e) => this.mouse('cl', ...Object.values(toCanvas(e)));
+    window.addEventListener('keydown', kd);
+    window.addEventListener('keyup', ku);
+    s.addEventListener('touchstart', ts, { passive: true });
+    window.addEventListener('touchmove', tm, { passive: true });
+    s.addEventListener('touchend', te, { passive: true });
+    s.addEventListener('touchcancel', te, { passive: true });
+    s.addEventListener('mousedown', md);
+    window.addEventListener('mousemove', mm);
+    window.addEventListener('mouseup', mu);
+    s.addEventListener('click', cl);
+    this._listeners = { kd, ku, ts, tm, te, md, mm, mu, cl };
+  }
+
+  /** 触点 → 画布坐标 */
+  _tp(t, toCanvas, e) {
+    const p = toCanvas({ clientX: t.clientX, clientY: t.clientY });
+    return [p.x, p.y];
+  }
+
+  _unbind() {
+    const L = this._listeners;
+    if (!L) return;
+    window.removeEventListener('keydown', L.kd);
+    window.removeEventListener('keyup', L.ku);
+    this.surface.removeEventListener('touchstart', L.ts);
+    window.removeEventListener('touchmove', L.tm);
+    this.surface.removeEventListener('touchend', L.te);
+    this.surface.removeEventListener('touchcancel', L.te);
+    this.surface.removeEventListener('mousedown', L.md);
+    window.removeEventListener('mousemove', L.mm);
+    window.removeEventListener('mouseup', L.mu);
+    this.surface.removeEventListener('click', L.cl);
+    this._listeners = null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 回放
+// ---------------------------------------------------------------------------
+
+/** 事件 → 真实 DOM 事件（走游戏原本的监听器，管线零差别） */
+function dispatchReplayEvent(surface, ev) {
+  if (typeof window === 'undefined') return false;
+  const toClient = (x, y) => {
+    const r = surface.getBoundingClientRect ? surface.getBoundingClientRect() : { left: 0, top: 0 };
+    return {
+      clientX: r.left + (x / Math.max(1, surface.width)) * Math.max(1, r.width),
+      clientY: r.top + (y / Math.max(1, surface.height)) * Math.max(1, r.height),
+    };
+  };
+  if (ev.k === 'kd' || ev.k === 'ku') {
+    window.dispatchEvent(new KeyboardEvent(ev.k === 'kd' ? 'keydown' : 'keyup', { code: ev.code, bubbles: true, cancelable: true }));
+    return true;
+  }
+  if (ev.k === 'td' || ev.k === 'tm' || ev.k === 'tu') {
+    const p = toClient(ev.x, ev.y);
+    const t = new Touch({ identifier: ev.id, target: surface, clientX: p.clientX, clientY: p.clientY });
+    const type = ev.k === 'td' ? 'touchstart' : ev.k === 'tm' ? 'touchmove' : 'touchend';
+    surface.dispatchEvent(new TouchEvent(type, { touches: [t], changedTouches: [t], bubbles: true, cancelable: true }));
+    return true;
+  }
+  if (ev.k.startsWith('m')) {
+    const p = toClient(ev.x, ev.y);
+    const type = { md: 'mousedown', mm: 'mousemove', mu: 'mouseup', cl: 'click' }[ev.k];
+    const target = ev.k === 'mm' || ev.k === 'mu' ? window : surface;
+    target.dispatchEvent(new MouseEvent(type, { clientX: p.clientX, clientY: p.clientY, button: ev.btn ?? 0, bubbles: true, cancelable: true }));
+    return true;
+  }
+  return false;
+}
+
+/** 按 scene.time 推进回放：注册到活跃场景的 onTick；R 重开局 = 段结束（不放 reload）。
+ *  @param events 按 t 升序的录制事件
+ *  @param opts { sink(ev)=dispatchReplayEvent, onDone(), onEvent(ev) }
+ *  @returns 停止函数 */
+function replayEvents(getScene, surface, events, opts = {}) {
+  const sink = opts.sink ?? ((ev) => dispatchReplayEvent(surface, ev));
+  let ptr = 0;
+  const scene = typeof getScene === 'function' ? getScene() : getScene;
+  if (!scene || typeof scene.onTick !== 'function') return () => {};
+  let stop = () => {};
+  const tick = () => {
+    const t = scene.time;
+    // 严格 t < 当前帧时间：录制时按键落在 tick 之后，其效果自下一 tick 生效——
+    // 回放也要在下一 tick 应用（否则同一 tick 内按键提前生效，差一整帧运动量）
+    while (ptr < events.length && events[ptr].t < t) {
+      const ev = events[ptr++];
+      opts.onEvent?.(ev);
+      // 重开局（R）：不放行（会触发页面重载）——作为段结束信号
+      if (ev.k === 'kd' && ev.code === 'KeyR') {
+        stop();
+        opts.onDone?.(true);
+        return;
+      }
+      sink(ev);
+    }
+    if (ptr >= events.length) {
+      stop();
+      opts.onDone?.(false);
+    }
+  };
+  stop = scene.onTick(tick);
+  return stop;
+}
+
+// ---------------------------------------------------------------------------
+// 页面面板（?record=1 → 录制；会话内有回放数据 → 回放模式）
+// ---------------------------------------------------------------------------
+
+const REPLAY_KEY = 'czl-replay-v1'; // sessionStorage：拖入的回放文件（JSON 文本）
+
+/**
+ * 挂载录制/回放面板。返回 { recorder, startReplayFromData(data), destroy }。
+ * getScene：() => 活跃 Scene（时间源/回放注册 onTick）。
+ * surface：事件表面（canvas 或容器）。
+ */
+function attachRecorderPanel(getScene, surface) {
+  const recorder = new GameRecorder(getScene, surface);
+  const rec = recorder;
+
+  // ---- DOM 面板 ----
+  let el = null;
+  let btn = null;
+  let stat = null;
+  let dot = null;
+  let runInfo = null;
+  function ensurePanel() {
+    if (el || typeof document === 'undefined') return;
+    el = document.createElement('div');
+    el.id = 'czl-recorder';
+    el.style.cssText = [
+      'position:fixed;top:44px;left:8px;z-index:60;display:flex;align-items:center;gap:8px;',
+      'padding:6px 10px;border-radius:9px;border:1px solid #2b3047;background:rgba(12,10,32,.92);',
+      'color:#dfe8f2;font:12px "Segoe UI","Microsoft YaHei",sans-serif;',
+      'backdrop-filter:blur(2px);user-select:none;',
+    ].join('');
+    dot = document.createElement('span');
+    dot.id = 'czl-rec-dot';
+    dot.textContent = '●';
+    dot.style.color = '#ff3b30';
+    dot.style.animation = 'czl-bl 1s steps(2) infinite';
+    stat = document.createElement('span');
+    stat.textContent = '⏺ 录制中…';
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.style.cssText = 'cursor:pointer;padding:3px 10px;border:1px solid #e8b84b;background:#241a02;color:#ffe9b0;font-weight:bold;border-radius:6px;';
+    btn.textContent = '⏹ 停止并下载';
+    btn.addEventListener('click', () => {
+      if (rec.on) {
+        const runs = rec.stop();
+        stat.textContent = `已停止 · ${runs.length} 段 · ${runs.reduce((n, r) => n + r.events.length, 0)} 事件`;
+        dot.style.color = '#6a7a96';
+        dot.style.animation = '';
+        btn.textContent = '⏺ 重新录制';
+        addDownload();
+        addLoadHint();
+      } else {
+        rec.start();
+        stat.textContent = '⏺ 录制中…';
+        dot.style.color = '#ff3b30';
+        dot.style.animation = 'czl-bl 1s steps(2) infinite';
+        btn.textContent = '⏹ 停止并下载';
+        runInfo && runInfo.remove();
+      }
+    });
+    el.append(dot, stat, btn);
+    document.body.appendChild(el);
+    const st = document.createElement('style');
+    st.textContent = '@keyframes czl-bl{50%{opacity:.15}}';
+    document.head.appendChild(st);
+  }
+
+  function addDownload() {
+    const data = rec.data();
+    if (!data.runs.length) return;
+    const a = document.createElement('a');
+    a.textContent = '⬇ 下载';
+    a.style.cssText = 'color:#7fd8ff;cursor:pointer;text-decoration:underline;';
+    a.addEventListener('click', () => {
+      const blob = new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' });
+      const u = URL.createObjectURL(blob);
+      const dl = document.createElement('a');
+      const d = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      dl.href = u;
+      dl.download = `chezzle-记录-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}.json`;
+      dl.click();
+      setTimeout(() => URL.revokeObjectURL(u), 4000);
+    });
+    el.appendChild(a);
+    return a;
+  }
+
+  function addLoadHint() {
+    if (document.getElementById('czl-rec-load')) return;
+    const h = document.createElement('span');
+    h.id = 'czl-rec-load';
+    h.textContent = '· 拖入 .json 回放';
+    h.style.color = '#5f6d8f';
+    el.appendChild(h);
+  }
+
+  // ---- 回放模式（sessionStorage 有回放数据 → 页面加载后自动回放） ----
+  function enterReplay(data) {
+    try { sessionStorage.setItem(REPLAY_KEY, JSON.stringify(data)); } catch (e) { /* 大文件存不下 */ }
+    if (typeof location !== 'undefined') location.reload();
+  }
+
+  function startReplayIfAny() {
+    if (typeof sessionStorage === 'undefined') return false;
+    let data = null;
+    try { data = JSON.parse(sessionStorage.getItem(REPLAY_KEY) || 'null'); } catch (e) { return false; }
+    if (!data || !data.runs || !data.runs.length) return false;
+    const runIdx = parseRunIdxFromUrl() || 0;
+    if (runIdx >= data.runs.length) {
+      sessionStorage.removeItem(REPLAY_KEY);
+      cleanupHash();
+      notify('回放完成：全部 ' + data.runs.length + ' 段已播放');
+      return;
+    }
+    ensurePanel();
+    installSeed(data.seed);
+    const scene = typeof getScene === 'function' ? getScene() : null;
+    if (!scene) return;
+    const run = data.runs[runIdx];
+    const events = run.events;
+    stat.textContent = `▶ 回放中 第 ${runIdx + 1}/${data.runs.length} 段 · ${events.length} 事件`;
+    dot.style.color = '#7fd8ff';
+    btn.style.display = 'none';
+    replayEvents(() => scene, surface, events, {
+      onDone: () => {
+        const next = runIdx + 1;
+        try { sessionStorage.setItem(REPLAY_KEY, JSON.stringify(data)); } catch (e) {}
+        location.hash = `czl-replay-run=${next}`;
+        location.reload();
+      },
+    });
+    return true;
+  }
+
+  function parseRunIdxFromUrl() {
+    const m = /czl-replay-run=(\d+)/.exec(location.hash || '');
+    return m ? parseInt(m[1], 10) : 0;
+  }
+
+  function cleanupHash() {
+    if (typeof location !== 'undefined' && location.hash) location.hash = '';
+  }
+
+  function notify(text) {
+    if (typeof document === 'undefined') return;
+    const d = document.createElement('div');
+    d.style.cssText = 'position:fixed;left:50%;top:16%;transform:translateX(-50%);z-index:70;padding:10px 22px;border:1px solid #e8b84b;background:#241a02;color:#ffe9b0;font:bold 14px "Segoe UI","Microsoft YaHei",sans-serif;border-radius:8px;box-shadow:0 0 22px rgba(232,184,75,.45);';
+    d.textContent = text;
+    document.body.appendChild(d);
+    setTimeout(() => d.remove(), 4000);
+  }
+
+  // ---- 拖入文件 / 文件选择 ----
+  function bindDrop() {
+    if (typeof document === 'undefined') return;
+    document.addEventListener('dragover', (e) => e.preventDefault());
+    document.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const f = [...(e.dataTransfer?.files ?? [])].find((x) => /\.json$/i.test(x.name));
+      if (!f) return;
+      const rd = new FileReader();
+      rd.onload = () => {
+        try {
+          const data = JSON.parse(rd.result);
+          if (!data.runs) throw new Error('不是录制文件');
+          if (rec.on) rec.stop();
+          enterReplay(data);
+        } catch (err) { notify('回放文件无效：' + err.message); }
+      };
+      rd.readAsText(f);
+    });
+  }
+
+  ensurePanel();
+  bindDrop();
+  if (!startReplayIfAny() && !rec.on) {
+    // ?record=1 打开即自动开录（录到停止/下载为止）
+    rec.start();
+  }
+  return {
+    recorder: rec,
+    /** 编程式开始回放（无文件交互；E2E/控制台用） */
+    startReplayFromData: enterReplay,
+    destroy: () => {
+      if (typeof document !== 'undefined') document.getElementById('czl-recorder')?.remove();
+    },
+  };
+}
+
+exports.mulberry32 = mulberry32;
+exports.installSeed = installSeed;
+exports.GameRecorder = GameRecorder;
+exports.dispatchReplayEvent = dispatchReplayEvent;
+exports.replayEvents = replayEvents;
+exports.attachRecorderPanel = attachRecorderPanel;
+
+  };
   __modules["src/level/builder.js"] = function (module, exports, __require) {
 // ============================================================================
 // 关卡 DSL：流式构建 Scene，末尾 build() 返回 Scene，start() 启动游戏循环。
@@ -8136,6 +9193,8 @@ const { Extractor } = __require('src/objects/extractor.js');;
 const { Dropper } = __require('src/objects/dropper.js');;
 const { GasBottle } = __require('src/objects/gasbottle.js');;
 const { bindSceneClick } = __require('src/level/click.js');;
+const { bindTouchUI } = __require('src/core/touch.js');;
+const { attachRecorderPanel } = __require('src/core/recorder.js');;
 
 class LevelBuilder {
   constructor(canvas, opts = {}) {
@@ -8283,12 +9342,19 @@ class LevelBuilder {
     return this.scene;
   }
 
-  /** 启动：状态→输入→点击（提示/选格）→主循环 */
+  /** 启动：状态→输入→点击（提示/选格）→触控（移动端）→主循环 */
   start() {
     const scene = this.build();
     scene.status = 'running';
     this.unbind = bindKeyboard(scene);
     this.bindClick();
+    // 移动端触控（摇杆/按钮/拖动管线）；桌面端绑定但按 isTouchDevice 门槛空转
+    this.touch = bindTouchUI(this.renderer.canvas, () => ({ scene: this.scene, hud: this.hud }));
+    scene._touchUI = this.touch.ui;
+    // 操作录制/回放面板（开发工具：?record=1 显示；拖入录制的 .json 回放）
+    if (typeof location !== 'undefined' && /[?&]record=1/.test(location.search)) {
+      this.recorder = attachRecorderPanel(() => this.scene, this.renderer.canvas);
+    }
     this.stop = startLoop(scene, this.renderer, { hud: this.hud });
     return scene;
   }
@@ -8570,6 +9636,7 @@ class Camera {
   constructor({ viewW = 1000, viewH = 800, worldW = 1000, worldH = 800 } = {}) {
     this.viewW = viewW;
     this.viewH = viewH;
+    this.mobileViewH = 0; // 移动端视野高度（0 = 桌面默认）；由 touchui 按设备设置
     this.worldW = worldW;
     this.worldH = worldH;
     this._shake = 0; // 屏幕震动强度（px），每帧衰减
@@ -8592,12 +9659,20 @@ class Camera {
   /**
    * 计算缩放与屏幕偏移。focus 为可选跟随目标（{x,y,w,h}，通常是玩家）。
    * 世界 ≤ 视口时居中显示整个世界；世界 > 视口时跟随 focus 滚动（钳制在世界内）。
+   * 移动端（mobileViewH>0 且横屏）：高度按 mobileViewH 收窄 → 世界内容按屏幕
+   * 比例变宽（跟随玩家），玩家在手机上不再缩成小点。
    */
   compute(vw, vh, focus = null) {
-    const scale = Math.min(vw / this.viewW, vh / this.viewH);
+    let viewW = this.viewW;
+    let viewH = this.viewH;
+    if (this.mobileViewH > 0 && vw > 0 && vh > 0 && vh < vw) {
+      viewH = this.mobileViewH;
+      viewW = Math.max(1, viewH * (vw / vh));
+    }
+    const scale = Math.min(vw / viewW, vh / viewH);
     // 实际显示的世界窗口（单位：世界坐标）
-    const vx = Math.min(this.worldW, this.viewW);
-    const vy = Math.min(this.worldH, this.viewH);
+    const vx = Math.min(this.worldW, viewW);
+    const vy = Math.min(this.worldH, viewH);
     // 窗口原点 ox, oy
     let ox;
     let oy;
@@ -8692,7 +9767,8 @@ const { solutionColor } = __require('src/render/liquidrender.js');;
 const { CFG } = __require('src/core/config.js');;
 const { GasColumn } = __require('src/objects/gascolumn.js');;
 const { Block } = __require('src/objects/block.js');;
-const { inventorySlotRects } = __require('src/level/click.js');;
+const { inventorySlotRects, uiMargins } = __require('src/level/click.js');;
+const { joyGeom, touchButtonRects } = __require('src/core/touch.js');;
 
 /** 质量短格式：1.2g / 0.30g / 12g（空气计百分比旁同显质量） */
 function fmtMass(m) {
@@ -8738,7 +9814,132 @@ class Hud {
     if (scene.debugMode) this.hoverPanel(ctx, scene, W, H);
     this.tipButton(ctx, W, H, time);
     this.notice(ctx, scene, W, H, time);
+    this.touchControls(ctx, scene, W, H, time);
+    this.rotateHint(ctx, scene, W, H);
     this.overlay(ctx, scene, W, H);
+    ctx.restore();
+  }
+
+  // ---- 移动端触控（摇杆 + 右下按钮；仅触屏设备绘制） ----
+  touchControls(ctx, scene, W, H, time) {
+    const ui = scene._touchUI;
+    if (!ui || !ui.enabled()) return;
+    const touch = ui.insets;
+    ctx.save();
+    // —— 左下：半透明半圆摇杆基座（直径贴底边）——
+    const g = joyGeom(W, H, touch);    ctx.beginPath();
+    ctx.arc(g.cx, g.cy, g.R, Math.PI, 0); // 上半圆
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(255,255,255,0.07)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(232,184,75,0.32)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // 5 向刻度（上/左上/右上/左/右），激活方向高亮
+    const TICKS = [
+      { ux: 0, uy: -1, on: () => ui.joy && ui.joy.dir.jump && !ui.joy.dir.left && !ui.joy.dir.right },
+      { ux: -0.7071, uy: -0.7071, on: () => ui.joy && ui.joy.dir.jump && ui.joy.dir.left },
+      { ux: 0.7071, uy: -0.7071, on: () => ui.joy && ui.joy.dir.jump && ui.joy.dir.right },
+      { ux: -1, uy: 0, on: () => ui.joy && ui.joy.dir.left && !ui.joy.dir.jump },
+      { ux: 1, uy: 0, on: () => ui.joy && ui.joy.dir.right && !ui.joy.dir.jump },
+    ];
+    for (const t of TICKS) {
+      const tx = g.cx + t.ux * (g.R - 11);
+      const ty = g.cy + t.uy * (g.R - 11);
+      const active = t.on();
+      ctx.beginPath();
+      ctx.arc(tx, ty, active ? 5 : 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = active ? 'rgba(255,215,106,0.9)' : 'rgba(232,184,75,0.35)';
+      ctx.fill();
+    }
+    // 摇杆球（吸附位置；未触摸时居中淡显）
+    const ox = ui.joy ? ui.joy.sx : 0;
+    const oy = ui.joy ? ui.joy.sy : 0;
+    ctx.beginPath();
+    ctx.arc(g.cx + ox, g.cy + oy, 34, 0, Math.PI * 2);
+    ctx.fillStyle = ui.joy ? 'rgba(255,255,255,0.30)' : 'rgba(255,255,255,0.12)';
+    ctx.fill();
+    ctx.strokeStyle = ui.joy ? 'rgba(255,215,106,0.85)' : 'rgba(232,184,75,0.4)';
+    ctx.lineWidth = ui.joy ? 2 : 1.2;
+    ctx.stroke();
+    // —— 右下：Q/⇧/C/X 四键（按住=长按语义同键盘；无玩家场景不画）——
+    if (scene.player) {
+      const LABELS = { grab: ['C', '拾取'], use: ['X', '倒出'], collect: ['Q', '收集'], place: ['⇧', '放置'] };
+      for (const r of ui.buttonRects()) {
+        const [glyph, cap] = LABELS[r.key] ?? ['', ''];
+        const down = ui.isPressed(r.key);
+        ctx.save();
+        rr(ctx, r.x, r.y, r.size, r.size, 14);
+        const gr = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.size);
+        gr.addColorStop(0, down ? 'rgba(90,64,20,0.95)' : 'rgba(38,32,74,0.88)');
+        gr.addColorStop(1, down ? 'rgba(48,32,10,0.95)' : 'rgba(14,11,36,0.88)');
+        ctx.fillStyle = gr;
+        ctx.fill();
+        ctx.strokeStyle = down ? 'rgba(255,215,106,0.95)' : 'rgba(232,184,75,0.45)';
+        ctx.lineWidth = down ? 2 : 1.2;
+        if (down) {
+          ctx.shadowColor = 'rgba(255,215,106,0.8)';
+          ctx.shadowBlur = 12;
+        }
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = down ? '#fff6d8' : '#ffe9b0';
+        ctx.font = 'bold 17px "Segoe UI", sans-serif';
+        ctx.fillText(glyph, r.x + r.size / 2, r.y + r.size / 2 + 2);
+        ctx.fillStyle = down ? '#ffd76a' : 'rgba(255,233,176,0.62)';
+        ctx.font = '9.5px "Segoe UI", "Microsoft YaHei", sans-serif';
+        ctx.fillText(cap, r.x + r.size / 2, r.y + r.size - 9);
+        ctx.restore();
+      }
+    }
+    ctx.restore();
+  }
+
+  /** 竖屏提示（移动端）：半透明压暗 + 手机旋转图标 + 文案（游戏照常运行） */
+  rotateHint(ctx, scene, W, H) {
+    const ui = scene._touchUI;
+    if (!ui || !ui.isPortrait()) return;
+    ctx.save();
+    ctx.fillStyle = 'rgba(6,5,20,0.82)';
+    ctx.fillRect(0, 0, W, H);
+    const cx = W / 2;
+    const cy = H / 2;
+    ctx.translate(cx, cy);
+    ctx.rotate(Math.PI / 2); // 手机框画成"横过来的手机 + 箭头"
+    // 手机机身
+    rr(ctx, -34, -58, 68, 116, 12);
+    ctx.strokeStyle = '#e8b84b';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, -44, 4, 0, Math.PI * 2);
+    ctx.fillStyle = '#e8b84b';
+    ctx.fill();
+    ctx.rotate(0.62);
+    // 旋转箭头（弧 + 箭头尖）
+    ctx.beginPath();
+    ctx.arc(0, 0, 88, -0.4, 2.4);
+    ctx.strokeStyle = 'rgba(232,184,75,0.55)';
+    ctx.lineWidth = 7;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+    const fx = 88 * Math.cos(2.4);
+    const fy = 88 * Math.sin(2.4);
+    ctx.beginPath();
+    ctx.moveTo(fx - 4, fy + 16);
+    ctx.lineTo(fx + 14, fy + 3);
+    ctx.lineTo(fx + 6, fy - 14);
+    ctx.stroke();
+    ctx.resetTransform();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffd76a';
+    ctx.font = 'bold 20px "Segoe UI", "Microsoft YaHei", sans-serif';
+    ctx.fillText('请旋转设备', cx, cy + 68);
+    ctx.fillStyle = '#9fb2c8';
+    ctx.font = '13px "Segoe UI", "Microsoft YaHei", sans-serif';
+    ctx.fillText('横屏游玩体验更佳', cx, cy + 92);
     ctx.restore();
   }
 
@@ -9234,7 +10435,7 @@ class Hud {
   // ---- 物品栏（宝石槽）：装物品的格子放大 + 内容物溶质显示 + 获取弹跳 ----
   inventory(ctx, p, W, H, time) {
     const slots = p.inventory.slots;
-    const rects = inventorySlotRects(W, H, slots);
+    const rects = inventorySlotRects(W, H, slots, uiMargins(this.scene));
     if (!this._pop) this._pop = {}; // 物品格弹跳计时 {i:{sig,t}}
     let minTop = Infinity;
     for (let i = 0; i < rects.length; i++) {
@@ -9628,7 +10829,8 @@ class Hud {
     ctx.fillText(win ? '通关！' : '死亡', cx, cy + 58);
     ctx.fillStyle = '#e8d8b0';
     ctx.font = '15px "Segoe UI", sans-serif';
-    ctx.fillText('按 R 重开', cx, cy + 90);
+    const touch = scene._touchUI && scene._touchUI.enabled();
+    ctx.fillText(touch ? '轻触屏幕重新开始' : '按 R 重开', cx, cy + 90);
     ctx.textAlign = 'left';
     ctx.restore();
   }
@@ -13319,6 +14521,8 @@ const { startLoop } = __require('src/core/loop.js');;
 const { bindKeyboard } = __require('src/core/input.js');;
 const { Plugins } = __require('src/level/plugins.js');;
 const { handleSceneClick } = __require('src/level/click.js');;
+const { bindTouchUI } = __require('src/core/touch.js');;
+const { attachRecorderPanel } = __require('src/core/recorder.js');;
 
 class Multiscene {
   /**
@@ -13359,6 +14563,9 @@ class Multiscene {
     };
     this.scenes.set(name, entry);
     this._bindClick(entry); // 每个场景画布的鼠标（提示按钮/物品栏选格/调试悬停）
+    // 移动端触控（摇杆/按钮/拖动管线；桌面端按 isTouchDevice 门槛空转）
+    const activeOf = () => (this.current === entry.name && entry.active ? { scene: entry.scene, hud: entry.hud } : null);
+    entry.touch = bindTouchUI(canvas, activeOf);
     return builder;
   }
 
@@ -13413,6 +14620,9 @@ class Multiscene {
       if (e.built) continue;
       e.scene = e.builder.build();
       e.scene.status = 'running';
+      // 移动端触控挂载点：HUD 渲染读取 + 相机移动端视野
+      e.scene._touchUI = e.touch?.ui ?? null;
+      if (e.touch && e.touch.ui.enabled()) e.touch.ui.refresh();
       // 插件注入：场景级（scene(name,{plugins})) 优先于全局
       const entries = e.plugins ?? this.plugins;
       Plugins.inject(e.scene, entries);
@@ -13440,6 +14650,13 @@ class Multiscene {
     e.active = true;
     this.current = name;
     this._unbindKeys = bindKeyboard(e.scene);
+    // 操作录制/回放面板（开发工具：?record=1 显示；拖入录制的 .json 回放）
+    if (typeof location !== 'undefined' && /[?&]record=1/.test(location.search)) {
+      this.recorder = attachRecorderPanel(() => {
+        const a = this.scenes.get(this.current);
+        return a && a.active ? a.scene : null;
+      }, this.container);
+    }
     this._stop = startLoop(() => {
       const a = this.scenes.get(this.current);
       return a && a.active ? { scene: a.scene, renderer: a.renderer, hud: a.hud } : null;
@@ -13453,7 +14670,15 @@ class Multiscene {
     if (!e || !e.built) throw new Error(`场景不存在或未构建: ${name}`);
     if (this.current === name && e.active) return this;
     const from = this.scenes.get(this.current);
-    if (from && from.active) from.active = false;
+    if (from && from.active) {
+      from.active = false;
+      // 场景切换时清空旧场景的持续输入（键盘/摇杆按住未抬起会泄漏到切回时）
+      if (from.scene) {
+        from.scene.control.clear();
+        from.scene.pressed.clear();
+        if (from.touch) from.touch.ui.releaseAll();
+      }
+    }
     if (from) from.canvas.style.display = 'none';
 
     if (opts.carryPlayer !== false) {
