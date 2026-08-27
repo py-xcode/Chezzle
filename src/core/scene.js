@@ -908,11 +908,14 @@ export class Scene {
       return;
     }
     if (product.phase === 'precipitate') {
-      if (ctx.container) {
+      // 优先取反应上下文容器（干式台子落回台面时显式携带 container——避免
+      // _emitCtx 已被后续反应覆盖/大气反应无目标容器时落错地方）
+      const cont = product.container ?? (ctx && ctx.container);
+      if (cont) {
         // 在反应位置附近生成沉淀颗粒（物理堆叠），记录生成来源（调试悬停显示）；
         // 产物落点成为容器"最近落点"——后续反应/气泡/沉淀围绕它（不再回池中央）
-        if (ctx.point) ctx.container.depositAt = { x: ctx.point.x, y: ctx.point.y };
-        ctx.container.addPrecipitate(product.id, product.mass, ctx.point, origin);
+        if (ctx.point) cont.depositAt = { x: ctx.point.x, y: ctx.point.y };
+        cont.addPrecipitate(product.id, product.mass, ctx.point, origin);
         return;
       }
     }

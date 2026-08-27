@@ -910,6 +910,11 @@ export class ChemistryEngine {
       env,
       dt,
       inContainer: !!containerMat,
+      // 真液介质：容器确实装着液体（容积>0——与 H2O 特例/cond.solution 同一惯例）。
+      // 干式台子（灯/开关 volume=0）只是"承载面"——可溶产物**不能**进它的溶液
+      // （幽灵溶质：不可见、不可收集、质量凭空消失——用户确认的根因），
+      // 要落回台面成固体粉末。
+      inLiquid: !!(containerMat && containerMat.solution && containerMat.solution.volume > 0),
       containerMat,
       playerInvolved: matA.isPlayer || matB.isPlayer,
       solidObj,
@@ -951,8 +956,14 @@ export class ChemistryEngine {
       // 玩家参与：可溶产物（非玩家核心）直接进溶液（ZnCl2 溶于盐酸，不堆积在身上）；
       // 核心物质（NaOH 再生回血）与不溶物（BaCO3 壳阻断）附着玩家
       if (isSoluble(id) && id !== ctx.playerCore) {
-        if (ctx.inContainer) {
+        if (ctx.inLiquid) {
           ctx.containerMat.add(id, mass, ctx.lastRxText);
+          return;
+        }
+        if (ctx.inContainer) {
+          // 干式台子（无水容器）：可溶产物留不下溶液——落回台面成固体粉末
+          // （FeCl3/FeCl2 在喷灯上，和铝热的 Fe/Al2O3 一样留在灯上；不留幽灵溶质）
+          ctx.env.emit({ id, mass, phase: 'precipitate', container: ctx.containerMat.owner ?? null }, ctx.lastRxText);
           return;
         }
         ctx.env.emit({ id, mass, phase: 'particle' }, ctx.lastRxText);
@@ -969,8 +980,13 @@ export class ChemistryEngine {
     if (ctx.solidObj && sub.state === 'solid') {
       // 有固体反应物参与：可溶产物直接进溶液（ZnCl2 不附着在锌块上），
       // 不溶产物附着在反应物表面（Fe 浸 CuSO4 表面就地变铜）
-      if (ctx.inContainer && isSoluble(id)) {
+      if (ctx.inLiquid && isSoluble(id)) {
         ctx.containerMat.add(id, mass, ctx.lastRxText);
+        return;
+      }
+      // 干式台子：可溶产物落回台面（无水溶液可进）
+      if (ctx.inContainer && isSoluble(id)) {
+        ctx.env.emit({ id, mass, phase: 'precipitate', container: ctx.containerMat.owner ?? null }, ctx.lastRxText);
         return;
       }
       // 粉末沉淀 + 物块反应：固体产物以沉淀形式生成（不附着到物块表面）
@@ -981,9 +997,14 @@ export class ChemistryEngine {
       ctx.env.emit({ id, mass, phase: 'adhere', target: ctx.solidObj }, ctx.lastRxText);
       return;
     }
-    if (ctx.inContainer) {
+    if (ctx.inLiquid) {
       if (isSoluble(id)) ctx.containerMat.add(id, mass, ctx.lastRxText);
       else ctx.env.emit({ id, mass, phase: 'precipitate' }, ctx.lastRxText);
+      return;
+    }
+    if (ctx.inContainer) {
+      // 干式台子（无水）：可溶产物落回台面成固体粉末（不留幽灵溶液）
+      ctx.env.emit({ id, mass, phase: 'precipitate', container: ctx.containerMat.owner ?? null }, ctx.lastRxText);
       return;
     }
     if (ctx.playerInvolved) {
