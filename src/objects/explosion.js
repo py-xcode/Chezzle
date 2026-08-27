@@ -7,6 +7,7 @@
 // ============================================================================
 
 import { Obj } from './obj.js';
+import { mix } from '../render/color.js';
 
 /** 确定性伪随机（mulberry32）：同一 Explosion 实例内每次渲染形状一致；不同实例不同形 */
 function mulberry32(seed) {
@@ -21,16 +22,23 @@ function mulberry32(seed) {
 }
 
 export class Explosion extends Obj {
-  constructor({ x, y, strength = 10, cause = null, flip = false, flame = null }) {
+  constructor({ x, y, strength = 10, cause = null, flip = false, flames = null }) {
     super({ x, y, w: 0, h: 0, solid: false, physicsKind: 'none', noLift: true });
     this.strength = strength;
     this.cause = cause; // 爆炸原因文本（调试：爆炸发生时显示）
-    this.flame = flame; // 焰色反应染色（hex，如 Na 黄 #ffd23f）——部分火星/余烬用它
+    this.flames = (flames ?? []).slice(0, 3); // 焰色集合（Na 黄/K 紫/Cu 蓝绿…）——火星/光晕/余烬轮流染色
     this.age = 0;
     this.life = 0.5;
-    const rnd = mulberry32((flip ? 0x9e37 : 0x85eb) + ((strength * 7919) | 0) + (flame ? 0x7f4a7c : 0));
+    const seed = ((flip ? 0x9e37 : 0x85eb) + ((strength * 7919) | 0) + (this.flames.length ? 0x7f4a7c : 0)) >>> 0;
+    const rnd = mulberry32(seed);
     this.rnd = [];
     for (let i = 0; i < 40; i++) this.rnd.push(rnd());
+  }
+
+  /** 第 i 个焰色染色（循环取用；无焰色返回 null） */
+  colorOf(i) {
+    if (!this.flames.length) return null;
+    return this.flames[Math.abs(i) % this.flames.length];
   }
 
   update(dt, scene) {
@@ -46,7 +54,9 @@ export class Explosion extends Obj {
     const alpha = Math.max(0, 1 - t);
     const x = this.x;
     const y = this.y;
-    const flame = this.flame;
+    const flame = this.colorOf(0); // 主焰色（第一种）——用于火团/光晕基调
+    const hexA = (c, a) => (c || '#ff8030') + ''; // 简化：颜色直接 hex 填充（透明度走 globalAlpha/渐变 stop）
+    const mixC = (c1, c2, k) => (c2 ? mix(c1, c2, k) : c1);
     ctx.save();
     // ---- 白热闪核（前 18% 最亮，快速熄灭） ----
     const flash = Math.max(0, 1 - t / 0.18);
@@ -76,44 +86,48 @@ export class Explosion extends Obj {
     }
     const fireG = ctx.createRadialGradient(x, y, 0, x, y, R);
     fireG.addColorStop(0, `rgba(255,246,225,${(alpha * 0.95).toFixed(3)})`);
-    fireG.addColorStop(0.45, `rgba(255,180,80,${(alpha * 0.7).toFixed(3)})`);
-    fireG.addColorStop(0.8, `rgba(255,105,30,${(alpha * 0.4).toFixed(3)})`);
+    // 火团中层/外层掺主焰色（光晕级染色——整体焰色更明显）
+    fireG.addColorStop(0.45, mixC('#ffb450', flame, 0.4) + '');
+    fireG.addColorStop(0.8, mixC('#ff6920', flame, 0.35) + '');
     fireG.addColorStop(1, 'rgba(180,60,20,0)');
     ctx.fillStyle = fireG;
-    ctx.shadowColor = 'rgba(255,130,40,0.9)';
+    ctx.globalAlpha = Math.max(0.2, alpha);
+    ctx.shadowColor = mixC('#ff8232', flame, 0.55); // 火团辉光（光晕）带焰色
     ctx.shadowBlur = 24;
     ctx.fill();
+    ctx.globalAlpha = 1;
     ctx.shadowBlur = 0;
-    // ---- 二级甩出火团（2 个小火团随 t 向外甩开淡出——"碎火"） ----
+    // ---- 二级甩出火团（2 个小火团随 t 向外甩开淡出——"碎火"；颜色轮流用焰色集） ----
     if (t < 0.5) {
       for (let i = 0; i < 2; i++) {
         const ang = rnd[33 + i] * Math.PI * 2 + t * 1.8;
         const d = R * (0.7 + t * 1.2 + i * 0.25);
         const fr = R * (0.22 - t * 0.22) * (1 + rnd[35 + i] * 0.5);
+        const fc = this.colorOf(i);
         const fg = ctx.createRadialGradient(x + Math.cos(ang) * d, y + Math.sin(ang) * d * 0.85, 0,
           x + Math.cos(ang) * d, y + Math.sin(ang) * d * 0.85, Math.max(1, fr));
-        fg.addColorStop(0, `rgba(255,210,120,${(alpha * 0.75).toFixed(3)})`);
-        fg.addColorStop(0.6, `rgba(255,120,40,${(alpha * 0.4).toFixed(3)})`);
-        fg.addColorStop(1, `rgba(255,90,30,${(alpha * 0.12).toFixed(3)})`);
+        fg.addColorStop(0, mixC('#ffd278', fc, 0.45) + '');
+        fg.addColorStop(0.6, mixC('#ff7828', fc, 0.4) + '');
+        fg.addColorStop(1, 'rgba(255,90,30,0)');
         ctx.fillStyle = fg;
         ctx.beginPath();
         ctx.arc(x + Math.cos(ang) * d, y + Math.sin(ang) * d * 0.85, Math.max(1, fr), 0, Math.PI * 2);
         ctx.fill();
       }
     }
-    // ---- 撕裂冲击环：快白内环 + 慢橙外环（带缺口、旋转、收细） ----
+    // ---- 撕裂冲击环：快白内环 + 慢橙外环（带缺口、旋转、收细）；辉光带焰色 ----
     ctx.lineCap = 'round';
     ctx.globalAlpha = alpha;
     ctx.strokeStyle = 'rgba(255,240,215,0.9)';
     ctx.lineWidth = (1 - t) * 3.2 + 0.7;
-    ctx.shadowColor = 'rgba(255,150,60,0.8)';
+    ctx.shadowColor = mixC('#ff9640', flame, 0.5); // 冲击环辉光带焰色
     ctx.shadowBlur = 10;
     ctx.beginPath();
     ctx.arc(x, y, R * (0.45 + 0.75 * ease), 0, Math.PI * 2);
     ctx.stroke();
     const gapA = rnd[14] * Math.PI * 2 + t * 1.4;
     const gapB = gapA + 0.6 + rnd[15] * 0.9;
-    ctx.strokeStyle = `rgba(255,150,70,${(alpha * 0.75).toFixed(3)})`;
+    ctx.strokeStyle = mixC('#ff9646', this.colorOf(1), 0.3); // 外环掺第二种焰色
     ctx.lineWidth = (1 - t) * 4.5 + 0.9;
     ctx.beginPath();
     ctx.arc(x, y, R * (0.75 + 1.05 * ease), gapB, gapA + Math.PI * 2);
@@ -134,7 +148,7 @@ export class Explosion extends Obj {
         ctx.stroke();
       }
     }
-    // ---- 拖尾火星（带下坠感；每 3 颗按焰色反应染色——Na 黄/K 紫/Li 红/Cu 绿…） ----
+    // ---- 拖尾火星（带下坠感；每隔一颗按焰色染色——多种焰色轮流：Na 黄/K 紫/Cu 蓝绿…） ----
     ctx.globalAlpha = 1;
     const n = 15;
     for (let i = 0; i < n; i++) {
@@ -147,9 +161,9 @@ export class Explosion extends Obj {
       const x1 = x + Math.cos(ang) * d1;
       const y1 = y + Math.sin(ang) * d1 * 0.88 + fall;
       const a = Math.max(0, alpha * (1 - t * 0.8));
-      const isFlame = flame && i % 2 === 0; // 1/2 火星带焰色（比重高一点）
+      const fc = i % 2 === 0 ? this.colorOf(i) : null; // 1/2 火星带焰色（轮流）
       ctx.globalAlpha = a;
-      if (isFlame) ctx.strokeStyle = flame;
+      if (fc) ctx.strokeStyle = fc;
       else ctx.strokeStyle = i % 2 ? 'rgba(255,220,160,1)' : 'rgba(255,120,40,1)';
       ctx.lineWidth = 2.3 - t * 1.5;
       ctx.beginPath();
@@ -157,12 +171,12 @@ export class Explosion extends Obj {
       ctx.lineTo(x1, y1);
       ctx.stroke();
       // 火星头（亮点）
-      ctx.fillStyle = isFlame ? flame : (i % 2 ? '#fff3d8' : '#ff8c3d');
+      ctx.fillStyle = fc ?? (i % 2 ? '#fff3d8' : '#ff8c3d');
       ctx.beginPath();
       ctx.arc(x1, y1, Math.max(0.8, 2.6 - t * 2), 0, Math.PI * 2);
       ctx.fill();
     }
-    // ---- 碎片（小方块旋转飞出，前 45%） ----
+    // ---- 碎片（小方块旋转飞出，前 45%；交替焰色/橙色） ----
     if (t < 0.45) {
       for (let i = 0; i < 3; i++) {
         const ang = rnd[37 + i] * Math.PI * 2 + t * 1.2 * (i % 2 ? 1 : -1);
@@ -171,7 +185,7 @@ export class Explosion extends Obj {
         const sy = y + Math.sin(ang) * d * 0.85 + t * t * R * 0.5;
         const s = (4 - t * 5) * (0.7 + rnd[i] * 0.6);
         ctx.globalAlpha = alpha * 0.8;
-        ctx.fillStyle = '#ff9a4d';
+        ctx.fillStyle = this.colorOf(i) ?? '#ff9a4d';
         ctx.save();
         ctx.translate(sx, sy);
         ctx.rotate(ang * 2 + t * 6);
@@ -179,14 +193,16 @@ export class Explosion extends Obj {
         ctx.restore();
       }
     }
-    // ---- 焰色残余辉光（火团消退后，一层反应物焰色薄光慢慢散开——焰色反应的"余韵"） ----
-    if (flame && t > 0.22) {
+    // ---- 焰色残余辉光（火团消退后，各焰色一层薄光慢慢散开——焰色反应的"余韵"） ----
+    if (this.flames.length && t > 0.22) {
       const fa = alpha * 0.3 * Math.min(1, (t - 0.22) / 0.18);
-      ctx.globalAlpha = fa;
-      ctx.fillStyle = flame;
-      ctx.beginPath();
-      ctx.arc(x, y, R * (0.5 + t * 0.9), 0, Math.PI * 2);
-      ctx.fill();
+      for (let i = 0; i < this.flames.length; i++) {
+        ctx.globalAlpha = fa / (1 + i * 0.6);
+        ctx.fillStyle = this.flames[i];
+        ctx.beginPath();
+        ctx.arc(x, y, R * (0.5 + t * (0.9 + i * 0.25)), 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
     // ---- 烟尘：深灰蓝团上升 + 余烬小亮点 ----
     for (let i = 0; i < 5; i++) {
@@ -202,7 +218,7 @@ export class Explosion extends Obj {
       const ex = x + Math.sin(rnd[20 + i] * 20 + t * 4) * R * 0.8;
       const ey = y - 8 + t * t * R * 1.1;
       ctx.globalAlpha = alpha * (0.6 + 0.4 * Math.sin(t * 30 + i * 7));
-      ctx.fillStyle = flame ? flame : '#ffcf7a'; // 余烬也带焰色
+      ctx.fillStyle = this.colorOf(i) ?? '#ffcf7a'; // 余烬也带焰色（轮流）
       ctx.beginPath();
       ctx.arc(ex, ey, Math.max(0.6, 1.8 - t), 0, Math.PI * 2);
       ctx.fill();

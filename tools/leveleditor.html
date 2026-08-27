@@ -1111,6 +1111,9 @@ canvas.addEventListener('mousedown', (e) => {
     const items = group ? [...state.sel] : [hit];
     state.sel = new Set(items);
     state.selected = hit;
+    if (!group && state.placed[hit].type === 'dropper') {
+      $('status').textContent = '滴管：按「▶ 试玩」进入试玩后左键点击滴液（编辑模式点击=选中/拖动，不会滴）';
+    }
     drag = { mode: 'move', items, sx: sp.x, sy: sp.y, oxs: {}, oys: {} };
     for (const i of items) { drag.oxs[i] = state.placed[i].obj.x; drag.oys[i] = state.placed[i].obj.y; }
     buildRenderScene();

@@ -8,7 +8,7 @@
 
 import { ChemistryEngine } from '../chem/engine.js';
 import { Atmosphere } from '../chem/atmosphere.js';
-import { getSubstance, isSoluble } from '../chem/substances.js';
+import { getSubstance, isSoluble, flameColorOf } from '../chem/substances.js';
 import { CollisionSystem, ContactTracker, overlaps } from '../physics/collision.js';
 import { Particle, splitPile } from '../objects/particle.js';
 import { CELL_SIZE } from '../render/gridrender.js';
@@ -569,18 +569,30 @@ export class Scene {
    * 受冲击过强的物块/玩家碎裂掉渣（自身缩小，掉出等量可收集沉淀）。
    * cause：爆炸原因文本（调试悬停/面板显示，如"2H2+O2 → 2H2O"、"2Al+Fe2O3 → ..."）。
    */
-  /** 爆炸的焰色染色：取反应对象的主物质焰色（Na 黄/K 紫/Li 红/Cu 绿…）——
-   *  爆炸的"一部分颜色粒子"按焰色反应上色 */
-  _explosionFlameColor() {
-    const o = this._emitCtx?.obj ?? this._emitCtx?.player ?? null;
-    let id = o?.substance ?? null;
-    if (!id && o?.grid && typeof o.grid.ids === 'function') {
-      const ids = o.grid.ids();
-      if (ids.length) id = ids[0]; // 多物质取主物质
+  /** 爆炸焰色集合：反应对象（物块/玩家各物质）焰色 + 容器溶液各溶质焰色
+   *  （K 块丢进 CuSO4 池 → 钾紫 + 铜蓝绿并存；不同颜色分别在火星/光晕/余烬上体现）；
+   *  最多取 3 种、去重。 */
+  _explosionFlameColors() {
+    const out = [];
+    const push = (id) => {
+      const f = flameColorOf(id);
+      if (f && !out.includes(f) && out.length < 3) out.push(f);
+    };
+    const o = this._emitCtx?.obj ?? null;
+    const c = this._emitCtx?.container ?? null;
+    if (o?.substance) push(o.substance);
+    else if (o?.grid && typeof o.grid.ids === 'function') {
+      for (const id of o.grid.ids()) push(id);
     }
-    if (!id) return null;
-    const sub = getSubstance(id);
-    return sub?.flameColor ?? null;
+    if (c?.solution) {
+      for (const [id] of c.solution.solutes) push(id);
+    }
+    return out;
+  }
+
+  /** 爆炸的焰色染色（单色兼容接口）：取第一种焰色 */
+  _explosionFlameColor() {
+    return this._explosionFlameColors()[0] ?? null;
   }
 
   explode(point, strength, cause = null) {
@@ -588,7 +600,7 @@ export class Scene {
     const R = 150; // 爆炸半径（衰减基准）
     // 视觉 + 屏幕震动；记录最近爆炸原因（HUD 调试面板显示）
     const flip = (this._explosionSeq = (this._explosionSeq ?? 0) + 1) % 2 === 0; // 连续爆炸相位交替，不雷同
-    this.addObject(new Explosion({ x: p.x, y: p.y, strength, cause, flip, flame: this._explosionFlameColor() }));
+    this.addObject(new Explosion({ x: p.x, y: p.y, strength, cause, flip, flames: this._explosionFlameColors() }));
     this._lastExplosion = { cause: cause || '剧烈反应', t: this.time };
     if (this.camera) this.camera.shake(Math.min(22, 5 + strength * 0.2));
     // 冲击：动态体（玩家/物块/烧杯）
@@ -724,6 +736,15 @@ export class Scene {
     plume.life = 2.5;
     if (accel > plume.accel) plume.accel = accel;
     if (maxSpeed > plume.maxSpeed) plume.maxSpeed = maxSpeed;
+    // 柱**跟随**当前反应面：源被溶窄/热点移动时，柱的位置/宽度实时更新——
+    // 否则旧柱停在原地，形成"空中旧柱 + 液面新柱"的双柱悬空（用户反馈）
+    const gh = (srcObj && srcObj.gasHeight) || (emit.container && emit.container.gasHeight) || 80;
+    const faceW = eb ? eb.x1 - eb.x0 : (srcObj?.w ?? emit.container?.w ?? 48) * 0.6;
+    const w = Math.max(40, Math.min(180, faceW * 0.85));
+    plume.x = center.x - w / 2;
+    plume.y = point.y - gh;
+    plume.w = w;
+    plume.h = gh;
     // 气泡视觉：在**当前反应热点**冒出（每 tick 热点在暴露面随机换位 → 气泡沿整个反应面分布）
     const n = Math.max(1, Math.min(6, Math.round(mass * 1.2)));
     for (let i = 0; i < n; i++) {

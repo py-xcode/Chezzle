@@ -406,6 +406,11 @@ export const FLAME_COLORS = {
   'Ca2+': '#ff5f2e', // 砖红
   'Ba2+': '#b8ff4f', // 黄绿（绿色）
   'Cu2+': '#4dff5f', // 绿
+  'Sr2+': '#ff3d6a', // 洋红
+  'Fe2+': '#ffb340', // 金黄
+  'Fe3+': '#ffa03d', // 橙金
+  'Zn2+': '#9fd8ff', // 蓝白
+  'Mg2+': '#d8ffe8', // 白绿
 };
 
 /** 物质的焰色：优先物质自带 flameColor（单质），否则按阳离子查表 */
