@@ -6,6 +6,8 @@ export * from './core/config.js';
 export * from './core/scene.js';
 export * from './core/input.js';
 export * from './core/loop.js';
+export * from './core/touch.js';
+export * from './core/recorder.js';
 
 export * from './level/builder.js';
 export * from './level/plugins.js';

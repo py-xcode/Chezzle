@@ -24,6 +24,8 @@ import { startLoop } from '../core/loop.js';
 import { bindKeyboard } from '../core/input.js';
 import { Plugins } from './plugins.js';
 import { handleSceneClick } from './click.js';
+import { bindTouchUI } from '../core/touch.js';
+import { attachRecorderPanel } from '../core/recorder.js';
 
 export class Multiscene {
   /**
@@ -64,6 +66,9 @@ export class Multiscene {
     };
     this.scenes.set(name, entry);
     this._bindClick(entry); // 每个场景画布的鼠标（提示按钮/物品栏选格/调试悬停）
+    // 移动端触控（摇杆/按钮/拖动管线；桌面端按 isTouchDevice 门槛空转）
+    const activeOf = () => (this.current === entry.name && entry.active ? { scene: entry.scene, hud: entry.hud } : null);
+    entry.touch = bindTouchUI(canvas, activeOf);
     return builder;
   }
 
@@ -118,6 +123,9 @@ export class Multiscene {
       if (e.built) continue;
       e.scene = e.builder.build();
       e.scene.status = 'running';
+      // 移动端触控挂载点：HUD 渲染读取 + 相机移动端视野
+      e.scene._touchUI = e.touch?.ui ?? null;
+      if (e.touch && e.touch.ui.enabled()) e.touch.ui.refresh();
       // 插件注入：场景级（scene(name,{plugins})) 优先于全局
       const entries = e.plugins ?? this.plugins;
       Plugins.inject(e.scene, entries);
@@ -145,6 +153,13 @@ export class Multiscene {
     e.active = true;
     this.current = name;
     this._unbindKeys = bindKeyboard(e.scene);
+    // 操作录制/回放面板（开发工具：?record=1 显示；拖入录制的 .json 回放）
+    if (typeof location !== 'undefined' && /[?&]record=1/.test(location.search)) {
+      this.recorder = attachRecorderPanel(() => {
+        const a = this.scenes.get(this.current);
+        return a && a.active ? a.scene : null;
+      }, this.container);
+    }
     this._stop = startLoop(() => {
       const a = this.scenes.get(this.current);
       return a && a.active ? { scene: a.scene, renderer: a.renderer, hud: a.hud } : null;
@@ -158,7 +173,15 @@ export class Multiscene {
     if (!e || !e.built) throw new Error(`场景不存在或未构建: ${name}`);
     if (this.current === name && e.active) return this;
     const from = this.scenes.get(this.current);
-    if (from && from.active) from.active = false;
+    if (from && from.active) {
+      from.active = false;
+      // 场景切换时清空旧场景的持续输入（键盘/摇杆按住未抬起会泄漏到切回时）
+      if (from.scene) {
+        from.scene.control.clear();
+        from.scene.pressed.clear();
+        if (from.touch) from.touch.ui.releaseAll();
+      }
+    }
     if (from) from.canvas.style.display = 'none';
 
     if (opts.carryPlayer !== false) {

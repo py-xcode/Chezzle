@@ -29,6 +29,8 @@ import { Extractor } from '../objects/extractor.js';
 import { Dropper } from '../objects/dropper.js';
 import { GasBottle } from '../objects/gasbottle.js';
 import { bindSceneClick } from './click.js';
+import { bindTouchUI } from '../core/touch.js';
+import { attachRecorderPanel } from '../core/recorder.js';
 
 export class LevelBuilder {
   constructor(canvas, opts = {}) {
@@ -176,12 +178,19 @@ export class LevelBuilder {
     return this.scene;
   }
 
-  /** 启动：状态→输入→点击（提示/选格）→主循环 */
+  /** 启动：状态→输入→点击（提示/选格）→触控（移动端）→主循环 */
   start() {
     const scene = this.build();
     scene.status = 'running';
     this.unbind = bindKeyboard(scene);
     this.bindClick();
+    // 移动端触控（摇杆/按钮/拖动管线）；桌面端绑定但按 isTouchDevice 门槛空转
+    this.touch = bindTouchUI(this.renderer.canvas, () => ({ scene: this.scene, hud: this.hud }));
+    scene._touchUI = this.touch.ui;
+    // 操作录制/回放面板（开发工具：?record=1 显示；拖入录制的 .json 回放）
+    if (typeof location !== 'undefined' && /[?&]record=1/.test(location.search)) {
+      this.recorder = attachRecorderPanel(() => this.scene, this.renderer.canvas);
+    }
     this.stop = startLoop(scene, this.renderer, { hud: this.hud });
     return scene;
   }

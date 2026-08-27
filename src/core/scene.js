@@ -87,8 +87,10 @@ export class Scene {
 
   /** 每帧执行 fn(dt, time)：返回 true 则卸载；返回 deregister 函数可手动卸载 */
   onTick(fn) {
+    fn._czlDead = false; // 取消标记：回调内部调用取消函数时由 runner 读取
     this._tickFns.push(fn);
     return () => {
+      fn._czlDead = true;
       const i = this._tickFns.indexOf(fn);
       if (i >= 0) this._tickFns.splice(i, 1);
     };
@@ -157,9 +159,17 @@ export class Scene {
     const after = this._afterFns;
     this._afterFns = [];
     for (const fn of after) fn();
-    this._tickFns = this._tickFns.filter((fn) => {
-      try { return fn(dt, this.time) !== true; } catch (err) { return false; }
-    });
+    // 快照当前 tick 函数集，结果收集到新数组——回调内部调用"取消函数"（splice）
+    // 才能生效（旧写法 filter 在迭代中把 splice 掉的函数又收回结果，取消形同虚设；
+    // onTick 返回的取消在回调里调用是插件常用语义——回放驱动、一次性钩子都依赖它）
+    const fns = this._tickFns;
+    this._tickFns = [];
+    for (const fn of fns) {
+      try {
+        // 回调内取消（标记 _czlDead）优先于返回值；跨帧取消走 splice
+        if (fn(dt, this.time) !== true && !fn._czlDead) this._tickFns.push(fn);
+      } catch (err) { /* 插件回调异常不拖垮游戏循环 */ }
+    }
     if (this._timers.length) {
       this._timers = this._timers.filter((t) => {
         if (this.time < t.at) return true;
