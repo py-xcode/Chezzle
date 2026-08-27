@@ -1797,15 +1797,41 @@ function togglePlay() {
   const onPlayLeave = () => { if (scene.mouse) scene.mouse.on = false; };
   // 试玩点击：提示按钮（右上）+ 物品栏选格（右下）+ 可点击物体（滴管等 onTap）
   // ——与导出关卡 LevelBuilder.bindClick 同一管线（Chezzle.handleSceneClick）
+  // 诊断回调：点击/悬停的世界坐标与命中结果实时显示在状态栏（排查"点了没反应"）
   const onPlayClick = (e) => {
     const rect = canvas.getBoundingClientRect();
     const x = (e.clientX - rect.left) * (canvas.width / rect.width);
     const y = (e.clientY - rect.top) * (canvas.height / rect.height);
-    C.handleSceneClick(scene, hud, canvas, x, y);
+    C.handleSceneClick(scene, hud, canvas, x, y, (info) => {
+      const wx = Math.round(info.world?.x ?? 0);
+      const wy = Math.round(info.world?.y ?? 0);
+      let msg;
+      if (info.type === 'tap') {
+        const o = info.object;
+        msg = `点击→世界(${wx},${wy}) 命中：${o.hoverLabel ?? o.constructor.name} ${info.success ? '→ 已滴液' : '→ 未滴（下方无容器或已滴空）'}`;
+      } else if (info.type === 'miss') {
+        msg = `点击→世界(${wx},${wy}) 未命中任何可交互物体（滴管不在该点）`;
+      } else if (info.type === 'tip') {
+        msg = '点击：右上提示按钮';
+      } else {
+        msg = '点击：物品栏选格';
+      }
+      $('status').textContent = '试玩中｜' + msg;
+    });
   };
   canvas.addEventListener('mousemove', onPlayMove);
   canvas.addEventListener('mouseleave', onPlayLeave);
   canvas.addEventListener('click', onPlayClick);
+  // 悬停显示世界坐标（对照滴管实际位置；排查"点偏了/看到的是编辑画面"）
+  const onPlayMoveDiag = (e) => {
+    if (!state.playing || !scene.camera) return;
+    const rect = canvas.getBoundingClientRect();
+    const sx = (e.clientX - rect.left) * (canvas.width / rect.width);
+    const sy = (e.clientY - rect.top) * (canvas.height / rect.height);
+    const w = C.screenToWorld(scene, canvas, sx, sy);
+    $('status').textContent = `试玩中｜悬停世界(${Math.round(w.x)},${Math.round(w.y)})｜点击滴管可滴液`;
+  };
+  canvas.addEventListener('mousemove', onPlayMoveDiag);
   state.playing = true;
   $('btnPlay').textContent = '⏹ 退出试玩';
   canvas.style.cursor = 'default';
@@ -1814,6 +1840,7 @@ function togglePlay() {
     canvas.removeEventListener('mousemove', onPlayMove);
     canvas.removeEventListener('mouseleave', onPlayLeave);
     canvas.removeEventListener('click', onPlayClick);
+    canvas.removeEventListener('mousemove', onPlayMoveDiag);
   };
   playStop = C.startLoop(scene, renderer, { hud });
   playScene = scene; // 调试/测试可访问当前试玩场景

@@ -16,12 +16,14 @@ export function screenToWorld(scene, canvas, sx, sy) {
 /**
  * 处理一次画布点击（sx/sy 为画布像素坐标）。
  * hud 可为空（无 HUD 时只处理物体点击）。返回 true = 已消费。
+ * onInfo（可选）诊断回调：{type:'tap'|'miss'|'tip'|'slot', ...}——编辑器调试显示用。
  */
-export function handleSceneClick(scene, hud, canvas, sx, sy) {
+export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   if (!scene) return false;
   // 1) 提示按钮（右上）
   if (sx > canvas.width - 68 && sx < canvas.width - 8 && sy > 8 && sy < 34) {
     if (hud) hud.showTip = !hud.showTip;
+    onInfo?.({ type: 'tip' });
     return true;
   }
   // 2) 物品栏选格（右下）
@@ -38,6 +40,7 @@ export function handleSceneClick(scene, hud, canvas, sx, sy) {
       const bx = sx0 + i * (slotSize + gap);
       if (sx >= bx && sx <= bx + slotSize && sy >= sy0 && sy <= sy0 + slotSize) {
         p.inventory.selected = i;
+        onInfo?.({ type: 'slot' });
         return true;
       }
     }
@@ -48,10 +51,12 @@ export function handleSceneClick(scene, hud, canvas, sx, sy) {
     const o = scene.objects[i];
     if (typeof o.onTap !== 'function') continue;
     if (w.x >= o.x - 6 && w.x <= o.x + o.w + 6 && w.y >= o.y - 6 && w.y <= o.y + o.h + 6) {
-      o.onTap(scene, w);
+      const ok = o.onTap(scene, w);
+      onInfo?.({ type: 'tap', object: o, success: !!ok, world: w });
       return true;
     }
   }
+  onInfo?.({ type: 'miss', world: w });
   return false;
 }
 
