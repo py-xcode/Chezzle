@@ -224,23 +224,23 @@ const CATALOG = [
     collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, poolId: o.poolId, switchId: o.switchId, rate: o.rate, id: o.id }),
     fields: [F.num('x'), F.num('y'), F.num('w', '宽'), F.num('h', '高'), F.txt('poolId', '池id'), F.txt('switchId', '开关id'), F.num('rate', '速率g/s', 0.25), F.txt('id', 'id')] },
   { type: 'beaker', label: '烧杯', dsl: 'beaker', color: '#9adcff', rect: true,
-    construct: (o) => new C.Beaker({ x: o.x, y: o.y, w: o.w ?? 60, h: o.h ?? 80, volume: o.volume ?? 200, water: o.water !== undefined ? o.water : undefined, solutes: o.solutes, id: o.id }),
-    collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, volume: o.solution.volume, water: o.solution.water, solutes: mapToObj(o.solution.solutes), id: o.id }),
-    fields: [F.num('x'), F.num('y'), F.num('w', '宽'), F.num('h', '高'), F.num('volume', '容量g'), F.num('water', '水量g(=容量=满杯)'), F.sol('solutes'), F.txt('id', 'id')] },
+    construct: (o) => new C.Beaker({ x: o.x, y: o.y, w: o.w ?? 60, h: o.h ?? 80, volume: o.volume ?? 200, water: o.water !== undefined ? o.water : undefined, solutes: o.solutes, noCarry: o.noCarry, id: o.id }),
+    collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, volume: o.solution.volume, water: o.solution.water, solutes: mapToObj(o.solution.solutes), noCarry: o.noCarry, id: o.id }),
+    fields: [F.num('x'), F.num('y'), F.num('w', '宽'), F.num('h', '高'), F.num('volume', '容量g'), F.num('water', '水量g(=容量=满杯)'), F.sol('solutes'), F.bool('noCarry', '锁定(不可拾取/携带)'), F.txt('id', 'id')] },
   { type: 'dropper', label: '滴管', dsl: 'dropper', color: '#9fd8ff',
-    construct: (o) => new C.Dropper({ x: o.x, y: o.y, substance: o.substance ?? 'H2O', capacity: o.capacity ?? 50, drop: o.drop ?? 0.5, liquid: o.liquid, id: o.id }),
-    collect: (o) => ({ x: o.x, y: o.y, substance: o.substance ?? 'H2O', capacity: o.capacity ?? 50, drop: o.drop ?? 0.5, liquid: o.liquid, id: o.id }),
-    fields: [F.num('x'), F.num('y'), F.dropsub('substance', '液体物质'), F.num('capacity', '容量g', 50), F.num('liquid', '初始液量g(0=空管)', 50), F.num('drop', '滴量g/次', 0.5), F.txt('id', 'id')] },
+    construct: (o) => new C.Dropper({ x: o.x, y: o.y, substance: o.substance ?? 'H2O', capacity: o.capacity ?? 50, drop: o.drop ?? 0.5, liquid: o.liquid, noCarry: o.noCarry, id: o.id }),
+    collect: (o) => ({ x: o.x, y: o.y, substance: o.substance ?? 'H2O', capacity: o.capacity ?? 50, drop: o.drop ?? 0.5, liquid: o.liquid, noCarry: o.noCarry, id: o.id }),
+    fields: [F.num('x'), F.num('y'), F.dropsub('substance', '液体物质'), F.num('capacity', '容量g', 50), F.num('liquid', '初始液量g(0=空管)', 50), F.num('drop', '滴量g/次', 0.5), F.bool('noCarry', '锁定(不可拾取/携带)'), F.txt('id', 'id')] },
   { type: 'gasbottle', label: '集气瓶', dsl: 'gasbottle', color: '#b0e8ff',
     construct: (o) => {
       let gases = null;
       if (o.gases) {
         try { gases = typeof o.gases === 'string' ? JSON.parse(o.gases) : o.gases; } catch (e) { gases = null; }
       }
-      return new C.GasBottle({ x: o.x, y: o.y, capacity: o.capacity ?? 5, gases, id: o.id });
+      return new C.GasBottle({ x: o.x, y: o.y, capacity: o.capacity ?? 5, gases, noCarry: o.noCarry, id: o.id });
     },
-    collect: (o) => ({ x: o.x, y: o.y, capacity: o.capacity, gases: mapToObj(o.gases), id: o.id }),
-    fields: [F.num('x'), F.num('y'), F.num('capacity', '容量g', 5), F.txt('gases', '初始气体(如 {CO2:2})'), F.txt('id', 'id')] },
+    collect: (o) => ({ x: o.x, y: o.y, capacity: o.capacity, gases: mapToObj(o.gases), noCarry: o.noCarry, id: o.id }),
+    fields: [F.num('x'), F.num('y'), F.num('capacity', '容量g', 5), F.txt('gases', '初始气体(如 {CO2:2})'), F.bool('noCarry', '锁定(不可拾取/携带)'), F.txt('id', 'id')] },
   { type: 'gas', label: '气流柱', dsl: 'gas', color: '#78dcff', rect: true,
     construct: (o) => new C.GasColumn({ x: o.x, y: o.y, w: o.w ?? 48, h: o.h ?? 80, gasId: o.gasId, label: o.label, dir: o.dir ?? -1, id: o.id }),
     collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, gasId: o.gasId, label: o.label ?? '', dir: o.dir, id: o.id }),
@@ -1481,17 +1481,17 @@ function dslLine(item) {
     case 'beaker': {
       // water = 容量时为满杯（旧默认）；只在实际水量 ≠ 容量时导出（空杯/半杯）
       const water = Math.round(o.solution.water * 10) / 10;
-      const opts = { volume: o.solution.volume, water: water !== o.solution.volume ? water : undefined, solutes: mapToObj(o.solution.solutes), hidden: HID, id: o.id };
+      const opts = { volume: o.solution.volume, water: water !== o.solution.volume ? water : undefined, solutes: mapToObj(o.solution.solutes), noCarry: o.noCarry ? true : undefined, hidden: HID, id: o.id };
       return `.beaker(${pos}, ${R(o.w)}, ${R(o.h)}${fmtOpts(opts) ? ', ' + fmtOpts(opts) : ''})`;
     }
     case 'dropper': {
       // 满管（=容量）不导出（开局满管默认）；空管/部分导出 liquid
       const liquid = o.liquid !== o.capacity ? Math.round(o.liquid * 10) / 10 : undefined;
-      const opts = { substance: o.substance, capacity: o.capacity, drop: o.drop, liquid, hidden: HID, id: o.id };
+      const opts = { substance: o.substance, capacity: o.capacity, drop: o.drop, liquid, noCarry: o.noCarry ? true : undefined, hidden: HID, id: o.id };
       return `.dropper(${pos}, ${fmtOpts(opts)})`;
     }
     case 'gasbottle': {
-      const opts = { capacity: o.capacity !== 5 ? o.capacity : undefined, gases: mapToObj(o.gases), hidden: HID, id: o.id };
+      const opts = { capacity: o.capacity !== 5 ? o.capacity : undefined, gases: mapToObj(o.gases), noCarry: o.noCarry ? true : undefined, hidden: HID, id: o.id };
       return `.gasbottle(${pos}, ${fmtOpts(opts)})`;
     }
     case 'gas': return `.gas(${pos}, ${R(o.w)}, ${R(o.h)}, ${fmtOpts({ gasId: o.gasId, label: o.label, dir: o.dir, hidden: HID, id: o.id })})`;

@@ -43,12 +43,13 @@ function rectDist(a, b) {
   return Math.hypot(dx, dy);
 }
 
-/** 场景内最近的可携带物品（集气瓶/烧杯/滴管），超范围返回 null */
+/** 场景内最近的可携带物品（集气瓶/烧杯/滴管），超范围返回 null；
+ *  noCarry（关卡固定装置，编辑器可勾选"锁定"）不参与拾取 */
 export function nearestCarryItem(scene, player) {
   let best = null;
   let bd = Infinity;
   for (const o of scene.objects) {
-    if (!o.isCarryItem) continue;
+    if (!o.isCarryItem || o.noCarry) continue;
     const d = rectDist(o, player);
     if (d < bd) {
       bd = d;

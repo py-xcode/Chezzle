@@ -640,6 +640,66 @@ test('倒液会话方向/站位：目标在右侧时杯停在其左侧并保持�
   assert.ok(bko._pour.standX <= pool.x, `应平移到目标左侧停靠：standX=${bko._pour.standX} pool.x=${pool.x}`);
 });
 
+// ---- 14. noCarry 锁定物品（编辑器可配置：不可拾取/携带） --------------------
+test('noCarry 锁定：滴管/烧杯不可拾取（其它正常物品仍可拾取）', () => {
+  const scene = flatScene();
+  const p = withPlayer(scene, 330, 630);
+  const drFixed = new Dropper({ x: 360, y: 620, capacity: 50, noCarry: true, id: 'drFix' });
+  scene.addObject(drFixed);
+  const drLoose = new Dropper({ x: 450, y: 620, capacity: 50, liquid: 0, id: 'drLoose' });
+  scene.addObject(drLoose);
+  run(scene, 2);
+  // 锁定滴管更近也不被拾取——拾取应落到正常滴管
+  p.inventory.selected = 0;
+  assert.equal(pickupItem(p, scene), true, '应拾取正常滴管');
+  assert.equal(p.inventory.slots[0].obj, drLoose, '拾取的是未锁定的一支');
+  // 锁定物仍在场景中
+  assert.ok(scene.objects.includes(drFixed), '锁定滴管应留在场景');
+  // 只留锁定物：不再拾取
+  p.inventory.selected = 1;
+  assert.equal(pickupItem(p, scene), false, '锁定物品不可拾取');
+  // 烧杯锁定同样生效
+  const bkFixed = new Beaker({ x: 400, y: 600, w: 60, h: 70, volume: 200, water: 0, noCarry: true, id: 'bkFix' });
+  scene.addObject(bkFixed);
+  run(scene, 2);
+  assert.equal(pickupItem(p, scene), false, '锁定烧杯不可拾取');
+  assert.ok(scene.containers.includes(bkFixed), '锁定烧杯留在场景');
+});
+
+test('noCarry 锁定的集气瓶：不可拾取且仍可放气（固定装置）', () => {
+  const scene = flatScene();
+  const p = withPlayer(scene, 330, 630);
+  const gb = new GasBottle({ x: 360, y: 600, noCarry: true, id: 'gbFix', gases: { CO2: 2 } });
+  scene.addObject(gb);
+  run(scene, 2);
+  p.inventory.selected = 0;
+  assert.equal(pickupItem(p, scene), false, '锁定集气瓶不可拾取');
+  // 锁定不影响其它操作（瓶仍可装气）
+  const had = gb.totalGas();
+  assert.equal(gb.addGas('CO2', 1), 1, '瓶仍可装气');
+  assert.ok(gb.totalGas() - had > 0.99);
+});
+
+// ---- 15. 集气瓶碰撞箱与视觉对齐（用户反馈：碰撞箱看起来异常偏大） ------------
+test('集气瓶碰撞对齐：瓶壁只沿瓶身段（瓶颈区无墙）；盖板贴口', () => {
+  const scene = flatScene();
+  const gb = new GasBottle({ x: 420, y: 620, id: 'gbA', noCarry: true });
+  scene.addObject(gb);
+  run(scene, 30); // 落定
+  const l = scene.byId['gbA_gb_l'];
+  const r = scene.byId['gbA_gb_r'];
+  const lid = scene.byId['gbA_gb_lid'];
+  // 壁体从瓶口下方 NECK_H(10) 开始（瓶颈区不再有"假墙"）
+  assert.ok(Math.abs(l.y - (gb.y + 10)) < 0.01, `左壁应从瓶身段开始：${l.y} vs ${gb.y + 10}`);
+  assert.ok(Math.abs(r.y - (gb.y + 10)) < 0.01, '右壁同');
+  // 壁到瓶底（沿瓶身全高）
+  assert.ok(Math.abs(l.y + l.h - gb.bottom) < 0.01, `壁到瓶底：${l.y + l.h} vs ${gb.bottom}`);
+  // 盖板贴住瓶口（底边与瓶口线重叠 1~2px；不悬空）
+  assert.ok(lid.y < gb.y && lid.y + lid.h >= gb.y - 1, `盖板应贴住瓶口：lid(${lid.y}..${lid.y + lid.h}) 瓶口=${gb.y}`);
+  // 盖板宽度贴近瓶颈（不再宽出一圈悬空沿）
+  assert.ok(lid.x >= gb.x + 3 && lid.x + lid.w <= gb.x + gb.w - 3, `盖板应在瓶口范围：${lid.x}..${lid.x + lid.w}`);
+});
+
 // ---- 液面真实判定：尖端在"杯沿下但真实液面上"不算浸入（用户反馈核心 bug）----
 test('液面判定：尖端在杯沿下、真实液面之上 → 长按=持续滴（不误吸）；液面下 → 吸取', () => {
   const scene = flatScene();

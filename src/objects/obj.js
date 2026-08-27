@@ -12,13 +12,14 @@ export class Obj extends Body {
     id = '', x = 0, y = 0, w = 16, h = 16,
     solid = true, pushable = false, static: isStatic = false,
     mass = 1, gravity = 1, autoStep = false,
-    physicsKind = null, layer = 0, origin = null, hidden = false, noLift = false,
+    physicsKind = null, layer = 0, origin = null, hidden = false, noLift = false, noCarry = false,
   } = {}) {
     super({ id: id || `obj${++SEQ}`, x, y, w, h, solid, pushable, static: isStatic, mass, gravity, autoStep });
     this.physicsKind = physicsKind ?? (isStatic ? 'static' : 'dynamic');
     this.layer = layer;
     this.hidden = hidden; // 初始隐藏：不可见、无碰撞、不参与逻辑，由开关 showId 开启时显现
     this.noLift = noLift; // 不可被气泡柱/气流托起（重力照常，只是气流不托它）
+    this.noCarry = noCarry; // 锁定物品：不可拾取/携带（关卡固定装置；编辑器可配置）
     // 溯源：此物体"为何存在"。kind ∈ 'level'|'reaction'|'explosion'|'place'|'shell'；text 为附加说明（反应方程式等）。
     // 调试模式鼠标悬停显示（见 hud.hoverPanel）。
     this.origin = origin;

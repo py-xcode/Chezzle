@@ -4663,13 +4663,14 @@ class Obj extends Body {
     id = '', x = 0, y = 0, w = 16, h = 16,
     solid = true, pushable = false, static: isStatic = false,
     mass = 1, gravity = 1, autoStep = false,
-    physicsKind = null, layer = 0, origin = null, hidden = false, noLift = false,
+    physicsKind = null, layer = 0, origin = null, hidden = false, noLift = false, noCarry = false,
   } = {}) {
     super({ id: id || `obj${++SEQ}`, x, y, w, h, solid, pushable, static: isStatic, mass, gravity, autoStep });
     this.physicsKind = physicsKind ?? (isStatic ? 'static' : 'dynamic');
     this.layer = layer;
     this.hidden = hidden; // 初始隐藏：不可见、无碰撞、不参与逻辑，由开关 showId 开启时显现
     this.noLift = noLift; // 不可被气泡柱/气流托起（重力照常，只是气流不托它）
+    this.noCarry = noCarry; // 锁定物品：不可拾取/携带（关卡固定装置；编辑器可配置）
     // 溯源：此物体"为何存在"。kind ∈ 'level'|'reaction'|'explosion'|'place'|'shell'；text 为附加说明（反应方程式等）。
     // 调试模式鼠标悬停显示（见 hud.hoverPanel）。
     this.origin = origin;
@@ -10695,12 +10696,13 @@ function rectDist(a, b) {
   return Math.hypot(dx, dy);
 }
 
-/** 场景内最近的可携带物品（集气瓶/烧杯/滴管），超范围返回 null */
+/** 场景内最近的可携带物品（集气瓶/烧杯/滴管），超范围返回 null；
+ *  noCarry（关卡固定装置，编辑器可勾选"锁定"）不参与拾取 */
 function nearestCarryItem(scene, player) {
   let best = null;
   let bd = Infinity;
   for (const o of scene.objects) {
-    if (!o.isCarryItem) continue;
+    if (!o.isCarryItem || o.noCarry) continue;
     const d = rectDist(o, player);
     if (d < bd) {
       bd = d;
@@ -12993,8 +12995,9 @@ exports.Dropper = Dropper;
 // ============================================================================
 // 集气瓶（GasBottle）：可收集气体的玻璃瓶（**有实体**——与烧杯同一套容器物理）。
 // ----------------------------------------------------------------------------
-// - 碰撞箱：左右瓶壁 + 瓶底围成"玻璃瓶"，顶部一块**玻璃盖板**盖住瓶口
-//   （和现实一样；盖板也是实心体——玩家之类进不去瓶内，只能站在盖上）；
+// - 碰撞箱 = 玻璃瓶身轮廓（左右瓶壁沿**瓶身段** = 瓶口以下 10px → 瓶底；
+//   瓶口/瓶颈区开放——细瓶颈两侧是空气，不该挡人；玻璃盖板贴住瓶口，
+//   与视觉对齐——修"碰撞箱看起来异常偏大（盖板悬空+瓶口假墙挡人）"）
 // - 可推动：玩家贴外壁行走会推动整只瓶子；受重力，无支撑时下落；
 // - 容量默认 5g：按住 C（背包含集气瓶）时，把最近气泡柱产生的气体直接截留进瓶
 //   （气体不再进大气）；按住 X 向最近液体容器通入气体（0.05g/s）；
@@ -13013,6 +13016,7 @@ const BOTTLE_H = 56;
 const WALL = 4; // 瓶壁厚（px）
 const LID_H = 4; // 盖板厚（px）
 const LID_LIFT = 2.5; // 装气时盖板被顶起的最大高度（px）
+const NECK_H = 10; // 瓶口/瓶颈区高度（px）：无侧壁，只有透明瓶颈
 
 let SEQ_N = 0; // 无 id 集气瓶的子体命名序号（防 byId 键冲突）
 
@@ -13027,13 +13031,14 @@ class GasBottle extends Obj {
     this.vy = 0;
     this._lidLift = 0; // 0→1 装气顶盖动画进度
     this._fillPulse = 0; // 装气辉光脉冲
-    // 实体子体：左右壁（全高）+ 底 + 口部盖板。noLift：不被气泡柱顶飞。
+    // 实体子体：左右瓶壁（**瓶身段**：口下 NECK_H → 瓶底）+ 底 + 贴口玻璃盖板。
+    // noLift：不被气泡柱顶飞。瓶颈区（顶部 NECK_H）无侧壁——细瓶颈两侧是空气，不该挡人。
     const pid = rest.id ? `${rest.id}_gb` : `gb${++SEQ_N}`;
     this.subBodies = [
-      new Obj({ id: `${pid}_l`, x, y, w: WALL, h: BOTTLE_H, solid: true, physicsKind: 'dynamic', gravity: 0, mass: 1, noLift: true }),
-      new Obj({ id: `${pid}_r`, x: x + BOTTLE_W - WALL, y, w: WALL, h: BOTTLE_H, solid: true, physicsKind: 'dynamic', gravity: 0, mass: 1, noLift: true }),
+      new Obj({ id: `${pid}_l`, x, y: y + NECK_H, w: WALL, h: BOTTLE_H - NECK_H, solid: true, physicsKind: 'dynamic', gravity: 0, mass: 1, noLift: true }),
+      new Obj({ id: `${pid}_r`, x: x + BOTTLE_W - WALL, y: y + NECK_H, w: WALL, h: BOTTLE_H - NECK_H, solid: true, physicsKind: 'dynamic', gravity: 0, mass: 1, noLift: true }),
       new Obj({ id: `${pid}_b`, x, y: y + BOTTLE_H - WALL, w: BOTTLE_W, h: WALL, solid: true, physicsKind: 'dynamic', gravity: 0, mass: 1, noLift: true }),
-      new Obj({ id: `${pid}_lid`, x: x + 2, y: y - LID_H + 2, w: BOTTLE_W - 4, h: LID_H, solid: true, physicsKind: 'dynamic', gravity: 0, mass: 1, noLift: true }),
+      new Obj({ id: `${pid}_lid`, x: x + 4, y: y - 2, w: BOTTLE_W - 8, h: LID_H, solid: true, physicsKind: 'dynamic', gravity: 0, mass: 1, noLift: true }),
     ];
     this.syncWalls();
     this.capacity = Math.max(0.1, capacity);
@@ -13112,13 +13117,13 @@ class GasBottle extends Obj {
   syncWalls() {
     const [l, r, b, lid] = this.subBodies;
     l.x = this.x;
-    l.y = this.y;
+    l.y = this.y + NECK_H;
     r.x = this.x + this.w - this.wall;
-    r.y = this.y;
+    r.y = this.y + NECK_H;
     b.x = this.x;
     b.y = this.y + this.h - this.wall;
-    lid.x = this.x + 2;
-    lid.y = this.y - LID_LIFT * this._lidLift - LID_H + 2;
+    lid.x = this.x + 4;
+    lid.y = this.y - LID_LIFT * this._lidLift - 2; // 盖板底边贴住瓶口线（装气时顶起微隙）
   }
 
   /** 无支撑时受重力下落，落到**最浅**支撑面停住（与烧杯同款：statics + 实心动态体，
