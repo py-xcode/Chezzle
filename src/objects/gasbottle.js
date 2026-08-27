@@ -14,7 +14,7 @@
 import { Obj } from './obj.js';
 import { getSubstance } from '../chem/substances.js';
 import { CFG } from '../core/config.js';
-import { shallowestSupportY, settleBodyOnSupport, horizontallyBlocked } from '../physics/support.js';
+import { shallowestSupportY, settleBodyOnSupport } from '../physics/support.js';
 
 export const BOTTLE_W = 30;
 export const BOTTLE_H = 56;
@@ -38,13 +38,15 @@ export class GasBottle extends Obj {
     this._lidLift = 0; // 0→1 装气顶盖动画进度
     this._fillPulse = 0; // 装气辉光脉冲
     // 实体子体：左右瓶壁（**瓶身段**：口下 NECK_H → 瓶底）+ 底 + 贴口玻璃盖板。
-    // noLift：不被气泡柱顶飞。瓶颈区（顶部 NECK_H）无侧壁——细瓶颈两侧是空气，不该挡人。
+    // static：壁是"与瓶身联动的死墙"——不参与动量交换（动态壁会被玩家撞飞再被
+    // syncWalls 拉回 → 推动强烈震动——用户反馈）；noLift：不被气泡柱顶飞。
+    // 瓶颈区（顶部 NECK_H）无侧壁——细瓶颈两侧是空气，不该挡人。
     const pid = rest.id ? `${rest.id}_gb` : `gb${++SEQ_N}`;
     this.subBodies = [
-      new Obj({ id: `${pid}_l`, x, y: y + NECK_H, w: WALL, h: BOTTLE_H - NECK_H, solid: true, physicsKind: 'dynamic', gravity: 0, mass: 1, noLift: true }),
-      new Obj({ id: `${pid}_r`, x: x + BOTTLE_W - WALL, y: y + NECK_H, w: WALL, h: BOTTLE_H - NECK_H, solid: true, physicsKind: 'dynamic', gravity: 0, mass: 1, noLift: true }),
-      new Obj({ id: `${pid}_b`, x, y: y + BOTTLE_H - WALL, w: BOTTLE_W, h: WALL, solid: true, physicsKind: 'dynamic', gravity: 0, mass: 1, noLift: true }),
-      new Obj({ id: `${pid}_lid`, x: x + 4, y: y - 2, w: BOTTLE_W - 8, h: LID_H, solid: true, physicsKind: 'dynamic', gravity: 0, mass: 1, noLift: true }),
+      new Obj({ id: `${pid}_l`, x, y: y + NECK_H, w: WALL, h: BOTTLE_H - NECK_H, solid: true, static: true, physicsKind: 'static', noLift: true }),
+      new Obj({ id: `${pid}_r`, x: x + BOTTLE_W - WALL, y: y + NECK_H, w: WALL, h: BOTTLE_H - NECK_H, solid: true, static: true, physicsKind: 'static', noLift: true }),
+      new Obj({ id: `${pid}_b`, x, y: y + BOTTLE_H - WALL, w: BOTTLE_W, h: WALL, solid: true, static: true, physicsKind: 'static', noLift: true }),
+      new Obj({ id: `${pid}_lid`, x: x + 4, y: y - 2, w: BOTTLE_W - 8, h: LID_H, solid: true, static: true, physicsKind: 'static', noLift: true }),
     ];
     this.syncWalls();
     this.capacity = Math.max(0.1, capacity);
@@ -140,19 +142,8 @@ export class GasBottle extends Obj {
 
   update(dt, scene) {
     this.applyGravity(dt, scene);
-    // 玩家贴外壁推动整瓶（与烧杯同款手感）；推之前先看路，不穿模进池盆壁
-    const p = scene.player;
-    if (p && Math.abs(p.vel.x) > 0.1) {
-      const push = p.vel.x * dt;
-      const aligned = p.bottom > this.y && p.top < this.y + this.h;
-      if (push > 0 && p.right >= this.x - 2 && p.right <= this.x + this.wall + 2 && aligned) {
-        const nx = this.x + push;
-        if (!horizontallyBlocked(this, nx, scene)) this.x = nx;
-      } else if (push < 0 && p.left <= this.x + this.w + 2 && p.left >= this.x + this.w - this.wall - 2 && aligned) {
-        const nx = this.x + push;
-        if (!horizontallyBlocked(this, nx, scene)) this.x = nx;
-      }
-    }
+    // 玩家贴壁推动已挪到 Player.update（pushContainers——时序要求：玩家重设 vel 之后、
+    // 物理步之前：吸附+清 vel，否则推-弹交替"一卡一卡"——用户反馈）
     // 动画计时衰减（盖板回落、辉光消退）
     if (this._lidLift > 0) this._lidLift = Math.max(0, this._lidLift - dt * 2.6);
     if (this._fillPulse > 0) this._fillPulse = Math.max(0, this._fillPulse - dt * 1.8);

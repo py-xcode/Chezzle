@@ -22,6 +22,10 @@ export function shallowestSupportY(body, scene, span = 40) {
   const r = body.x + body.w;
   const b0 = body.y + body.h;
   let best = Infinity;
+  const sub = body.subBodies;
+  // statics/dynamics 都要排除**自身子体**（烧杯/集气瓶的壁体在 static 化后
+  // 进了 statics——不排除的话"自己撑住自己/自己挡自己"）
+  const skipSelf = (s) => (sub && sub.includes(s));
   const scan = (list, skip) => {
     for (const s of list) {
       if (!s || !s.solid || (skip && skip(s))) continue;
@@ -29,30 +33,69 @@ export function shallowestSupportY(body, scene, span = 40) {
       if (s.y >= b0 - EPS && s.y <= b0 + span) best = Math.min(best, s.y);
     }
   };
-  if (scene.statics) scan(scene.statics);
+  if (scene.statics) scan(scene.statics, skipSelf);
   if (scene.dynamics) {
-    const sub = body.subBodies;
-    scan(scene.dynamics, (d) => d === body || (sub && sub.includes(d)) || typeof d.amount === 'number');
+    scan(scene.dynamics, (d) => d === body || skipSelf(d) || typeof d.amount === 'number');
   }
   return best;
 }
 
-/** 与作用力无关的通用"落到支撑面停住"推进（重力累加 ≤400，钳位贴合） */
+/** 与作用力无关的通用"落到支撑面停住"推进（重力累加 ≤400，钳位贴合）。
+ *  贴合容差 0.25px：已在表面（含微小间隙）→ 静止——否则"恰好贴住"时每帧
+ *  微落 0.6px 再被顶回 → 烧杯/集气瓶站着也在微微震动（用户反馈推动时的抖动源之一） */
 export function settleBodyOnSupport(body, dt, support, accel = 600, maxV = 400) {
   if (!Number.isFinite(support)) {
     body.vy = Math.min(maxV, body.vy + accel * dt);
     body.y += body.vy * dt;
     return;
   }
-  if (body.y + body.h > support) {
-    body.y = support - body.h; // 已陷入支撑面：顶回表面
+  if (body.y + body.h >= support - 0.25) {
     body.vy = 0;
+    if (body.y + body.h > support) body.y = support - body.h; // 已陷入支撑面：顶回表面
   } else {
     body.vy = Math.min(maxV, body.vy + accel * dt);
     body.y += body.vy * dt;
     if (body.y + body.h >= support) {
       body.y = support - body.h;
       body.vy = 0;
+    }
+  }
+}
+
+/**
+ * 玩家推动容器（烧杯/集气瓶）——在 **Player.update** 里调用（玩家自己重设 vel 之后）。
+ * 时序必须如此：容器 update 先于玩家——若由容器侧读取玩家速度驱动，物理步玩家
+ * 自行前进 → 撞壁被弹回 → 推-弹交替（用户反馈：tick1 玩家碰到物块、tick2 物块推动
+ * 玩家不动、tick3 物块不动玩家动一步…… 循环往复）。
+ * 推动帧：容器前进 push、玩家**精确吸附**到壁边（消除累积偏差）、玩家 vel 清零
+ * （物理步静止，无"自行前进→被壁分离"的循环）。推之前先看路，不穿模。
+ */
+export function pushContainers(p, scene, dt) {
+  const dir = (scene.control && scene.control.has('right') ? 1 : 0) - (scene.control && scene.control.has('left') ? 1 : 0);
+  if (dir === 0) return;
+  const push = dir * p.moveSpeed * dt;
+  // 注意遍历 scene.objects（集气瓶不是 Container 子类，不在 scene.containers）
+  for (const c of scene.objects) {
+    if (c.isCarryItem !== 'beaker' && c.isCarryItem !== 'bottle') continue;
+    if (typeof c.containsObj === 'function' && c.containsObj(p)) continue; // 杯内携带：走 lateUpdate 带动
+    if (p.bottom <= c.y || p.top >= c.y + c.h) continue; // 高度不重叠（贴不到壁）
+    const wall = c.wall ?? 4;
+    if (push > 0 && p.right >= c.x - 2 && p.right <= c.x + wall + 2) {
+      const nx = c.x + push;
+      if (!horizontallyBlocked(c, nx, scene)) {
+        c.x = nx;
+        if (typeof c.syncWalls === 'function') c.syncWalls(); // 壁体**立即**跟上（否则物理步用旧壁位置 → 玩家被弹开）
+        p.x = c.x - p.w; // 吸附到左壁
+        p.vel.x = 0;
+      }
+    } else if (push < 0 && p.left <= c.x + c.w + 2 && p.left >= c.x + c.w - wall - 2) {
+      const nx = c.x + push;
+      if (!horizontallyBlocked(c, nx, scene)) {
+        c.x = nx;
+        if (typeof c.syncWalls === 'function') c.syncWalls();
+        p.x = c.x + c.w; // 吸附到右壁
+        p.vel.x = 0;
+      }
     }
   }
 }
@@ -69,6 +112,10 @@ export function horizontallyBlocked(body, nx, scene) {
   const t = body.y + 2;
   const b = body.y + body.h - 2;
   let hit = Infinity; // 记录阻挡物 x（诊断用）
+  const sub = body.subBodies;
+  // statics 同样排除自身子体（static 化后的壁体在 statics 里——不排除会被
+  // 自己的右壁/左壁挡住 → 烧杯/集气瓶推不动——用户反馈的"推动异常"根因）
+  const skipSelf = (s) => (sub && sub.includes(s));
   const scan = (list, skip) => {
     for (const s of list) {
       if (!s || !s.solid || (skip && skip(s))) continue;
@@ -77,10 +124,9 @@ export function horizontallyBlocked(body, nx, scene) {
       hit = Math.min(hit, s.x);
     }
   };
-  if (scene.statics) scan(scene.statics);
+  if (scene.statics) scan(scene.statics, skipSelf);
   if (scene.dynamics) {
-    const sub = body.subBodies;
-    scan(scene.dynamics, (d) => d === body || d === scene.player || (sub && sub.includes(d)) || typeof d.amount === 'number');
+    scan(scene.dynamics, (d) => d === body || d === scene.player || skipSelf(d) || typeof d.amount === 'number');
   }
   return Number.isFinite(hit);
 }

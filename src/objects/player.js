@@ -12,6 +12,7 @@ import { THEME, rr, contrastEdge, luminance } from '../render/theme.js';
 import { getSubstance, isSoluble, shedCoeffOf } from '../chem/substances.js';
 import { CFG } from '../core/config.js';
 import { pickupItem, placeCarriedItem, drawLiquid, pourBeaker, injectBottleGas } from '../level/items.js';
+import { pushContainers } from '../physics/support.js';
 
 export class Inventory {
   constructor({ slots = CFG.inventory.slots, capacity = CFG.inventory.capacity } = {}) {
@@ -234,6 +235,9 @@ export class Player extends Obj {
     // 由地面摩擦逐渐减速——否则爆炸永远炸不动玩家）
     const input = (c.has('right') ? 1 : 0) - (c.has('left') ? 1 : 0);
     if (input !== 0) this.vel.x = input * this.moveSpeed * (1 - resist);
+    // 推动烧杯/集气瓶（必须在本处：玩家重设 vel 之后、物理步之前——吸附+清 vel，
+    // 否则"物块推动-玩家不动 / 物块不动-玩家动"推弹交替，用户逐帧确认）
+    pushContainers(this, scene, dt);
     if (c.has('jump') && this.onGround) this.vel.y = -this.jumpVel;
     if (scene.pressed.has('place')) this.tryPlace(scene);
     if (scene.pressed.has('collect')) this.tryCollect(scene);

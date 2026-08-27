@@ -11,7 +11,7 @@ import { Obj } from './obj.js';
 import { renderLiquid, solutionColor } from '../render/liquidrender.js';
 import { rr } from '../render/theme.js';
 import { Drip } from './drip.js';
-import { shallowestSupportY, settleBodyOnSupport, horizontallyBlocked } from '../physics/support.js';
+import { shallowestSupportY, settleBodyOnSupport } from '../physics/support.js';
 
 // ---- 倒出动画节奏（纯视觉会话，见 beginPour）----
 const POUR_TRAVEL = 0.16; // 平移到目标旁的时长
@@ -35,11 +35,13 @@ export class Beaker extends Container {
     this.wall = wall;
     this.vy = 0;
     // 实心杯壁（左/右/底），跟随烧杯移动；顶口敞开（可跳入）
+    // static：壁是"与杯身联动的死墙"——不参与动量交换（玩家推杯时靠 update 驱动杯身，
+    // 壁只跟随；动态壁会被玩家撞飞再被 syncWalls 拉回 → 推动强烈震动——用户反馈）。
     // noLift：杯壁不被气泡柱气流托起（通入气体时气泡柱紧贴杯壁，不能把杯子顶飞）
     this.subBodies = [
-      new Obj({ id: 'bk_l', x, y, w: wall, h, solid: true, physicsKind: 'dynamic', gravity: 0, mass: 1, noLift: true }),
-      new Obj({ id: 'bk_r', x: x + w - wall, y, w: wall, h, solid: true, physicsKind: 'dynamic', gravity: 0, mass: 1, noLift: true }),
-      new Obj({ id: 'bk_b', x, y: y + h - wall, w, h: wall, solid: true, physicsKind: 'dynamic', gravity: 0, mass: 1, noLift: true }),
+      new Obj({ id: 'bk_l', x, y, w: wall, h, solid: true, static: true, physicsKind: 'static', noLift: true }),
+      new Obj({ id: 'bk_r', x: x + w - wall, y, w: wall, h, solid: true, static: true, physicsKind: 'static', noLift: true }),
+      new Obj({ id: 'bk_b', x, y: y + h - wall, w, h: wall, solid: true, static: true, physicsKind: 'static', noLift: true }),
     ];
   }
 
@@ -158,22 +160,8 @@ export class Beaker extends Container {
     super.update(dt, scene); // 颗粒沉降等容器逻辑
     this.applyGravity(dt, scene);
     this.updatePour(dt, scene);
-    const p = scene.player;
-    if (!p) return;
-    const inner = this.innerRect();
-    // 玩家在杯外贴杯壁朝内移动 → 推动烧杯（杯内携带放到 lateUpdate，按实际位移）。
-    // 推之前先看路：前方有实心体（池盆壁/其他装置）就推不动——不穿模。
-    if (!this.containsObj(p) && Math.abs(p.vel.x) > 0.1) {
-      const push = p.vel.x * dt;
-      const aligned = p.bottom > inner.y && p.top < inner.y + inner.h;
-      if (push > 0 && p.right >= this.x - 2 && p.right <= this.x + this.wall + 2 && aligned) {
-        const nx = this.x + push;
-        if (!horizontallyBlocked(this, nx, scene)) this.x = nx;
-      } else if (push < 0 && p.left <= this.x + this.w + 2 && p.left >= this.x + this.w - this.wall - 2 && aligned) {
-        const nx = this.x + push;
-        if (!horizontallyBlocked(this, nx, scene)) this.x = nx;
-      }
-    }
+    // 玩家贴壁推动已挪到 Player.update（pushContainers——时序要求：玩家重设 vel 之后、
+    // 物理步之前：吸附+清 vel，否则推-弹交替"一卡一卡"——用户反馈）
   }
 
   /** 物理结算后：杯内玩家与烧杯互相带动——烧杯跟随玩家的水平位移；玩家跟随烧杯的竖直位移。

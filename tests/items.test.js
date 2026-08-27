@@ -700,6 +700,53 @@ test('集气瓶碰撞对齐：瓶壁只沿瓶身段（瓶颈区无墙）；盖�
   assert.ok(lid.x >= gb.x + 3 && lid.x + lid.w <= gb.x + gb.w - 3, `盖板应在瓶口范围：${lid.x}..${lid.x + lid.w}`);
 });
 
+// ---- 16. 推动平滑性（用户反馈：推动时瓶子震动/玩家一卡一卡） ------------------
+test('推瓶/推杯平滑：全程位置单调、无每帧回弹抖动', () => {
+  const mk = (kind) => {
+    const scene = flatScene();
+    const p = withPlayer(scene, 700, 640);
+    let obj;
+    if (kind === 'bottle') {
+      obj = new GasBottle({ x: 500, y: 640, id: 'gbS' });
+      scene.addObject(obj);
+    } else {
+      obj = new Beaker({ x: 500, y: 640, w: 60, h: 70, volume: 200, water: 0, id: 'bkS' });
+      scene.addObject(obj);
+    }
+    run(scene, 30); // 落定（瓶/杯贴地）
+    scene.control.add('left');
+    const xs = [];
+    const ps = [];
+    for (let i = 0; i < 120; i++) {
+      scene.step(TICK);
+      xs.push(obj.x);
+      ps.push(p.x);
+    }
+    scene.control.delete('left');
+    return { obj, p, xs, ps };
+  };
+  for (const kind of ['bottle', 'beaker']) {
+    const { obj, xs, ps } = mk(kind);
+    const stepX = 220 * TICK; // 玩家速度 220px/s → 单帧最多 ~7.3px
+    let moved = 0;
+    let backJitter = 0;
+    for (let i = 1; i < xs.length; i++) {
+      const d = xs[i] - xs[i - 1];
+      if (d < -1e-9) backJitter++; // 位置回弹 = 震动
+      if (d < 0) moved++;
+      // 回弹幅度不应超过半步（解算抖动的特征量）；正常推进 = -7.33/帧
+      assert.ok(d >= -stepX * 1.2, `${kind} 帧${i} 回跳过大：${d.toFixed(2)}`);
+      assert.ok(d <= 0.01, `${kind} 帧${i} 出现向右回跳：${d.toFixed(2)}`);
+    }
+    // 玩家也应随瓶平滑推进（位置单调向左）
+    for (let i = 1; i < ps.length; i++) {
+      assert.ok(ps[i] - ps[i - 1] <= 0.01, `${kind} 玩家帧${i} 回跳：${(ps[i] - ps[i - 1]).toFixed(2)}`);
+    }
+    assert.ok(moved > 80, `${kind} 应被推出至少 80 帧：${moved}`);
+    assert.ok(xs[xs.length - 1] < 495, `${kind} 应整体左移：${xs[0]} → ${xs[xs.length - 1]}`);
+  }
+});
+
 // ---- 液面真实判定：尖端在"杯沿下但真实液面上"不算浸入（用户反馈核心 bug）----
 test('液面判定：尖端在杯沿下、真实液面之上 → 长按=持续滴（不误吸）；液面下 → 吸取', () => {
   const scene = flatScene();
