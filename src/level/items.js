@@ -21,6 +21,20 @@ import { Bubble } from '../objects/bubble.js';
 
 let FX_SEQ = 0; // 特效对象 id 序号（fx.js 的计数器不跨模块共享）
 
+/** 放置落点是否被占用：与其它可携带物品、实心动态体（装置壁）、实心放置粒子重叠 */
+function spotBlocked(scene, o, x, y) {
+  const m = 3; // 收缩容差：贴边不算
+  const l = x + m, r = x + o.w - m, t = y + m, b = y + o.h - m;
+  for (const s of scene.objects) {
+    if (s === scene.player || !s || s.hidden) continue;
+    if (typeof s.amount === 'number' && !s.solid) continue; // 软体自由粒子不挡
+    const isCarry = !!s.isCarryItem;
+    if (!(isCarry || s.solid)) continue; // 只看实体类；区域容器（池等）允许浸入
+    if (r > s.x + m && l < s.x + s.w - m && b > s.y + m && t < s.y + s.h - m) return true;
+  }
+  return false;
+}
+
 /** 两矩形之间的最近距离（边缘间隙；重叠=0）——池/烧杯等高宽物体用边缘距离，
  *  站在池边即可吸液（用中心距离会让宽池显得"遥不可及"） */
 function rectDist(a, b) {
@@ -61,7 +75,8 @@ export function pickupItem(player, scene) {
   return true;
 }
 
-/** Shift 放置：把选中格里的物品放到玩家身旁（朝移动方向一侧、脚边） */
+/** Shift 放置：把选中格里的物品放到玩家身旁（朝移动方向一侧、脚边）。
+ *  落点被占用（已有装置/实心体）时依次向外探测空位——不再把两件物品叠在一起。 */
 export function placeCarriedItem(player, scene) {
   const inv = player.inventory;
   const slot = inv.selectedSlot();
@@ -73,6 +88,26 @@ export function placeCarriedItem(player, scene) {
   let y = player.bottom + 2 - o.h; // 底边贴脚底（烧杯/集气瓶落地面，滴管停在原地）
   x = Math.max(4, Math.min(scene.worldW - o.w - 4, x));
   y = Math.max(4, Math.min(scene.worldH - o.h - 4, y));
+  // 空位探测：原位 → 原方向再远一格 → 反侧对称位 → 反侧更远
+  if (spotBlocked(scene, o, x, y)) {
+    const step = o.w + 10;
+    const probes = [
+      x + front * step,
+      x + front * step * 2,
+      x - front * step,
+      x - front * step * 2,
+    ];
+    let found = false;
+    for (const px of probes) {
+      const cx = Math.max(4, Math.min(scene.worldW - o.w - 4, px));
+      if (!spotBlocked(scene, o, cx, y)) {
+        x = cx;
+        found = true;
+        break;
+      }
+    }
+    if (!found && !spotBlocked(scene, o, player.x, y)) x = player.x; // 最后兜底：正下方
+  }
   o.x = x;
   o.y = y;
   if (Number.isFinite(o.rx)) { o.rx = o.x; o.ry = o.y; } // 滴管渲染平滑坐标同步（防放置瞬移残影）
@@ -214,8 +249,8 @@ export function pourBeaker(player, scene) {
   if (pour <= 1e-9) return false;
   const sample = o.solution.takeSample(pour);
   if (!sample) return false;
-  // 倾倒动画：杯身向目标侧倾斜 + 液流弧线（先于转移本身，视觉先行）
-  o.pourFx?.(scene, target);
+  // 倒出会话：平移到目标旁→倾斜→按住保持（视觉层，物理坐标不动）
+  o.beginPour?.(scene, target);
   target.solution.addSample(sample);
   for (const [id, v] of Object.entries(sample.solutes ?? {})) {
     if (v > 1e-9) target.noteSolOrigin?.(id, { kind: 'pour', text: '烧杯倒入' });

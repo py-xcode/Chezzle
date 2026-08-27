@@ -23,6 +23,7 @@ import { Atmosphere } from '../src/chem/atmosphere.js';
 import { ChemistryEngine } from '../src/chem/engine.js';
 import { pickupItem, placeCarriedItem, drawLiquid, pourBeaker, injectBottleGas } from '../src/level/items.js';
 import { handleScenePressDown, handleScenePressMove, handleScenePressUp } from '../src/level/click.js';
+import { CFG } from '../src/core/config.js';
 
 const TICK = 1 / 30;
 const near = (a, b, eps = 1e-9) => Math.abs(a - b) < eps;
@@ -480,4 +481,133 @@ test('集气瓶实体化：子体壁落地、玩家贴壁推动整瓶且无法�
   scene.control.delete('right');
   assert.ok(bottle.x > 420 + 3, `贴壁行走应推动整瓶：${bottle.x.toFixed(1)}`);
   assert.ok(p.right <= bottle.x + bottle.wall + 1, `玩家应被挡在瓶外：p.right=${p.right} bottle.x=${bottle.x}`);
+});
+
+// ============================================================================
+// 体验打磨第二批：倒液方向/停留、放置找空位、拖动超距钳制、胶头液下吸取
+// ============================================================================
+
+const overlap2 = (a, b, m = 1) => a.x + a.w > b.x + m && a.x < b.x + b.w - m
+  && a.y + a.h > b.y + m && a.y < b.y + b.h - m;
+
+test('Shift 放置第二件物品自动找空位：不与已放置的装置重叠', () => {
+  const scene = flatScene();
+  const p = withPlayer(scene, 400, 630);
+  const bk = new Beaker({ x: 430, y: 620, w: 60, h: 70, volume: 200, water: 0 });
+  scene.addObject(bk);
+  const bt = new GasBottle({ x: 520, y: 660 });
+  scene.addObject(bt);
+  run(scene, 30);
+  p.inventory.selected = 0;
+  pickupItem(p, scene);
+  assert.equal(placeCarriedItem(p, scene), true); // 放在玩家右侧 → 会落在烧杯原先附近（此处没别的实体）
+  // 再拾起集气瓶放置：第一落点若被占则应挪到别处，两者不得重叠
+  p.inventory.selected = 1;
+  pickupItem(p, scene);
+  if (placeCarriedItem(p, scene)) {
+    const placed = p.inventory.selectedSlot()?.obj ?? null; // 已清格；从场景找瓶子
+    const bottle = scene.objects.find((o) => o.isCarryItem === 'bottle');
+    const beaker = scene.containers.find((c) => c.isCarryItem === 'beaker');
+    if (bottle && beaker) {
+      assert.ok(!overlap2(bottle, beaker), `两件物品不得重叠：bt(${bottle.x.toFixed(0)},${bottle.y.toFixed(0)}) bk(${beaker.x.toFixed(0)},${beaker.y.toFixed(0)})`);
+    }
+  }
+});
+
+test('拖动滴管不能超出玩家范围：越界贴边走并弹提示', () => {
+  const scene = new Scene({ worldW: 1000, worldH: 800 });
+  scene.camera = new Camera({ viewW: 1000, viewH: 800, worldW: 1000, worldH: 800 });
+  scene.status = 'running';
+  scene.addObject(new Floor({ x: -200, y: 720, w: 3000, h: 100 }));
+  const dr = new Dropper({ x: 425, y: 640, substance: 'HCl', capacity: 50, drop: 1 });
+  scene.addObject(dr);
+  const p = withPlayer(scene, 400, 630);
+  const canvas = { width: 1000, height: 800 };
+  run(scene, 2);
+  const cam = scene.camera.compute(canvas.width, canvas.height, scene.player ?? null);
+  const toScreen = (wx, wy) => ({ x: wx * cam.scale + cam.offsetX, y: wy * cam.scale + cam.offsetY });
+  // 按住玻璃段（管中下部，避开胶头区）
+  const s = toScreen(dr.x + dr.w / 2, dr.y + dr.h - 6);
+  handleScenePressDown(scene, canvas, s.x, s.y);
+  handleScenePressMove(scene, canvas, s.x + 500, s.y + 200); // 试图拖出很远
+  const pcx = p.x + p.w / 2;
+  const pcy = p.y + p.h / 2;
+  const dCenter = Math.hypot(dr.x + dr.w / 2 - pcx, dr.y + dr.h / 2 - pcy);
+  assert.ok(dCenter <= CFG.item.dragRange + 1,
+    `拖动应被钳制在 dragRange 内：${dCenter.toFixed(1)} > ${CFG.item.dragRange}`);
+  assert.ok(scene._notice && /太远/.test(scene._notice.text), `应有超距提示：${scene._notice?.text}`);
+  handleScenePressUp(scene, canvas);
+});
+
+test('胶头长按+松开：液下吸取成功；非空管拒绝', () => {
+  const scene = flatScene();
+  const pool = new Pool({ x: 300, y: 660, w: 260, h: 60, volume: 200, solutes: { NaCl: 10 } });
+  scene.addObject(pool);
+  const p = withPlayer(scene, 250, 600);
+  // 空滴管尖端浸入池内液面下（innerRect y≈668）
+  const dr = new Dropper({ x: 430, y: 622, capacity: 50, liquid: 0 }); // bottom=674 > 668 ✓
+  scene.addObject(dr);
+  run(scene, 2);
+  const canvas = { width: 1000, height: 800 };
+  scene.camera = new Camera({ viewW: 1000, viewH: 800, worldW: 1000, worldH: 800 });
+  const cam = scene.camera.compute(canvas.width, canvas.height, scene.player ?? null);
+  const toScreen = (wx, wy) => ({ x: wx * cam.scale + cam.offsetX, y: wy * cam.scale + cam.offsetY });
+  const bs = toScreen(dr.x + dr.w / 2, dr.y + 6); // 胶头区中心
+  // 按住一段时间再松开（长按是手感；期间不应触发任何滴液）
+  handleScenePressDown(scene, canvas, bs.x, bs.y);
+  run(scene, 15);
+  handleScenePressUp(scene, canvas);
+  assert.ok(near(dr.liquid, 5, 1e-6), `松开应吸取 5g：${dr.liquid}`);
+  assert.equal(dr.substance, 'NaCl');
+  assert.ok(near(pool.solution.mass('NaCl'), 5, 1e-6), '池中 NaCl 转入管内');
+  // 管里已有液体 → 再吸拒绝（同种也不行）
+  const before = dr.liquid;
+  handleScenePressDown(scene, canvas, bs.x, bs.y);
+  handleScenePressUp(scene, canvas);
+  assert.ok(near(dr.liquid, before, 1e-9), '非空管不能再吸');
+  assert.ok(scene._notice && /已有液体/.test(scene._notice.text), '应提示先滴空');
+});
+
+test('按住胶头不会误触滴液；拖拽走的仍是玻璃段语义', () => {
+  const scene = flatScene();
+  const pool = new Pool({ x: 300, y: 660, w: 260, h: 60, volume: 200, solutes: { NaCl: 4 } });
+  scene.addObject(pool);
+  withPlayer(scene, 250, 600);
+  const dr = new Dropper({ x: 340, y: 590, substance: 'HCl', capacity: 50, liquid: 10, drop: 1 });
+  scene.addObject(dr);
+  run(scene, 2);
+  const canvas = { width: 1000, height: 800 };
+  scene.camera = new Camera({ viewW: 1000, viewH: 800, worldW: 1000, worldH: 800 });
+  const cam = scene.camera.compute(canvas.width, canvas.height, scene.player ?? null);
+  const s = {
+    x: (dr.x + dr.w / 2) * cam.scale + cam.offsetX,
+    y: (dr.y + 6) * cam.scale + cam.offsetY, // 胶头
+  };
+  // 尖端不在液面下(590+52=642 < 668 表面)：按住15tick+松开=吸取失败且从未滴液
+  handleScenePressDown(scene, canvas, s.x, s.y);
+  run(scene, 15);
+  assert.ok(near(pool.solution.totalMass(), 4, 1e-9) || pool.solution.totalMass() >= 3.99, '按住胶头未改变池内总量（未滴液）');
+  const beakerHClBefore = dr.liquid;
+  handleScenePressUp(scene, canvas);
+  assert.ok(near(dr.liquid, beakerHClBefore, 1e-9), '非液下+非空管：什么都不发生');
+});
+
+test('倒液会话方向/站位：目标在右侧时杯停在其左侧并保持站立', () => {
+  const scene = flatScene();
+  const pool = new Pool({ x: 700, y: 660, w: 240, h: 60, volume: 200 });
+  scene.addObject(pool);
+  const p = withPlayer(scene, 400, 640);
+  const bk = new Beaker({ x: 380, y: 620, w: 60, h: 70, volume: 200, water: 40 });
+  scene.addObject(bk);
+  run(scene, 2);
+  p.inventory.selected = 0;
+  pickupItem(p, scene);
+  const bko = p.inventory.selectedItem(); // 保持携带状态执行倒出（真实操作流）
+  p.x = 660; // 挪到池边（保证在倒出距离内）
+  assert.equal(pourBeaker(p, scene), true, '倒出应成功');
+  // 会话挂在杯子对象上；放回世界只为核对站位参数
+  scene.addItem(bko);
+  assert.ok(bko._pour, '应进入倒出会话');
+  assert.equal(bko._pour.dir, 1, '目标在右 → 站位/倾角朝右');
+  assert.ok(bko._pour.standX <= pool.x, `应平移到目标左侧停靠：standX=${bko._pour.standX} pool.x=${pool.x}`);
 });

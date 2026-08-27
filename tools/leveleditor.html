@@ -933,6 +933,11 @@ function stripSeedObjects() {
 }
 function addPlaced(type, opts) {
   const e = byType[type];
+  // 药品池：新建时默认容积随划定大小自动计算（≈25px²/ml，取5的倍数，下限20ml）——
+  // 大池子不再顶着固定 200ml 的小容量永远显示满格；属性面板里手动改过则尊重原值
+  if (type === 'pool' && opts.volume == null && opts.w > 0 && opts.h > 0) {
+    opts.volume = Math.max(20, Math.round((opts.w * opts.h) / 25 / 5) * 5);
+  }
   // 数字 id（属性面板/旧数据可能给数字）统一转字符串
   if (opts.id != null) opts.id = String(opts.id);
   // 自动分配可读 id（block1/pool1/lamp1…），供绳子悬挂/接线引用

@@ -20,6 +20,12 @@ export function screenToWorld(scene, canvas, sx, sy) {
   return { x: (sx - offsetX) / scale, y: (sy - offsetY) / scale };
 }
 
+/** 场景通知横幅（HUD 顶部中偏下淡入淡出 ~1.6s）：超距提示、吸取失败原因等 */
+export function pushNotice(scene, text) {
+  if (!scene) return;
+  scene._notice = { text, t: scene.time ?? 0 };
+}
+
 /** 物品栏槽位几何（HUD 渲染与点击命中**共用这一套数字**，保证点哪是哪）：
  *  普通格 CFG.inventory.slotPx，装物品的格子放大为 itemSlotPx；底边对齐、右缘贴边。 */
 export function inventorySlotRects(W, H, slots) {
@@ -127,6 +133,15 @@ export function handleScenePressDown(scene, canvas, sx, sy, onInfo = null) {
   if (!scene) return false;
   scene._pressHome = null;
   const hit = hitTap(scene, canvas, sx, sy);
+  // 胶头区（滴管红色吸头段）：按下进入"长按吸取"候选——任意距离都可用，
+  // 松开时若尖端在液面下且管为空则吸取（不会触发滴液）
+  if (hit && typeof hit.obj.onBulb === 'function' && hit.obj.onBulb(hit.world)) {
+    scene._pressCand = { mode: 'suck', obj: hit.obj, startX: sx, startY: sy, world: hit.world, downT: 0, moved: false };
+    scene._pressTap = null;
+    scene._pressTapT = 0;
+    onInfo?.({ type: 'suck-press', object: hit.obj, world: hit.world });
+    return true;
+  }
   if (hit && hit.obj.isDraggable && scene.player && dist(scene.player, hit.obj) <= CFG.item.dragRange) {
     scene._pressCand = { obj: hit.obj, startX: sx, startY: sy, world: hit.world, downT: 0, moved: false };
     scene._pressTap = null;
@@ -143,6 +158,11 @@ export function handleScenePressDown(scene, canvas, sx, sy, onInfo = null) {
 export function handleScenePressMove(scene, canvas, sx, sy) {
   if (!scene) return;
   const c = scene._pressCand;
+  // 胶头吸取候选：大幅移动视为放弃（不滴、不转拖动）
+  if (c && c.mode === 'suck') {
+    if (!c.moved && Math.hypot(sx - c.startX, sy - c.startY) > CFG.item.dragStartPx) c.moved = true;
+    return;
+  }
   if (c && !c.moved && Math.hypot(sx - c.startX, sy - c.startY) > CFG.item.dragStartPx) {
     c.moved = true; // 进入拖动：取消按住滴加（偏移取按下点，避免"先跳一下"）
     scene._pressTap = null;
@@ -162,16 +182,42 @@ export function handleScenePressMove(scene, canvas, sx, sy) {
     scene._drag = { obj: h.obj, ox: h.obj.x - w0.x, oy: h.obj.y - w0.y };
   }
   if (scene._drag) {
+    const d = scene._drag;
+    const o = d.obj;
     const w = screenToWorld(scene, canvas, sx, sy);
-    scene._drag.obj.x = w.x + scene._drag.ox;
-    scene._drag.obj.y = w.y + scene._drag.oy;
+    let nx = w.x + d.ox;
+    let ny = w.y + d.oy;
+    // 拖动范围钳制：滴管拖不出玩家的 dragRange——越界时贴着边界走并提示
+    const p = scene.player;
+    if (p) {
+      const pcx = p.x + p.w / 2;
+      const pcy = p.y + p.h / 2;
+      const dx = nx + o.w / 2 - pcx;
+      const dy = ny + o.h / 2 - pcy;
+      const L = Math.hypot(dx, dy);
+      if (L > CFG.item.dragRange && L > 0.001) {
+        const k = CFG.item.dragRange / L;
+        nx = pcx + dx * k - o.w / 2;
+        ny = pcy + dy * k - o.h / 2;
+        pushNotice(scene, '距离玩家太远——滴管拖不出这个范围');
+      }
+    }
+    o.x = nx;
+    o.y = ny;
   }
 }
 
-/** 抬起：结束候选/拖动；候选未移动 → 单击（在按下位置滴一滴） */
+/** 抬起：结束候选/拖动；候选未移动 → 单击（在按下位置滴一滴）；
+ *  胶头候选 → 松开执行"液下吸取" */
 export function handleScenePressUp(scene, canvas = null) {
   if (!scene) return;
   const c = scene._pressCand;
+  if (c && c.mode === 'suck') {
+    scene._pressCand = null; // 无论按多久，松开才算吸取（长按只是蓄势的手感）
+    if (!c.moved && typeof c.obj.attemptSubmergeSuck === 'function') c.obj.attemptSubmergeSuck(scene);
+    handleSceneTapUp(scene);
+    return;
+  }
   if (c && !c.moved && canvas) {
     scene._pressCand = null;
     handleSceneTapDown(scene, canvas, c.startX, c.startY);
@@ -182,11 +228,12 @@ export function handleScenePressUp(scene, canvas = null) {
   handleSceneTapUp(scene);
 }
 
-/** 每 tick 推进：候选长按转换（dripArmDelay 留出拖动窗口）+ 按住持续执行 */
+/** 每 tick 推进：候选长按转换（dripArmDelay 留出拖动窗口）+ 按住持续执行。
+ *  胶头吸取候选不在此转换（松开才吸取，见 handleScenePressUp）。 */
 export function stepPressTap(scene, dt) {
   if (!scene) return;
   const c = scene._pressCand;
-  if (c && !c.moved) {
+  if (c && c.mode !== 'suck' && !c.moved) {
     c.downT = (c.downT ?? 0) + dt;
     if (c.downT >= CFG.item.dripArmDelay) {
       // 长按开始：转换为按住滴加（滴一笔 + 进入节奏）；记录按下原点供"拖动抢断"

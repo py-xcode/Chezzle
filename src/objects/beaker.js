@@ -10,8 +10,18 @@ import { getSubstance } from '../chem/substances.js';
 import { Obj } from './obj.js';
 import { renderLiquid, solutionColor } from '../render/liquidrender.js';
 import { rr } from '../render/theme.js';
-import { flowFx } from './fx.js';
-import { shallowestSupportY, settleBodyOnSupport } from '../physics/support.js';
+import { Drip } from './drip.js';
+import { shallowestSupportY, settleBodyOnSupport, horizontallyBlocked } from '../physics/support.js';
+
+// ---- 倒出动画节奏（纯视觉会话，见 beginPour）----
+const POUR_TRAVEL = 0.16; // 平移到目标旁的时长
+const POUR_TILT_IN = 0.14; // 起倾时长
+const POUR_BACK = 0.22; // 松手后回位时长
+const POUR_HOLD_MAX = 0.45; // 按 X 续期的停留余量（连按/按住都保持不停留超时）
+const POUR_MAX_ANG = 0.52; // 最大倾角（≈30°，弧度）
+const POUR_LIFT = 5; // 倾倒时轻微抬升（手腕感）
+
+let DRIP_SEQ = 0;
 
 export class Beaker extends Container {
   get hoverLabel() {
@@ -54,22 +64,88 @@ export class Beaker extends Container {
   }
 
   /**
-   * 倾倒动画（X 倒出时由 items.pourBeaker 调用，纯视觉）：
-   * 杯身向目标一侧倾斜 ~0.55s 再回弹；同时从杯口沿出一条液流弧线落向目标液面。
+   * 倒出会话（X 倒出时由 items.pourBeaker 调用；纯视觉，物理坐标不动）：
+   * ① 杯身平移到目标容器旁（修正"目标在右动画仍朝左/落点不准"）；
+   * ② 起倾 ~30°，杯口沿连续滴出液滴落入目标液面；
+   * ③ 玩家按住/连按 X → 保持倾倒姿势不回位，松手 0.45s 后回弹归位。
+   * 同一目标续倒不重跑位移（不顿挫）。
    */
-  pourFx(scene, target) {
+  beginPour(scene, target) {
     if (!scene || typeof scene.addObject !== 'function') return;
     const dir = (target.x + (target.w ?? 0) / 2) >= (this.x + this.w / 2) ? 1 : -1;
-    this._tilt = { t: 0, dur: 0.55, dir };
-    const lipX = dir > 0 ? this.x + this.w - 3 : this.x + 3; // 倾斜侧的杯口沿
-    const lipY = this.y + 6;
-    const tr = target.innerRect ? target.innerRect() : { x: target.x + 4, y: target.y + 4, w: target.w - 8, h: target.h - 8 };
-    const tx = Math.max(tr.x + 3, Math.min(tr.x + tr.w - 3, this.x + this.w / 2));
-    flowFx(scene, {
-      x0: lipX, y0: lipY, x1: tx, y1: tr.y,
-      color: solutionColor(this.solution).color,
-      life: 0.55, n: 9, bend: 0.18,
-    });
+    const gap = 6;
+    if (this._pour && this._pour.target === target && this._pour.dir === dir) {
+      this._pour.holdT = POUR_HOLD_MAX; // 续倒：只续停留
+      return;
+    }
+    let standX = dir > 0 ? target.x - this.w - gap : target.x + target.w + gap;
+    standX = Math.max(2, Math.min((scene.worldW ?? 2000) - this.w - 2, standX));
+    this._pour = { target, dir, t: 0, fromX: this.x, standX, holdT: POUR_HOLD_MAX, lipEmit: 0, relAt: null };
+  }
+
+  /** 倒出会话推进：计算渲染偏移/倾角 + 杯口沿液滴发射 */
+  updatePour(dt, scene) {
+    const sess = this._pour;
+    if (!sess) {
+      this._visPour = null;
+      return;
+    }
+    // X 按住且选中的正是本杯 → 续期停留；否则停留计时递减
+    const sel = scene.player?.inventory?.selectedItem?.();
+    if (scene.control && scene.control.has('use') && sel === this) sess.holdT = POUR_HOLD_MAX;
+    else sess.holdT -= dt;
+
+    sess.t += dt;
+    if (sess.relAt == null && sess.holdT <= 0) sess.relAt = sess.t; // 开始回位
+    const standOff = sess.standX - sess.fromX;
+
+    let offK = 0;
+    let angK = 0;
+    if (sess.relAt != null) {
+      const tr = sess.t - sess.relAt;
+      if (tr >= POUR_BACK) {
+        this._pour = null;
+        this._visPour = null;
+        return;
+      }
+      const k0 = 1 - tr / POUR_BACK;
+      const k = k0 * k0 * (3 - 2 * k0); // smoothstep 回位
+      offK = k;
+      angK = k;
+    } else {
+      const pt = Math.min(1, sess.t / POUR_TRAVEL);
+      offK = 1 - Math.pow(1 - pt, 3); // easeOutCubic 平移
+      const at = Math.min(1, Math.max(0, (sess.t - POUR_TRAVEL) / POUR_TILT_IN));
+      angK = at * at * (3 - 2 * at); // smoothstep 起倾
+    }
+
+    const ang = POUR_MAX_ANG * angK;
+    const offX = standOff * offK;
+    const liftY = -POUR_LIFT * angK;
+    this._visPour = { offX, liftY, aSign: sess.dir, ang };
+
+    // 杯口沿液滴：倾斜到位后从旋转后的口沿位置滴落，落向目标液面
+    if (ang > 0.16 && offK > 0.9 && scene.addObject) {
+      sess.lipEmit -= dt;
+      if (sess.lipEmit <= 0) {
+        sess.lipEmit = 0.065;
+        const a = sess.dir * ang;
+        const pvx = this.x + offX + this.w / 2;
+        const pvy = this.y + this.h + liftY;
+        const lx0 = sess.dir > 0 ? this.w / 2 - 4 : -(this.w / 2 - 4);
+        const ly0 = 8 - this.h;
+        const wx = pvx + lx0 * Math.cos(a) - ly0 * Math.sin(a);
+        const wy = pvy + lx0 * Math.sin(a) + ly0 * Math.cos(a);
+        const tgt = sess.target.innerRect ? sess.target.innerRect() : { x: sess.target.x + 4, y: sess.target.y + 4, w: sess.target.w - 8, h: sess.target.h - 8 };
+        scene.addObject(new Drip({
+          x: wx - 2,
+          y: wy + 2,
+          targetY: tgt.y + 4,
+          color: solutionColor(this.solution).color,
+          id: `drip${++DRIP_SEQ}`,
+        }));
+      }
+    }
   }
 
   /** 无支撑时受重力下落，落到**最浅**支撑面停住（statics + 玩家等实心动态体；
@@ -81,21 +157,21 @@ export class Beaker extends Container {
   update(dt, scene) {
     super.update(dt, scene); // 颗粒沉降等容器逻辑
     this.applyGravity(dt, scene);
-    if (this._tilt) {
-      this._tilt.t += dt;
-      if (this._tilt.t >= this._tilt.dur) this._tilt = null;
-    }
+    this.updatePour(dt, scene);
     const p = scene.player;
     if (!p) return;
     const inner = this.innerRect();
-    // 玩家在杯外贴杯壁朝内移动 → 推动烧杯（杯内携带放到 lateUpdate，按实际位移）
+    // 玩家在杯外贴杯壁朝内移动 → 推动烧杯（杯内携带放到 lateUpdate，按实际位移）。
+    // 推之前先看路：前方有实心体（池盆壁/其他装置）就推不动——不穿模。
     if (!this.containsObj(p) && Math.abs(p.vel.x) > 0.1) {
       const push = p.vel.x * dt;
       const aligned = p.bottom > inner.y && p.top < inner.y + inner.h;
       if (push > 0 && p.right >= this.x - 2 && p.right <= this.x + this.wall + 2 && aligned) {
-        this.x += push;
+        const nx = this.x + push;
+        if (!horizontallyBlocked(this, nx, scene)) this.x = nx;
       } else if (push < 0 && p.left <= this.x + this.w + 2 && p.left >= this.x + this.w - this.wall - 2 && aligned) {
-        this.x += push;
+        const nx = this.x + push;
+        if (!horizontallyBlocked(this, nx, scene)) this.x = nx;
       }
     }
   }
@@ -130,18 +206,15 @@ export class Beaker extends Container {
   }
 
   render(ctx, scene) {
-    // 倾倒动画：整杯（液体+颗粒+杯体）绕底部中心向目标侧旋转 ≈16°，快倾慢回
+    // 倒出会话变换：平移到目标旁 + 轻微抬升 + 倾斜（液体/颗粒/杯体整体）
     ctx.save();
-    if (this._tilt) {
-      const { t, dur, dir } = this._tilt;
-      const p = Math.min(1, t / 0.12);
-      const back = t < dur * 0.55 ? 1 : Math.max(0, 1 - (t - dur * 0.55) / (dur * 0.45));
-      const ang = 0.28 * p * back;
-      const cx = this.x + this.w / 2;
+    const vp = this._visPour;
+    if (vp && (Math.abs(vp.offX) > 0.01 || vp.ang > 0.001)) {
+      const cx = this.x + vp.offX + this.w / 2;
       const cy = this.y + this.h;
       ctx.translate(cx, cy);
-      ctx.rotate(dir * ang);
-      ctx.translate(-cx, -cy);
+      ctx.rotate(vp.aSign * vp.ang);
+      ctx.translate(-cx, -cy - vp.liftY);
     }
     // 液体（元素发光液面；液面高度 = 实际液体量/容量——吸液/倒出后可见升降）
     const inner = this.innerRect();

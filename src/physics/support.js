@@ -56,3 +56,31 @@ export function settleBodyOnSupport(body, dt, support, accel = 600, maxV = 400) 
     }
   }
 }
+
+/**
+ * 水平阻挡探测：把 body 平移到 nx 后是否与任何实心体相交 ≥3px 深度。
+ * 用于烧杯/集气瓶的"手动推挤"——它们不走通用碰撞积分，自己挪位置时需要
+ * 自己看路，否则会被直接推进池盆壁里（穿模）。忽略脚底贴合面（≤2px 的
+ * 支撑重叠不算），也不忽略动态实心体（别的装置壁照样挡路）。
+ */
+export function horizontallyBlocked(body, nx, scene) {
+  const l = nx + 1;
+  const r = nx + body.w - 1;
+  const t = body.y + 2;
+  const b = body.y + body.h - 2;
+  let hit = Infinity; // 记录阻挡物 x（诊断用）
+  const scan = (list, skip) => {
+    for (const s of list) {
+      if (!s || !s.solid || (skip && skip(s))) continue;
+      if (!(s.x < r && s.x + s.w > l)) continue;
+      if (!(s.y < b && s.y + s.h > t)) continue;
+      hit = Math.min(hit, s.x);
+    }
+  };
+  if (scene.statics) scan(scene.statics);
+  if (scene.dynamics) {
+    const sub = body.subBodies;
+    scan(scene.dynamics, (d) => d === body || d === scene.player || (sub && sub.includes(d)) || typeof d.amount === 'number');
+  }
+  return Number.isFinite(hit);
+}

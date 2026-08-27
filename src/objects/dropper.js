@@ -15,6 +15,9 @@ import { getSubstance } from '../chem/substances.js';
 import { Solution } from '../chem/solution.js';
 import { solutionColor } from '../render/liquidrender.js';
 import { Drip } from './drip.js';
+import { flowFx, puffFx } from './fx.js';
+import { CFG } from '../core/config.js';
+import { pushNotice } from '../level/click.js';
 
 export const DROPPER_W = 11;
 export const DROPPER_H = 52;
@@ -44,7 +47,8 @@ export class Dropper extends Obj {
   get hoverLabel() {
     const sub = getSubstance(this.substance);
     const name = sub ? (sub.name ?? this.substance) : this.substance;
-    return this.liquid > 1e-9 ? `滴管·${name}（${this.liquid.toFixed(1)}g）` : `滴管·${name}（空）`;
+    if (this.liquid <= 1e-9) return '滴管（空）'; // 空管不标物质名——免误导（管里明明没有）
+    return `滴管·${name}（${this.liquid.toFixed(1)}g）`;
   }
 
   get isCarryItem() {
@@ -53,6 +57,82 @@ export class Dropper extends Obj {
 
   /** 玩家附近可拖动（改变位置，无碰撞箱） */
   get isDraggable() {
+    return true;
+  }
+
+  /** 点击点是否落在"胶头/管口上段"（红色吸头区）——该区按下=长按吸取，不再触发滴液 */
+  onBulb(world) {
+    if (!world) return false;
+    return world.y <= this.y + 16; // 胶头（顶 ~10px）+ 管口过渡段
+  }
+
+  /** 尖端正浸在哪个容器的液面下？（水平对齐容器内区 + 管底低于液面 + 未深穿容器底） */
+  _submergedIn(scene) {
+    const cx = this.x + this.w / 2;
+    let best = null;
+    let bestDy = Infinity;
+    for (const c of scene.containers ?? []) {
+      const r = c.innerRect();
+      if (!(cx >= r.x && cx <= r.x + r.w)) continue;
+      const surface = r.y;
+      // 尖端（this.bottom）需已在液面下 ≥3px；允许伸入到接近容器底
+      if (this.bottom < surface + 3) continue;
+      if (this.bottom > r.y + r.h + 8) continue;
+      const dy = Math.abs(this.bottom - surface);
+      if (dy < bestDy) {
+        bestDy = dy;
+        best = c;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * 液下吸取（长按红色胶头后松开）：尖端必须在某容器液面之下，且**管必须为空**
+   * （现实中吸了东西的滴管没法再吸第二手——同种液体也不行）。
+   * 成功：按一次吸液量取占优溶质（纯水→H2O），返回 true；否则 false。
+   */
+  attemptSubmergeSuck(scene) {
+    if (!scene) return false;
+    if (this.liquid > 1e-9) {
+      pushNotice(scene, '滴管里已有液体——先滴空才能再吸');
+      return false;
+    }
+    const c = this._submergedIn(scene);
+    if (!c || !c.solution || !(c.solution.volume > 0)) {
+      pushNotice(scene, '把滴管尖端伸到液面下再吸');
+      return false;
+    }
+    const take = Math.min(CFG.item.dropperTransfer, this.capacity);
+    let id = 'H2O';
+    let m = 0;
+    for (const [sid, sm] of c.solution.solutes) {
+      if (sm > m) {
+        id = sid;
+        m = sm;
+      }
+    }
+    let got = 0;
+    if (id === 'H2O') {
+      got = c.solution.water > 0 ? Math.min(take, c.solution.water) : 0;
+      if (got > 1e-9) c.solution.water -= got;
+    } else {
+      got = c.solution.remove(id, take);
+    }
+    if (got <= 1e-9) return false;
+    this.substance = id;
+    this.liquid += got;
+    c.noteSolOrigin?.(id, { kind: 'fill', text: '液下吸取' });
+    // 特效：表面涟漪尘雾 + 一串上行液滴飞进管口
+    const r = c.innerRect();
+    const sx = Math.max(r.x + 4, Math.min(r.x + r.w - 4, this.x + this.w / 2));
+    puffFx(scene, sx, r.y + 3, { color: '225,245,255', r: 4, spread: 10, life: 0.35 });
+    flowFx(scene, {
+      x0: sx, y0: r.y + 6,
+      x1: this.x + this.w / 2, y1: this.y + this.h * 0.45,
+      color: solutionColor(new Solution({ volume: this.capacity, water: this.liquid > 0 ? 1 : 0, solutes: this.substance === 'H2O' ? {} : { [this.substance]: this.liquid } })).color,
+      life: 0.4, n: 6, bend: 0.25,
+    });
     return true;
   }
 
