@@ -76,13 +76,15 @@ export class Solution {
     }
     const next = (this.solutes.get(id) ?? 0) + m;
     if (next < MIN_ENTRY) return; // 微量不入账：防"0.000g ↔ 不显示"的条目抖动
-    // 微溶饱和：超出的部分析出（溶液保持饱和浓度；析出的量进容器沉淀）
+    // 微溶饱和：溶液先持续**变浑浊**（渲染按浓度/饱和线），拉到饱和浓度后才开始析出；
+    // 再留一段"过饱和带"（1.25×）才真正出沉淀——"过了过饱和线才开始出沉淀颗粒"
     const sub = getSubstance(id);
     if (sub && sub.solubilityLimit > 0 && this.volume > 0 && typeof this.onOversaturate === 'function') {
-      const limitMass = sub.solubilityLimit * (this.volume / 1000);
-      if (next > limitMass) {
-        const excess = next - limitMass;
-        this.solutes.set(id, limitMass);
+      const satMass = sub.solubilityLimit * (this.volume / 1000); // 饱和浓度对应的质量
+      const overMass = satMass * 1.25; // 过饱和带（1.25× 后才析出）
+      if (next > overMass) {
+        const excess = next - overMass;
+        this.solutes.set(id, overMass);
         this.onOversaturate(id, excess);
         return;
       }

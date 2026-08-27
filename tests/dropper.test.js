@@ -149,9 +149,9 @@ test('handleSceneTapDown/Up + 长按：按下滴一滴并标记按住，按住�
   assert.equal(handleSceneTapDown(scene, canvas, 430, 630), true, '按下应命中滴管');
   assert.equal(scene._pressTap, dr, '应标记按住目标');
   assert.ok(Math.abs(beaker.solution.mass('HCl') - 1) < 1e-9, '按下即滴一滴');
-  // 按住：每 0.18s 一滴（≈每 6 tick 一滴：20 tick 内第 6/11/16 tick 再滴 3 滴 → 共 4g）
+  // 按住：每 0.08s 一滴（≈每 2.4 tick 一滴：20 tick（0.67s）内再滴 ≥5 滴 → 总量 ≥6g）
   for (let i = 0; i < 20; i++) scene.step(TICK);
-  assert.ok(Math.abs(beaker.solution.mass('HCl') - 4) < 1e-9, `按住应持续滴（0.67s→+3滴）：${beaker.solution.mass('HCl')}`);
+  assert.ok(beaker.solution.mass('HCl') >= 6, `按住应快速持续滴（0.67s→≥5滴）：${beaker.solution.mass('HCl')}`);
   // 松开 → 停止
   handleSceneTapUp(scene);
   assert.equal(scene._pressTap, null, '松开应清除按住');

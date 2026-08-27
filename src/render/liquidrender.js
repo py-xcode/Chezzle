@@ -11,6 +11,8 @@ import { hexToRgb, rgbToHex, mix } from './color.js';
 /**
  * 计算溶液颜色与透明度（无色→饱和色平滑过渡）。
  * 指示剂（石蕊/酚酞）：按溶液 pH 显色，与离子色叠加。
+ * 微溶物质（solubilityLimit）：按"浓度/饱和线"产生**浑浊度**——接近饱和时溶液
+ * 开始泛乳白（先浑浊），过饱和带（1.25×）时最浑（随后才开始析出沉淀）。
  */
 export function solutionColor(solution) {
   let idx = 0;
@@ -37,6 +39,21 @@ export function solutionColor(solution) {
     const t = Math.min(1, idx);
     const ion = rgbToHex({ r: r / w, g: g / w, b: b / w });
     base = { color: mix('#aaaaaa', ion, t), alpha: 0.12 + 0.73 * t };
+  }
+  // 微溶浑浊：浓度越高越乳白（0=清澈；≥饱和线=明显浑浊；过饱和带最浑——沉淀即将出现）
+  let turb = 0;
+  for (const [id, mass] of solution.solutes) {
+    const sub = getSubstance(id);
+    if (!(sub.solubilityLimit > 0)) continue;
+    const concFrac = (mass * 1000) / (solution.volume * sub.solubilityLimit); // 浓度 / 饱和线
+    turb = Math.max(turb, Math.min(1, concFrac / 1.25));
+  }
+  if (turb > 0.02) {
+    const te = turb * turb * 0.62; // 曲线：浓度爬升时先明显变浑、越浓越白
+    base = {
+      color: mix(base.color, '#e9eef2', te),
+      alpha: base.alpha * (1 - te * 0.35) + 0.5 * te,
+    };
   }
   // 指示剂显色（石蕊红/紫/蓝，酚酞无色/浅红/深红，甲基橙红/橙/黄）
   const pH = solution.pH ? solution.pH() : 7;

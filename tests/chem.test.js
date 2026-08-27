@@ -100,28 +100,30 @@ test('溶解度判定（初中规则）', () => {
   assert.equal(getSubstance('Sr(NO3)2').soluble, 'soluble');
 });
 
-// ---- 2.5 微溶物质：过饱和析出（用户需求：CaCl2 持续滴 NaOH → Ca(OH)2 浑浊）----
-test('Solution 饱和析出：超过溶解度上限 → onOversaturate + 溶液锁定饱和浓度', () => {
-  const sol = new Solution({ volume: 200 }); // Ca(OH)2 上限 = 1.7g/L × 0.2L = 0.34g
+// ---- 2.5 微溶物质：过饱和析出（用户需求：CaCl2 持续滴 NaOH → 先浑浊后析出）----
+test('Solution 微溶：接近饱和不析出（仅变浑浊），过饱和带（1.25×）后才析出', () => {
+  const sol = new Solution({ volume: 200 }); // Ca(OH)2 上限 = 12g/L × 0.2L = 2.4g；过饱和带 1.25× = 3.0g
   let out = 0;
   sol.onOversaturate = (id, excess) => { out += excess; };
-  sol.add('Ca(OH)2', 0.1);
+  sol.add('Ca(OH)2', 0.5); // 远低于饱和：不析出（只浑浊）
   assert.equal(out, 0, '低于饱和不析出');
-  assert.ok(Math.abs(sol.mass('Ca(OH)2') - 0.1) < 1e-9);
-  sol.add('Ca(OH)2', 0.4); // 0.5 > 0.34 → 析出 0.16
-  assert.ok(Math.abs(out - 0.16) < 1e-9, `析出 ${out.toFixed(3)}`);
-  assert.ok(Math.abs(sol.mass('Ca(OH)2') - 0.34) < 1e-9, '溶液应锁定饱和浓度');
+  sol.add('Ca(OH)2', 2.0); // 2.5g < 3.0：仍不析出（过饱和带内——溶液已浑浊）
+  assert.equal(out, 0, '过饱和带内（1×~1.25×）不析出——只是浑浊');
+  assert.ok(Math.abs(sol.mass('Ca(OH)2') - 2.5) < 1e-9);
+  sol.add('Ca(OH)2', 1.0); // 3.5 > 3.0 → 析出 0.5，溶液锁在过饱和带顶
+  assert.ok(Math.abs(out - 0.5) < 1e-9, `析出 ${out.toFixed(3)}`);
+  assert.ok(Math.abs(sol.mass('Ca(OH)2') - 3.0) < 1e-9, '溶液应锁定在过饱和带顶');
 });
 
-test('微溶驱动：CaCl2+NaOH 同池 → Ca(OH)2 生成并过饱和析出（浑浊）', () => {
+test('微溶驱动：CaCl2+NaOH 同池 → Ca(OH)2 生成并过饱和析出（浑浊→沉淀）', () => {
   const mat = new SolutionMaterial(new Solution({ volume: 200, solutes: { CaCl2: 20, NaOH: 20 } }));
   let precipitated = 0;
   mat.solution.onOversaturate = (id, excess) => { precipitated += excess; };
   const engine = new ChemistryEngine();
   const env = makeEnv();
   for (let i = 0; i < 600; i++) engine.reactSelf(mat, TICK, env, { skipDissolution: true });
-  assert.ok(precipitated > 1, `应析出 Ca(OH)2（浑浊）：${precipitated.toFixed(2)}g`);
-  assert.ok(Math.abs(mat.solution.mass('Ca(OH)2') - 0.34) < 0.02, `溶液应保持饱和：${mat.solution.mass('Ca(OH)2').toFixed(3)}`);
+  assert.ok(precipitated > 1, `应析出 Ca(OH)2（浑浊→沉淀）：${precipitated.toFixed(2)}g`);
+  assert.ok(Math.abs(mat.solution.mass('Ca(OH)2') - 3.0) < 0.05, `溶液应锁定过饱和带顶：${mat.solution.mass('Ca(OH)2').toFixed(3)}`);
   assert.ok(mat.solution.mass('NaCl') > 5, `副产物 NaCl：${mat.solution.mass('NaCl').toFixed(2)}`);
 });
 

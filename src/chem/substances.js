@@ -192,7 +192,7 @@ SUBSTANCES['CH3COOH'] = { id: 'CH3COOH', mm: 60, state: 'liquid', kind: 'acid', 
 // --- 碱（acidStrength 同用于碱的电离强弱）---
 SUBSTANCES['NaOH'] = { id: 'NaOH', mm: 40, state: 'solid', kind: 'base', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'Na+', an: 'OH-', catCount: 1, anCount: 1 }, solid: ['#ffffff'] };
 SUBSTANCES['KOH'] = { id: 'KOH', mm: 56, state: 'solid', kind: 'base', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'K+', an: 'OH-', catCount: 1, anCount: 1 }, solid: ['#ffffff'] };
-SUBSTANCES['Ca(OH)2'] = { id: 'Ca(OH)2', mm: 74, state: 'solid', kind: 'base', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'Ca2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#f4f4f4'], solubilityLimit: 1.7 }; // 微溶（20°C ≈1.7g/L：持续滴碱会过饱和析出——石灰乳浑浊）
+SUBSTANCES['Ca(OH)2'] = { id: 'Ca(OH)2', mm: 74, state: 'solid', kind: 'base', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'Ca2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#f4f4f4'], solubilityLimit: 12 }; // 微溶（游戏值 12g/L：200ml 池滴约 3~4 次才达饱和——先浑浊后沉淀）
 SUBSTANCES['Cu(OH)2'] = { id: 'Cu(OH)2', mm: 98, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Cu2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#00afff'] };
 SUBSTANCES['Fe(OH)3'] = { id: 'Fe(OH)3', mm: 107, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Fe3+', an: 'OH-', catCount: 1, anCount: 3 }, solid: ['#002929'] };
 SUBSTANCES['Mg(OH)2'] = { id: 'Mg(OH)2', mm: 58, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Mg2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#f2f2f2'] };
@@ -210,7 +210,7 @@ defineSalt('Zn2+', 'Cl-', { solid: ['#ffffff'] });
 defineSalt('Mg2+', 'Cl-', { solid: ['#ffffff'] });
 defineSalt('Ca2+', 'Cl-', { solid: ['#ffffff'] });
 defineSalt('Ba2+', 'Cl-', { solid: ['#ffffff'] });
-defineSalt('Ca2+', 'SO4^2-', { solid: ['#ffffff'], solubilityLimit: 2 }); // CaSO4 微溶（-2g/L）
+defineSalt('Ca2+', 'SO4^2-', { solid: ['#ffffff'], solubilityLimit: 10 }); // CaSO4 微溶（游戏值 10g/L）
 defineSalt('Na+', 'CO3^2-', { solid: ['#ffffff'], dense: true }); // Na2CO3 致密晶形壳：碳化壳真正保护内核——挡 CO2 继续碳化（自限）、挡酸蚀从外到内逐层剥壳（否则盐酸穿透壳掏空内核成碎片）
 defineSalt('Ca2+', 'CO3^2-', { solid: ['#f2f2f2'], dense: true });   // CaCO3 晶形致密（石灰水检验）
 defineSalt('Ba2+', 'SO4^2-', { solid: ['#ffffff'], dense: true });  // BaSO4 致密（检验硫酸根）
@@ -218,9 +218,9 @@ defineSalt('Ag+', 'Cl-', { solid: ['#ffffff'], dense: true });      // AgCl 致�
 defineSalt('Ag+', 'Br-', { solid: ['#f2e3b0'] });                   // AgBr 淡黄↓（检验溴离子）
 defineSalt('Ag+', 'I-', { solid: ['#ffe98a'] });                    // AgI 黄↓（检验碘离子）
 defineSalt('Ag+', 'NO3-', { solid: ['#ffffff'] });
-defineSalt('Ag+', 'SO4^2-', { solid: ['#ffffff'], solubilityLimit: 8 }); // Ag2SO4 微溶（≈8g/L，中等浓度即析出）
+defineSalt('Ag+', 'SO4^2-', { solid: ['#ffffff'], solubilityLimit: 20 }); // Ag2SO4 微溶（游戏值 20g/L）
 defineSalt('Pb2+', 'NO3-', { solid: ['#ffffff'] });  // Pb(NO3)2 硝酸铅（离子双置换的铅源）
-defineSalt('Pb2+', 'Cl-', { solid: ['#ffffff'], solubilityLimit: 10 }); // PbCl2 微溶（冷水中难溶）
+defineSalt('Pb2+', 'Cl-', { solid: ['#ffffff'], solubilityLimit: 20 }); // PbCl2 微溶（游戏值 20g/L）
 defineSalt('Sr2+', 'NO3-', { solid: ['#ffffff'] });  // Sr(NO3)2 硝酸锶
 defineSalt('Cu2+', 'NO3-', { solid: ['#b7e4ff'] });
 defineSalt('Fe3+', 'NO3-', { solid: ['#ffd9a8'] });

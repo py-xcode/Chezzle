@@ -378,10 +378,10 @@ class Scene {
       if (typeof obj.update === 'function') obj.update(dt, this);
     }
 
-    // 1.2 长按持续操作（按住滴管=持续滴加，直到松开/用完/失败）
+    // 1.2 长按持续操作（按住滴管=持续滴加，直到松开/用完/失败；0.08s/滴）
     if (this._pressTap) {
       this._pressTapT = (this._pressTapT ?? 0) + dt;
-      if (this._pressTapT >= 0.18) {
+      if (this._pressTapT >= 0.08) {
         this._pressTapT = 0;
         const o = this._pressTap;
         if (!this.objects.includes(o) || typeof o.onTap !== 'function' || !o.onTap(this)) {
@@ -2418,7 +2418,7 @@ SUBSTANCES['CH3COOH'] = { id: 'CH3COOH', mm: 60, state: 'liquid', kind: 'acid', 
 // --- 碱（acidStrength 同用于碱的电离强弱）---
 SUBSTANCES['NaOH'] = { id: 'NaOH', mm: 40, state: 'solid', kind: 'base', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'Na+', an: 'OH-', catCount: 1, anCount: 1 }, solid: ['#ffffff'] };
 SUBSTANCES['KOH'] = { id: 'KOH', mm: 56, state: 'solid', kind: 'base', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'K+', an: 'OH-', catCount: 1, anCount: 1 }, solid: ['#ffffff'] };
-SUBSTANCES['Ca(OH)2'] = { id: 'Ca(OH)2', mm: 74, state: 'solid', kind: 'base', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'Ca2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#f4f4f4'], solubilityLimit: 1.7 }; // 微溶（20°C ≈1.7g/L：持续滴碱会过饱和析出——石灰乳浑浊）
+SUBSTANCES['Ca(OH)2'] = { id: 'Ca(OH)2', mm: 74, state: 'solid', kind: 'base', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'Ca2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#f4f4f4'], solubilityLimit: 12 }; // 微溶（游戏值 12g/L：200ml 池滴约 3~4 次才达饱和——先浑浊后沉淀）
 SUBSTANCES['Cu(OH)2'] = { id: 'Cu(OH)2', mm: 98, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Cu2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#00afff'] };
 SUBSTANCES['Fe(OH)3'] = { id: 'Fe(OH)3', mm: 107, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Fe3+', an: 'OH-', catCount: 1, anCount: 3 }, solid: ['#002929'] };
 SUBSTANCES['Mg(OH)2'] = { id: 'Mg(OH)2', mm: 58, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Mg2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#f2f2f2'] };
@@ -2436,7 +2436,7 @@ defineSalt('Zn2+', 'Cl-', { solid: ['#ffffff'] });
 defineSalt('Mg2+', 'Cl-', { solid: ['#ffffff'] });
 defineSalt('Ca2+', 'Cl-', { solid: ['#ffffff'] });
 defineSalt('Ba2+', 'Cl-', { solid: ['#ffffff'] });
-defineSalt('Ca2+', 'SO4^2-', { solid: ['#ffffff'], solubilityLimit: 2 }); // CaSO4 微溶（-2g/L）
+defineSalt('Ca2+', 'SO4^2-', { solid: ['#ffffff'], solubilityLimit: 10 }); // CaSO4 微溶（游戏值 10g/L）
 defineSalt('Na+', 'CO3^2-', { solid: ['#ffffff'], dense: true }); // Na2CO3 致密晶形壳：碳化壳真正保护内核——挡 CO2 继续碳化（自限）、挡酸蚀从外到内逐层剥壳（否则盐酸穿透壳掏空内核成碎片）
 defineSalt('Ca2+', 'CO3^2-', { solid: ['#f2f2f2'], dense: true });   // CaCO3 晶形致密（石灰水检验）
 defineSalt('Ba2+', 'SO4^2-', { solid: ['#ffffff'], dense: true });  // BaSO4 致密（检验硫酸根）
@@ -2444,9 +2444,9 @@ defineSalt('Ag+', 'Cl-', { solid: ['#ffffff'], dense: true });      // AgCl 致�
 defineSalt('Ag+', 'Br-', { solid: ['#f2e3b0'] });                   // AgBr 淡黄↓（检验溴离子）
 defineSalt('Ag+', 'I-', { solid: ['#ffe98a'] });                    // AgI 黄↓（检验碘离子）
 defineSalt('Ag+', 'NO3-', { solid: ['#ffffff'] });
-defineSalt('Ag+', 'SO4^2-', { solid: ['#ffffff'], solubilityLimit: 8 }); // Ag2SO4 微溶（≈8g/L，中等浓度即析出）
+defineSalt('Ag+', 'SO4^2-', { solid: ['#ffffff'], solubilityLimit: 20 }); // Ag2SO4 微溶（游戏值 20g/L）
 defineSalt('Pb2+', 'NO3-', { solid: ['#ffffff'] });  // Pb(NO3)2 硝酸铅（离子双置换的铅源）
-defineSalt('Pb2+', 'Cl-', { solid: ['#ffffff'], solubilityLimit: 10 }); // PbCl2 微溶（冷水中难溶）
+defineSalt('Pb2+', 'Cl-', { solid: ['#ffffff'], solubilityLimit: 20 }); // PbCl2 微溶（游戏值 20g/L）
 defineSalt('Sr2+', 'NO3-', { solid: ['#ffffff'] });  // Sr(NO3)2 硝酸锶
 defineSalt('Cu2+', 'NO3-', { solid: ['#b7e4ff'] });
 defineSalt('Fe3+', 'NO3-', { solid: ['#ffd9a8'] });
@@ -2798,13 +2798,15 @@ class Solution {
     }
     const next = (this.solutes.get(id) ?? 0) + m;
     if (next < MIN_ENTRY) return; // 微量不入账：防"0.000g ↔ 不显示"的条目抖动
-    // 微溶饱和：超出的部分析出（溶液保持饱和浓度；析出的量进容器沉淀）
+    // 微溶饱和：溶液先持续**变浑浊**（渲染按浓度/饱和线），拉到饱和浓度后才开始析出；
+    // 再留一段"过饱和带"（1.25×）才真正出沉淀——"过了过饱和线才开始出沉淀颗粒"
     const sub = getSubstance(id);
     if (sub && sub.solubilityLimit > 0 && this.volume > 0 && typeof this.onOversaturate === 'function') {
-      const limitMass = sub.solubilityLimit * (this.volume / 1000);
-      if (next > limitMass) {
-        const excess = next - limitMass;
-        this.solutes.set(id, limitMass);
+      const satMass = sub.solubilityLimit * (this.volume / 1000); // 饱和浓度对应的质量
+      const overMass = satMass * 1.25; // 过饱和带（1.25× 后才析出）
+      if (next > overMass) {
+        const excess = next - overMass;
+        this.solutes.set(id, overMass);
         this.onOversaturate(id, excess);
         return;
       }
@@ -9087,6 +9089,8 @@ const { hexToRgb, rgbToHex, mix } = __require('src/render/color.js');;
 /**
  * 计算溶液颜色与透明度（无色→饱和色平滑过渡）。
  * 指示剂（石蕊/酚酞）：按溶液 pH 显色，与离子色叠加。
+ * 微溶物质（solubilityLimit）：按"浓度/饱和线"产生**浑浊度**——接近饱和时溶液
+ * 开始泛乳白（先浑浊），过饱和带（1.25×）时最浑（随后才开始析出沉淀）。
  */
 function solutionColor(solution) {
   let idx = 0;
@@ -9113,6 +9117,21 @@ function solutionColor(solution) {
     const t = Math.min(1, idx);
     const ion = rgbToHex({ r: r / w, g: g / w, b: b / w });
     base = { color: mix('#aaaaaa', ion, t), alpha: 0.12 + 0.73 * t };
+  }
+  // 微溶浑浊：浓度越高越乳白（0=清澈；≥饱和线=明显浑浊；过饱和带最浑——沉淀即将出现）
+  let turb = 0;
+  for (const [id, mass] of solution.solutes) {
+    const sub = getSubstance(id);
+    if (!(sub.solubilityLimit > 0)) continue;
+    const concFrac = (mass * 1000) / (solution.volume * sub.solubilityLimit); // 浓度 / 饱和线
+    turb = Math.max(turb, Math.min(1, concFrac / 1.25));
+  }
+  if (turb > 0.02) {
+    const te = turb * turb * 0.62; // 曲线：浓度爬升时先明显变浑、越浓越白
+    base = {
+      color: mix(base.color, '#e9eef2', te),
+      alpha: base.alpha * (1 - te * 0.35) + 0.5 * te,
+    };
   }
   // 指示剂显色（石蕊红/紫/蓝，酚酞无色/浅红/深红，甲基橙红/橙/黄）
   const pH = solution.pH ? solution.pH() : 7;

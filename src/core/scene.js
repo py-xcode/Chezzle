@@ -252,10 +252,10 @@ export class Scene {
       if (typeof obj.update === 'function') obj.update(dt, this);
     }
 
-    // 1.2 长按持续操作（按住滴管=持续滴加，直到松开/用完/失败）
+    // 1.2 长按持续操作（按住滴管=持续滴加，直到松开/用完/失败；0.08s/滴）
     if (this._pressTap) {
       this._pressTapT = (this._pressTapT ?? 0) + dt;
-      if (this._pressTapT >= 0.18) {
+      if (this._pressTapT >= 0.08) {
         this._pressTapT = 0;
         const o = this._pressTap;
         if (!this.objects.includes(o) || typeof o.onTap !== 'function' || !o.onTap(this)) {
