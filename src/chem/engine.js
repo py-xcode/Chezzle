@@ -395,8 +395,13 @@ export class ChemistryEngine {
     for (const c of cands) this._runRedox(c, dt, env, ctx);
   }
 
-  /** 收集氧化剂×还原剂候选，按氧化剂强度/还原性排序（强氧化剂优先消耗共享还原剂） */
+  /** 收集氧化剂×还原剂候选，按氧化剂强度/还原性排序（强氧化剂优先消耗共享还原剂）
+   *  干式台子（无水容器）：通用离子氧化还原（金属+盐/酸的置换）不放行——
+   *  离子反应需要溶液介质（Fe + FeCl3 → FeCl2 只在**水溶液**中发生；干灯上
+   *  铁粉被氯气点燃只会烧到 FeCl3 为止）。设计内的固-固反应（铝热、CuO+碳
+   *  还原、金属+卤素化合等）走各自的专用规则表，不经此处，不受影响。 */
   _redoxCandidates(matA, matB, env, ctx) {
+    if (ctx.inContainer && !ctx.inLiquid) return [];
     const out = [];
     const oxIdsOf = (mat) => {
       const list = [];
