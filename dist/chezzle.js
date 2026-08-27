@@ -112,7 +112,8 @@ const CFG = {
   item: {
     collectRange: 90,      // C 拾取物品半径
     liquidRange: 80,       // C 吸液 / X 倒出 / 通入气体的目标容器距离
-    dragRange: 130,        // 可拖动滴管的玩家最大距离（中心距离，滴管细长）
+    dragRange: 480,        // 可拖动滴管的玩家最大距离（中心距离；用户反馈 130 太小 —— 扩大）
+    dragSlack: 14,         // 回抓宽限：拖到边界后再抓，允许超出 dragRange 一点也能重新抓住
     beakerCapacity: 200,   // 标准烧杯容量（g；与编辑器烧杯默认 volume 一致）
     beakerTransfer: 20,    // 烧杯每次 C 吸液量（g）
     pourStep: 10,          // 烧杯每次 X 倒出量（g）——分次倒，不再一次全倒
@@ -123,10 +124,11 @@ const CFG = {
     gasRate: 0.05,         // 通入气体速率（g/s）
     placeOffset: 6,        // 放置物品离玩家边缘的间隙（px）
     dragStartPx: 6,        // 按住后移动超过该屏幕距离 → 判定为拖动（不滴）
-    dripArmDelay: 0.22,    // 按住多久转"长按持续滴"（s）——留出拖动判定窗口，
-                           // 之前 0.08s 几乎必然先开滴，拖不动（用户反馈）
+    dripArmDelay: 0.5,     // 按住多久转"长按持续滴"/"液下吸取"（s；用户明确 >0.5s）——
+                           // 留出拖动判定窗口，0.22s 太短，拖动常被误判成长按滴（用户反馈）
     dripPeriod: 0.08,      // 长按持续滴的节奏（s/滴；0fd5314 调定的手感值保留）
     dragAbortPx: 10,       // 长按已开滴后再移动超过该距离 → 停滴转为拖动
+    suckPeriod: 0.3,       // 液下长按吸取的节奏（s/手 ≤ dropperTransfer g）
   },
 
   lampRange: 70, // px（灯提供加热/点燃的半径）
@@ -215,8 +217,9 @@ class Scene {
     this._pressTap = null; // 按住的目标（长按持续执行 onTap，如滴管连续滴）
     this._pressTapT = 0; // 距上次触发的时间
     this._pressCand = null; // 按下候选（拖动 vs 点击滴液判定）
-    this._pressHome = null; // 长按开滴时的按下原点（供"再拖动→停滴转拖动"抢断）
+    this._pressHome = null; // 长按开滴/开吸时的按下原点（供"再拖动→停滴转拖动"抢断）
     this._drag = null; // 正在拖动的物品（滴管）
+    this._holdSuck = null; // 液下长按吸取进行中（{obj,t}；每 suckPeriod 吸一手）
     this._gasHold = null; // 按住 C 集气的集气瓶（Player.update 每帧设置）
     this.mouse = null; // 调试模式悬停：{x,y,on}（屏幕坐标，由 builder 鼠标监听写入）
     this._rxLogT = {}; // 玩家反应日志限频：规范化反应式 → 上次记录时刻（防"反应抖动"）
@@ -7751,58 +7754,70 @@ function handleSceneTapUp(scene) {
 }
 
 /**
- * 按下（可拖动物体，如滴管）：先进入候选——移动 >dragStartPx = 拖动（不滴）；
- * 按住 dripArmDelay = 长按开始滴；快速抬起 = 单击滴一滴（在按下位置补滴）。
- * 仅当玩家在 dragRange 内时才候选（远离玩家的滴管 = 普通点击滴液）。
+ * 按下（滴管）：按命中位置分流——
+ * ① 红色胶头（onBulb）：滴加的**唯一起点**。单击（<0.5s 快速抬起）= 滴一滴；
+ *    长按（≥0.5s）= 液上持续滴加 / 液下吸取（尖端在液面下；按滴管自身判定）；
+ * ② 玻璃段（isDraggable）：只能拖动（永不转滴）——玩家在 dragRange+slack 内才可；
+ * ③ 其它可点击物体（非可拖动类）：立即触发 + 长按（旧行为）。
+ * 落在滴管玻璃段但玩家太远 / 无容器等 → 未命中（不滴也不拖）。
  */
 function handleScenePressDown(scene, canvas, sx, sy, onInfo = null) {
   if (!scene) return false;
   scene._pressHome = null;
   const hit = hitTap(scene, canvas, sx, sy);
-  // 胶头区（滴管红色吸头段）：按下进入"长按吸取"候选——任意距离都可用，
-  // 松开时若尖端在液面下且管为空则吸取（不会触发滴液）
-  if (hit && typeof hit.obj.onBulb === 'function' && hit.obj.onBulb(hit.world)) {
-    scene._pressCand = { mode: 'suck', obj: hit.obj, startX: sx, startY: sy, world: hit.world, downT: 0, moved: false };
+  if (!hit) {
+    scene._pressCand = null;
+    onInfo?.({ type: 'miss', world: screenToWorld(scene, canvas, sx, sy) });
+    return false;
+  }
+  // ① 红色胶头：任意距离可滴/可吸
+  if (typeof hit.obj.onBulb === 'function' && hit.obj.onBulb(hit.world)) {
+    scene._pressCand = { mode: 'bulb', obj: hit.obj, startX: sx, startY: sy, world: hit.world, downT: 0, moved: false };
     scene._pressTap = null;
     scene._pressTapT = 0;
-    onInfo?.({ type: 'suck-press', object: hit.obj, world: hit.world });
+    onInfo?.({ type: 'press', object: hit.obj, world: hit.world, bulb: true });
     return true;
   }
-  if (hit && hit.obj.isDraggable && scene.player && dist(scene.player, hit.obj) <= CFG.item.dragRange) {
-    scene._pressCand = { obj: hit.obj, startX: sx, startY: sy, world: hit.world, downT: 0, moved: false };
+  // ② 玻璃段拖动候选：靠近玩家才可拖动
+  if (hit.obj.isDraggable && scene.player && dist(scene.player, hit.obj) <= CFG.item.dragRange + CFG.item.dragSlack) {
+    scene._pressCand = { mode: 'drag', obj: hit.obj, startX: sx, startY: sy, world: hit.world, downT: 0, moved: false };
     scene._pressTap = null;
     scene._pressTapT = 0;
     onInfo?.({ type: 'press', object: hit.obj, world: hit.world });
     return true;
   }
+  // ③ 其它可点击物体（非可拖动物）：立即触发 + 长按（旧行为）
   scene._pressCand = null;
-  return handleSceneTapDown(scene, canvas, sx, sy, onInfo);
+  if (typeof hit.obj.onTap === 'function' && !hit.obj.isDraggable) {
+    return handleSceneTapDown(scene, canvas, sx, sy, onInfo);
+  }
+  onInfo?.({ type: 'miss', world: hit.world });
+  return false;
 }
 
-/** 移动（按住期间）：拖动 = 移动滴管位置（取消潜在长按滴加）；
- *  **已开滴的长按**再拖出 dragAbortPx → 停滴转拖动（修长按/拖动冲突） */
+/** 移动（按住期间）：拖动 = 移动滴管位置；胶头/玻璃段都允许拖。
+ *  候选期拖出 dragStartPx → 拖动（不滴）；已开滴/开吸再拖出 dragAbortPx → 停转拖动 */
 function handleScenePressMove(scene, canvas, sx, sy) {
   if (!scene) return;
   const c = scene._pressCand;
-  // 胶头吸取候选：大幅移动视为放弃（不滴、不转拖动）
-  if (c && c.mode === 'suck') {
-    if (!c.moved && Math.hypot(sx - c.startX, sy - c.startY) > CFG.item.dragStartPx) c.moved = true;
-    return;
-  }
   if (c && !c.moved && Math.hypot(sx - c.startX, sy - c.startY) > CFG.item.dragStartPx) {
-    c.moved = true; // 进入拖动：取消按住滴加（偏移取按下点，避免"先跳一下"）
+    c.moved = true;
+    // 拖动门槛：滴管不能离玩家太远（拖出范围=放弃，不滴不拖）
+    const p = scene.player;
+    if (!p || dist(p, c.obj) > CFG.item.dragRange + CFG.item.dragSlack) return;
     scene._pressTap = null;
     scene._pressTapT = 0;
     const w0 = screenToWorld(scene, canvas, c.startX, c.startY);
     scene._drag = { obj: c.obj, ox: c.obj.x - w0.x, oy: c.obj.y - w0.y };
   }
-  // 长按滴加进行中（候选已被消费）又拖出 abort 距离 → 停滴、转为拖动同一物体
+  // 长按已开滴/开吸（候选已被消费）又拖出 abort 距离 → 停、转为拖动同一物体
   const h = scene._pressHome;
-  if (!c && !scene._drag && scene._pressTap && h && h.obj.isDraggable
+  if (!c && !scene._drag && (scene._pressTap || scene._holdSuck) && h && h.obj.isDraggable
       && Math.hypot(sx - h.sx, sy - h.sy) > CFG.item.dragAbortPx
-      && scene.player && dist(scene.player, h.obj) <= CFG.item.dragRange) {
+      && scene.player && dist(scene.player, h.obj) <= CFG.item.dragRange + CFG.item.dragSlack) {
     scene._pressTap = null;
     scene._pressTapT = 0;
+    scene._holdSuck = null;
     scene._pressHome = null;
     const w0 = screenToWorld(scene, canvas, h.sx, h.sy);
     scene._drag = { obj: h.obj, ox: h.obj.x - w0.x, oy: h.obj.y - w0.y };
@@ -7813,7 +7828,7 @@ function handleScenePressMove(scene, canvas, sx, sy) {
     const w = screenToWorld(scene, canvas, sx, sy);
     let nx = w.x + d.ox;
     let ny = w.y + d.oy;
-    // 拖动范围钳制：滴管拖不出玩家的 dragRange——越界时贴着边界走并提示
+    // 拖动范围钳制：滴管拖不出玩家的 dragRange——越界时贴着边界走并提示（一次/会话）
     const p = scene.player;
     if (p) {
       const pcx = p.x + p.w / 2;
@@ -7825,7 +7840,10 @@ function handleScenePressMove(scene, canvas, sx, sy) {
         const k = CFG.item.dragRange / L;
         nx = pcx + dx * k - o.w / 2;
         ny = pcy + dy * k - o.h / 2;
-        pushNotice(scene, '距离玩家太远——滴管拖不出这个范围');
+        if (!d._noticed) {
+          d._noticed = true;
+          pushNotice(scene, '距离玩家太远——滴管拖不出这个范围');
+        }
       }
     }
     o.x = nx;
@@ -7833,43 +7851,61 @@ function handleScenePressMove(scene, canvas, sx, sy) {
   }
 }
 
-/** 抬起：结束候选/拖动；候选未移动 → 单击（在按下位置滴一滴）；
- *  胶头候选 → 松开执行"液下吸取" */
+/** 抬起：快速单击胶头 = 滴一滴（长按/液下吸取已在 stepPressTap 觉醒）；
+ *  玻璃段候选不滴（松开即完成，仅拖动会移动位置）；结束一切按住状态 */
 function handleScenePressUp(scene, canvas = null) {
   if (!scene) return;
   const c = scene._pressCand;
-  if (c && c.mode === 'suck') {
-    scene._pressCand = null; // 无论按多久，松开才算吸取（长按只是蓄势的手感）
-    if (!c.moved && typeof c.obj.attemptSubmergeSuck === 'function') c.obj.attemptSubmergeSuck(scene);
-    handleSceneTapUp(scene);
-    return;
-  }
-  if (c && !c.moved && canvas) {
+  if (c && c.mode === 'bulb' && !c.moved && c.downT < CFG.item.dripArmDelay && canvas) {
     scene._pressCand = null;
-    handleSceneTapDown(scene, canvas, c.startX, c.startY);
+    handleSceneTapDown(scene, canvas, c.startX, c.startY); // 单击：在按下位置滴一滴
   }
   scene._pressCand = null;
   scene._drag = null;
+  scene._holdSuck = null;
   scene._pressHome = null;
   handleSceneTapUp(scene);
 }
 
-/** 每 tick 推进：候选长按转换（dripArmDelay 留出拖动窗口）+ 按住持续执行。
- *  胶头吸取候选不在此转换（松开才吸取，见 handleScenePressUp）。 */
+/** 每 tick 推进：候选长按觉醒（≥ dripArmDelay：液下→吸取 / 液上→持续滴，胶头专属）
+ *  + 液下持续吸取节奏 + 长按持续滴节奏 */
 function stepPressTap(scene, dt) {
   if (!scene) return;
   const c = scene._pressCand;
-  if (c && c.mode !== 'suck' && !c.moved) {
+  if (c && c.mode === 'bulb' && !c.moved) {
     c.downT = (c.downT ?? 0) + dt;
     if (c.downT >= CFG.item.dripArmDelay) {
-      // 长按开始：转换为按住滴加（滴一笔 + 进入节奏）；记录按下原点供"拖动抢断"
+      // 长按觉醒：液下 → 吸取；液上 → 持续滴加（都只在胶头发生——玻璃段永不滴）
       scene._pressCand = null;
-      const ok = c.obj.onTap(scene);
-      scene._pressTap = ok ? c.obj : null;
-      scene._pressTapT = 0;
-      if (ok) scene._pressHome = { obj: c.obj, sx: c.startX, sy: c.startY };
+      const o = c.obj;
+      const sub = typeof o._submergedIn === 'function' ? o._submergedIn(scene) : null;
+      scene._pressHome = { obj: o, sx: c.startX, sy: c.startY };
+      if (sub) {
+        scene._holdSuck = { obj: o, t: 0 };
+        if (!o.attemptSuckOnce(scene)) {
+          scene._holdSuck = null;
+          scene._pressHome = null;
+        }
+      } else {
+        const ok = o.onTap(scene);
+        scene._pressTap = ok ? o : null;
+        scene._pressTapT = 0;
+        if (!ok) scene._pressHome = null;
+      }
     }
   }
+  // 液下持续吸取（每 suckPeriod 吸一手；管满/换液/尖端出液面自动停）
+  if (scene._holdSuck) {
+    scene._holdSuck.t += dt;
+    if (scene._holdSuck.t >= CFG.item.suckPeriod) {
+      scene._holdSuck.t = 0;
+      const o = scene._holdSuck.obj;
+      if (!scene.objects.includes(o) || typeof o.attemptSuckOnce !== 'function' || !o.attemptSuckOnce(scene)) {
+        scene._holdSuck = null;
+      }
+    }
+  }
+  // 长按持续滴
   if (scene._pressTap) {
     scene._pressTapT = (scene._pressTapT ?? 0) + dt;
     if (scene._pressTapT >= CFG.item.dripPeriod) {
@@ -12703,27 +12739,36 @@ class Dropper extends Obj {
     return true;
   }
 
-  /** 点击点是否落在"胶头/管口上段"（红色吸头区）——该区按下=长按吸取，不再触发滴液 */
+  /** 点击点是否落在"红色胶头"上——只有胶头区能触发滴加（单击=滴一滴、
+   *  长按=持续滴/液下吸取）；玻璃段只能拖动。world 为世界坐标。 */
   onBulb(world) {
     if (!world) return false;
-    return world.y <= this.y + 16; // 胶头（顶 ~10px）+ 管口过渡段
+    return world.y <= this.y + 12; // 胶头（顶 ~11px，含边缘 1-2px 容差）
   }
 
-  /** 尖端正浸在哪个容器的液面下？（水平对齐容器内区 + 管底低于液面 + 未深穿容器底） */
+  /**
+   * 尖端正浸在哪个容器的液面下？（水平对齐容器内区 + 尖端低于**真实液面**
+   * （随量升降：surface = r.bottom - r.h×min(1,total/volume)）+ 未深穿容器底）。
+   * 与烧杯/池的渲染液面同一公式——液面只有一半时，尖端在"杯沿与液面之间"不算浸入。
+   */
   _submergedIn(scene) {
     const cx = this.x + this.w / 2;
+    const tipY = this.bottom; // 滴管尖端（锥尖最底点）
     let best = null;
-    let bestDy = Infinity;
+    let bestDepth = -Infinity;
     for (const c of scene.containers ?? []) {
       const r = c.innerRect();
       if (!(cx >= r.x && cx <= r.x + r.w)) continue;
-      const surface = r.y;
-      // 尖端（this.bottom）需已在液面下 ≥3px；允许伸入到接近容器底
-      if (this.bottom < surface + 3) continue;
-      if (this.bottom > r.y + r.h + 8) continue;
-      const dy = Math.abs(this.bottom - surface);
-      if (dy < bestDy) {
-        bestDy = dy;
+      const sol = c.solution;
+      if (!sol || !(sol.volume > 0)) continue;
+      const total = sol.totalMass ? sol.totalMass() : 0;
+      if (total <= 1e-9) continue; // 容器里没有液体（干杯不算液下）
+      const lh = r.h * Math.max(0, Math.min(1, total / sol.volume)); // 与渲染同公式
+      const surface = r.y + r.h - lh;
+      if (tipY < surface + 2) continue; // 尖端未到达液面下（≥2px）
+      if (tipY > r.y + r.h + 8) continue; // 穿底过多（伸穿容器底按无效）
+      if (tipY - surface > bestDepth) {
+        bestDepth = tipY - surface;
         best = c;
       }
     }
@@ -12731,22 +12776,25 @@ class Dropper extends Obj {
   }
 
   /**
-   * 液下吸取（长按红色胶头后松开）：尖端必须在某容器液面之下，且**管必须为空**
-   * （现实中吸了东西的滴管没法再吸第二手——同种液体也不行）。
-   * 成功：按一次吸液量取占优溶质（纯水→H2O），返回 true；否则 false。
+   * 液下吸取一手（长按胶头、尖端在液面下时每 suckPeriod 执行一次）：
+   *  - 管里没有液体：直接吸一手（≤ dropperTransfer g，占优溶质/纯水→H2O）；
+   *  - 管里已有**同一液体**：可以续吸（直到容量上限——与 C 键吸液同一语义）；
+   *  - 管里是**别的液体**：拒绝（无法混吸）；
+   *  - 尖端不在液面下 / 源已无液体：拒绝并提示。
    */
-  attemptSubmergeSuck(scene) {
+  attemptSuckOnce(scene) {
     if (!scene) return false;
-    if (this.liquid > 1e-9) {
-      pushNotice(scene, '滴管里已有液体——先滴空才能再吸');
-      return false;
-    }
     const c = this._submergedIn(scene);
-    if (!c || !c.solution || !(c.solution.volume > 0)) {
+    if (!c) {
       pushNotice(scene, '把滴管尖端伸到液面下再吸');
       return false;
     }
-    const take = Math.min(CFG.item.dropperTransfer, this.capacity);
+    const room = this.capacity - this.liquid;
+    if (room <= 1e-9) {
+      pushNotice(scene, '滴管已装满');
+      return false;
+    }
+    // 取占优成分（无溶质 = 纯水）
     let id = 'H2O';
     let m = 0;
     for (const [sid, sm] of c.solution.solutes) {
@@ -12755,6 +12803,11 @@ class Dropper extends Obj {
         m = sm;
       }
     }
+    if (this.liquid > 1e-9 && id !== this.substance) {
+      pushNotice(scene, '管里是别的液体——不能混吸');
+      return false;
+    }
+    const take = Math.min(CFG.item.dropperTransfer, room);
     let got = 0;
     if (id === 'H2O') {
       got = c.solution.water > 0 ? Math.min(take, c.solution.water) : 0;
@@ -12762,7 +12815,10 @@ class Dropper extends Obj {
     } else {
       got = c.solution.remove(id, take);
     }
-    if (got <= 1e-9) return false;
+    if (got <= 1e-9) {
+      pushNotice(scene, '这里已经没有可吸的液体');
+      return false;
+    }
     this.substance = id;
     this.liquid += got;
     c.noteSolOrigin?.(id, { kind: 'fill', text: '液下吸取' });

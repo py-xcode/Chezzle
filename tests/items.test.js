@@ -337,7 +337,7 @@ test('按住 X 通气：集气瓶 CO2 → 石灰水 → CaCO3 沉淀（0.05g/s�
 });
 
 // ---- 10. 拖动滴管 -------------------------------------------------------------
-test('拖动滴管：玩家附近按下→移动=拖动位置（不滴）；单击=滴一滴', () => {
+test('拖动滴管：玻璃段按住移动=拖动（不滴）；单击胶头=滴一滴；玻璃段单击不滴', () => {
   const scene = new Scene({ worldW: 1000, worldH: 800 });
   scene.camera = new Camera({ viewW: 1000, viewH: 800, worldW: 1000, worldH: 800 });
   scene.status = 'running';
@@ -352,9 +352,10 @@ test('拖动滴管：玩家附近按下→移动=拖动位置（不滴）；单�
   // 屏幕坐标：直接复用相机的窗口偏移（世界 → 屏幕）
   const cam = scene.camera.compute(canvas.width, canvas.height, scene.player ?? null);
   const toScreen = (wx, wy) => ({ x: wx * cam.scale + cam.offsetX, y: wy * cam.scale + cam.offsetY });
+  // 玻璃段（管中部）按下 → 拖动候选（永不转滴）
   let s = toScreen(dr.x + dr.w / 2, dr.y + dr.h / 2);
   assert.equal(handleScenePressDown(scene, canvas, s.x, s.y), true, '按下命中滴管（候选）');
-  assert.ok(scene._pressCand, '应进入候选（拖动 vs 点击）');
+  assert.equal(scene._pressCand.mode, 'drag', '玻璃段应是拖动候选（不滴）');
   // 移动 >6px → 拖动
   handleScenePressMove(scene, canvas, s.x + 40, s.y + 20);
   assert.ok(scene._drag, '应开始拖动');
@@ -362,37 +363,48 @@ test('拖动滴管：玩家附近按下→移动=拖动位置（不滴）；单�
   handleScenePressUp(scene, canvas);
   assert.equal(scene._drag, null, '拖动结束');
   assert.ok(near(beaker.solution.mass('HCl'), 0, 1e-9), '拖动不应滴液');
-  // 移回烧杯上方 → 单击（原位按下抬起）→ 滴一滴
+  // 移回烧杯上方 → 单击**红色胶头**（y+6）→ 滴一滴
   dr.x = 425; dr.y = 640;
-  s = toScreen(dr.x + dr.w / 2, dr.y + dr.h / 2);
-  assert.equal(handleScenePressDown(scene, canvas, s.x, s.y), true);
+  s = toScreen(dr.x + dr.w / 2, dr.y + 6);
+  assert.equal(handleScenePressDown(scene, canvas, s.x, s.y), true, '胶头按下（候选）');
   handleScenePressUp(scene, canvas);
-  assert.ok(near(beaker.solution.mass('HCl'), 1, 1e-9), '单击应滴一滴');
+  assert.ok(near(beaker.solution.mass('HCl'), 1, 1e-9), '单击胶头应滴一滴');
+  // 玻璃段快速单击：不滴（滴加只认胶头）
+  const b2 = beaker.solution.mass('HCl');
+  s = toScreen(dr.x + dr.w / 2, dr.y + dr.h / 2);
+  assert.equal(handleScenePressDown(scene, canvas, s.x, s.y), true, '玻璃段按下（候选）');
+  handleScenePressUp(scene, canvas);
+  assert.ok(near(beaker.solution.mass('HCl'), b2, 1e-9), '玻璃段单击不滴');
 });
 
-test('拖动滴管：玩家远离时按下=立即滴（无拖动候选）；长按仍连续滴', () => {
+test('拖动滴管：玩家远离时玻璃段无响应；胶头单击=滴一滴、长按(>0.5s)=持续滴', () => {
   const scene = new Scene({ worldW: 1000, worldH: 800 });
   scene.camera = new Camera({ viewW: 1000, viewH: 800, worldW: 1000, worldH: 800 });
   scene.status = 'running';
   scene.addObject(new Floor({ x: -200, y: 720, w: 3000, h: 100 }));
   const beaker = new Beaker({ x: 400, y: 660, w: 60, h: 60, volume: 150 });
   scene.addObject(beaker);
-  const dr = new Dropper({ x: 425, y: 640, substance: 'HCl', capacity: 50, drop: 1 });
+  const dr = new Dropper({ x: 425, y: 604, substance: 'HCl', capacity: 50, drop: 1 }); // 底 656 在杯口上方（不浸入液面 665）
   scene.addObject(dr);
-  const p = withPlayer(scene, 80, 630); // 玩家远离滴管
+  const p = withPlayer(scene, -160, 630); // 玩家远超 dragRange+slack（>494px）
   const canvas = { width: 1000, height: 800 };
   run(scene, 2);
   const cam = scene.camera.compute(canvas.width, canvas.height, scene.player ?? null);
-  const s = {
-    x: (dr.x + dr.w / 2) * cam.scale + cam.offsetX,
-    y: (dr.y + dr.h / 2) * cam.scale + cam.offsetY,
-  };
-  assert.equal(handleScenePressDown(scene, canvas, s.x, s.y), true, '命中即滴（无候选）');
-  assert.equal(scene._pressCand, null, '远离玩家不进入候选');
-  assert.ok(near(beaker.solution.mass('HCl'), 1, 1e-9), '按下即滴一滴');
-  // 长按：20 tick 后继续滴（step 里的 stepPressTap 保持旧节奏）
-  run(scene, 20);
-  assert.ok(beaker.solution.mass('HCl') >= 6, `长按应连续滴：${beaker.solution.mass('HCl')}`);
+  const toScreen = (wx, wy) => ({ x: wx * cam.scale + cam.offsetX, y: wy * cam.scale + cam.offsetY });
+  // 玻璃段 + 玩家太远 → 不进入候选、不滴
+  let s = toScreen(dr.x + dr.w / 2, dr.y + dr.h / 2);
+  assert.equal(handleScenePressDown(scene, canvas, s.x, s.y), false, '远处玻璃段无响应（不滴不拖）');
+  assert.equal(scene._pressCand, null, '无候选');
+  assert.ok(near(beaker.solution.mass('HCl'), 0, 1e-9), '没有误滴');
+  // 胶头（任意距离）快速单击 → 滴一滴
+  s = toScreen(dr.x + dr.w / 2, dr.y + 6);
+  assert.equal(handleScenePressDown(scene, canvas, s.x, s.y), true, '胶头按下（候选）');
+  handleScenePressUp(scene, canvas);
+  assert.ok(near(beaker.solution.mass('HCl'), 1, 1e-9), '单击胶头滴一滴');
+  // 胶头长按 ≥0.5s（15 tick）→ 觉醒开始持续滴
+  handleScenePressDown(scene, canvas, s.x, s.y);
+  run(scene, 30); // 0.5s 觉醒 + ~0.5s 节奏 → 至少 5 滴
+  assert.ok(beaker.solution.mass('HCl') >= 5, `长按应持续滴：${beaker.solution.mass('HCl')}`);
   handleScenePressUp(scene, canvas);
   const before = beaker.solution.mass('HCl');
   run(scene, 10);
@@ -424,23 +436,24 @@ test('拖动窗口：按住未到 dripArmDelay 就移动 → 直接拖动，不�
   assert.ok(near(beaker.solution.mass('HCl'), 0, 1e-9), '全程一滴未滴');
 });
 
-test('抢断：长按已开滴后再拖动 → 停滴转为拖动', () => {
+test('抢断：长按胶头已开滴后再拖动 → 停滴转为拖动', () => {
   const scene = new Scene({ worldW: 1000, worldH: 800 });
   scene.camera = new Camera({ viewW: 1000, viewH: 800, worldW: 1000, worldH: 800 });
   scene.status = 'running';
   scene.addObject(new Floor({ x: -200, y: 720, w: 3000, h: 100 }));
   const beaker = new Beaker({ x: 400, y: 660, w: 60, h: 60, volume: 150 });
   scene.addObject(beaker);
-  const dr = new Dropper({ x: 425, y: 640, substance: 'HCl', capacity: 50, drop: 1 });
+  const dr = new Dropper({ x: 425, y: 604, substance: 'HCl', capacity: 50, drop: 1 }); // 底 656 在杯口上方（不浸入液面 665）
   scene.addObject(dr);
   const p = withPlayer(scene, 400, 630);
   const canvas = { width: 1000, height: 800 };
   run(scene, 2);
   const cam = scene.camera.compute(canvas.width, canvas.height, scene.player ?? null);
   const toScreen = (wx, wy) => ({ x: wx * cam.scale + cam.offsetX, y: wy * cam.scale + cam.offsetY });
-  const s = toScreen(dr.x + dr.w / 2, dr.y + dr.h / 2);
+  // 胶头长按 18 tick（0.6s > 0.5s 觉醒）→ 先滴了一笔
+  const s = toScreen(dr.x + dr.w / 2, dr.y + 6);
   handleScenePressDown(scene, canvas, s.x, s.y);
-  run(scene, 12); // 0.4s > 0.22s：长按已开滴（先滴了一笔，可能带一拍节奏滴）
+  run(scene, 18);
   assert.equal(scene._pressTap, dr, '长按应已开始');
   const dropped = beaker.solution.mass('HCl');
   assert.ok(dropped >= 1, `开滴应已滴出至少一笔：${dropped}`);
@@ -539,13 +552,13 @@ test('拖动滴管不能超出玩家范围：越界贴边走并弹提示', () =>
   handleScenePressUp(scene, canvas);
 });
 
-test('胶头长按+松开：液下吸取成功；非空管拒绝', () => {
+test('液下吸取：长按胶头吸一手；同液续吸；不同液拒绝', () => {
   const scene = flatScene();
   const pool = new Pool({ x: 300, y: 660, w: 260, h: 60, volume: 200, solutes: { NaCl: 10 } });
   scene.addObject(pool);
   const p = withPlayer(scene, 250, 600);
-  // 空滴管尖端浸入池内液面下（innerRect y≈668）
-  const dr = new Dropper({ x: 430, y: 622, capacity: 50, liquid: 0 }); // bottom=674 > 668 ✓
+  // 空滴管尖端浸入池内液面下（innerRect y=660，真实液面=660；bottom=674 已浸入）
+  const dr = new Dropper({ x: 430, y: 622, capacity: 50, liquid: 0 }); // bottom=674 > 660 ✓
   scene.addObject(dr);
   run(scene, 2);
   const canvas = { width: 1000, height: 800 };
@@ -553,22 +566,31 @@ test('胶头长按+松开：液下吸取成功；非空管拒绝', () => {
   const cam = scene.camera.compute(canvas.width, canvas.height, scene.player ?? null);
   const toScreen = (wx, wy) => ({ x: wx * cam.scale + cam.offsetX, y: wy * cam.scale + cam.offsetY });
   const bs = toScreen(dr.x + dr.w / 2, dr.y + 6); // 胶头区中心
-  // 按住一段时间再松开（长按是手感；期间不应触发任何滴液）
+  // 长按 ≥0.5s（16 tick）→ 觉醒即吸一手（不用等松开；按住继续每 0.3s 吸一手）
   handleScenePressDown(scene, canvas, bs.x, bs.y);
-  run(scene, 15);
-  handleScenePressUp(scene, canvas);
-  assert.ok(near(dr.liquid, 5, 1e-6), `松开应吸取 5g：${dr.liquid}`);
+  run(scene, 16);
+  assert.ok(near(dr.liquid, 5, 1e-6), `长按觉醒应吸 5g：${dr.liquid}`);
   assert.equal(dr.substance, 'NaCl');
   assert.ok(near(pool.solution.mass('NaCl'), 5, 1e-6), '池中 NaCl 转入管内');
-  // 管里已有液体 → 再吸拒绝（同种也不行）
-  const before = dr.liquid;
-  handleScenePressDown(scene, canvas, bs.x, bs.y);
+  // 同液续吸：继续按住 1s（30 tick，0.3s/手）→ 5+5=10g（池中 NaCl 只剩 5g，第二手吸空）
+  run(scene, 30);
+  assert.ok(near(dr.liquid, 10, 1e-6), `同液应续吸到 10g：${dr.liquid}`);
+  assert.ok(pool.solution.mass('NaCl') < 1e-6, '池中 NaCl 已吸空');
   handleScenePressUp(scene, canvas);
-  assert.ok(near(dr.liquid, before, 1e-9), '非空管不能再吸');
-  assert.ok(scene._notice && /已有液体/.test(scene._notice.text), '应提示先滴空');
+  // 换液拒绝：管里是 HCl（别的液体），长按液下 → 拒绝并提示
+  scene.removeItem(dr);
+  const dr2 = new Dropper({ x: 430, y: 622, capacity: 50, substance: 'HCl', liquid: 10, drop: 1 });
+  scene.addObject(dr2);
+  run(scene, 2);
+  const bs2 = toScreen(dr2.x + dr2.w / 2, dr2.y + 6);
+  handleScenePressDown(scene, canvas, bs2.x, bs2.y);
+  run(scene, 16);
+  handleScenePressUp(scene, canvas);
+  assert.ok(near(dr2.liquid, 10, 1e-9), '管里是别的液体：不能再吸');
+  assert.ok(scene._notice && /别的液体/.test(scene._notice.text), `应提示不能混吸：${scene._notice?.text}`);
 });
 
-test('按住胶头不会误触滴液；拖拽走的仍是玻璃段语义', () => {
+test('玻璃段按住不滴不吸；胶头按住+移动=拖动', () => {
   const scene = flatScene();
   const pool = new Pool({ x: 300, y: 660, w: 260, h: 60, volume: 200, solutes: { NaCl: 4 } });
   scene.addObject(pool);
@@ -579,17 +601,23 @@ test('按住胶头不会误触滴液；拖拽走的仍是玻璃段语义', () =>
   const canvas = { width: 1000, height: 800 };
   scene.camera = new Camera({ viewW: 1000, viewH: 800, worldW: 1000, worldH: 800 });
   const cam = scene.camera.compute(canvas.width, canvas.height, scene.player ?? null);
-  const s = {
-    x: (dr.x + dr.w / 2) * cam.scale + cam.offsetX,
-    y: (dr.y + 6) * cam.scale + cam.offsetY, // 胶头
-  };
-  // 尖端不在液面下(590+52=642 < 668 表面)：按住15tick+松开=吸取失败且从未滴液
-  handleScenePressDown(scene, canvas, s.x, s.y);
-  run(scene, 15);
-  assert.ok(near(pool.solution.totalMass(), 4, 1e-9) || pool.solution.totalMass() >= 3.99, '按住胶头未改变池内总量（未滴液）');
-  const beakerHClBefore = dr.liquid;
+  const toScreen = (wx, wy) => ({ x: wx * cam.scale + cam.offsetX, y: wy * cam.scale + cam.offsetY });
+  // 玻璃段（管中部，尖端 642 未到液面 660）：按住 1s 抬起 → 什么都不发生（不滴不吸）
+  const ts = toScreen(dr.x + dr.w / 2, dr.y + 30);
+  handleScenePressDown(scene, canvas, ts.x, ts.y);
+  run(scene, 30);
   handleScenePressUp(scene, canvas);
-  assert.ok(near(dr.liquid, beakerHClBefore, 1e-9), '非液下+非空管：什么都不发生');
+  assert.ok(near(pool.solution.totalMass(), 204, 1e-6), '池内总量不变（未滴未吸）');
+  assert.ok(near(dr.liquid, 10, 1e-9), '管内液体不变');
+  // 胶头按住 + 移动 → 拖动（不滴不吸）
+  const bs = toScreen(dr.x + dr.w / 2, dr.y + 6);
+  handleScenePressDown(scene, canvas, bs.x, bs.y);
+  handleScenePressMove(scene, canvas, bs.x + 30, bs.y + 10);
+  assert.ok(scene._drag, '胶头按住+移动应转拖动');
+  assert.ok(near(dr.x, 340 + 30, 0.5), `滴管应随拖动移动：${dr.x}`);
+  handleScenePressUp(scene, canvas);
+  assert.ok(near(dr.liquid, 10, 1e-9), '拖动期间未滴未吸');
+  assert.ok(near(pool.solution.totalMass(), 204, 1e-6), '池内总量不变');
 });
 
 test('倒液会话方向/站位：目标在右侧时杯停在其左侧并保持站立', () => {
@@ -610,4 +638,74 @@ test('倒液会话方向/站位：目标在右侧时杯停在其左侧并保持�
   assert.ok(bko._pour, '应进入倒出会话');
   assert.equal(bko._pour.dir, 1, '目标在右 → 站位/倾角朝右');
   assert.ok(bko._pour.standX <= pool.x, `应平移到目标左侧停靠：standX=${bko._pour.standX} pool.x=${pool.x}`);
+});
+
+// ---- 液面真实判定：尖端在"杯沿下但真实液面上"不算浸入（用户反馈核心 bug）----
+test('液面判定：尖端在杯沿下、真实液面之上 → 长按=持续滴（不误吸）；液面下 → 吸取', () => {
+  const scene = flatScene();
+  const beaker = new Beaker({ x: 400, y: 660, w: 60, h: 60, volume: 200, water: 40 }); // 20% 液量
+  scene.addObject(beaker);
+  withPlayer(scene, 250, 600);
+  const canvas = { width: 1000, height: 800 };
+  scene.camera = new Camera({ viewW: 1000, viewH: 800, worldW: 1000, worldH: 800 });
+  run(scene, 2);
+  const cam = scene.camera.compute(canvas.width, canvas.height, scene.player ?? null);
+  const toScreen = (wx, wy) => ({ x: wx * cam.scale + cam.offsetX, y: wy * cam.scale + cam.offsetY });
+  // 真实液面：innerRect(405,665,50,50)；lh=50×40/200=10 → surface=665+50-10=705
+  // A：尖端 692 —— 在杯沿(665)下、真实液面(705)上 → 不算浸入（旧实现误判为浸入！）
+  const drA = new Dropper({ x: 425, y: 640, substance: 'HCl', capacity: 50, liquid: 10, drop: 1 }); // tip=692
+  scene.addObject(drA);
+  run(scene, 2);
+  const sA = toScreen(drA.x + drA.w / 2, drA.y + 6);
+  handleScenePressDown(scene, canvas, sA.x, sA.y);
+  run(scene, 16); // >0.5s 觉醒
+  assert.equal(scene._pressTap, drA, '液上长按应转为持续滴');
+  assert.ok(near(drA.liquid, 9, 1e-6), `滴加进行中：${drA.liquid}`);
+  run(scene, 40); // 持续滴节奏（0.08s/滴）→ 10g 滴完自动停
+  assert.ok(drA.liquid < 1e-9, `管应滴空：${drA.liquid}`);
+  assert.ok(beaker.solution.mass('HCl') >= 9, `HCl 应滴入杯：${beaker.solution.mass('HCl')}`);
+  handleScenePressUp(scene, canvas);
+  // B：尖端 712 —— 低于真实液面 705 → 液下吸取（管是空的 → 吸走杯中 HCl + 水不行，
+  //    占优成分=水 → 吸 5g 纯水）
+  const drB = new Dropper({ x: 425, y: 660, capacity: 50, liquid: 0 }); // tip=712 > 707 ✓
+  scene.addObject(drB);
+  run(scene, 2);
+  const sB = toScreen(drB.x + drB.w / 2, drB.y + 6);
+  handleScenePressDown(scene, canvas, sB.x, sB.y);
+  run(scene, 16);
+  assert.ok(near(drB.liquid, 5, 1e-6), `液下长按应吸取 5g：${drB.liquid}`);
+  assert.equal(scene._pressTap, null, '吸取不触发滴液');
+  handleScenePressUp(scene, canvas);
+});
+
+// ---- 拖动边界回抓（用户反馈：拖到极限再拖回来就抓不住了） --------------------
+test('拖动边界回抓：拖到钳制边界松开，还能再次抓住拖回（dragSlack 宽限）', () => {
+  const scene = new Scene({ worldW: 1000, worldH: 800 });
+  scene.camera = new Camera({ viewW: 1000, viewH: 800, worldW: 1000, worldH: 800 });
+  scene.status = 'running';
+  scene.addObject(new Floor({ x: -200, y: 720, w: 3000, h: 100 }));
+  const dr = new Dropper({ x: 425, y: 640, substance: 'HCl', capacity: 50, drop: 1 });
+  scene.addObject(dr);
+  const p = withPlayer(scene, 400, 630);
+  const canvas = { width: 1000, height: 800 };
+  run(scene, 2);
+  const cam = scene.camera.compute(canvas.width, canvas.height, scene.player ?? null);
+  const toScreen = (wx, wy) => ({ x: wx * cam.scale + cam.offsetX, y: wy * cam.scale + cam.offsetY });
+  // 第一次：玻璃段按住拖到钳制边界（位置被钳在 dragRange 上）
+  let s = toScreen(dr.x + dr.w / 2, dr.y + dr.h / 2);
+  handleScenePressDown(scene, canvas, s.x, s.y);
+  handleScenePressMove(scene, canvas, s.x + 900, s.y + 500); // 试图拖出极远
+  handleScenePressUp(scene, canvas);
+  const pcx = p.x + p.w / 2;
+  const pcy = p.y + p.h / 2;
+  const d0 = Math.hypot(dr.x + dr.w / 2 - pcx, dr.y + dr.h / 2 - pcy);
+  assert.ok(d0 <= CFG.item.dragRange + 1, `应在边界：${d0.toFixed(1)}`);
+  // 第二次：直接再按当前位置（边界上）→ 仍能抓住并拖回
+  s = toScreen(dr.x + dr.w / 2, dr.y + dr.h / 2);
+  assert.equal(handleScenePressDown(scene, canvas, s.x, s.y), true, '边界处仍可抓住');
+  assert.equal(scene._pressCand.mode, 'drag', '应是拖动候选');
+  handleScenePressMove(scene, canvas, s.x - 200, s.y - 100); // 拖回
+  const d1 = Math.hypot(dr.x + dr.w / 2 - pcx, dr.y + dr.h / 2 - pcy);
+  assert.ok(d1 < d0 - 50, `应能拖回：${d1.toFixed(1)} < ${d0.toFixed(1)}`);
+  handleScenePressUp(scene, canvas);
 });

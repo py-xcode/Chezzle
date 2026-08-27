@@ -1092,7 +1092,7 @@ function canvasPos(e) {
 }
 canvas.addEventListener('mousedown', (e) => {
   if (state.playing) {
-    // 试玩中按下：点中滴管 → 单击滴一滴/长按持续滴/拖动移动（玩家附近）；其它同旧
+    // 试玩中按下：点中滴管胶头 → 单击滴/长按持续滴(液下=吸取)；玻璃段 → 仅拖动
     const sp = canvasPos(e);
     if (e.button === 0 && playScene) {
       C.handleScenePressDown(playScene, canvas, sp.x, sp.y, (info) => {
@@ -1102,7 +1102,9 @@ canvas.addEventListener('mousedown', (e) => {
         if (info.type === 'tap') {
           $('status').textContent = `试玩中｜按下→世界(${wx},${wy}) 命中：${o.hoverLabel ?? o.constructor.name} ${info.success ? '→ 已滴液（按住可连续滴）' : '→ 未滴（下方无容器或已滴空）'}`;
         } else if (info.type === 'press') {
-          $('status').textContent = `试玩中｜按下→世界(${wx},${wy}) 命中：${o.hoverLabel ?? o.constructor.name}（拖动=移动位置，按住=连滴）`;
+          $('status').textContent = info.bulb
+            ? `试玩中｜按下→世界(${wx},${wy}) 胶头：${o.hoverLabel ?? o.constructor.name}（单击滴一滴 / 按住>0.5s持续滴·液下=吸取 / 移动=拖动）`
+            : `试玩中｜按下→世界(${wx},${wy}) 玻璃段：${o.hoverLabel ?? o.constructor.name}（拖动=移动位置，不会滴）`;
         } else {
           $('status').textContent = `试玩中｜按下→世界(${wx},${wy}) 未命中可交互物体`;
         }
@@ -1145,7 +1147,7 @@ canvas.addEventListener('mousedown', (e) => {
     state.sel = new Set(items);
     state.selected = hit;
     if (!group && state.placed[hit].type === 'dropper') {
-      $('status').textContent = '滴管：试玩中左键点击滴液 / 按住连滴 / 拖动移动（玩家附近）；编辑模式点击=选中/拖动';
+      $('status').textContent = '滴管：试玩中点红色胶头滴液/按住持续滴（液下长按=吸取）/玻璃段拖动；编辑模式点击=选中/拖动';
     }
     drag = { mode: 'move', items, sx: sp.x, sy: sp.y, oxs: {}, oys: {} };
     for (const i of items) { drag.oxs[i] = state.placed[i].obj.x; drag.oys[i] = state.placed[i].obj.y; }
@@ -1870,7 +1872,7 @@ function togglePlay() {
     const sx = (e.clientX - rect.left) * (canvas.width / rect.width);
     const sy = (e.clientY - rect.top) * (canvas.height / rect.height);
     const w = C.screenToWorld(scene, canvas, sx, sy);
-    $('status').textContent = `试玩中｜悬停世界(${Math.round(w.x)},${Math.round(w.y)})｜点击/按住滴管可滴液`;
+    $('status').textContent = `试玩中｜悬停世界(${Math.round(w.x)},${Math.round(w.y)})｜滴管：点胶头滴液/按住持续滴·液下长按吸取·玻璃段拖动`;
   };
   canvas.addEventListener('mousemove', onPlayMoveDiag);
   // 松开鼠标准确停（长按滴加在 mouseup 停止；窗口级兜底）
@@ -1904,7 +1906,7 @@ function togglePlay() {
   };
   playStop = C.startLoop(scene, renderer, { hud });
   playScene = scene; // 调试/测试可访问当前试玩场景
-  $('status').textContent = '试玩中：A/D 移动 · 空格跳 · Q 收集 · Shift 放置 · C 拾取物品/吸液/按住集气 · X 倒出/按住通气 · 点击/按住滴管滴液·拖动移动 · 悬停查来源 · F5暂停';
+  $('status').textContent = '试玩中：A/D 移动 · 空格跳 · Q 收集 · Shift 放置 · C 拾取物品/吸液/按住集气 · X 倒出/按住通气 · 滴管：点胶头滴液/按住持续滴(液下长按=吸取)/玻璃段拖动 · 悬停查来源 · F5暂停';
   notifyPlayState(true);
 }
 

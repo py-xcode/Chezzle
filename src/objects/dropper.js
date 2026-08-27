@@ -60,27 +60,36 @@ export class Dropper extends Obj {
     return true;
   }
 
-  /** 点击点是否落在"胶头/管口上段"（红色吸头区）——该区按下=长按吸取，不再触发滴液 */
+  /** 点击点是否落在"红色胶头"上——只有胶头区能触发滴加（单击=滴一滴、
+   *  长按=持续滴/液下吸取）；玻璃段只能拖动。world 为世界坐标。 */
   onBulb(world) {
     if (!world) return false;
-    return world.y <= this.y + 16; // 胶头（顶 ~10px）+ 管口过渡段
+    return world.y <= this.y + 12; // 胶头（顶 ~11px，含边缘 1-2px 容差）
   }
 
-  /** 尖端正浸在哪个容器的液面下？（水平对齐容器内区 + 管底低于液面 + 未深穿容器底） */
+  /**
+   * 尖端正浸在哪个容器的液面下？（水平对齐容器内区 + 尖端低于**真实液面**
+   * （随量升降：surface = r.bottom - r.h×min(1,total/volume)）+ 未深穿容器底）。
+   * 与烧杯/池的渲染液面同一公式——液面只有一半时，尖端在"杯沿与液面之间"不算浸入。
+   */
   _submergedIn(scene) {
     const cx = this.x + this.w / 2;
+    const tipY = this.bottom; // 滴管尖端（锥尖最底点）
     let best = null;
-    let bestDy = Infinity;
+    let bestDepth = -Infinity;
     for (const c of scene.containers ?? []) {
       const r = c.innerRect();
       if (!(cx >= r.x && cx <= r.x + r.w)) continue;
-      const surface = r.y;
-      // 尖端（this.bottom）需已在液面下 ≥3px；允许伸入到接近容器底
-      if (this.bottom < surface + 3) continue;
-      if (this.bottom > r.y + r.h + 8) continue;
-      const dy = Math.abs(this.bottom - surface);
-      if (dy < bestDy) {
-        bestDy = dy;
+      const sol = c.solution;
+      if (!sol || !(sol.volume > 0)) continue;
+      const total = sol.totalMass ? sol.totalMass() : 0;
+      if (total <= 1e-9) continue; // 容器里没有液体（干杯不算液下）
+      const lh = r.h * Math.max(0, Math.min(1, total / sol.volume)); // 与渲染同公式
+      const surface = r.y + r.h - lh;
+      if (tipY < surface + 2) continue; // 尖端未到达液面下（≥2px）
+      if (tipY > r.y + r.h + 8) continue; // 穿底过多（伸穿容器底按无效）
+      if (tipY - surface > bestDepth) {
+        bestDepth = tipY - surface;
         best = c;
       }
     }
@@ -88,22 +97,25 @@ export class Dropper extends Obj {
   }
 
   /**
-   * 液下吸取（长按红色胶头后松开）：尖端必须在某容器液面之下，且**管必须为空**
-   * （现实中吸了东西的滴管没法再吸第二手——同种液体也不行）。
-   * 成功：按一次吸液量取占优溶质（纯水→H2O），返回 true；否则 false。
+   * 液下吸取一手（长按胶头、尖端在液面下时每 suckPeriod 执行一次）：
+   *  - 管里没有液体：直接吸一手（≤ dropperTransfer g，占优溶质/纯水→H2O）；
+   *  - 管里已有**同一液体**：可以续吸（直到容量上限——与 C 键吸液同一语义）；
+   *  - 管里是**别的液体**：拒绝（无法混吸）；
+   *  - 尖端不在液面下 / 源已无液体：拒绝并提示。
    */
-  attemptSubmergeSuck(scene) {
+  attemptSuckOnce(scene) {
     if (!scene) return false;
-    if (this.liquid > 1e-9) {
-      pushNotice(scene, '滴管里已有液体——先滴空才能再吸');
-      return false;
-    }
     const c = this._submergedIn(scene);
-    if (!c || !c.solution || !(c.solution.volume > 0)) {
+    if (!c) {
       pushNotice(scene, '把滴管尖端伸到液面下再吸');
       return false;
     }
-    const take = Math.min(CFG.item.dropperTransfer, this.capacity);
+    const room = this.capacity - this.liquid;
+    if (room <= 1e-9) {
+      pushNotice(scene, '滴管已装满');
+      return false;
+    }
+    // 取占优成分（无溶质 = 纯水）
     let id = 'H2O';
     let m = 0;
     for (const [sid, sm] of c.solution.solutes) {
@@ -112,6 +124,11 @@ export class Dropper extends Obj {
         m = sm;
       }
     }
+    if (this.liquid > 1e-9 && id !== this.substance) {
+      pushNotice(scene, '管里是别的液体——不能混吸');
+      return false;
+    }
+    const take = Math.min(CFG.item.dropperTransfer, room);
     let got = 0;
     if (id === 'H2O') {
       got = c.solution.water > 0 ? Math.min(take, c.solution.water) : 0;
@@ -119,7 +136,10 @@ export class Dropper extends Obj {
     } else {
       got = c.solution.remove(id, take);
     }
-    if (got <= 1e-9) return false;
+    if (got <= 1e-9) {
+      pushNotice(scene, '这里已经没有可吸的液体');
+      return false;
+    }
     this.substance = id;
     this.liquid += got;
     c.noteSolOrigin?.(id, { kind: 'fill', text: '液下吸取' });

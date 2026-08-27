@@ -35,7 +35,8 @@ export const CFG = {
   item: {
     collectRange: 90,      // C 拾取物品半径
     liquidRange: 80,       // C 吸液 / X 倒出 / 通入气体的目标容器距离
-    dragRange: 130,        // 可拖动滴管的玩家最大距离（中心距离，滴管细长）
+    dragRange: 480,        // 可拖动滴管的玩家最大距离（中心距离；用户反馈 130 太小 —— 扩大）
+    dragSlack: 14,         // 回抓宽限：拖到边界后再抓，允许超出 dragRange 一点也能重新抓住
     beakerCapacity: 200,   // 标准烧杯容量（g；与编辑器烧杯默认 volume 一致）
     beakerTransfer: 20,    // 烧杯每次 C 吸液量（g）
     pourStep: 10,          // 烧杯每次 X 倒出量（g）——分次倒，不再一次全倒
@@ -46,10 +47,11 @@ export const CFG = {
     gasRate: 0.05,         // 通入气体速率（g/s）
     placeOffset: 6,        // 放置物品离玩家边缘的间隙（px）
     dragStartPx: 6,        // 按住后移动超过该屏幕距离 → 判定为拖动（不滴）
-    dripArmDelay: 0.22,    // 按住多久转"长按持续滴"（s）——留出拖动判定窗口，
-                           // 之前 0.08s 几乎必然先开滴，拖不动（用户反馈）
+    dripArmDelay: 0.5,     // 按住多久转"长按持续滴"/"液下吸取"（s；用户明确 >0.5s）——
+                           // 留出拖动判定窗口，0.22s 太短，拖动常被误判成长按滴（用户反馈）
     dripPeriod: 0.08,      // 长按持续滴的节奏（s/滴；0fd5314 调定的手感值保留）
     dragAbortPx: 10,       // 长按已开滴后再移动超过该距离 → 停滴转为拖动
+    suckPeriod: 0.3,       // 液下长按吸取的节奏（s/手 ≤ dropperTransfer g）
   },
 
   lampRange: 70, // px（灯提供加热/点燃的半径）
