@@ -20,9 +20,11 @@ test('性能：2000g 物块 + 2000g 沉淀堆（120 颗粒子）600 帧', () => 
   const t0 = performance.now();
   for (let i = 0; i < 600; i++) scene.step(TICK);
   const dt = performance.now() - t0;
-  // 优化前该场景 >120s 超时（>200ms/帧）；600 颗粒子 + 2000g 物块 ~5-12ms/帧
-  //（机器负载波动 ±30% 属正常；≥3 倍恶化才算回归）
-  assert.ok(dt < 9000, `600 帧 ${dt.toFixed(0)}ms（>15ms/帧 视为卡顿）`);
+  // 优化前该场景 >120s 超时（>200ms/帧）；600 颗粒子 + 2000g 物块 ~5-12ms/帧。
+  // 阈值按"≥3 倍恶化才算回归"定：正常上限 12ms/帧 × 3 ≈ 36ms/帧 → 600 帧 < 20000ms。
+  // （旧阈值 15ms/帧≈9000ms 在开发机负载波动下频繁误报——满载时 9300ms 都见过，
+  //   与性能无关，只浪费排查时间。真正的性能回归（如回到 200ms/帧）数值上毫无悬念。）
+  assert.ok(dt < 20000, `600 帧 ${dt.toFixed(0)}ms（>33ms/帧 视为卡顿）`);
   assert.ok(scene.particles.length <= 610, `粒子应受上限约束: ${scene.particles.length}`);
   assert.ok(scene.particles.every((p) => p.amount <= 0.5 + 1e-9 || scene.particles.length >= 590), '小堆颗粒 ≤0.5g（大堆超出上限时合并）');
 });
