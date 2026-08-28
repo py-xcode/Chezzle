@@ -9,6 +9,10 @@
 //    与键盘 keydown/keyup 完全同语义——C 按住收气、X 按住通气），下方是物品栏。
 //  - 场景内：与鼠标同一套"按下/拖动/抬起"管线（滴管点击滴液、长按持续滴、
 //    液下吸取、拖动），触点落在 UI 控件外即进入该管线。
+//  - 鸟瞰（灵魂出窍）：进入后触点改走手势管线——1 指拖动 = 平移、2 指捏合 =
+//    缩放（中点为锚）；"返回"按钮退出（桌面 V 键 / HUD 鸟瞰按钮同效）。
+//  - 全屏：首个触点自动请求全屏（小屏金贵；iOS 不支持元素全屏 → 静默跳过），
+//    HUD ⛶ 按钮可随时切换。
 //  - 竖屏：HUD 层画"请旋转设备"提示（游戏照常运行）。
 //
 // 几何约定：所有触控按钮/摇杆命中区 = 画布坐标（同 palette.js 的 inventorySlotRects），
@@ -23,7 +27,9 @@ import {
   handleScenePressUp,
   inventorySlotRects,
   uiMargins,
+  overviewButtonRect,
 } from '../level/click.js';
+import { requestFullscreenOnce } from './fullscreen.js';
 
 // ---------------------------------------------------------------------------
 // 设备检测
@@ -227,6 +233,7 @@ export class TouchUI {
     this.buttons = new Map(); // touchId → key（按下中的按键）
     this.uiTouches = new Set(); // 被 HUD UI（提示/物品栏）消费的触点
     this.sceneTouch = null; // { id }：进入场景按下/拖动管线的触点（单指）
+    this.ovTouches = new Map(); // 鸟瞰手势触点 id → {x,y}（1指平移 / 2指捏合缩放）
     this._ctlScene = null; // 摇杆控制写入的 scene（切场景时释放旧场景的按键）
     this._bound = false;
   }
@@ -317,7 +324,7 @@ export class TouchUI {
 
   // ---- 单点管线（触点按下/移动/抬起 → 分派角色） ----
 
-  /** 触点按下（画布坐标）。返回 'joy' | 'btn' | 'ui' | 'scene' | null */
+  /** 触点按下（画布坐标）。返回 'joy' | 'btn' | 'ui' | 'scene' | 'ov' | null */
   down(id, x, y) {
     const act = this.getActive();
     if (!act || !act.scene) return null;
@@ -327,6 +334,16 @@ export class TouchUI {
     if (scene.status === 'died') {
       scene.restart();
       return 'died';
+    }
+    // ⓪ 鸟瞰模式：返回按钮 = 退出；其余触点进手势管线（1指平移 / 2指捏合缩放）
+    if (scene.overview) {
+      const b = overviewButtonRect(this.canvas.width);
+      if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
+        scene.toggleOverview();
+        return 'ui';
+      }
+      this.ovTouches.set(id, { x, y });
+      return 'ov';
     }
     // ① 摇杆：左下半圆（上半部 hit；手指可从半圆上方/左右进入）
     const g = this.geom();
@@ -357,11 +374,43 @@ export class TouchUI {
     return 'scene';
   }
 
+  /** 鸟瞰手势：1指 = 平移；2指 = 双指捏合缩放（中点为锚）+ 中点平移 */
+  _applyOverviewGesture(id, x, y) {
+    const act = this.getActive();
+    const scene = act && act.scene ? act.scene : null;
+    const prev = this.ovTouches.get(id);
+    if (!scene || !scene.camera || !prev) return;
+    if (this.ovTouches.size === 1) {
+      scene.camera.panOverview(x - prev.x, y - prev.y, this.canvas.width, this.canvas.height);
+    } else if (this.ovTouches.size >= 2) {
+      // 取另外一根手指组成捏合对
+      let otherId = null;
+      for (const k of this.ovTouches.keys()) if (k !== id) { otherId = k; break; }
+      const o = otherId != null ? this.ovTouches.get(otherId) : null;
+      if (o) {
+        const d0 = Math.hypot(prev.x - o.x, prev.y - o.y);
+        const d1 = Math.hypot(x - o.x, y - o.y);
+        // 中点位移 = 平移；距离比 = 缩放（中点为锚）
+        const m0x = (prev.x + o.x) / 2;
+        const m0y = (prev.y + o.y) / 2;
+        const m1x = (x + o.x) / 2;
+        const m1y = (y + o.y) / 2;
+        scene.camera.panOverview(m1x - m0x, m1y - m0y, this.canvas.width, this.canvas.height);
+        if (d0 > 8) scene.camera.zoomOverview(d1 / d0, m1x, m1y, this.canvas.width, this.canvas.height);
+      }
+    }
+    this.ovTouches.set(id, { x, y });
+  }
+
   /** 触点移动 */
   move(id, x, y) {
     const act = this.getActive();
     if (!act || !act.scene) return;
     const scene = act.scene;
+    if (this.ovTouches.has(id)) {
+      this._applyOverviewGesture(id, x, y);
+      return;
+    }
     if (this.joy && this.joy.id === id) {
       this._applyJoy(x, y);
       return;
@@ -375,6 +424,10 @@ export class TouchUI {
 
   /** 触点抬起/取消 */
   up(id) {
+    if (this.ovTouches.has(id)) {
+      this.ovTouches.delete(id);
+      return;
+    }
     const act = this.getActive();
     const scene = act && act.scene ? act.scene : null;
     if (this.joy && this.joy.id === id) {
@@ -403,6 +456,7 @@ export class TouchUI {
   releaseAll() {
     const act = this.getActive();
     const scene = act && act.scene ? act.scene : null;
+    this.ovTouches.clear();
     this._releaseJoyControl(this._ctlScene ?? scene);
     this._ctlScene = null;
     this.joy = null;
@@ -432,6 +486,8 @@ export class TouchUI {
     const enabled = () => isTouchDevice();
     const onStart = (e) => {
       if (!enabled()) return;
+      // 首个用户手势自动全屏（小屏金贵；不支持/iOS → 静默跳过；HUD ⛶ 按钮可随时切换）
+      requestFullscreenOnce();
       for (const t of e.changedTouches) {
         const p = pos(t);
         this.down(t.identifier, p.x, p.y);
@@ -495,9 +551,13 @@ export function bindTouchUI(canvas, getActive) {
     clearTimeout(onLayout._t);
     onLayout._t = setTimeout(onLayout, 90);
   };
+  const fsChange = () => debounce();
   if (typeof window !== 'undefined') {
     window.addEventListener('resize', debounce);
     window.addEventListener('orientationchange', debounce);
+    // 进/出全屏：窗口尺寸变化 → 重排画布与安全区
+    document.addEventListener('fullscreenchange', fsChange);
+    document.addEventListener('webkitfullscreenchange', fsChange);
   }
   UIS.push(ui);
   const act = getActive();
@@ -510,6 +570,8 @@ export function bindTouchUI(canvas, getActive) {
       if (typeof window !== 'undefined') {
         window.removeEventListener('resize', debounce);
         window.removeEventListener('orientationchange', debounce);
+        document.removeEventListener('fullscreenchange', fsChange);
+        document.removeEventListener('webkitfullscreenchange', fsChange);
       }
       const i = UIS.indexOf(ui);
       if (i >= 0) UIS.splice(i, 1);

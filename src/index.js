@@ -7,6 +7,8 @@ export * from './core/scene.js';
 export * from './core/input.js';
 export * from './core/loop.js';
 export * from './core/touch.js';
+export * from './core/fullscreen.js';
+export * from './core/overview.js';
 export * from './core/recorder.js';
 
 export * from './level/builder.js';

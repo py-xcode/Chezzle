@@ -29,6 +29,7 @@ import { Extractor } from '../objects/extractor.js';
 import { Dropper } from '../objects/dropper.js';
 import { GasBottle } from '../objects/gasbottle.js';
 import { bindSceneClick } from './click.js';
+import { bindOverviewInput } from '../core/overview.js';
 import { bindTouchUI } from '../core/touch.js';
 import { attachRecorderPanel } from '../core/recorder.js';
 
@@ -138,9 +139,12 @@ export class LevelBuilder {
     return this.add(obj);
   }
 
-  /** 开启调试模式：F5 暂停/继续 tick，F6 手动步进一 tick，HUD 显示附近所有反应 */
+  /**
+   * @deprecated 调试模式改用 URL 参数开启：`levels/xxx.html?debug=1`。
+   * 本方法保留兼容（旧关卡脚本链式调用不报错），但**不再生效**——
+   * 调试开关从"写死在关卡文件"变为"打开页面的诉求"，方便随时开关。
+   */
   debugmode() {
-    this.scene.debugMode = true;
     return this;
   }
 
@@ -157,6 +161,10 @@ export class LevelBuilder {
   build() {
     // 注入相机（爆炸屏幕震动用）
     this.scene.camera = this.renderer.camera;
+    // 调试模式：URL 参数 ?debug=1 开启（.debugmode() 已废弃，见下）
+    if (typeof location !== 'undefined' && /[?&]debug=1/.test(location.search)) {
+      this.scene.debugMode = true;
+    }
     // 无玩家时相机聚焦关卡内容包围盒：否则显示世界中央，物体（滴管等）不在视口
     // 内——玩家看不到也点不到（"点击没反应"的根源）
     if (!this.scene.player) {
@@ -178,7 +186,7 @@ export class LevelBuilder {
     return this.scene;
   }
 
-  /** 启动：状态→输入→点击（提示/选格）→触控（移动端）→主循环 */
+  /** 启动：状态→输入→点击（提示/选格）→触控（移动端）→鸟瞰输入→主循环 */
   start() {
     const scene = this.build();
     scene.status = 'running';
@@ -187,6 +195,8 @@ export class LevelBuilder {
     // 移动端触控（摇杆/按钮/拖动管线）；桌面端绑定但按 isTouchDevice 门槛空转
     this.touch = bindTouchUI(this.renderer.canvas, () => ({ scene: this.scene, hud: this.hud }));
     scene._touchUI = this.touch.ui;
+    // 鸟瞰输入（灵魂出窍）：滚轮缩放 + 拖动平移（仅 scene.overview 时生效）
+    this.unbindOverview = bindOverviewInput(this.renderer.canvas, () => ({ scene: this.scene }));
     // 操作录制/回放面板（开发工具：?record=1 显示；拖入录制的 .json 回放）
     if (typeof location !== 'undefined' && /[?&]record=1/.test(location.search)) {
       this.recorder = attachRecorderPanel(() => this.scene, this.renderer.canvas);

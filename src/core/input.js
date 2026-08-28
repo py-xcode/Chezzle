@@ -29,6 +29,12 @@ export function bindKeyboard(scene) {
       scene.restart();
       return;
     }
+    // 鸟瞰模式（灵魂出窍）：V 进出（暂停模拟，自由缩放/平移看整关）
+    if (e.code === 'KeyV' && typeof scene.toggleOverview === 'function') {
+      scene.toggleOverview();
+      e.preventDefault();
+      return;
+    }
     // 调试模式：F5 暂停/继续，F6 步进一 tick，X 循环切换悬停重叠目标
     if (scene.debugMode) {
       if (e.code === 'F5') {

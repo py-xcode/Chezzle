@@ -52,9 +52,10 @@ export class Scene {
     this.time = 0;
     this.dt = 1 / CFG.tickRate;
     this.tip = '';
-    this.debugMode = false; // 调试模式（.debugmode() 开启）
+    this.debugMode = false; // 调试模式（URL 参数 ?debug=1 开启；.debugmode() 已废弃）
     this.debugPaused = false; // 暂停 tick 推进
     this.debugStepOnce = false; // 手动步进一 tick
+    this.overview = false; // 鸟瞰模式（灵魂出窍）：暂停模拟，相机自由缩放/平移看整关
 
     this.control = new Set(); // 长按（left/right/jump/place/collect/grab/use）
     this.pressed = new Set(); // 本刻刚按下（边缘触发）
@@ -194,6 +195,37 @@ export class Scene {
 
   fire(name, ...args) {
     for (const fn of this._events[name] ?? []) fn(...args);
+  }
+
+  // ---------------------------------------------------------------------------
+  // 鸟瞰模式（灵魂出窍）：暂停模拟，相机自由缩放/平移看整关（桌面 V 键 /
+  // HUD 鸟瞰按钮 / 移动端同按钮进入；滚轮/拖动、双指捏合由鸟瞰输入管线驱动）。
+  // ---------------------------------------------------------------------------
+
+  setOverview(on) {
+    const v = !!on;
+    if (v === this.overview) return v;
+    this.overview = v;
+    // 进出都清空持续输入与按住状态：摇杆/滴管长按/集气按住不会泄漏到恢复后
+    this.control.clear();
+    this.pressed.clear();
+    this._pressCand = null;
+    this._pressTap = null;
+    this._pressTapT = 0;
+    this._pressHome = null;
+    this._drag = null;
+    this._holdSuck = null;
+    this._gasHold = null;
+    if (this.camera) {
+      if (v) this.camera.enterOverview();
+      else this.camera.exitOverview();
+    }
+    this.fire('overview', { on: v });
+    return v;
+  }
+
+  toggleOverview() {
+    return this.setOverview(!this.overview);
   }
 
   addObject(obj) {

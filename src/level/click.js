@@ -11,13 +11,30 @@
 // ============================================================================
 
 import { CFG } from '../core/config.js';
+import { toggleFullscreen } from '../core/fullscreen.js';
 
-/** 屏幕坐标 → 世界坐标（与 Renderer.frame 同口径：跟随玩家/聚焦内容） */
+/** 屏幕坐标 → 世界坐标（与 Renderer.frame 同口径：跟随玩家/聚焦内容；鸟瞰时走鸟瞰视图） */
 export function screenToWorld(scene, canvas, sx, sy) {
   const c = scene.camera;
   if (!c) return { x: sx, y: sy };
   const { scale, offsetX, offsetY } = c.compute(canvas.width, canvas.height, scene.player ?? scene.cameraFocus ?? null);
   return { x: (sx - offsetX) / scale, y: (sy - offsetY) / scale };
+}
+
+// ---- 顶部按钮几何（HUD 渲染与点击命中共用；提示按钮为 W-72,10,62×28，见 hud.tipButton）----
+
+/** 鸟瞰按钮（提示按钮左侧；双端显示）：返回 {x,y,w,h} */
+export function overviewButtonRect(W) {
+  return { x: W - 142, y: 10, w: 62, h: 28 };
+}
+
+/** 全屏按钮（仅触屏端显示，图标 ⛶）：在鸟瞰按钮左侧 */
+export function fullscreenButtonRect(W) {
+  return { x: W - 196, y: 10, w: 44, h: 28 };
+}
+
+function inRect(r, sx, sy) {
+  return sx >= r.x && sx <= r.x + r.w && sy >= r.y && sy <= r.y + r.h;
 }
 
 /** 场景通知横幅（HUD 顶部中偏下淡入淡出 ~1.6s）：超距提示、吸取失败原因等 */
@@ -78,18 +95,40 @@ function dist(a, b) {
 }
 
 /**
- * 处理一次"点击"（提示按钮 / 物品栏选格）。
- * hjude 可为空。返回 true = 已消费。onInfo（可选）诊断回调。
+ * 处理一次"点击"（提示按钮 / 物品栏选格 / 鸟瞰与全屏按钮）。
+ * hud 可为空。返回 true = 已消费。onInfo（可选）诊断回调。
  */
 export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   if (!scene) return false;
-  // 1) 提示按钮（右上）
+  // 0) 鸟瞰模式：只认"返回"按钮（暂停态；未中 → 交给鸟瞰拖动/缩放管线）
+  if (scene.overview) {
+    if (inRect(overviewButtonRect(canvas.width), sx, sy)) {
+      scene.toggleOverview();
+      onInfo?.({ type: 'overview-exit' });
+    }
+    return false;
+  }
+  // 1) 全屏按钮（仅触屏端显示；click/触点都在用户手势内，可请求全屏）
+  if (scene._touchUI && typeof scene._touchUI.enabled === 'function' && scene._touchUI.enabled()) {
+    if (inRect(fullscreenButtonRect(canvas.width), sx, sy)) {
+      toggleFullscreen();
+      onInfo?.({ type: 'fullscreen' });
+      return true;
+    }
+  }
+  // 2) 鸟瞰按钮（双端）
+  if (inRect(overviewButtonRect(canvas.width), sx, sy)) {
+    scene.toggleOverview();
+    onInfo?.({ type: 'overview' });
+    return true;
+  }
+  // 3) 提示按钮（右上）
   if (sx > canvas.width - 68 && sx < canvas.width - 8 && sy > 8 && sy < 34) {
     if (hud) hud.showTip = !hud.showTip;
     onInfo?.({ type: 'tip' });
     return true;
   }
-  // 2) 物品栏选格（右下；几何与 HUD 渲染共用 inventorySlotRects）
+  // 4) 物品栏选格（右下；几何与 HUD 渲染共用 inventorySlotRects）
   const p = scene.player;
   if (p && p.inventory) {
     const rects = inventorySlotRects(canvas.width, canvas.height, p.inventory.slots, uiMargins(scene));
@@ -112,7 +151,7 @@ export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
  * 未命中 → 清除按住标记并返回 false。
  */
 export function handleSceneTapDown(scene, canvas, sx, sy, onInfo = null, pad = 6) {
-  if (!scene) return false;
+  if (!scene || scene.overview) return false; // 鸟瞰：场景管线冻结（拖动/缩放走鸟瞰输入）
   scene._pressHome = null;
   const hit = hitTap(scene, canvas, sx, sy, pad);
   if (!hit) {
@@ -146,7 +185,7 @@ export function handleSceneTapUp(scene) {
  * 落在滴管玻璃段但玩家太远 / 无容器等 → 未命中（不滴也不拖）。
  */
 export function handleScenePressDown(scene, canvas, sx, sy, onInfo = null, pad = 6) {
-  if (!scene) return false;
+  if (!scene || scene.overview) return false; // 鸟瞰：场景管线冻结
   scene._pressHome = null;
   const hit = hitTap(scene, canvas, sx, sy, pad);
   if (!hit) {
@@ -182,7 +221,7 @@ export function handleScenePressDown(scene, canvas, sx, sy, onInfo = null, pad =
 /** 移动（按住期间）：拖动 = 移动滴管位置；胶头/玻璃段都允许拖。
  *  候选期拖出 dragStartPx → 拖动（不滴）；已开滴/开吸再拖出 dragAbortPx → 停转拖动 */
 export function handleScenePressMove(scene, canvas, sx, sy) {
-  if (!scene) return;
+  if (!scene || scene.overview) return;
   const c = scene._pressCand;
   if (c && !c.moved && Math.hypot(sx - c.startX, sy - c.startY) > CFG.item.dragStartPx) {
     c.moved = true;
@@ -238,7 +277,7 @@ export function handleScenePressMove(scene, canvas, sx, sy) {
 /** 抬起：快速单击胶头 = 滴一滴（长按/液下吸取已在 stepPressTap 觉醒）；
  *  玻璃段候选不滴（松开即完成，仅拖动会移动位置）；结束一切按住状态 */
 export function handleScenePressUp(scene, canvas = null, pad = 6) {
-  if (!scene) return;
+  if (!scene || scene.overview) return;
   const c = scene._pressCand;
   if (c && c.mode === 'bulb' && !c.moved && c.downT < CFG.item.dripArmDelay && canvas) {
     scene._pressCand = null;
@@ -254,7 +293,7 @@ export function handleScenePressUp(scene, canvas = null, pad = 6) {
 /** 每 tick 推进：候选长按觉醒（≥ dripArmDelay：液下→吸取 / 液上→持续滴，胶头专属）
  *  + 液下持续吸取节奏 + 长按持续滴节奏 */
 export function stepPressTap(scene, dt) {
-  if (!scene) return;
+  if (!scene || scene.overview) return;
   const c = scene._pressCand;
   if (c && c.mode === 'bulb' && !c.moved) {
     c.downT = (c.downT ?? 0) + dt;

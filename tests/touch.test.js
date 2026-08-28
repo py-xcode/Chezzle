@@ -18,7 +18,7 @@ import { CFG } from '../src/core/config.js';
 import {
   TouchUI, joyInput, joyGeom, touchButtonRects, isTouchDevice, forceTouch,
 } from '../src/core/touch.js';
-import { inventorySlotRects, uiMargins } from '../src/level/click.js';
+import { inventorySlotRects, uiMargins, overviewButtonRect } from '../src/level/click.js';
 
 const W = 844;
 const H = 390;
@@ -271,4 +271,61 @@ test('isPortrait：竖屏画布（触屏端）为 true', () => {
   assert.equal(ui2.isPortrait(), false);
   forceTouch(false);
   assert.equal(ui.isPortrait(), false, '桌面端不做竖屏限制');
+});
+
+// ---- 11. 鸟瞰手势：单指平移 / 双指捏合缩放 / 返回按钮退出 ----------------------
+test('鸟瞰触控：单指拖动平移、双指捏合缩放、点返回退出', () => {
+  forceTouch(true);
+  const canvas = fakeCanvas();
+  const scene = flatScene();
+  scene.camera = new Camera({ viewW: 1000, viewH: 800, worldW: 1500, worldH: 800 });
+  scene.setOverview(true);
+  const ui = new TouchUI(canvas, () => ({ scene, hud: null }));
+  // 先放大（fit 视图与世界同大时无平移余量），单指拖动：内容跟随手指（视窗原点左移）
+  scene.camera.zoomOverview(2, W / 2, H / 2, W, H);
+  assert.equal(ui.down(1, 400, 200), 'ov', '鸟瞰触点进手势管线');
+  const ox0 = scene.camera._ov.ox;
+  ui.move(1, 500, 200);
+  assert.ok(scene.camera._ov.ox < ox0, '右拖 → 世界内容跟随手指右移');
+  assert.equal(ui.up(1), undefined);
+  // 双指捏合：距离变大 → 放大；中点保持
+  const scale0 = scene.camera._ov.scale;
+  ui.down(2, 300, 200);
+  ui.down(3, 500, 200);
+  ui.move(2, 250, 200); // 指距 300 → 350：放大
+  const scale1 = scene.camera._ov.scale;
+  assert.ok(scale1 > scale0, `捏开放大：${scale0.toFixed(3)} → ${scale1.toFixed(3)}`);
+  ui.up(2);
+  ui.up(3);
+  assert.equal(ui.ovTouches.size, 0, '抬指清理');
+  // 返回按钮：退出鸟瞰
+  const b = overviewButtonRect(W);
+  assert.equal(ui.down(4, b.x + b.w / 2, b.y + b.h / 2), 'ui');
+  assert.equal(scene.overview, false, '返回按钮退出鸟瞰');
+});
+
+// ---- 12. 正常模式：触点点鸟瞰按钮进入（handleSceneClick 路径） ------------------
+test('鸟瞰按钮（触屏）：TouchUI 命中 → toggleOverview', () => {
+  forceTouch(true);
+  const canvas = fakeCanvas();
+  const scene = flatScene();
+  const ui = new TouchUI(canvas, () => ({ scene, hud: null }));
+  const b = overviewButtonRect(W);
+  assert.equal(ui.down(1, b.x + 10, b.y + 10), 'ui', '按钮点击被 HUD 消费');
+  assert.equal(scene.overview, true, '进入鸟瞰');
+  ui.up(1);
+});
+
+// ---- 13. 鸟瞰下 releaseAll 兜底 ------------------------------------------------
+test('鸟瞰：releaseAll 清空手势触点（失焦/切场景不泄漏）', () => {
+  forceTouch(true);
+  const canvas = fakeCanvas();
+  const scene = flatScene();
+  scene.setOverview(true);
+  const ui = new TouchUI(canvas, () => ({ scene, hud: null }));
+  ui.down(1, 400, 200);
+  ui.down(2, 500, 220);
+  assert.equal(ui.ovTouches.size, 2);
+  ui.releaseAll();
+  assert.equal(ui.ovTouches.size, 0, '全部清空');
 });

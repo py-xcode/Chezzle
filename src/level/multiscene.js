@@ -25,6 +25,7 @@ import { bindKeyboard } from '../core/input.js';
 import { Plugins } from './plugins.js';
 import { handleSceneClick } from './click.js';
 import { bindTouchUI } from '../core/touch.js';
+import { bindOverviewInput } from '../core/overview.js';
 import { attachRecorderPanel } from '../core/recorder.js';
 
 export class Multiscene {
@@ -69,6 +70,8 @@ export class Multiscene {
     // 移动端触控（摇杆/按钮/拖动管线；桌面端按 isTouchDevice 门槛空转）
     const activeOf = () => (this.current === entry.name && entry.active ? { scene: entry.scene, hud: entry.hud } : null);
     entry.touch = bindTouchUI(canvas, activeOf);
+    // 鸟瞰输入（灵魂出窍）：滚轮缩放 + 拖动平移（仅该场景 overview 时生效）
+    entry.overview = bindOverviewInput(canvas, activeOf);
     return builder;
   }
 

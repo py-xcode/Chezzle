@@ -86,7 +86,7 @@
     <button class="btn" id="btnPlugins">🧩 插件</button>
     <button class="btn" id="btnClear">🗑 清空</button>
     <button class="btn" id="btnClearStorage">🗑 清空存档</button>
-    <label style="color:#9fb2c8"><input type="checkbox" id="cbDebug" checked> 调试模式</label>
+    <label style="color:#9fb2c8"><input type="checkbox" id="cbDebug" checked> 导出调试提示（?debug=1）</label>
     <label>世界宽 <input type="number" id="inW" value="3000" min="200" step="100"></label>
     <label>高 <input type="number" id="inH" value="800" min="300" step="50"></label>
     <label style="color:#9fb2c8">大气 <input type="text" id="inAtm" placeholder="CO2:8, O2:15（不填=默认地球大气）" style="width:100px;background:#0e1432;color:#fff;border:1px solid var(--edge);padding:2px 5px;font-size:11px"></label>
@@ -1516,7 +1516,7 @@ function buildScript() {
     `const L = new Chezzle.LevelBuilder(canvas, { worldW: ${state.worldW}, worldH: ${state.worldH} });`,
     'L',
   ];
-  if ($('cbDebug') && $('cbDebug').checked) lines.push('  .debugmode()'); // 可选：导出带调试模式
+  if ($('cbDebug') && $('cbDebug').checked) lines.push(`  // 调试模式：打开本关时 URL 加 ?debug=1（.debugmode() 已废弃，导出仅留提示）`); // 可选：提示调试模式开启方式
   const post = []; // 构建后语句（灯上默认沉淀 / 开关预设开启物 / 绳子）
   for (const p of state.placed) {
     if (p.type === 'rope') continue; // 绳子需引用物体，走构建后语句
@@ -1896,6 +1896,8 @@ function togglePlay() {
   $('btnPlay').textContent = '⏹ 退出试玩';
   canvas.style.cursor = 'default';
   playUnbind = C.bindKeyboard(scene);
+  // 鸟瞰输入（滚轮缩放 + 拖动平移；试玩 HUD 也有"鸟瞰"按钮，与导出关卡一致）
+  const unbindOverview = C.bindOverviewInput(canvas, () => (playScene === scene ? { scene } : null));
   playMouseClean = () => {
     canvas.removeEventListener('mousemove', onPlayMove);
     canvas.removeEventListener('mouseleave', onPlayLeave);
@@ -1903,10 +1905,11 @@ function togglePlay() {
     canvas.removeEventListener('mousemove', onPlayMoveDiag);
     window.removeEventListener('mouseup', onPlayTapUp);
     window.removeEventListener('mousemove', onPlayPressMove);
+    unbindOverview();
   };
   playStop = C.startLoop(scene, renderer, { hud });
   playScene = scene; // 调试/测试可访问当前试玩场景
-  $('status').textContent = '试玩中：A/D 移动 · 空格跳 · Q 收集 · Shift 放置 · C 拾取物品/吸液/按住集气 · X 倒出/按住通气 · 滴管：点胶头滴液/按住持续滴(液下长按=吸取)/玻璃段拖动 · 悬停查来源 · F5暂停';
+  $('status').textContent = '试玩中：A/D 移动 · 空格跳 · Q 收集 · Shift 放置 · C 拾取物品/吸液/按住集气 · X 倒出/按住通气 · 滴管：点胶头滴液/按住持续滴(液下长按=吸取)/玻璃段拖动 · V 鸟瞰 · 悬停查来源 · F5暂停';
   notifyPlayState(true);
 }
 

@@ -22,7 +22,10 @@ export function startLoop(scene, renderer, opts = {}) {
     if (active && active.scene) {
       const S = active.scene;
       let guard = 0;
-      if (S.debugMode && S.debugPaused) {
+      if (S.overview) {
+        // 鸟瞰（灵魂出窍）：暂停推进（保持画面），自由缩放/平移由输入管线驱动
+        acc = 0;
+      } else if (S.debugMode && S.debugPaused) {
         // 调试暂停：不推进 tick（保持画面），F6 手动步进一 tick
         if (S.debugStepOnce) {
           S.debugStepOnce = false;

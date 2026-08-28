@@ -18,6 +18,8 @@ Object.assign(exports, __require('src/core/scene.js'));;
 Object.assign(exports, __require('src/core/input.js'));;
 Object.assign(exports, __require('src/core/loop.js'));;
 Object.assign(exports, __require('src/core/touch.js'));;
+Object.assign(exports, __require('src/core/fullscreen.js'));;
+Object.assign(exports, __require('src/core/overview.js'));;
 Object.assign(exports, __require('src/core/recorder.js'));;
 
 Object.assign(exports, __require('src/level/builder.js'));;
@@ -141,6 +143,9 @@ const CFG = {
   // 移动端（触屏/小屏；桌面 fine-pointer 完全不受影响）
   touch: {
     viewH: 560,    // 移动端相机视野高度（世界坐标；宽度按屏幕比例推出——玩家更大更清晰）
+    focusBias: 0.14, // 相机跟随偏置（视野高度比例）：视窗中心下移 → 玩家画面偏上，
+                     // 不被左上面板/右下控件遮挡（移动端 HUD 压缩的配套）
+    hudAlpha: 0.78,  // 移动端左侧 HUD 卡片透明度（面板体；文字不降，保可读）
     joyR: 105,     // 摇杆基座半径（px）
     joyDead: 0.22, // 摇杆死区（半径比例；死区内不触发任何方向）
     horizDead: 0.14, // 水平方向死区（半径比例：小幅下倾/抖动不会误触左右）
@@ -218,9 +223,10 @@ class Scene {
     this.time = 0;
     this.dt = 1 / CFG.tickRate;
     this.tip = '';
-    this.debugMode = false; // 调试模式（.debugmode() 开启）
+    this.debugMode = false; // 调试模式（URL 参数 ?debug=1 开启；.debugmode() 已废弃）
     this.debugPaused = false; // 暂停 tick 推进
     this.debugStepOnce = false; // 手动步进一 tick
+    this.overview = false; // 鸟瞰模式（灵魂出窍）：暂停模拟，相机自由缩放/平移看整关
 
     this.control = new Set(); // 长按（left/right/jump/place/collect/grab/use）
     this.pressed = new Set(); // 本刻刚按下（边缘触发）
@@ -360,6 +366,37 @@ class Scene {
 
   fire(name, ...args) {
     for (const fn of this._events[name] ?? []) fn(...args);
+  }
+
+  // ---------------------------------------------------------------------------
+  // 鸟瞰模式（灵魂出窍）：暂停模拟，相机自由缩放/平移看整关（桌面 V 键 /
+  // HUD 鸟瞰按钮 / 移动端同按钮进入；滚轮/拖动、双指捏合由鸟瞰输入管线驱动）。
+  // ---------------------------------------------------------------------------
+
+  setOverview(on) {
+    const v = !!on;
+    if (v === this.overview) return v;
+    this.overview = v;
+    // 进出都清空持续输入与按住状态：摇杆/滴管长按/集气按住不会泄漏到恢复后
+    this.control.clear();
+    this.pressed.clear();
+    this._pressCand = null;
+    this._pressTap = null;
+    this._pressTapT = 0;
+    this._pressHome = null;
+    this._drag = null;
+    this._holdSuck = null;
+    this._gasHold = null;
+    if (this.camera) {
+      if (v) this.camera.enterOverview();
+      else this.camera.exitOverview();
+    }
+    this.fire('overview', { on: v });
+    return v;
+  }
+
+  toggleOverview() {
+    return this.setOverview(!this.overview);
   }
 
   addObject(obj) {
@@ -7697,13 +7734,30 @@ exports.Rope = Rope;
 // ============================================================================
 
 const { CFG } = __require('src/core/config.js');;
+const { toggleFullscreen } = __require('src/core/fullscreen.js');;
 
-/** 屏幕坐标 → 世界坐标（与 Renderer.frame 同口径：跟随玩家/聚焦内容） */
+/** 屏幕坐标 → 世界坐标（与 Renderer.frame 同口径：跟随玩家/聚焦内容；鸟瞰时走鸟瞰视图） */
 function screenToWorld(scene, canvas, sx, sy) {
   const c = scene.camera;
   if (!c) return { x: sx, y: sy };
   const { scale, offsetX, offsetY } = c.compute(canvas.width, canvas.height, scene.player ?? scene.cameraFocus ?? null);
   return { x: (sx - offsetX) / scale, y: (sy - offsetY) / scale };
+}
+
+// ---- 顶部按钮几何（HUD 渲染与点击命中共用；提示按钮为 W-72,10,62×28，见 hud.tipButton）----
+
+/** 鸟瞰按钮（提示按钮左侧；双端显示）：返回 {x,y,w,h} */
+function overviewButtonRect(W) {
+  return { x: W - 142, y: 10, w: 62, h: 28 };
+}
+
+/** 全屏按钮（仅触屏端显示，图标 ⛶）：在鸟瞰按钮左侧 */
+function fullscreenButtonRect(W) {
+  return { x: W - 196, y: 10, w: 44, h: 28 };
+}
+
+function inRect(r, sx, sy) {
+  return sx >= r.x && sx <= r.x + r.w && sy >= r.y && sy <= r.y + r.h;
 }
 
 /** 场景通知横幅（HUD 顶部中偏下淡入淡出 ~1.6s）：超距提示、吸取失败原因等 */
@@ -7764,18 +7818,40 @@ function dist(a, b) {
 }
 
 /**
- * 处理一次"点击"（提示按钮 / 物品栏选格）。
- * hjude 可为空。返回 true = 已消费。onInfo（可选）诊断回调。
+ * 处理一次"点击"（提示按钮 / 物品栏选格 / 鸟瞰与全屏按钮）。
+ * hud 可为空。返回 true = 已消费。onInfo（可选）诊断回调。
  */
 function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   if (!scene) return false;
-  // 1) 提示按钮（右上）
+  // 0) 鸟瞰模式：只认"返回"按钮（暂停态；未中 → 交给鸟瞰拖动/缩放管线）
+  if (scene.overview) {
+    if (inRect(overviewButtonRect(canvas.width), sx, sy)) {
+      scene.toggleOverview();
+      onInfo?.({ type: 'overview-exit' });
+    }
+    return false;
+  }
+  // 1) 全屏按钮（仅触屏端显示；click/触点都在用户手势内，可请求全屏）
+  if (scene._touchUI && typeof scene._touchUI.enabled === 'function' && scene._touchUI.enabled()) {
+    if (inRect(fullscreenButtonRect(canvas.width), sx, sy)) {
+      toggleFullscreen();
+      onInfo?.({ type: 'fullscreen' });
+      return true;
+    }
+  }
+  // 2) 鸟瞰按钮（双端）
+  if (inRect(overviewButtonRect(canvas.width), sx, sy)) {
+    scene.toggleOverview();
+    onInfo?.({ type: 'overview' });
+    return true;
+  }
+  // 3) 提示按钮（右上）
   if (sx > canvas.width - 68 && sx < canvas.width - 8 && sy > 8 && sy < 34) {
     if (hud) hud.showTip = !hud.showTip;
     onInfo?.({ type: 'tip' });
     return true;
   }
-  // 2) 物品栏选格（右下；几何与 HUD 渲染共用 inventorySlotRects）
+  // 4) 物品栏选格（右下；几何与 HUD 渲染共用 inventorySlotRects）
   const p = scene.player;
   if (p && p.inventory) {
     const rects = inventorySlotRects(canvas.width, canvas.height, p.inventory.slots, uiMargins(scene));
@@ -7798,7 +7874,7 @@ function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
  * 未命中 → 清除按住标记并返回 false。
  */
 function handleSceneTapDown(scene, canvas, sx, sy, onInfo = null, pad = 6) {
-  if (!scene) return false;
+  if (!scene || scene.overview) return false; // 鸟瞰：场景管线冻结（拖动/缩放走鸟瞰输入）
   scene._pressHome = null;
   const hit = hitTap(scene, canvas, sx, sy, pad);
   if (!hit) {
@@ -7832,7 +7908,7 @@ function handleSceneTapUp(scene) {
  * 落在滴管玻璃段但玩家太远 / 无容器等 → 未命中（不滴也不拖）。
  */
 function handleScenePressDown(scene, canvas, sx, sy, onInfo = null, pad = 6) {
-  if (!scene) return false;
+  if (!scene || scene.overview) return false; // 鸟瞰：场景管线冻结
   scene._pressHome = null;
   const hit = hitTap(scene, canvas, sx, sy, pad);
   if (!hit) {
@@ -7868,7 +7944,7 @@ function handleScenePressDown(scene, canvas, sx, sy, onInfo = null, pad = 6) {
 /** 移动（按住期间）：拖动 = 移动滴管位置；胶头/玻璃段都允许拖。
  *  候选期拖出 dragStartPx → 拖动（不滴）；已开滴/开吸再拖出 dragAbortPx → 停转拖动 */
 function handleScenePressMove(scene, canvas, sx, sy) {
-  if (!scene) return;
+  if (!scene || scene.overview) return;
   const c = scene._pressCand;
   if (c && !c.moved && Math.hypot(sx - c.startX, sy - c.startY) > CFG.item.dragStartPx) {
     c.moved = true;
@@ -7924,7 +8000,7 @@ function handleScenePressMove(scene, canvas, sx, sy) {
 /** 抬起：快速单击胶头 = 滴一滴（长按/液下吸取已在 stepPressTap 觉醒）；
  *  玻璃段候选不滴（松开即完成，仅拖动会移动位置）；结束一切按住状态 */
 function handleScenePressUp(scene, canvas = null, pad = 6) {
-  if (!scene) return;
+  if (!scene || scene.overview) return;
   const c = scene._pressCand;
   if (c && c.mode === 'bulb' && !c.moved && c.downT < CFG.item.dripArmDelay && canvas) {
     scene._pressCand = null;
@@ -7940,7 +8016,7 @@ function handleScenePressUp(scene, canvas = null, pad = 6) {
 /** 每 tick 推进：候选长按觉醒（≥ dripArmDelay：液下→吸取 / 液上→持续滴，胶头专属）
  *  + 液下持续吸取节奏 + 长按持续滴节奏 */
 function stepPressTap(scene, dt) {
-  if (!scene) return;
+  if (!scene || scene.overview) return;
   const c = scene._pressCand;
   if (c && c.mode === 'bulb' && !c.moved) {
     c.downT = (c.downT ?? 0) + dt;
@@ -8025,6 +8101,8 @@ function bindSceneClick(canvas, getScreenPos, getActive) {
 }
 
 exports.screenToWorld = screenToWorld;
+exports.overviewButtonRect = overviewButtonRect;
+exports.fullscreenButtonRect = fullscreenButtonRect;
 exports.pushNotice = pushNotice;
 exports.inventorySlotRects = inventorySlotRects;
 exports.uiMargins = uiMargins;
@@ -8036,6 +8114,73 @@ exports.handleScenePressMove = handleScenePressMove;
 exports.handleScenePressUp = handleScenePressUp;
 exports.stepPressTap = stepPressTap;
 exports.bindSceneClick = bindSceneClick;
+
+  };
+  __modules["src/core/fullscreen.js"] = function (module, exports, __require) {
+// ============================================================================
+// 全屏（移动端小屏必备：地址栏/系统栏挤占画面）。桌面端也可用（HUD 按钮仅触屏画）。
+// 浏览器要求全屏必须发生在用户手势内：自动全屏走"首个触点"请求（requestFullscreenOnce），
+// 手动切换走 HUD 按钮（click/touchstart 都是手势上下文）。
+// iOS Safari 不支持元素全屏 API → 全部静默降级（不报错、不弹提示）。
+// ============================================================================
+
+/** 当前环境是否支持全屏 API（node/无 DOM = false） */
+function fullscreenSupported() {
+  if (typeof document === 'undefined') return false;
+  const el = document.documentElement;
+  return !!(el.requestFullscreen || el.webkitRequestFullscreen);
+}
+
+/** 当前是否已处于全屏 */
+function isFullscreen() {
+  if (typeof document === 'undefined') return false;
+  return !!(document.fullscreenElement || document.webkitFullscreenElement);
+}
+
+/** 请求全屏（最好在用户手势内调用）；返回 Promise|null（静默吞掉拒绝） */
+function enterFullscreen() {
+  if (typeof document === 'undefined' || isFullscreen()) return null;
+  const el = document.documentElement;
+  try {
+    const p = el.requestFullscreen
+      ? el.requestFullscreen()
+      : el.webkitRequestFullscreen?.();
+    if (p && typeof p.catch === 'function') p.catch(() => { /* 用户拒绝/不支持：静默 */ });
+    return p ?? null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/** 退出全屏 */
+function exitFullscreen() {
+  if (typeof document === 'undefined' || !isFullscreen()) return;
+  try {
+    if (document.exitFullscreen) document.exitFullscreen();
+    else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+  } catch (e) { /* 静默 */ }
+}
+
+/** 切换全屏（HUD 按钮） */
+function toggleFullscreen() {
+  if (isFullscreen()) exitFullscreen();
+  else enterFullscreen();
+}
+
+/** 首个用户手势自动全屏（每页只尝试一次；不支持/已全屏则静默跳过） */
+function requestFullscreenOnce() {
+  if (requestFullscreenOnce._done) return;
+  requestFullscreenOnce._done = true;
+  if (!fullscreenSupported() || isFullscreen()) return;
+  enterFullscreen();
+}
+
+exports.fullscreenSupported = fullscreenSupported;
+exports.isFullscreen = isFullscreen;
+exports.enterFullscreen = enterFullscreen;
+exports.exitFullscreen = exitFullscreen;
+exports.toggleFullscreen = toggleFullscreen;
+exports.requestFullscreenOnce = requestFullscreenOnce;
 
   };
   __modules["src/core/input.js"] = function (module, exports, __require) {
@@ -8068,6 +8213,12 @@ function bindKeyboard(scene) {
     scene._fireKey('down', e);
     if (e.code === 'KeyR') {
       scene.restart();
+      return;
+    }
+    // 鸟瞰模式（灵魂出窍）：V 进出（暂停模拟，自由缩放/平移看整关）
+    if (e.code === 'KeyV' && typeof scene.toggleOverview === 'function') {
+      scene.toggleOverview();
+      e.preventDefault();
       return;
     }
     // 调试模式：F5 暂停/继续，F6 步进一 tick，X 循环切换悬停重叠目标
@@ -8148,7 +8299,10 @@ function startLoop(scene, renderer, opts = {}) {
     if (active && active.scene) {
       const S = active.scene;
       let guard = 0;
-      if (S.debugMode && S.debugPaused) {
+      if (S.overview) {
+        // 鸟瞰（灵魂出窍）：暂停推进（保持画面），自由缩放/平移由输入管线驱动
+        acc = 0;
+      } else if (S.debugMode && S.debugPaused) {
         // 调试暂停：不推进 tick（保持画面），F6 手动步进一 tick
         if (S.debugStepOnce) {
           S.debugStepOnce = false;
@@ -8186,6 +8340,10 @@ exports.startLoop = startLoop;
 //    与键盘 keydown/keyup 完全同语义——C 按住收气、X 按住通气），下方是物品栏。
 //  - 场景内：与鼠标同一套"按下/拖动/抬起"管线（滴管点击滴液、长按持续滴、
 //    液下吸取、拖动），触点落在 UI 控件外即进入该管线。
+//  - 鸟瞰（灵魂出窍）：进入后触点改走手势管线——1 指拖动 = 平移、2 指捏合 =
+//    缩放（中点为锚）；"返回"按钮退出（桌面 V 键 / HUD 鸟瞰按钮同效）。
+//  - 全屏：首个触点自动请求全屏（小屏金贵；iOS 不支持元素全屏 → 静默跳过），
+//    HUD ⛶ 按钮可随时切换。
 //  - 竖屏：HUD 层画"请旋转设备"提示（游戏照常运行）。
 //
 // 几何约定：所有触控按钮/摇杆命中区 = 画布坐标（同 palette.js 的 inventorySlotRects），
@@ -8193,7 +8351,8 @@ exports.startLoop = startLoop;
 // ============================================================================
 
 const { CFG } = __require('src/core/config.js');;
-const { handleSceneClick, handleScenePressDown, handleScenePressMove, handleScenePressUp, inventorySlotRects, uiMargins } = __require('src/level/click.js');;
+const { handleSceneClick, handleScenePressDown, handleScenePressMove, handleScenePressUp, inventorySlotRects, uiMargins, overviewButtonRect } = __require('src/level/click.js');;
+const { requestFullscreenOnce } = __require('src/core/fullscreen.js');;
 
 // ---------------------------------------------------------------------------
 // 设备检测
@@ -8397,6 +8556,7 @@ class TouchUI {
     this.buttons = new Map(); // touchId → key（按下中的按键）
     this.uiTouches = new Set(); // 被 HUD UI（提示/物品栏）消费的触点
     this.sceneTouch = null; // { id }：进入场景按下/拖动管线的触点（单指）
+    this.ovTouches = new Map(); // 鸟瞰手势触点 id → {x,y}（1指平移 / 2指捏合缩放）
     this._ctlScene = null; // 摇杆控制写入的 scene（切场景时释放旧场景的按键）
     this._bound = false;
   }
@@ -8487,7 +8647,7 @@ class TouchUI {
 
   // ---- 单点管线（触点按下/移动/抬起 → 分派角色） ----
 
-  /** 触点按下（画布坐标）。返回 'joy' | 'btn' | 'ui' | 'scene' | null */
+  /** 触点按下（画布坐标）。返回 'joy' | 'btn' | 'ui' | 'scene' | 'ov' | null */
   down(id, x, y) {
     const act = this.getActive();
     if (!act || !act.scene) return null;
@@ -8497,6 +8657,16 @@ class TouchUI {
     if (scene.status === 'died') {
       scene.restart();
       return 'died';
+    }
+    // ⓪ 鸟瞰模式：返回按钮 = 退出；其余触点进手势管线（1指平移 / 2指捏合缩放）
+    if (scene.overview) {
+      const b = overviewButtonRect(this.canvas.width);
+      if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
+        scene.toggleOverview();
+        return 'ui';
+      }
+      this.ovTouches.set(id, { x, y });
+      return 'ov';
     }
     // ① 摇杆：左下半圆（上半部 hit；手指可从半圆上方/左右进入）
     const g = this.geom();
@@ -8527,11 +8697,43 @@ class TouchUI {
     return 'scene';
   }
 
+  /** 鸟瞰手势：1指 = 平移；2指 = 双指捏合缩放（中点为锚）+ 中点平移 */
+  _applyOverviewGesture(id, x, y) {
+    const act = this.getActive();
+    const scene = act && act.scene ? act.scene : null;
+    const prev = this.ovTouches.get(id);
+    if (!scene || !scene.camera || !prev) return;
+    if (this.ovTouches.size === 1) {
+      scene.camera.panOverview(x - prev.x, y - prev.y, this.canvas.width, this.canvas.height);
+    } else if (this.ovTouches.size >= 2) {
+      // 取另外一根手指组成捏合对
+      let otherId = null;
+      for (const k of this.ovTouches.keys()) if (k !== id) { otherId = k; break; }
+      const o = otherId != null ? this.ovTouches.get(otherId) : null;
+      if (o) {
+        const d0 = Math.hypot(prev.x - o.x, prev.y - o.y);
+        const d1 = Math.hypot(x - o.x, y - o.y);
+        // 中点位移 = 平移；距离比 = 缩放（中点为锚）
+        const m0x = (prev.x + o.x) / 2;
+        const m0y = (prev.y + o.y) / 2;
+        const m1x = (x + o.x) / 2;
+        const m1y = (y + o.y) / 2;
+        scene.camera.panOverview(m1x - m0x, m1y - m0y, this.canvas.width, this.canvas.height);
+        if (d0 > 8) scene.camera.zoomOverview(d1 / d0, m1x, m1y, this.canvas.width, this.canvas.height);
+      }
+    }
+    this.ovTouches.set(id, { x, y });
+  }
+
   /** 触点移动 */
   move(id, x, y) {
     const act = this.getActive();
     if (!act || !act.scene) return;
     const scene = act.scene;
+    if (this.ovTouches.has(id)) {
+      this._applyOverviewGesture(id, x, y);
+      return;
+    }
     if (this.joy && this.joy.id === id) {
       this._applyJoy(x, y);
       return;
@@ -8545,6 +8747,10 @@ class TouchUI {
 
   /** 触点抬起/取消 */
   up(id) {
+    if (this.ovTouches.has(id)) {
+      this.ovTouches.delete(id);
+      return;
+    }
     const act = this.getActive();
     const scene = act && act.scene ? act.scene : null;
     if (this.joy && this.joy.id === id) {
@@ -8573,6 +8779,7 @@ class TouchUI {
   releaseAll() {
     const act = this.getActive();
     const scene = act && act.scene ? act.scene : null;
+    this.ovTouches.clear();
     this._releaseJoyControl(this._ctlScene ?? scene);
     this._ctlScene = null;
     this.joy = null;
@@ -8602,6 +8809,8 @@ class TouchUI {
     const enabled = () => isTouchDevice();
     const onStart = (e) => {
       if (!enabled()) return;
+      // 首个用户手势自动全屏（小屏金贵；不支持/iOS → 静默跳过；HUD ⛶ 按钮可随时切换）
+      requestFullscreenOnce();
       for (const t of e.changedTouches) {
         const p = pos(t);
         this.down(t.identifier, p.x, p.y);
@@ -8665,9 +8874,13 @@ function bindTouchUI(canvas, getActive) {
     clearTimeout(onLayout._t);
     onLayout._t = setTimeout(onLayout, 90);
   };
+  const fsChange = () => debounce();
   if (typeof window !== 'undefined') {
     window.addEventListener('resize', debounce);
     window.addEventListener('orientationchange', debounce);
+    // 进/出全屏：窗口尺寸变化 → 重排画布与安全区
+    document.addEventListener('fullscreenchange', fsChange);
+    document.addEventListener('webkitfullscreenchange', fsChange);
   }
   UIS.push(ui);
   const act = getActive();
@@ -8680,6 +8893,8 @@ function bindTouchUI(canvas, getActive) {
       if (typeof window !== 'undefined') {
         window.removeEventListener('resize', debounce);
         window.removeEventListener('orientationchange', debounce);
+        document.removeEventListener('fullscreenchange', fsChange);
+        document.removeEventListener('webkitfullscreenchange', fsChange);
       }
       const i = UIS.indexOf(ui);
       if (i >= 0) UIS.splice(i, 1);
@@ -8694,6 +8909,90 @@ exports.touchButtonRects = touchButtonRects;
 exports.joyInput = joyInput;
 exports.TouchUI = TouchUI;
 exports.bindTouchUI = bindTouchUI;
+
+  };
+  __modules["src/core/overview.js"] = function (module, exports, __require) {
+// ============================================================================
+// 鸟瞰模式输入（桌面端；移动端单指/双指在 touch.js 的 TouchUI 里处理）：
+//  - 滚轮：以光标为锚缩放（光标下的世界点保持不动）；
+//  - 左键拖动：平移视图（按下落在"返回"按钮上时不拖——让 click 事件去切换）。
+// 仅在 scene.overview 时生效（其它时刻各处理器直接返回，不影响正常游戏管线）。
+// 几何约定：overviewButtonRect（HUD 渲染与命中共用）在 level/click.js。
+// ============================================================================
+
+const { overviewButtonRect } = __require('src/level/click.js');;
+
+/**
+ * 给画布绑定鸟瞰输入。
+ * @param getActive () => { scene } | null（同 bindTouchUI 语义）
+ * @returns unbind()
+ */
+function bindOverviewInput(canvas, getActive) {
+  // getActive 兼容两种形态：() => { scene }（标准）或 () => Scene（容错）——
+  // 形态不匹配会让处理器静默失灵，这里统一收敛成 Scene
+  const sceneOf = () => {
+    const a = typeof getActive === 'function' ? getActive() : getActive;
+    const s = a && a.scene ? a.scene : a;
+    return s && typeof s.overview === 'boolean' ? s : null;
+  };
+  let pan = null; // { x, y } 拖动中（屏幕坐标）
+
+  const onWheel = (e) => {
+    const scene = sceneOf();
+    if (!scene || !scene.overview || !scene.camera) return;
+    e.preventDefault();
+    const r = canvas.getBoundingClientRect();
+    const px = e.clientX - r.left;
+    const py = e.clientY - r.top;
+    // 滚轮一格 ≈ 1.12×；deltaMode=1（行）时放大系数
+    const step = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+    const factor = Math.pow(1.12, -step / 53);
+    scene.camera.zoomOverview(factor, px, py, canvas.width, canvas.height);
+  };
+
+  const onDown = (e) => {
+    const scene = sceneOf();
+    if (!scene || !scene.overview) return;
+    if (e.button !== 0) return;
+    const r = canvas.getBoundingClientRect();
+    const px = e.clientX - r.left;
+    const py = e.clientY - r.top;
+    // "返回"按钮：不进入拖动（click 事件负责切换）
+    const b = overviewButtonRect(canvas.width);
+    if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) return;
+    pan = { x: e.clientX, y: e.clientY };
+  };
+
+  const onMove = (e) => {
+    if (!pan) return;
+    const scene = sceneOf();
+    if (!scene || !scene.overview || !scene.camera) {
+      pan = null;
+      return;
+    }
+    scene.camera.panOverview(e.clientX - pan.x, e.clientY - pan.y, canvas.width, canvas.height);
+    pan = { x: e.clientX, y: e.clientY };
+  };
+
+  const onUp = () => {
+    pan = null;
+  };
+
+  canvas.addEventListener('wheel', onWheel, { passive: false });
+  canvas.addEventListener('mousedown', onDown);
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
+  window.addEventListener('blur', onUp);
+  return () => {
+    canvas.removeEventListener('wheel', onWheel);
+    canvas.removeEventListener('mousedown', onDown);
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('mouseup', onUp);
+    window.removeEventListener('blur', onUp);
+  };
+}
+
+exports.bindOverviewInput = bindOverviewInput;
 
   };
   __modules["src/core/recorder.js"] = function (module, exports, __require) {
@@ -9193,6 +9492,7 @@ const { Extractor } = __require('src/objects/extractor.js');;
 const { Dropper } = __require('src/objects/dropper.js');;
 const { GasBottle } = __require('src/objects/gasbottle.js');;
 const { bindSceneClick } = __require('src/level/click.js');;
+const { bindOverviewInput } = __require('src/core/overview.js');;
 const { bindTouchUI } = __require('src/core/touch.js');;
 const { attachRecorderPanel } = __require('src/core/recorder.js');;
 
@@ -9302,9 +9602,12 @@ class LevelBuilder {
     return this.add(obj);
   }
 
-  /** 开启调试模式：F5 暂停/继续 tick，F6 手动步进一 tick，HUD 显示附近所有反应 */
+  /**
+   * @deprecated 调试模式改用 URL 参数开启：`levels/xxx.html?debug=1`。
+   * 本方法保留兼容（旧关卡脚本链式调用不报错），但**不再生效**——
+   * 调试开关从"写死在关卡文件"变为"打开页面的诉求"，方便随时开关。
+   */
   debugmode() {
-    this.scene.debugMode = true;
     return this;
   }
 
@@ -9321,6 +9624,10 @@ class LevelBuilder {
   build() {
     // 注入相机（爆炸屏幕震动用）
     this.scene.camera = this.renderer.camera;
+    // 调试模式：URL 参数 ?debug=1 开启（.debugmode() 已废弃，见下）
+    if (typeof location !== 'undefined' && /[?&]debug=1/.test(location.search)) {
+      this.scene.debugMode = true;
+    }
     // 无玩家时相机聚焦关卡内容包围盒：否则显示世界中央，物体（滴管等）不在视口
     // 内——玩家看不到也点不到（"点击没反应"的根源）
     if (!this.scene.player) {
@@ -9342,7 +9649,7 @@ class LevelBuilder {
     return this.scene;
   }
 
-  /** 启动：状态→输入→点击（提示/选格）→触控（移动端）→主循环 */
+  /** 启动：状态→输入→点击（提示/选格）→触控（移动端）→鸟瞰输入→主循环 */
   start() {
     const scene = this.build();
     scene.status = 'running';
@@ -9351,6 +9658,8 @@ class LevelBuilder {
     // 移动端触控（摇杆/按钮/拖动管线）；桌面端绑定但按 isTouchDevice 门槛空转
     this.touch = bindTouchUI(this.renderer.canvas, () => ({ scene: this.scene, hud: this.hud }));
     scene._touchUI = this.touch.ui;
+    // 鸟瞰输入（灵魂出窍）：滚轮缩放 + 拖动平移（仅 scene.overview 时生效）
+    this.unbindOverview = bindOverviewInput(this.renderer.canvas, () => ({ scene: this.scene }));
     // 操作录制/回放面板（开发工具：?record=1 显示；拖入录制的 .json 回放）
     if (typeof location !== 'undefined' && /[?&]record=1/.test(location.search)) {
       this.recorder = attachRecorderPanel(() => this.scene, this.renderer.canvas);
@@ -9628,7 +9937,11 @@ exports.Renderer = Renderer;
   __modules["src/render/camera.js"] = function (module, exports, __require) {
 // ============================================================================
 // 相机：逻辑视口（默认 1000×800）等比缩放居中；世界比视口大时跟随 focus 滚动。
+// 鸟瞰模式（overview）：忽略 focus，用自由视图 {scale, ox, oy}——整关缩放/平移
+//   （灵魂出窍；由 Scene.setOverview 开关，pan/zoom 由鸟瞰输入管线驱动）。
 // ============================================================================
+
+const { CFG } = __require('src/core/config.js');;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -9640,6 +9953,9 @@ class Camera {
     this.worldW = worldW;
     this.worldH = worldH;
     this._shake = 0; // 屏幕震动强度（px），每帧衰减
+    // 鸟瞰（自由视图）：_ov = {scale, ox, oy}（scale = 屏幕px/世界px；ox/oy = 视窗左上角世界坐标）
+    this.overview = false;
+    this._ov = null; // 惰性初始化（首次 compute 时按当前画布尺寸适配整关）
   }
 
   /** 触发屏幕震动（爆炸/剧烈反应） */
@@ -9656,31 +9972,96 @@ class Camera {
     return { x: Math.cos(ang) * a, y: Math.sin(ang) * a * 0.6 };
   }
 
+  // ---- 鸟瞰（灵魂出窍）：自由缩放/平移 ------------------------------------
+
+  enterOverview() {
+    this.overview = true;
+    this._ov = null; // 下一帧按当前画布尺寸重新适配整关
+  }
+
+  exitOverview() {
+    this.overview = false;
+    this._ov = null;
+  }
+
+  /** 鸟瞰初始视图：整个世界适配进画布并居中 */
+  _ovFit(vw, vh) {
+    const scale = Math.min(vw / this.worldW, vh / this.worldH);
+    return this._ovClamp({ scale, ox: 0, oy: 0 }, vw, vh);
+  }
+
+  /** 把鸟瞰视图钳制在世界内（视图大于世界 → 居中） */
+  _ovClamp(v, vw, vh) {
+    const viewW = vw / v.scale;
+    const viewH = vh / v.scale;
+    v.ox = viewW >= this.worldW ? (this.worldW - viewW) / 2 : clamp(v.ox, 0, this.worldW - viewW);
+    v.oy = viewH >= this.worldH ? (this.worldH - viewH) / 2 : clamp(v.oy, 0, this.worldH - viewH);
+    return v;
+  }
+
+  /** 鸟瞰平移（屏幕像素位移 → 世界位移） */
+  panOverview(dxScreen, dyScreen, vw, vh) {
+    if (!this.overview) return;
+    if (!this._ov) this._ov = this._ovFit(vw, vh);
+    this._ov.ox -= dxScreen / this._ov.scale;
+    this._ov.oy -= dyScreen / this._ov.scale;
+    this._ovClamp(this._ov, vw, vh);
+  }
+
+  /** 鸟瞰缩放：factor 缩放比，(px,py) = 缩放中心（屏幕像素，光标/双指中点——该世界点保持不动） */
+  zoomOverview(factor, px, py, vw, vh) {
+    if (!this.overview || !(factor > 0)) return;
+    if (!this._ov) this._ov = this._ovFit(vw, vh);
+    const minS = Math.min(vw / this.worldW, vh / this.worldH); // 最远 = 整关一屏
+    const maxS = Math.max(minS * 16, 3); // 最近 = 放大到能看清细节
+    const ns = clamp(this._ov.scale * factor, minS, maxS);
+    // 保持 (px,py) 下的世界点不动：wx = ox + px/s → ox' = wx - px/ns
+    const wx = this._ov.ox + px / this._ov.scale;
+    const wy = this._ov.oy + py / this._ov.scale;
+    this._ov.scale = ns;
+    this._ov.ox = wx - px / ns;
+    this._ov.oy = wy - py / ns;
+    this._ovClamp(this._ov, vw, vh);
+  }
+
   /**
    * 计算缩放与屏幕偏移。focus 为可选跟随目标（{x,y,w,h}，通常是玩家）。
    * 世界 ≤ 视口时居中显示整个世界；世界 > 视口时跟随 focus 滚动（钳制在世界内）。
    * 移动端（mobileViewH>0 且横屏）：高度按 mobileViewH 收窄 → 世界内容按屏幕
-   * 比例变宽（跟随玩家），玩家在手机上不再缩成小点。
+   * 比例变宽（跟随玩家），玩家在手机上不再缩成小点；同时视窗中心按 focusBias
+   * 下移——玩家画在屏幕中上部，不被左上面板/右下触控控件遮挡。
+   * 鸟瞰模式（overview）：忽略 focus，用自由视图。
    */
   compute(vw, vh, focus = null) {
+    if (this.overview) {
+      if (!this._ov) this._ov = this._ovFit(vw, vh);
+      const { scale, ox, oy } = this._ov;
+      return { scale, ox, oy, offsetX: -ox * scale, offsetY: -oy * scale };
+    }
     let viewW = this.viewW;
     let viewH = this.viewH;
+    let biasY = 0;
     if (this.mobileViewH > 0 && vw > 0 && vh > 0 && vh < vw) {
       viewH = this.mobileViewH;
       viewW = Math.max(1, viewH * (vw / vh));
+      biasY = viewH * CFG.touch.focusBias; // 视窗中心下移 → 玩家画在屏幕偏上
     }
     const scale = Math.min(vw / viewW, vh / viewH);
     // 实际显示的世界窗口（单位：世界坐标）
     const vx = Math.min(this.worldW, viewW);
     const vy = Math.min(this.worldH, viewH);
-    // 窗口原点 ox, oy
+    // 窗口原点 ox, oy。偏置加在期望值上、且**下缘钳位放宽 biasY**：
+    // 玩家永远贴着世界底部走（地板在 worldH 附近），若只把期望值下移会被
+    // 底缘钳位吞掉——放宽下缘让视窗探到世界底边之下（下面是空背景，正好被
+    // 摇杆/按钮控件盖住），玩家才能真的画到屏幕中上部。上缘钳位不变（贴顶
+    // 时不把玩家推出画面）。
     let ox;
     let oy;
     if (focus) {
       const cx = focus.x + (focus.w ?? 0) / 2;
       const cy = focus.y + (focus.h ?? 0) / 2;
       ox = clamp(cx - vx / 2, 0, Math.max(0, this.worldW - vx));
-      oy = clamp(cy - vy / 2, 0, Math.max(0, this.worldH - vy));
+      oy = clamp(cy - vy / 2 + biasY, 0, Math.max(0, this.worldH - vy + biasY));
     } else {
       ox = (this.worldW - vx) / 2;
       oy = (this.worldH - vy) / 2;
@@ -9756,8 +10137,12 @@ exports.renderBackground = renderBackground;
   __modules["src/render/hud.js"] = function (module, exports, __require) {
 // ============================================================================
 // HUD（神话·元素风）：
-// 左上 玩家面板（物质 + 血量药瓶）、空气计（O2/CO2）；
-// 右上 提示按钮；右下 5 格宝石物品栏（选中发光）；通关/死亡神话遮罩。
+// 桌面：左上 玩家面板（物质+血量）+ 身体组成 + 空气计；右上 鸟瞰/提示按钮；
+//       右下 5 格宝石物品栏（选中发光）；通关/死亡神话遮罩。
+// 移动端（触屏）：左上压缩为单卡（物质/体质 + 身体组成 + 大气一行）；顶部
+//       ⛶ 全屏 / 鸟瞰 / 提示三按钮；"最近反应"仅调试模式显示。
+// 鸟瞰（灵魂出窍）：暂停模拟，整关自由缩放/平移——HUD 只留"返回"按钮 +
+//       操作提示 + 玩家魂标（金青脉动光环）。
 // ============================================================================
 
 const { THEME, rr, panel, glowText, clearText } = __require('src/render/theme.js');;
@@ -9767,7 +10152,7 @@ const { solutionColor } = __require('src/render/liquidrender.js');;
 const { CFG } = __require('src/core/config.js');;
 const { GasColumn } = __require('src/objects/gascolumn.js');;
 const { Block } = __require('src/objects/block.js');;
-const { inventorySlotRects, uiMargins } = __require('src/level/click.js');;
+const { inventorySlotRects, uiMargins, overviewButtonRect, fullscreenButtonRect } = __require('src/level/click.js');;
 const { joyGeom, touchButtonRects } = __require('src/core/touch.js');;
 
 /** 质量短格式：1.2g / 0.30g / 12g（空气计百分比旁同显质量） */
@@ -9788,11 +10173,24 @@ const ORIGIN_LABELS = {
   dissolve: '溶解',
 };
 
+// 大气中的非常驻气体 → 显示色（燃料气爆鸣预警等；airPanel/紧凑卡共用）
+const GAS_COLORS = {
+  CO: '#ffb86b', H2: '#9adcff', CH4: '#a8ff9a', H2S: '#ffd9a0',
+  NO: '#cfe3f7', NO2: '#e08b57', SO2: '#ffd98a', Cl2: '#b9f26b', NH3: '#b9a9ff',
+};
+const EXTRA_GAS_IDS = ['CO', 'H2', 'CH4', 'H2S', 'NO', 'NO2', 'SO2', 'Cl2', 'NH3'];
+
 class Hud {
   constructor(scene) {
     this.scene = scene;
     this.showTip = false;
     this.slotSize = 46; // 旧版统一槽宽（现为兼容字段；实际几何走 inventorySlotRects）
+  }
+
+  /** 当前是否触屏端（移动端 HUD 压缩/全屏按钮都以它为准） */
+  _isTouch() {
+    const t = this.scene._touchUI;
+    return !!(t && typeof t.enabled === 'function' && t.enabled());
   }
 
   render(ctx, time = 0) {
@@ -9803,15 +10201,33 @@ class Hud {
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
 
+    // 鸟瞰（灵魂出窍）：干净的全局视图——只画返回按钮/操作提示/玩家魂标
+    if (scene.overview) {
+      this.overviewUI(ctx, scene, W, H, time);
+      this.rotateHint(ctx, scene, W, H);
+      this.overlay(ctx, scene, W, H);
+      ctx.restore();
+      return;
+    }
+
     if (p) {
-      this.playerPanel(ctx, p, time);
-      this.compositionPanel(ctx, p);
-      this.reactionPanel(ctx, p);
-      this.airPanel(ctx, scene, time);
+      const touch = this._isTouch();
+      if (touch) {
+        // 移动端压缩布局：玩家卡合并"身体组成 + 大气"，不再各占一张卡片
+        this.playerPanelCompact(ctx, p, scene, time);
+      } else {
+        this.playerPanel(ctx, p, time);
+        this.compositionPanel(ctx, p);
+        this.airPanel(ctx, scene, time);
+      }
+      // 最近反应本就是调试信息：非调试模式不再常驻（双端一致）
+      if (scene.debugMode) this.reactionPanel(ctx, p);
       this.inventory(ctx, p, W, H, time);
     }
     this.debugPanel(ctx, scene, W, H, time);
     if (scene.debugMode) this.hoverPanel(ctx, scene, W, H);
+    this.viewButton(ctx, W, time);
+    if (this._isTouch()) this.fsButton(ctx, W);
     this.tipButton(ctx, W, H, time);
     this.notice(ctx, scene, W, H, time);
     this.touchControls(ctx, scene, W, H, time);
@@ -9820,10 +10236,117 @@ class Hud {
     ctx.restore();
   }
 
+  // ---- 顶部按钮：鸟瞰（双端）/ 全屏（触屏） ---------------------------------
+
+  /** 鸟瞰按钮（提示按钮左侧；桌面 V 键同效） */
+  viewButton(ctx, W, time) {
+    const r = overviewButtonRect(W);
+    ctx.save();
+    rr(ctx, r.x, r.y, r.w, r.h, 8);
+    const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
+    g.addColorStop(0, '#2a3a5e');
+    g.addColorStop(1, '#141d38');
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = THEME.water.light;
+    ctx.lineWidth = 1.5;
+    ctx.shadowColor = THEME.water.light;
+    ctx.shadowBlur = 4;
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = '#bfe6ff';
+    ctx.font = 'bold 13px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('鸟瞰', r.x + r.w / 2, r.y + 20);
+    ctx.textAlign = 'left';
+  }
+
+  /** 全屏按钮（仅触屏端；图标 ⛶。首次触点已自动请求全屏，此按钮供随时切换） */
+  fsButton(ctx, W) {
+    const r = fullscreenButtonRect(W);
+    ctx.save();
+    rr(ctx, r.x, r.y, r.w, r.h, 8);
+    const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
+    g.addColorStop(0, '#2a3a5e');
+    g.addColorStop(1, '#141d38');
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(191,230,255,0.7)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = '#bfe6ff';
+    ctx.font = '15px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('⛶', r.x + r.w / 2, r.y + 20);
+    ctx.textAlign = 'left';
+  }
+
+  // ---- 鸟瞰（灵魂出窍）界面：返回按钮 + 操作提示 + 玩家魂标 ------------------
+
+  overviewUI(ctx, scene, W, H, time) {
+    // 返回按钮（命中几何走 overviewButtonRect，点击/触点均可退出）
+    const r = overviewButtonRect(W);
+    ctx.save();
+    rr(ctx, r.x, r.y, r.w, r.h, 8);
+    const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
+    g.addColorStop(0, '#7a5a20');
+    g.addColorStop(1, '#4a3410');
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = THEME.gold.light;
+    ctx.lineWidth = 2;
+    ctx.shadowColor = THEME.gold.light;
+    ctx.shadowBlur = 10;
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = '#ffe9b0';
+    ctx.font = 'bold 13px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('返回', r.x + r.w / 2, r.y + 20);
+    // 操作提示
+    const touch = this._isTouch();
+    const hint = touch ? '鸟瞰 · 单指拖动平移 · 双指捏合缩放' : '鸟瞰 · 滚轮缩放 · 拖动平移 · V 返回';
+    ctx.font = 'bold 12px "Segoe UI", "Microsoft YaHei", sans-serif';
+    const tw = ctx.measureText(hint).width;
+    rr(ctx, W / 2 - tw / 2 - 14, 12, tw + 28, 24, 8);
+    ctx.fillStyle = 'rgba(10,12,26,0.72)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(127,224,255,0.4)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = '#bfe6ff';
+    ctx.fillText(hint, W / 2, 28);
+    ctx.textAlign = 'left';
+    // 玩家"魂标"：金青色脉动光环标出灵魂出窍的本体位置
+    const p = scene.player;
+    const cam = scene.camera;
+    if (p && cam) {
+      const { scale, offsetX, offsetY } = cam.compute(W, H, null);
+      const sx = (p.x + p.w / 2) * scale + offsetX;
+      const sy = (p.y + p.h / 2) * scale + offsetY;
+      const pulse = 10 + 3 * Math.sin(time * 4);
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,215,106,0.85)';
+      ctx.lineWidth = 2;
+      ctx.shadowColor = '#ffd76a';
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.arc(sx, sy, (p.w / 2) * scale + pulse, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 0.35;
+      ctx.beginPath();
+      ctx.arc(sx, sy, (p.w / 2) * scale + pulse + 8, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
   // ---- 移动端触控（摇杆 + 右下按钮；仅触屏设备绘制） ----
   touchControls(ctx, scene, W, H, time) {
     const ui = scene._touchUI;
     if (!ui || !ui.enabled()) return;
+    if (scene.overview) return; // 鸟瞰：触控改走平移/捏合手势，不画游戏控件
     const touch = ui.insets;
     ctx.save();
     // —— 左下：半透明半圆摇杆基座（直径贴底边）——
@@ -10354,13 +10877,14 @@ class Hud {
     }
   }
 
-  // ---- 玩家反应日志（最近发生在玩家身上的反应）----
+  // ---- 玩家反应日志（最近发生在玩家身上的反应；调试模式专属）----
   reactionPanel(ctx, p) {
     if (!p.reactions || p.reactions.length === 0) return;
     const shown = Math.min(4, p.reactions.length);
     const W = 264;
     const H = 22 + shown * 17;
-    const top = 136 + (this._compH ?? 0) + 4;
+    // 桌面：固定排在组成/空气面板下方；触屏：紧凑卡高度可变，按实际高度堆叠
+    const top = this._isTouch() ? 10 + (this._leftH ?? 126) + 6 : 136 + (this._compH ?? 0) + 4;
     panel(ctx, 10, top, W, H, THEME.gold.deep, 10);
     clearText(ctx, '最近反应', 22, top + 12, THEME.gold.text, 'bold 11px "Segoe UI", sans-serif');
     let y = top + 26;
@@ -10376,12 +10900,7 @@ class Hud {
     if (!atm) return;
     const o2 = atm.fraction('O2') * 100;
     const co2 = atm.fraction('CO2') * 100;
-    // 颜色：燃料气 + 氮氧化物 + 其它
-    const GAS_COLORS = {
-      CO: '#ffb86b', H2: '#9adcff', CH4: '#a8ff9a', H2S: '#ffd9a0',
-      NO: '#cfe3f7', NO2: '#e08b57', SO2: '#ffd98a', Cl2: '#b9f26b', NH3: '#b9a9ff',
-    };
-    const extras = ['CO', 'H2', 'CH4', 'H2S', 'NO', 'NO2', 'SO2', 'Cl2', 'NH3']
+    const extras = EXTRA_GAS_IDS
       .map((id) => ({ id, mass: atm.mass(id), frac: atm.fraction(id) * 100 }))
       .filter((g) => g.mass > 0.01);
     const H = 46 + (extras.length ? 22 : 0);
@@ -10429,6 +10948,94 @@ class Hud {
         clearText(ctx, label, gx + 14, 127, color, 'bold 10px monospace');
         gx += 14 + label.length * 6.4 + 8;
       }
+    }
+  }
+
+  // ---- 移动端紧凑玩家卡：物质/体质 + 身体组成 + 大气，合并成一张左上卡 ----
+  // 小屏金贵：原来三张卡（玩家/组成/空气）竖着排会占掉小半屏——合并后一张卡
+  // 解决；面板体按 CFG.touch.hudAlpha 降透明度（文字不降，保可读）。
+  playerPanelCompact(ctx, p, scene, time) {
+    const atm = scene.atmosphere;
+    // 身体组成（多物质才显示，单物质=血量本身）
+    const masses = p.grid ? p.grid.masses() : null;
+    const entries = masses
+      ? Object.entries(masses).filter(([, m]) => m > 1e-6).sort((a, b) => b[1] - a[1])
+      : [];
+    const compRows = entries.length > 1 ? Math.min(3, entries.length) : 0;
+    // 大气（一行 O2/CO2；有预警气体再加一行）
+    const extras = atm
+      ? EXTRA_GAS_IDS.map((id) => ({ id, frac: atm.fraction(id) * 100, mass: atm.mass(id) })).filter((g) => g.mass > 0.01)
+      : [];
+    const airLines = 1 + (extras.length ? 1 : 0);
+    const w = 240;
+    const h = 62
+      + (compRows ? 15 + compRows * 15 + (entries.length > compRows ? 11 : 0) : 0)
+      + airLines * 14 + 8;
+    this._leftH = h; // 左上卡实际高度（调试模式"最近反应"面板的堆叠定位用）
+    ctx.save();
+    ctx.globalAlpha = CFG.touch.hudAlpha;
+    panel(ctx, 10, 10, w, h, THEME.gold.deep, 12);
+    ctx.restore();
+    // 头部：血量药瓶 + 物质 + 体质
+    const sub = getSubstance(p.substance);
+    const color = sub?.solid?.[0] ?? '#7fe0ff';
+    const ratio = p.maxHp ? Math.max(0, Math.min(1, p.hp / p.maxHp)) : 0;
+    this.vial(ctx, 22, 18, 26, 40, ratio, color, time);
+    clearText(ctx, p.substance, 58, 32, THEME.gold.text, 'bold 14px "Segoe UI", sans-serif');
+    clearText(ctx, `${p.hp.toFixed(1)} g 体质`, 58, 50, '#ffffff', 'bold 11px monospace');
+    let y = 74;
+    if (compRows) {
+      clearText(ctx, '身体组成', 20, y, 'rgba(255,233,176,0.85)', 'bold 9px "Segoe UI", sans-serif');
+      y += 13;
+      const total = entries.reduce((s, [, m]) => s + m, 0);
+      for (const [id, m] of entries.slice(0, compRows)) {
+        const sc = getSubstance(id);
+        const isCore = id === p.substance;
+        ctx.save();
+        if (isCore) {
+          ctx.shadowColor = THEME.gold.text;
+          ctx.shadowBlur = 5;
+        }
+        ctx.fillStyle = sc?.solid?.[0] ?? '#7fe0ff';
+        ctx.beginPath();
+        ctx.arc(26, y + 3, 3.6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        clearText(ctx, id, 35, y + 6, isCore ? THEME.gold.text : '#dfe8f2', '9.5px monospace');
+        ctx.textAlign = 'right';
+        clearText(ctx, `${m.toFixed(1)}g`, w - 14, y + 6, '#9fb2c8', '9px monospace');
+        ctx.textAlign = 'left';
+        y += 15;
+      }
+      if (entries.length > compRows) {
+        clearText(ctx, `…另有 ${entries.length - compRows} 种`, 20, y + 5, '#9fb2c8', '9px monospace');
+        y += 11;
+      }
+      y += 2;
+    }
+    // 大气行：O2（青）· CO2（金）
+    const o2 = atm ? atm.fraction('O2') * 100 : 0;
+    const co2 = atm ? atm.fraction('CO2') * 100 : 0;
+    const co2Mass = atm ? atm.mass('CO2') : 0;
+    const co2Text = co2 >= 0.05 ? `${co2.toFixed(1)}%` : co2Mass > 1e-6 ? '<0.1%' : '0%';
+    clearText(ctx, `O2 ${o2.toFixed(1)}%`, 20, y + 5, '#aeeaff', 'bold 10px monospace');
+    clearText(ctx, `CO2 ${co2Text}`, 100, y + 5, '#ffe9b0', 'bold 10px monospace');
+    y += 14;
+    // 预警气体行（有质量才显示）：色点 + 缩略列表
+    if (extras.length) {
+      let gx = 20;
+      for (const g of extras.slice(0, 3)) {
+        const c = GAS_COLORS[g.id] ?? '#ffffff';
+        ctx.fillStyle = c;
+        ctx.beginPath();
+        ctx.arc(gx + 3, y - 1, 3, 0, Math.PI * 2);
+        ctx.fill();
+        const t = g.frac >= 0.05 ? `${g.frac.toFixed(1)}%` : '<0.1%';
+        const label = `${g.id} ${t}`;
+        clearText(ctx, label, gx + 9, y + 3, c, 'bold 9px monospace');
+        gx += 12 + label.length * 5.6 + 6;
+      }
+      if (extras.length > 3) clearText(ctx, `+${extras.length - 3}`, gx + 4, y + 3, '#9fb2c8', '9px monospace');
     }
   }
 
@@ -10528,7 +11135,15 @@ class Hud {
       const w2 = ctx.measureText(comp).width;
       const bw = Math.max(w1, w2) + 22;
       const bx = W - bw - 12; // 右对齐：贴物品栏右缘上方
-      const by = minTop - 48;
+      let by = minTop - 48;
+      // 触屏端：物品栏上方是 C/X/Q/⇧ 按钮块——面板再往上挪，不叠在按钮上
+      if (this._isTouch()) {
+        const ui = this.scene._touchUI;
+        const btns = touchButtonRects(W, H, slots, ui && ui.insets ? ui.insets : {});
+        let btnTop = Infinity;
+        for (const b of btns) btnTop = Math.min(btnTop, b.y);
+        if (btnTop < Infinity) by = btnTop - 44;
+      }
       rr(ctx, bx, by, bw, 38, 9);
       const g = ctx.createLinearGradient(bx, by, bx, by + 38);
       g.addColorStop(0, 'rgba(26,22,52,0.95)');
@@ -14522,6 +15137,7 @@ const { bindKeyboard } = __require('src/core/input.js');;
 const { Plugins } = __require('src/level/plugins.js');;
 const { handleSceneClick } = __require('src/level/click.js');;
 const { bindTouchUI } = __require('src/core/touch.js');;
+const { bindOverviewInput } = __require('src/core/overview.js');;
 const { attachRecorderPanel } = __require('src/core/recorder.js');;
 
 class Multiscene {
@@ -14566,6 +15182,8 @@ class Multiscene {
     // 移动端触控（摇杆/按钮/拖动管线；桌面端按 isTouchDevice 门槛空转）
     const activeOf = () => (this.current === entry.name && entry.active ? { scene: entry.scene, hud: entry.hud } : null);
     entry.touch = bindTouchUI(canvas, activeOf);
+    // 鸟瞰输入（灵魂出窍）：滚轮缩放 + 拖动平移（仅该场景 overview 时生效）
+    entry.overview = bindOverviewInput(canvas, activeOf);
     return builder;
   }
 

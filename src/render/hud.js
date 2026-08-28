@@ -1,7 +1,11 @@
 // ============================================================================
 // HUD（神话·元素风）：
-// 左上 玩家面板（物质 + 血量药瓶）、空气计（O2/CO2）；
-// 右上 提示按钮；右下 5 格宝石物品栏（选中发光）；通关/死亡神话遮罩。
+// 桌面：左上 玩家面板（物质+血量）+ 身体组成 + 空气计；右上 鸟瞰/提示按钮；
+//       右下 5 格宝石物品栏（选中发光）；通关/死亡神话遮罩。
+// 移动端（触屏）：左上压缩为单卡（物质/体质 + 身体组成 + 大气一行）；顶部
+//       ⛶ 全屏 / 鸟瞰 / 提示三按钮；"最近反应"仅调试模式显示。
+// 鸟瞰（灵魂出窍）：暂停模拟，整关自由缩放/平移——HUD 只留"返回"按钮 +
+//       操作提示 + 玩家魂标（金青脉动光环）。
 // ============================================================================
 
 import { THEME, rr, panel, glowText, clearText } from './theme.js';
@@ -11,7 +15,7 @@ import { solutionColor } from './liquidrender.js';
 import { CFG } from '../core/config.js';
 import { GasColumn } from '../objects/gascolumn.js';
 import { Block } from '../objects/block.js';
-import { inventorySlotRects, uiMargins } from '../level/click.js';
+import { inventorySlotRects, uiMargins, overviewButtonRect, fullscreenButtonRect } from '../level/click.js';
 import { joyGeom, touchButtonRects } from '../core/touch.js';
 
 /** 质量短格式：1.2g / 0.30g / 12g（空气计百分比旁同显质量） */
@@ -32,11 +36,24 @@ const ORIGIN_LABELS = {
   dissolve: '溶解',
 };
 
+// 大气中的非常驻气体 → 显示色（燃料气爆鸣预警等；airPanel/紧凑卡共用）
+const GAS_COLORS = {
+  CO: '#ffb86b', H2: '#9adcff', CH4: '#a8ff9a', H2S: '#ffd9a0',
+  NO: '#cfe3f7', NO2: '#e08b57', SO2: '#ffd98a', Cl2: '#b9f26b', NH3: '#b9a9ff',
+};
+const EXTRA_GAS_IDS = ['CO', 'H2', 'CH4', 'H2S', 'NO', 'NO2', 'SO2', 'Cl2', 'NH3'];
+
 export class Hud {
   constructor(scene) {
     this.scene = scene;
     this.showTip = false;
     this.slotSize = 46; // 旧版统一槽宽（现为兼容字段；实际几何走 inventorySlotRects）
+  }
+
+  /** 当前是否触屏端（移动端 HUD 压缩/全屏按钮都以它为准） */
+  _isTouch() {
+    const t = this.scene._touchUI;
+    return !!(t && typeof t.enabled === 'function' && t.enabled());
   }
 
   render(ctx, time = 0) {
@@ -47,15 +64,33 @@ export class Hud {
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
 
+    // 鸟瞰（灵魂出窍）：干净的全局视图——只画返回按钮/操作提示/玩家魂标
+    if (scene.overview) {
+      this.overviewUI(ctx, scene, W, H, time);
+      this.rotateHint(ctx, scene, W, H);
+      this.overlay(ctx, scene, W, H);
+      ctx.restore();
+      return;
+    }
+
     if (p) {
-      this.playerPanel(ctx, p, time);
-      this.compositionPanel(ctx, p);
-      this.reactionPanel(ctx, p);
-      this.airPanel(ctx, scene, time);
+      const touch = this._isTouch();
+      if (touch) {
+        // 移动端压缩布局：玩家卡合并"身体组成 + 大气"，不再各占一张卡片
+        this.playerPanelCompact(ctx, p, scene, time);
+      } else {
+        this.playerPanel(ctx, p, time);
+        this.compositionPanel(ctx, p);
+        this.airPanel(ctx, scene, time);
+      }
+      // 最近反应本就是调试信息：非调试模式不再常驻（双端一致）
+      if (scene.debugMode) this.reactionPanel(ctx, p);
       this.inventory(ctx, p, W, H, time);
     }
     this.debugPanel(ctx, scene, W, H, time);
     if (scene.debugMode) this.hoverPanel(ctx, scene, W, H);
+    this.viewButton(ctx, W, time);
+    if (this._isTouch()) this.fsButton(ctx, W);
     this.tipButton(ctx, W, H, time);
     this.notice(ctx, scene, W, H, time);
     this.touchControls(ctx, scene, W, H, time);
@@ -64,10 +99,117 @@ export class Hud {
     ctx.restore();
   }
 
+  // ---- 顶部按钮：鸟瞰（双端）/ 全屏（触屏） ---------------------------------
+
+  /** 鸟瞰按钮（提示按钮左侧；桌面 V 键同效） */
+  viewButton(ctx, W, time) {
+    const r = overviewButtonRect(W);
+    ctx.save();
+    rr(ctx, r.x, r.y, r.w, r.h, 8);
+    const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
+    g.addColorStop(0, '#2a3a5e');
+    g.addColorStop(1, '#141d38');
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = THEME.water.light;
+    ctx.lineWidth = 1.5;
+    ctx.shadowColor = THEME.water.light;
+    ctx.shadowBlur = 4;
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = '#bfe6ff';
+    ctx.font = 'bold 13px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('鸟瞰', r.x + r.w / 2, r.y + 20);
+    ctx.textAlign = 'left';
+  }
+
+  /** 全屏按钮（仅触屏端；图标 ⛶。首次触点已自动请求全屏，此按钮供随时切换） */
+  fsButton(ctx, W) {
+    const r = fullscreenButtonRect(W);
+    ctx.save();
+    rr(ctx, r.x, r.y, r.w, r.h, 8);
+    const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
+    g.addColorStop(0, '#2a3a5e');
+    g.addColorStop(1, '#141d38');
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(191,230,255,0.7)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = '#bfe6ff';
+    ctx.font = '15px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('⛶', r.x + r.w / 2, r.y + 20);
+    ctx.textAlign = 'left';
+  }
+
+  // ---- 鸟瞰（灵魂出窍）界面：返回按钮 + 操作提示 + 玩家魂标 ------------------
+
+  overviewUI(ctx, scene, W, H, time) {
+    // 返回按钮（命中几何走 overviewButtonRect，点击/触点均可退出）
+    const r = overviewButtonRect(W);
+    ctx.save();
+    rr(ctx, r.x, r.y, r.w, r.h, 8);
+    const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
+    g.addColorStop(0, '#7a5a20');
+    g.addColorStop(1, '#4a3410');
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = THEME.gold.light;
+    ctx.lineWidth = 2;
+    ctx.shadowColor = THEME.gold.light;
+    ctx.shadowBlur = 10;
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = '#ffe9b0';
+    ctx.font = 'bold 13px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('返回', r.x + r.w / 2, r.y + 20);
+    // 操作提示
+    const touch = this._isTouch();
+    const hint = touch ? '鸟瞰 · 单指拖动平移 · 双指捏合缩放' : '鸟瞰 · 滚轮缩放 · 拖动平移 · V 返回';
+    ctx.font = 'bold 12px "Segoe UI", "Microsoft YaHei", sans-serif';
+    const tw = ctx.measureText(hint).width;
+    rr(ctx, W / 2 - tw / 2 - 14, 12, tw + 28, 24, 8);
+    ctx.fillStyle = 'rgba(10,12,26,0.72)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(127,224,255,0.4)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = '#bfe6ff';
+    ctx.fillText(hint, W / 2, 28);
+    ctx.textAlign = 'left';
+    // 玩家"魂标"：金青色脉动光环标出灵魂出窍的本体位置
+    const p = scene.player;
+    const cam = scene.camera;
+    if (p && cam) {
+      const { scale, offsetX, offsetY } = cam.compute(W, H, null);
+      const sx = (p.x + p.w / 2) * scale + offsetX;
+      const sy = (p.y + p.h / 2) * scale + offsetY;
+      const pulse = 10 + 3 * Math.sin(time * 4);
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,215,106,0.85)';
+      ctx.lineWidth = 2;
+      ctx.shadowColor = '#ffd76a';
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.arc(sx, sy, (p.w / 2) * scale + pulse, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 0.35;
+      ctx.beginPath();
+      ctx.arc(sx, sy, (p.w / 2) * scale + pulse + 8, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
   // ---- 移动端触控（摇杆 + 右下按钮；仅触屏设备绘制） ----
   touchControls(ctx, scene, W, H, time) {
     const ui = scene._touchUI;
     if (!ui || !ui.enabled()) return;
+    if (scene.overview) return; // 鸟瞰：触控改走平移/捏合手势，不画游戏控件
     const touch = ui.insets;
     ctx.save();
     // —— 左下：半透明半圆摇杆基座（直径贴底边）——
@@ -598,13 +740,14 @@ export class Hud {
     }
   }
 
-  // ---- 玩家反应日志（最近发生在玩家身上的反应）----
+  // ---- 玩家反应日志（最近发生在玩家身上的反应；调试模式专属）----
   reactionPanel(ctx, p) {
     if (!p.reactions || p.reactions.length === 0) return;
     const shown = Math.min(4, p.reactions.length);
     const W = 264;
     const H = 22 + shown * 17;
-    const top = 136 + (this._compH ?? 0) + 4;
+    // 桌面：固定排在组成/空气面板下方；触屏：紧凑卡高度可变，按实际高度堆叠
+    const top = this._isTouch() ? 10 + (this._leftH ?? 126) + 6 : 136 + (this._compH ?? 0) + 4;
     panel(ctx, 10, top, W, H, THEME.gold.deep, 10);
     clearText(ctx, '最近反应', 22, top + 12, THEME.gold.text, 'bold 11px "Segoe UI", sans-serif');
     let y = top + 26;
@@ -620,12 +763,7 @@ export class Hud {
     if (!atm) return;
     const o2 = atm.fraction('O2') * 100;
     const co2 = atm.fraction('CO2') * 100;
-    // 颜色：燃料气 + 氮氧化物 + 其它
-    const GAS_COLORS = {
-      CO: '#ffb86b', H2: '#9adcff', CH4: '#a8ff9a', H2S: '#ffd9a0',
-      NO: '#cfe3f7', NO2: '#e08b57', SO2: '#ffd98a', Cl2: '#b9f26b', NH3: '#b9a9ff',
-    };
-    const extras = ['CO', 'H2', 'CH4', 'H2S', 'NO', 'NO2', 'SO2', 'Cl2', 'NH3']
+    const extras = EXTRA_GAS_IDS
       .map((id) => ({ id, mass: atm.mass(id), frac: atm.fraction(id) * 100 }))
       .filter((g) => g.mass > 0.01);
     const H = 46 + (extras.length ? 22 : 0);
@@ -673,6 +811,94 @@ export class Hud {
         clearText(ctx, label, gx + 14, 127, color, 'bold 10px monospace');
         gx += 14 + label.length * 6.4 + 8;
       }
+    }
+  }
+
+  // ---- 移动端紧凑玩家卡：物质/体质 + 身体组成 + 大气，合并成一张左上卡 ----
+  // 小屏金贵：原来三张卡（玩家/组成/空气）竖着排会占掉小半屏——合并后一张卡
+  // 解决；面板体按 CFG.touch.hudAlpha 降透明度（文字不降，保可读）。
+  playerPanelCompact(ctx, p, scene, time) {
+    const atm = scene.atmosphere;
+    // 身体组成（多物质才显示，单物质=血量本身）
+    const masses = p.grid ? p.grid.masses() : null;
+    const entries = masses
+      ? Object.entries(masses).filter(([, m]) => m > 1e-6).sort((a, b) => b[1] - a[1])
+      : [];
+    const compRows = entries.length > 1 ? Math.min(3, entries.length) : 0;
+    // 大气（一行 O2/CO2；有预警气体再加一行）
+    const extras = atm
+      ? EXTRA_GAS_IDS.map((id) => ({ id, frac: atm.fraction(id) * 100, mass: atm.mass(id) })).filter((g) => g.mass > 0.01)
+      : [];
+    const airLines = 1 + (extras.length ? 1 : 0);
+    const w = 240;
+    const h = 62
+      + (compRows ? 15 + compRows * 15 + (entries.length > compRows ? 11 : 0) : 0)
+      + airLines * 14 + 8;
+    this._leftH = h; // 左上卡实际高度（调试模式"最近反应"面板的堆叠定位用）
+    ctx.save();
+    ctx.globalAlpha = CFG.touch.hudAlpha;
+    panel(ctx, 10, 10, w, h, THEME.gold.deep, 12);
+    ctx.restore();
+    // 头部：血量药瓶 + 物质 + 体质
+    const sub = getSubstance(p.substance);
+    const color = sub?.solid?.[0] ?? '#7fe0ff';
+    const ratio = p.maxHp ? Math.max(0, Math.min(1, p.hp / p.maxHp)) : 0;
+    this.vial(ctx, 22, 18, 26, 40, ratio, color, time);
+    clearText(ctx, p.substance, 58, 32, THEME.gold.text, 'bold 14px "Segoe UI", sans-serif');
+    clearText(ctx, `${p.hp.toFixed(1)} g 体质`, 58, 50, '#ffffff', 'bold 11px monospace');
+    let y = 74;
+    if (compRows) {
+      clearText(ctx, '身体组成', 20, y, 'rgba(255,233,176,0.85)', 'bold 9px "Segoe UI", sans-serif');
+      y += 13;
+      const total = entries.reduce((s, [, m]) => s + m, 0);
+      for (const [id, m] of entries.slice(0, compRows)) {
+        const sc = getSubstance(id);
+        const isCore = id === p.substance;
+        ctx.save();
+        if (isCore) {
+          ctx.shadowColor = THEME.gold.text;
+          ctx.shadowBlur = 5;
+        }
+        ctx.fillStyle = sc?.solid?.[0] ?? '#7fe0ff';
+        ctx.beginPath();
+        ctx.arc(26, y + 3, 3.6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        clearText(ctx, id, 35, y + 6, isCore ? THEME.gold.text : '#dfe8f2', '9.5px monospace');
+        ctx.textAlign = 'right';
+        clearText(ctx, `${m.toFixed(1)}g`, w - 14, y + 6, '#9fb2c8', '9px monospace');
+        ctx.textAlign = 'left';
+        y += 15;
+      }
+      if (entries.length > compRows) {
+        clearText(ctx, `…另有 ${entries.length - compRows} 种`, 20, y + 5, '#9fb2c8', '9px monospace');
+        y += 11;
+      }
+      y += 2;
+    }
+    // 大气行：O2（青）· CO2（金）
+    const o2 = atm ? atm.fraction('O2') * 100 : 0;
+    const co2 = atm ? atm.fraction('CO2') * 100 : 0;
+    const co2Mass = atm ? atm.mass('CO2') : 0;
+    const co2Text = co2 >= 0.05 ? `${co2.toFixed(1)}%` : co2Mass > 1e-6 ? '<0.1%' : '0%';
+    clearText(ctx, `O2 ${o2.toFixed(1)}%`, 20, y + 5, '#aeeaff', 'bold 10px monospace');
+    clearText(ctx, `CO2 ${co2Text}`, 100, y + 5, '#ffe9b0', 'bold 10px monospace');
+    y += 14;
+    // 预警气体行（有质量才显示）：色点 + 缩略列表
+    if (extras.length) {
+      let gx = 20;
+      for (const g of extras.slice(0, 3)) {
+        const c = GAS_COLORS[g.id] ?? '#ffffff';
+        ctx.fillStyle = c;
+        ctx.beginPath();
+        ctx.arc(gx + 3, y - 1, 3, 0, Math.PI * 2);
+        ctx.fill();
+        const t = g.frac >= 0.05 ? `${g.frac.toFixed(1)}%` : '<0.1%';
+        const label = `${g.id} ${t}`;
+        clearText(ctx, label, gx + 9, y + 3, c, 'bold 9px monospace');
+        gx += 12 + label.length * 5.6 + 6;
+      }
+      if (extras.length > 3) clearText(ctx, `+${extras.length - 3}`, gx + 4, y + 3, '#9fb2c8', '9px monospace');
     }
   }
 
@@ -772,7 +998,15 @@ export class Hud {
       const w2 = ctx.measureText(comp).width;
       const bw = Math.max(w1, w2) + 22;
       const bx = W - bw - 12; // 右对齐：贴物品栏右缘上方
-      const by = minTop - 48;
+      let by = minTop - 48;
+      // 触屏端：物品栏上方是 C/X/Q/⇧ 按钮块——面板再往上挪，不叠在按钮上
+      if (this._isTouch()) {
+        const ui = this.scene._touchUI;
+        const btns = touchButtonRects(W, H, slots, ui && ui.insets ? ui.insets : {});
+        let btnTop = Infinity;
+        for (const b of btns) btnTop = Math.min(btnTop, b.y);
+        if (btnTop < Infinity) by = btnTop - 44;
+      }
       rr(ctx, bx, by, bw, 38, 9);
       const g = ctx.createLinearGradient(bx, by, bx, by + 38);
       g.addColorStop(0, 'rgba(26,22,52,0.95)');
