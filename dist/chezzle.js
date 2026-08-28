@@ -144,6 +144,8 @@ const CFG = {
   touch: {
     viewH: 560,    // 移动端相机视野高度基准（世界坐标；手机竖宽 ~390 时恰为此值）
     viewHRef: 390, // 视野基准对应的屏幕短边（px）——大屏平板按短边比例放大视野
+    viewHMin: 440, // 视野下限（世界坐标）：低分辨率老手机（短边 320-375）按比例
+                   // 本应更小 → 元素更大更清晰，不再糊成一团
     viewHMax: 1040, // 视野放大上限（世界坐标；平板也不会看到超出设计的范围）
     focusBias: 0.14, // 相机跟随偏置（视野高度比例）：视窗中心下移 → 玩家画面偏上，
                      // 不被左上面板/右下控件遮挡（移动端 HUD 压缩的配套）
@@ -6817,18 +6819,25 @@ class ReactionLabel extends Obj {
     const a = Math.max(0, 1 - this.age / this.life);
     ctx.save();
     ctx.globalAlpha = a;
-    ctx.font = 'bold 11px "Segoe UI", "Microsoft YaHei", monospace';
+    // 字号按"屏幕实际像素"保证（低分辨率手机上世界字号被相机缩小后糊）
+    let size = 11;
+    try {
+      const m = ctx.getTransform ? ctx.getTransform() : null;
+      const s = m ? Math.hypot(m.a, m.b) : 1;
+      if (s > 0.01) size = Math.max(11, Math.min(24, Math.round(12 / s)));
+    } catch (e) { /* 老浏览器：基准字号 */ }
+    ctx.font = `bold ${size}px "Segoe UI", "Microsoft YaHei", monospace`;
     const w = ctx.measureText(this.text).width;
     // 深色圆角底（保证在任意背景可读）
     ctx.fillStyle = 'rgba(6,14,28,0.72)';
     ctx.beginPath();
-    ctx.roundRect(this.x - w / 2 - 5, this.y - 11, w + 10, 17, 4);
+    ctx.roundRect(this.x - w / 2 - 6, this.y - size, w + 12, size + 6, 5);
     ctx.fill();
     // 反应式文本
     ctx.fillStyle = this.color;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(this.text, this.x, this.y - 2);
+    ctx.fillText(this.text, this.x, this.y - size / 2 + 3);
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
     ctx.restore();
@@ -7358,14 +7367,22 @@ exports.Container = Container;
 const { THEME, rr } = __require('src/render/theme.js');;
 
 function renderFormula(ctx, x, y, text, opts = {}) {
-  const size = opts.size ?? 10;
+  // 字号按"屏幕实际像素"保证：标签画在世界变换里，低分辨率手机上会被相机
+  // 缩到 6-7px（糊成一团）——从当前变换读出缩放，把字号补足到屏幕上至少
+  // 12px（封顶 22 世界像素，免得鸟瞰/大缩放时标签大得离谱）
+  let size = opts.size ?? 12;
+  try {
+    const m = ctx.getTransform ? ctx.getTransform() : null;
+    const s = m ? Math.hypot(m.a, m.b) : 1;
+    if (s > 0.01 && !opts.size) size = Math.max(size, Math.min(22, Math.round(12 / s)));
+  } catch (e) { /* 无 getTransform（老浏览器）：用基准字号 */ }
   const color = opts.color ?? THEME.gold.text;
   ctx.save();
   ctx.font = `bold ${size}px monospace`;
   ctx.textAlign = 'left';
-  const w = ctx.measureText(text).width + 10;
+  const w = ctx.measureText(text).width + 12;
   ctx.fillStyle = 'rgba(12,9,34,0.72)';
-  rr(ctx, x - 3, y - size, w, size + 5, 4);
+  rr(ctx, x - 4, y - size - 2, w, size + 7, 5);
   ctx.fill();
   ctx.strokeStyle = 'rgba(232,184,75,0.4)';
   ctx.lineWidth = 1;
@@ -8633,7 +8650,7 @@ class TouchUI {
         const short = Math.min(window.innerWidth, window.innerHeight);
         viewH = Math.round(Math.min(
           CFG.touch.viewHMax,
-          Math.max(CFG.touch.viewH, (CFG.touch.viewH * short) / CFG.touch.viewHRef),
+          Math.max(CFG.touch.viewHMin, (CFG.touch.viewH * short) / CFG.touch.viewHRef),
         ));
       }
       act.scene.camera.mobileViewH = viewH;
@@ -10425,7 +10442,7 @@ class Hud {
   }
 
   /** 触控按钮矢量图标（canvas 路径画的"SVG 小图"，原点 = 图标中心）：
-   *  grab=捏取手势（照参考图的手） / use=倾斜烧杯倒液（倒出） /
+   *  grab=一只手（抓取） / use=倾斜烧杯倒液（倒出） /
    *  collect=马蹄磁铁（吸集） / place=落点箭头（放置到地上） */
   _touchIcon(ctx, key, cx, cy, color) {
     ctx.save();
@@ -10438,41 +10455,19 @@ class Hud {
     ctx.lineJoin = 'round';
     ctx.beginPath();
     if (key === 'grab') {
-      // 捏取手势（照参考图）：手身（拇指/指节凸/手背/腕）+ 粗食指（独立的
-      // 圆头棒，斜向左上；与手身的接缝正好充当指根褶皱）。两个子路径合并成
-      // 一个路径一次填充（避免半透明叠加出现深色接痕），再统一描边。
-      ctx.beginPath();
-      // —— 手身 ——
-      ctx.moveTo(-3.2, 1.4); // 捏合点（虎口缝）
-      ctx.quadraticCurveTo(-0.9, 0.8, -0.15, -1); // 指蹼上升
-      ctx.quadraticCurveTo(0.15, -2.2, -0.6, -3.4); // 指根凹口
-      ctx.quadraticCurveTo(0.6, -5.6, 2.2, -5); // 指节凸 1
-      ctx.quadraticCurveTo(3.8, -7.2, 5.4, -5.6); // 指节凸 2
-      ctx.quadraticCurveTo(7, -7.2, 7.9, -5.4); // 指节凸 3
-      ctx.quadraticCurveTo(10, -2.6, 9.9, 0.8); // 手背右缘
-      ctx.quadraticCurveTo(9.8, 4.2, 8.4, 7); // 右缘下行
-      ctx.lineTo(6.6, 10.8); // 腕右
-      ctx.lineTo(1.2, 10.8); // 腕底
-      ctx.quadraticCurveTo(0.4, 7.2, -2, 6.2); // 腕左侧上行
-      ctx.quadraticCurveTo(-5.6, 5.4, -7, 4); // 掌下缘
-      ctx.quadraticCurveTo(-9.8, 2.8, -10.5, 0.5); // 拇指尖
-      ctx.quadraticCurveTo(-7.5, 2.6, -5, 2.6); // 拇指上缘
-      ctx.quadraticCurveTo(-4.2, 2.4, -3.2, 1.4); // 收回捏合点
-      ctx.closePath();
-      // —— 食指（旋转的圆头粗棒，斜向左上）——
-      ctx.rotate(0.47);
-      ctx.moveTo(0.5, -2.1);
-      ctx.lineTo(-6.5, -2.1);
-      ctx.quadraticCurveTo(-10.2, -2.1, -10.2, 0);
-      ctx.quadraticCurveTo(-10.2, 2.1, -6.5, 2.1);
-      ctx.lineTo(0.5, 2.1);
-      ctx.quadraticCurveTo(1.8, 0, 0.5, -2.1);
-      ctx.closePath();
-      ctx.rotate(-0.47);
-      ctx.save();
-      ctx.globalAlpha = 0.3;
-      ctx.fill();
-      ctx.restore();
+      // 一只手：四指 + 掌 + 拇指（"伸手抓取"）
+      ctx.moveTo(-6.5, -4); ctx.lineTo(-6.5, 1); // 食指
+      ctx.moveTo(-2.2, -6.5); ctx.lineTo(-2.2, 1); // 中指
+      ctx.moveTo(2.2, -5.5); ctx.lineTo(2.2, 1); // 无名指
+      ctx.moveTo(6.5, -3.5); ctx.lineTo(6.5, 1); // 小指
+      ctx.moveTo(-8, 0); // 掌（上缘开口由指根补齐）
+      ctx.lineTo(-8, 3.5);
+      ctx.quadraticCurveTo(-8, 8.5, -3, 8.5);
+      ctx.lineTo(3, 8.5);
+      ctx.quadraticCurveTo(8, 8.5, 8, 3.5);
+      ctx.lineTo(8, 0);
+      ctx.moveTo(-8, 2.5); // 拇指
+      ctx.quadraticCurveTo(-11.5, 1, -10.5, -4);
       ctx.stroke();
     } else if (key === 'use') {
       // 倾斜小烧杯（顺时针倒向右侧）+ 液滴从口沿洒落

@@ -283,7 +283,7 @@ export class TouchUI {
         const short = Math.min(window.innerWidth, window.innerHeight);
         viewH = Math.round(Math.min(
           CFG.touch.viewHMax,
-          Math.max(CFG.touch.viewH, (CFG.touch.viewH * short) / CFG.touch.viewHRef),
+          Math.max(CFG.touch.viewHMin, (CFG.touch.viewH * short) / CFG.touch.viewHRef),
         ));
       }
       act.scene.camera.mobileViewH = viewH;
