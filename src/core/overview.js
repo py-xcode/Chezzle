@@ -6,7 +6,7 @@
 // 几何约定：overviewButtonRect（HUD 渲染与命中共用）在 level/click.js。
 // ============================================================================
 
-import { overviewButtonRect } from '../level/click.js';
+import { overviewButtonRect, hudTopOffset } from '../level/click.js';
 
 /**
  * 给画布绑定鸟瞰输入。
@@ -44,7 +44,7 @@ export function bindOverviewInput(canvas, getActive) {
     const px = e.clientX - r.left;
     const py = e.clientY - r.top;
     // "返回"按钮：不进入拖动（click 事件负责切换）
-    const b = overviewButtonRect(canvas.width);
+    const b = overviewButtonRect(canvas.width, hudTopOffset(scene));
     if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) return;
     pan = { x: e.clientX, y: e.clientY };
   };

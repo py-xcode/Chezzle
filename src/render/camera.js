@@ -104,27 +104,29 @@ export class Camera {
     let viewW = this.viewW;
     let viewH = this.viewH;
     let biasY = 0;
+    let padTop = viewH * CFG.touch.padTop; // 顶部探出量（双端；爬高时相机跟进天空）
     if (this.mobileViewH > 0 && vw > 0 && vh > 0 && vh < vw) {
       viewH = this.mobileViewH;
       viewW = Math.max(1, viewH * (vw / vh));
       biasY = viewH * CFG.touch.focusBias; // 视窗中心下移 → 玩家画在屏幕偏上
+      padTop = viewH * CFG.touch.padTop;
     }
     const scale = Math.min(vw / viewW, vh / viewH);
     // 实际显示的世界窗口（单位：世界坐标）
     const vx = Math.min(this.worldW, viewW);
     const vy = Math.min(this.worldH, viewH);
-    // 窗口原点 ox, oy。偏置加在期望值上、且**下缘钳位放宽 biasY**：
-    // 玩家永远贴着世界底部走（地板在 worldH 附近），若只把期望值下移会被
-    // 底缘钳位吞掉——放宽下缘让视窗探到世界底边之下（下面是空背景，正好被
-    // 摇杆/按钮控件盖住），玩家才能真的画到屏幕中上部。上缘钳位不变（贴顶
-    // 时不把玩家推出画面）。
+    // 窗口原点 ox, oy。下缘钳位放宽 biasY：玩家永远贴着世界底部走（地板在
+    // worldH 附近），若只把期望值下移会被底缘钳位吞掉——放宽后视窗探到世界
+    // 底边之下（空背景，正被摇杆/按钮控件盖住），玩家才能真的画到屏幕中上部。
+    // 上缘钳位放宽 padTop（负方向）：玩家爬到世界顶时相机继续上移探出顶边
+    // （上方是空天空），玩家不被钉在屏幕顶缘、上方环境不被 HUD 卡片盖住。
     let ox;
     let oy;
     if (focus) {
       const cx = focus.x + (focus.w ?? 0) / 2;
       const cy = focus.y + (focus.h ?? 0) / 2;
       ox = clamp(cx - vx / 2, 0, Math.max(0, this.worldW - vx));
-      oy = clamp(cy - vy / 2 + biasY, 0, Math.max(0, this.worldH - vy + biasY));
+      oy = clamp(cy - vy / 2 + biasY, -padTop, Math.max(-padTop, this.worldH - vy + biasY));
     } else {
       ox = (this.worldW - vx) / 2;
       oy = (this.worldH - vy) / 2;

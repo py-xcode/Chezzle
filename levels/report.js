@@ -27,7 +27,25 @@
     } catch (e) { /* 隐私模式等忽略 */ }
   }
 
-  // 常驻悬浮"返回选关"（左上角，不遮挡游戏画面）
+  // 常驻悬浮"返回选关"（左上角）。
+  // 移动端避让：游戏 HUD 卡片在触屏设备整体下移（touch.hudTop=48）——返回钮
+  // 保持贴顶 10px 恰好落在让出的空档里；全屏时 iOS 会在左上角挂系统关闭按钮，
+  // 返回钮与游戏 HUD 再一起下移（游戏侧 touch.hudTopFs=92 / 这里 52）。
+  function isTouchLike() {
+    try {
+      if (/[?&]touch=1/.test(location.search)) return true;
+      if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) return true;
+      return navigator.maxTouchPoints > 0 && Math.min(innerWidth, innerHeight) < 500;
+    } catch (e) { return false; }
+  }
+  function isFs() {
+    return !!(document.fullscreenElement || document.webkitFullscreenElement);
+  }
+  function layoutBack(a) {
+    const touch = isTouchLike();
+    const top = touch && isFs() ? 52 : 10;
+    a.style.top = top + 'px';
+  }
   function backLink() {
     if (document.getElementById('czl-back')) return;
     const a = document.createElement('a');
@@ -45,6 +63,9 @@
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <path d="M15 5l-7 7 7 7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
       </svg><span style="opacity:.85">返回选关</span>`;
+    layoutBack(a);
+    document.addEventListener('fullscreenchange', () => layoutBack(a));
+    document.addEventListener('webkitfullscreenchange', () => layoutBack(a));
     a.addEventListener('mouseenter', () => {
       a.style.borderColor = '#e8b84b';
       a.style.color = '#ffd76a';

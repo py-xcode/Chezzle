@@ -28,6 +28,7 @@ import {
   inventorySlotRects,
   uiMargins,
   overviewButtonRect,
+  hudTopOffset,
 } from '../level/click.js';
 import { requestFullscreenOnce } from './fullscreen.js';
 
@@ -265,7 +266,9 @@ export class TouchUI {
     return touchButtonRects(this.canvas.width, this.canvas.height, slots, this.insets);
   }
 
-  /** 设备/布局刷新：安全区、画布铺满、相机移动端视野（forceTouch / resize 时调用） */
+  /** 设备/布局刷新：安全区、画布铺满、相机移动端视野（forceTouch / resize 时调用）。
+   *  视野按屏幕短边动态分配：手机（短边≈390）= 基准 viewH；平板短边更长 →
+   *  视野同比放大（上限 viewHMax）——大屏不再"元素偏大、视角偏小"。 */
   refresh() {
     if (!this.enabled()) return;
     ensureBaseStyle();
@@ -275,7 +278,15 @@ export class TouchUI {
     fitCanvas(this.canvas);
     const act = this.getActive();
     if (act && act.scene && act.scene.camera) {
-      act.scene.camera.mobileViewH = CFG.touch.viewH;
+      let viewH = CFG.touch.viewH;
+      if (typeof window !== 'undefined' && window.innerWidth && window.innerHeight) {
+        const short = Math.min(window.innerWidth, window.innerHeight);
+        viewH = Math.round(Math.min(
+          CFG.touch.viewHMax,
+          Math.max(CFG.touch.viewH, (CFG.touch.viewH * short) / CFG.touch.viewHRef),
+        ));
+      }
+      act.scene.camera.mobileViewH = viewH;
       act.scene._touchUI = this;
     }
   }
@@ -337,7 +348,7 @@ export class TouchUI {
     }
     // ⓪ 鸟瞰模式：返回按钮 = 退出；其余触点进手势管线（1指平移 / 2指捏合缩放）
     if (scene.overview) {
-      const b = overviewButtonRect(this.canvas.width);
+      const b = overviewButtonRect(this.canvas.width, hudTopOffset(scene));
       if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
         scene.toggleOverview();
         return 'ui';

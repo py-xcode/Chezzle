@@ -11,7 +11,7 @@
 // ============================================================================
 
 import { CFG } from '../core/config.js';
-import { toggleFullscreen } from '../core/fullscreen.js';
+import { toggleFullscreen, fullscreenSupported, isFullscreen } from '../core/fullscreen.js';
 
 /** 屏幕坐标 → 世界坐标（与 Renderer.frame 同口径：跟随玩家/聚焦内容；鸟瞰时走鸟瞰视图） */
 export function screenToWorld(scene, canvas, sx, sy) {
@@ -21,16 +21,33 @@ export function screenToWorld(scene, canvas, sx, sy) {
   return { x: (sx - offsetX) / scale, y: (sy - offsetY) / scale };
 }
 
-// ---- 顶部按钮几何（HUD 渲染与点击命中共用；提示按钮为 W-72,10,62×28，见 hud.tipButton）----
+/**
+ * 顶部 HUD 起始 y（画布坐标）——左上卡片与顶栏按钮（⛶/鸟瞰/提示）共用，
+ * 渲染与命中必须同源。触屏端整体下移：
+ *  - 常规：让开左上角"返回选关"悬浮钮（report.js 注入，位于 10,10）；
+ *  - 全屏：再让开 iOS 系统全屏关闭按钮（也挂在左上角）——report.js 的返回钮
+ *    在全屏时同步下移到 52，这里留到 92。
+ * 桌面（fine pointer）维持 10：关卡画布居中显示，左上角是页面留白。
+ */
+export function hudTopOffset(scene) {
+  const t = scene && scene._touchUI;
+  if (t && typeof t.enabled === 'function' && t.enabled()) {
+    const base = (t.insets && t.insets.top) || 0;
+    return Math.max(isFullscreen() ? CFG.touch.hudTopFs : CFG.touch.hudTop, base + 10);
+  }
+  return 10;
+}
+
+// ---- 顶部按钮几何（HUD 渲染与点击命中共用；top 缺省 10 = 桌面） --------------
 
 /** 鸟瞰按钮（提示按钮左侧；双端显示）：返回 {x,y,w,h} */
-export function overviewButtonRect(W) {
-  return { x: W - 142, y: 10, w: 62, h: 28 };
+export function overviewButtonRect(W, top = 10) {
+  return { x: W - 142, y: top, w: 62, h: 28 };
 }
 
 /** 全屏按钮（仅触屏端显示，图标 ⛶）：在鸟瞰按钮左侧 */
-export function fullscreenButtonRect(W) {
-  return { x: W - 196, y: 10, w: 44, h: 28 };
+export function fullscreenButtonRect(W, top = 10) {
+  return { x: W - 196, y: top, w: 44, h: 28 };
 }
 
 function inRect(r, sx, sy) {
@@ -100,30 +117,33 @@ function dist(a, b) {
  */
 export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   if (!scene) return false;
+  const top = hudTopOffset(scene);
   // 0) 鸟瞰模式：只认"返回"按钮（暂停态；未中 → 交给鸟瞰拖动/缩放管线）
   if (scene.overview) {
-    if (inRect(overviewButtonRect(canvas.width), sx, sy)) {
+    if (inRect(overviewButtonRect(canvas.width, top), sx, sy)) {
       scene.toggleOverview();
       onInfo?.({ type: 'overview-exit' });
     }
     return false;
   }
-  // 1) 全屏按钮（仅触屏端显示；click/触点都在用户手势内，可请求全屏）
+  // 1) 全屏按钮（仅触屏端显示；click/触点都在用户手势内，可请求全屏）。
+  //    老设备/浏览器不支持元素全屏 API → 明确提示（不静默失效）
   if (scene._touchUI && typeof scene._touchUI.enabled === 'function' && scene._touchUI.enabled()) {
-    if (inRect(fullscreenButtonRect(canvas.width), sx, sy)) {
-      toggleFullscreen();
+    if (inRect(fullscreenButtonRect(canvas.width, top), sx, sy)) {
+      if (fullscreenSupported()) toggleFullscreen();
+      else pushNotice(scene, '此浏览器不支持全屏（可试试"添加到主屏幕"后打开）');
       onInfo?.({ type: 'fullscreen' });
       return true;
     }
   }
   // 2) 鸟瞰按钮（双端）
-  if (inRect(overviewButtonRect(canvas.width), sx, sy)) {
+  if (inRect(overviewButtonRect(canvas.width, top), sx, sy)) {
     scene.toggleOverview();
     onInfo?.({ type: 'overview' });
     return true;
   }
-  // 3) 提示按钮（右上）
-  if (sx > canvas.width - 68 && sx < canvas.width - 8 && sy > 8 && sy < 34) {
+  // 3) 提示按钮（右上；hud.tipButton 同几何：top..top+28）
+  if (sx > canvas.width - 68 && sx < canvas.width - 8 && sy > top && sy < top + 28) {
     if (hud) hud.showTip = !hud.showTip;
     onInfo?.({ type: 'tip' });
     return true;

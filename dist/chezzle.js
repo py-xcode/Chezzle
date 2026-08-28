@@ -142,10 +142,17 @@ const CFG = {
 
   // 移动端（触屏/小屏；桌面 fine-pointer 完全不受影响）
   touch: {
-    viewH: 560,    // 移动端相机视野高度（世界坐标；宽度按屏幕比例推出——玩家更大更清晰）
+    viewH: 560,    // 移动端相机视野高度基准（世界坐标；手机竖宽 ~390 时恰为此值）
+    viewHRef: 390, // 视野基准对应的屏幕短边（px）——大屏平板按短边比例放大视野
+    viewHMax: 1040, // 视野放大上限（世界坐标；平板也不会看到超出设计的范围）
     focusBias: 0.14, // 相机跟随偏置（视野高度比例）：视窗中心下移 → 玩家画面偏上，
                      // 不被左上面板/右下控件遮挡（移动端 HUD 压缩的配套）
+    padTop: 0.14,  // 顶部探出（视野高度比例，双端）：玩家爬到世界顶时相机继续
+                   // 上移探出世界顶边（上方是空天空），玩家不再被钉在屏幕顶缘、
+                   // 也不被左上 HUD 卡片盖住上方环境
     hudAlpha: 0.78,  // 移动端左侧 HUD 卡片透明度（面板体；文字不降，保可读）
+    hudTop: 48,    // 触屏端顶部 HUD（卡片/按钮）起始 y：让开"返回选关"悬浮钮
+    hudTopFs: 92,  // 触屏端全屏时的顶部起始 y：再让开 iOS 系统全屏关闭按钮（左上）
     joyR: 105,     // 摇杆基座半径（px）
     joyDead: 0.22, // 摇杆死区（半径比例；死区内不触发任何方向）
     horizDead: 0.14, // 水平方向死区（半径比例：小幅下倾/抖动不会误触左右）
@@ -7734,7 +7741,7 @@ exports.Rope = Rope;
 // ============================================================================
 
 const { CFG } = __require('src/core/config.js');;
-const { toggleFullscreen } = __require('src/core/fullscreen.js');;
+const { toggleFullscreen, fullscreenSupported, isFullscreen } = __require('src/core/fullscreen.js');;
 
 /** 屏幕坐标 → 世界坐标（与 Renderer.frame 同口径：跟随玩家/聚焦内容；鸟瞰时走鸟瞰视图） */
 function screenToWorld(scene, canvas, sx, sy) {
@@ -7744,16 +7751,33 @@ function screenToWorld(scene, canvas, sx, sy) {
   return { x: (sx - offsetX) / scale, y: (sy - offsetY) / scale };
 }
 
-// ---- 顶部按钮几何（HUD 渲染与点击命中共用；提示按钮为 W-72,10,62×28，见 hud.tipButton）----
+/**
+ * 顶部 HUD 起始 y（画布坐标）——左上卡片与顶栏按钮（⛶/鸟瞰/提示）共用，
+ * 渲染与命中必须同源。触屏端整体下移：
+ *  - 常规：让开左上角"返回选关"悬浮钮（report.js 注入，位于 10,10）；
+ *  - 全屏：再让开 iOS 系统全屏关闭按钮（也挂在左上角）——report.js 的返回钮
+ *    在全屏时同步下移到 52，这里留到 92。
+ * 桌面（fine pointer）维持 10：关卡画布居中显示，左上角是页面留白。
+ */
+function hudTopOffset(scene) {
+  const t = scene && scene._touchUI;
+  if (t && typeof t.enabled === 'function' && t.enabled()) {
+    const base = (t.insets && t.insets.top) || 0;
+    return Math.max(isFullscreen() ? CFG.touch.hudTopFs : CFG.touch.hudTop, base + 10);
+  }
+  return 10;
+}
+
+// ---- 顶部按钮几何（HUD 渲染与点击命中共用；top 缺省 10 = 桌面） --------------
 
 /** 鸟瞰按钮（提示按钮左侧；双端显示）：返回 {x,y,w,h} */
-function overviewButtonRect(W) {
-  return { x: W - 142, y: 10, w: 62, h: 28 };
+function overviewButtonRect(W, top = 10) {
+  return { x: W - 142, y: top, w: 62, h: 28 };
 }
 
 /** 全屏按钮（仅触屏端显示，图标 ⛶）：在鸟瞰按钮左侧 */
-function fullscreenButtonRect(W) {
-  return { x: W - 196, y: 10, w: 44, h: 28 };
+function fullscreenButtonRect(W, top = 10) {
+  return { x: W - 196, y: top, w: 44, h: 28 };
 }
 
 function inRect(r, sx, sy) {
@@ -7823,30 +7847,33 @@ function dist(a, b) {
  */
 function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   if (!scene) return false;
+  const top = hudTopOffset(scene);
   // 0) 鸟瞰模式：只认"返回"按钮（暂停态；未中 → 交给鸟瞰拖动/缩放管线）
   if (scene.overview) {
-    if (inRect(overviewButtonRect(canvas.width), sx, sy)) {
+    if (inRect(overviewButtonRect(canvas.width, top), sx, sy)) {
       scene.toggleOverview();
       onInfo?.({ type: 'overview-exit' });
     }
     return false;
   }
-  // 1) 全屏按钮（仅触屏端显示；click/触点都在用户手势内，可请求全屏）
+  // 1) 全屏按钮（仅触屏端显示；click/触点都在用户手势内，可请求全屏）。
+  //    老设备/浏览器不支持元素全屏 API → 明确提示（不静默失效）
   if (scene._touchUI && typeof scene._touchUI.enabled === 'function' && scene._touchUI.enabled()) {
-    if (inRect(fullscreenButtonRect(canvas.width), sx, sy)) {
-      toggleFullscreen();
+    if (inRect(fullscreenButtonRect(canvas.width, top), sx, sy)) {
+      if (fullscreenSupported()) toggleFullscreen();
+      else pushNotice(scene, '此浏览器不支持全屏（可试试"添加到主屏幕"后打开）');
       onInfo?.({ type: 'fullscreen' });
       return true;
     }
   }
   // 2) 鸟瞰按钮（双端）
-  if (inRect(overviewButtonRect(canvas.width), sx, sy)) {
+  if (inRect(overviewButtonRect(canvas.width, top), sx, sy)) {
     scene.toggleOverview();
     onInfo?.({ type: 'overview' });
     return true;
   }
-  // 3) 提示按钮（右上）
-  if (sx > canvas.width - 68 && sx < canvas.width - 8 && sy > 8 && sy < 34) {
+  // 3) 提示按钮（右上；hud.tipButton 同几何：top..top+28）
+  if (sx > canvas.width - 68 && sx < canvas.width - 8 && sy > top && sy < top + 28) {
     if (hud) hud.showTip = !hud.showTip;
     onInfo?.({ type: 'tip' });
     return true;
@@ -8101,6 +8128,7 @@ function bindSceneClick(canvas, getScreenPos, getActive) {
 }
 
 exports.screenToWorld = screenToWorld;
+exports.hudTopOffset = hudTopOffset;
 exports.overviewButtonRect = overviewButtonRect;
 exports.fullscreenButtonRect = fullscreenButtonRect;
 exports.pushNotice = pushNotice;
@@ -8351,7 +8379,7 @@ exports.startLoop = startLoop;
 // ============================================================================
 
 const { CFG } = __require('src/core/config.js');;
-const { handleSceneClick, handleScenePressDown, handleScenePressMove, handleScenePressUp, inventorySlotRects, uiMargins, overviewButtonRect } = __require('src/level/click.js');;
+const { handleSceneClick, handleScenePressDown, handleScenePressMove, handleScenePressUp, inventorySlotRects, uiMargins, overviewButtonRect, hudTopOffset } = __require('src/level/click.js');;
 const { requestFullscreenOnce } = __require('src/core/fullscreen.js');;
 
 // ---------------------------------------------------------------------------
@@ -8588,7 +8616,9 @@ class TouchUI {
     return touchButtonRects(this.canvas.width, this.canvas.height, slots, this.insets);
   }
 
-  /** 设备/布局刷新：安全区、画布铺满、相机移动端视野（forceTouch / resize 时调用） */
+  /** 设备/布局刷新：安全区、画布铺满、相机移动端视野（forceTouch / resize 时调用）。
+   *  视野按屏幕短边动态分配：手机（短边≈390）= 基准 viewH；平板短边更长 →
+   *  视野同比放大（上限 viewHMax）——大屏不再"元素偏大、视角偏小"。 */
   refresh() {
     if (!this.enabled()) return;
     ensureBaseStyle();
@@ -8598,7 +8628,15 @@ class TouchUI {
     fitCanvas(this.canvas);
     const act = this.getActive();
     if (act && act.scene && act.scene.camera) {
-      act.scene.camera.mobileViewH = CFG.touch.viewH;
+      let viewH = CFG.touch.viewH;
+      if (typeof window !== 'undefined' && window.innerWidth && window.innerHeight) {
+        const short = Math.min(window.innerWidth, window.innerHeight);
+        viewH = Math.round(Math.min(
+          CFG.touch.viewHMax,
+          Math.max(CFG.touch.viewH, (CFG.touch.viewH * short) / CFG.touch.viewHRef),
+        ));
+      }
+      act.scene.camera.mobileViewH = viewH;
       act.scene._touchUI = this;
     }
   }
@@ -8660,7 +8698,7 @@ class TouchUI {
     }
     // ⓪ 鸟瞰模式：返回按钮 = 退出；其余触点进手势管线（1指平移 / 2指捏合缩放）
     if (scene.overview) {
-      const b = overviewButtonRect(this.canvas.width);
+      const b = overviewButtonRect(this.canvas.width, hudTopOffset(scene));
       if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
         scene.toggleOverview();
         return 'ui';
@@ -8920,7 +8958,7 @@ exports.bindTouchUI = bindTouchUI;
 // 几何约定：overviewButtonRect（HUD 渲染与命中共用）在 level/click.js。
 // ============================================================================
 
-const { overviewButtonRect } = __require('src/level/click.js');;
+const { overviewButtonRect, hudTopOffset } = __require('src/level/click.js');;
 
 /**
  * 给画布绑定鸟瞰输入。
@@ -8958,7 +8996,7 @@ function bindOverviewInput(canvas, getActive) {
     const px = e.clientX - r.left;
     const py = e.clientY - r.top;
     // "返回"按钮：不进入拖动（click 事件负责切换）
-    const b = overviewButtonRect(canvas.width);
+    const b = overviewButtonRect(canvas.width, hudTopOffset(scene));
     if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) return;
     pan = { x: e.clientX, y: e.clientY };
   };
@@ -10041,27 +10079,29 @@ class Camera {
     let viewW = this.viewW;
     let viewH = this.viewH;
     let biasY = 0;
+    let padTop = viewH * CFG.touch.padTop; // 顶部探出量（双端；爬高时相机跟进天空）
     if (this.mobileViewH > 0 && vw > 0 && vh > 0 && vh < vw) {
       viewH = this.mobileViewH;
       viewW = Math.max(1, viewH * (vw / vh));
       biasY = viewH * CFG.touch.focusBias; // 视窗中心下移 → 玩家画在屏幕偏上
+      padTop = viewH * CFG.touch.padTop;
     }
     const scale = Math.min(vw / viewW, vh / viewH);
     // 实际显示的世界窗口（单位：世界坐标）
     const vx = Math.min(this.worldW, viewW);
     const vy = Math.min(this.worldH, viewH);
-    // 窗口原点 ox, oy。偏置加在期望值上、且**下缘钳位放宽 biasY**：
-    // 玩家永远贴着世界底部走（地板在 worldH 附近），若只把期望值下移会被
-    // 底缘钳位吞掉——放宽下缘让视窗探到世界底边之下（下面是空背景，正好被
-    // 摇杆/按钮控件盖住），玩家才能真的画到屏幕中上部。上缘钳位不变（贴顶
-    // 时不把玩家推出画面）。
+    // 窗口原点 ox, oy。下缘钳位放宽 biasY：玩家永远贴着世界底部走（地板在
+    // worldH 附近），若只把期望值下移会被底缘钳位吞掉——放宽后视窗探到世界
+    // 底边之下（空背景，正被摇杆/按钮控件盖住），玩家才能真的画到屏幕中上部。
+    // 上缘钳位放宽 padTop（负方向）：玩家爬到世界顶时相机继续上移探出顶边
+    // （上方是空天空），玩家不被钉在屏幕顶缘、上方环境不被 HUD 卡片盖住。
     let ox;
     let oy;
     if (focus) {
       const cx = focus.x + (focus.w ?? 0) / 2;
       const cy = focus.y + (focus.h ?? 0) / 2;
       ox = clamp(cx - vx / 2, 0, Math.max(0, this.worldW - vx));
-      oy = clamp(cy - vy / 2 + biasY, 0, Math.max(0, this.worldH - vy + biasY));
+      oy = clamp(cy - vy / 2 + biasY, -padTop, Math.max(-padTop, this.worldH - vy + biasY));
     } else {
       ox = (this.worldW - vx) / 2;
       oy = (this.worldH - vy) / 2;
@@ -10137,12 +10177,10 @@ exports.renderBackground = renderBackground;
   __modules["src/render/hud.js"] = function (module, exports, __require) {
 // ============================================================================
 // HUD（神话·元素风）：
-// 桌面：左上 玩家面板（物质+血量）+ 身体组成 + 空气计；右上 鸟瞰/提示按钮；
-//       右下 5 格宝石物品栏（选中发光）；通关/死亡神话遮罩。
-// 移动端（触屏）：左上压缩为单卡（物质/体质 + 身体组成 + 大气一行）；顶部
-//       ⛶ 全屏 / 鸟瞰 / 提示三按钮；"最近反应"仅调试模式显示。
-// 鸟瞰（灵魂出窍）：暂停模拟，整关自由缩放/平移——HUD 只留"返回"按钮 +
-//       操作提示 + 玩家魂标（金青脉动光环）。
+// 左上 信息卡（双端统一单卡：物质/体质 + 身体组成 + 大气一行；触屏半透明）；
+// 右上 ⛶全屏（触屏）/ 鸟瞰 / 提示按钮（触屏端整体下移避让悬浮钮/系统按钮）；
+// 右下 5 格宝石物品栏（选中发光）；通关/死亡神话遮罩；"最近反应"仅调试模式。
+// 鸟瞰（灵魂出窍）：暂停模拟，整关自由缩放/平移——HUD 只留"返回"按钮 + 操作提示。
 // ============================================================================
 
 const { THEME, rr, panel, glowText, clearText } = __require('src/render/theme.js');;
@@ -10152,16 +10190,8 @@ const { solutionColor } = __require('src/render/liquidrender.js');;
 const { CFG } = __require('src/core/config.js');;
 const { GasColumn } = __require('src/objects/gascolumn.js');;
 const { Block } = __require('src/objects/block.js');;
-const { inventorySlotRects, uiMargins, overviewButtonRect, fullscreenButtonRect } = __require('src/level/click.js');;
+const { inventorySlotRects, uiMargins, overviewButtonRect, fullscreenButtonRect, hudTopOffset } = __require('src/level/click.js');;
 const { joyGeom, touchButtonRects } = __require('src/core/touch.js');;
-
-/** 质量短格式：1.2g / 0.30g / 12g（空气计百分比旁同显质量） */
-function fmtMass(m) {
-  if (!Number.isFinite(m) || m <= 0) return '';
-  if (m >= 100) return Math.round(m) + 'g';
-  if (m >= 10) return m.toFixed(0) + 'g';
-  return m.toFixed(2).replace(/0+$/, '').replace(/\.$/, '') + 'g';
-}
 
 // 溯源 kind → 中文（调试悬停显示物体"为何存在"）
 const ORIGIN_LABELS = {
@@ -10211,24 +10241,19 @@ class Hud {
     }
 
     if (p) {
-      const touch = this._isTouch();
-      if (touch) {
-        // 移动端压缩布局：玩家卡合并"身体组成 + 大气"，不再各占一张卡片
-        this.playerPanelCompact(ctx, p, scene, time);
-      } else {
-        this.playerPanel(ctx, p, time);
-        this.compositionPanel(ctx, p);
-        this.airPanel(ctx, scene, time);
-      }
-      // 最近反应本就是调试信息：非调试模式不再常驻（双端一致）
+      // 左上信息卡（双端统一紧凑单卡）：物质/体质 + 身体组成 + 大气一张卡解决；
+      // 移动端面板体降透明（CFG.touch.hudAlpha），桌面不透明
+      this.playerPanelCompact(ctx, p, scene, time, hudTopOffset(scene));
+      // 最近反应本就是调试信息：非调试模式不显示（双端一致）
       if (scene.debugMode) this.reactionPanel(ctx, p);
       this.inventory(ctx, p, W, H, time);
     }
     this.debugPanel(ctx, scene, W, H, time);
     if (scene.debugMode) this.hoverPanel(ctx, scene, W, H);
-    this.viewButton(ctx, W, time);
-    if (this._isTouch()) this.fsButton(ctx, W);
-    this.tipButton(ctx, W, H, time);
+    const top = hudTopOffset(scene);
+    this.viewButton(ctx, W, top);
+    if (this._isTouch()) this.fsButton(ctx, W, top);
+    this.tipButton(ctx, W, H, top);
     this.notice(ctx, scene, W, H, time);
     this.touchControls(ctx, scene, W, H, time);
     this.rotateHint(ctx, scene, W, H);
@@ -10236,11 +10261,12 @@ class Hud {
     ctx.restore();
   }
 
-  // ---- 顶部按钮：鸟瞰（双端）/ 全屏（触屏） ---------------------------------
+  // ---- 顶部按钮：鸟瞰（双端）/ 全屏（触屏）；y 走 hudTopOffset（触屏避让
+  //      "返回选关"悬浮钮与 iOS 系统全屏关闭钮；渲染与命中同源）--------------
 
   /** 鸟瞰按钮（提示按钮左侧；桌面 V 键同效） */
-  viewButton(ctx, W, time) {
-    const r = overviewButtonRect(W);
+  viewButton(ctx, W, top = 10) {
+    const r = overviewButtonRect(W, top);
     ctx.save();
     rr(ctx, r.x, r.y, r.w, r.h, 8);
     const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
@@ -10262,8 +10288,8 @@ class Hud {
   }
 
   /** 全屏按钮（仅触屏端；图标 ⛶。首次触点已自动请求全屏，此按钮供随时切换） */
-  fsButton(ctx, W) {
-    const r = fullscreenButtonRect(W);
+  fsButton(ctx, W, top = 10) {
+    const r = fullscreenButtonRect(W, top);
     ctx.save();
     rr(ctx, r.x, r.y, r.w, r.h, 8);
     const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
@@ -10282,11 +10308,12 @@ class Hud {
     ctx.textAlign = 'left';
   }
 
-  // ---- 鸟瞰（灵魂出窍）界面：返回按钮 + 操作提示 + 玩家魂标 ------------------
+  // ---- 鸟瞰（灵魂出窍）界面：返回按钮 + 操作提示（干净的全局视图）-----------
 
   overviewUI(ctx, scene, W, H, time) {
+    const top = hudTopOffset(scene);
     // 返回按钮（命中几何走 overviewButtonRect，点击/触点均可退出）
-    const r = overviewButtonRect(W);
+    const r = overviewButtonRect(W, top);
     ctx.save();
     rr(ctx, r.x, r.y, r.w, r.h, 8);
     const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
@@ -10309,37 +10336,15 @@ class Hud {
     const hint = touch ? '鸟瞰 · 单指拖动平移 · 双指捏合缩放' : '鸟瞰 · 滚轮缩放 · 拖动平移 · V 返回';
     ctx.font = 'bold 12px "Segoe UI", "Microsoft YaHei", sans-serif';
     const tw = ctx.measureText(hint).width;
-    rr(ctx, W / 2 - tw / 2 - 14, 12, tw + 28, 24, 8);
+    rr(ctx, W / 2 - tw / 2 - 14, top + 2, tw + 28, 24, 8);
     ctx.fillStyle = 'rgba(10,12,26,0.72)';
     ctx.fill();
     ctx.strokeStyle = 'rgba(127,224,255,0.4)';
     ctx.lineWidth = 1;
     ctx.stroke();
     ctx.fillStyle = '#bfe6ff';
-    ctx.fillText(hint, W / 2, 28);
+    ctx.fillText(hint, W / 2, top + 18);
     ctx.textAlign = 'left';
-    // 玩家"魂标"：金青色脉动光环标出灵魂出窍的本体位置
-    const p = scene.player;
-    const cam = scene.camera;
-    if (p && cam) {
-      const { scale, offsetX, offsetY } = cam.compute(W, H, null);
-      const sx = (p.x + p.w / 2) * scale + offsetX;
-      const sy = (p.y + p.h / 2) * scale + offsetY;
-      const pulse = 10 + 3 * Math.sin(time * 4);
-      ctx.save();
-      ctx.strokeStyle = 'rgba(255,215,106,0.85)';
-      ctx.lineWidth = 2;
-      ctx.shadowColor = '#ffd76a';
-      ctx.shadowBlur = 10;
-      ctx.beginPath();
-      ctx.arc(sx, sy, (p.w / 2) * scale + pulse, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.globalAlpha = 0.35;
-      ctx.beginPath();
-      ctx.arc(sx, sy, (p.w / 2) * scale + pulse + 8, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.restore();
-    }
   }
 
   // ---- 移动端触控（摇杆 + 右下按钮；仅触屏设备绘制） ----
@@ -10385,11 +10390,13 @@ class Hud {
     ctx.strokeStyle = ui.joy ? 'rgba(255,215,106,0.85)' : 'rgba(232,184,75,0.4)';
     ctx.lineWidth = ui.joy ? 2 : 1.2;
     ctx.stroke();
-    // —— 右下：Q/⇧/C/X 四键（按住=长按语义同键盘；无玩家场景不画）——
+    // —— 右下：四键（按住=长按语义同键盘；无玩家场景不画）。
+    //     键位字母（C/X/Q/⇧）对触屏玩家无意义 → 换成语义 SVG 矢量图标 +
+    //     下方二字说明（拾取/倒出/收集/放置）——
     if (scene.player) {
-      const LABELS = { grab: ['C', '拾取'], use: ['X', '倒出'], collect: ['Q', '收集'], place: ['⇧', '放置'] };
+      const LABELS = { grab: '拾取', use: '倒出', collect: '收集', place: '放置' };
       for (const r of ui.buttonRects()) {
-        const [glyph, cap] = LABELS[r.key] ?? ['', ''];
+        const cap = LABELS[r.key] ?? '';
         const down = ui.isPressed(r.key);
         ctx.save();
         rr(ctx, r.x, r.y, r.size, r.size, 14);
@@ -10407,14 +10414,75 @@ class Hud {
         ctx.stroke();
         ctx.shadowBlur = 0;
         ctx.textAlign = 'center';
-        ctx.fillStyle = down ? '#fff6d8' : '#ffe9b0';
-        ctx.font = 'bold 17px "Segoe UI", sans-serif';
-        ctx.fillText(glyph, r.x + r.size / 2, r.y + r.size / 2 + 2);
+        this._touchIcon(ctx, r.key, r.x + r.size / 2, r.y + r.size / 2 - 6, down ? '#fff6d8' : '#ffe9b0');
         ctx.fillStyle = down ? '#ffd76a' : 'rgba(255,233,176,0.62)';
         ctx.font = '9.5px "Segoe UI", "Microsoft YaHei", sans-serif';
         ctx.fillText(cap, r.x + r.size / 2, r.y + r.size - 9);
         ctx.restore();
       }
+    }
+    ctx.restore();
+  }
+
+  /** 触控按钮矢量图标（canvas 路径画的"SVG 小图"，原点 = 图标中心）：
+   *  grab=四角框选+目标点（抓取） / use=倾斜烧杯倒液（倒出） /
+   *  collect=马蹄磁铁（吸集） / place=落点箭头（放置到地上） */
+  _touchIcon(ctx, key, cx, cy, color) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = 2.2;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    if (key === 'grab') {
+      // 四角括号 + 中心目标点（"框选抓取"）
+      ctx.moveTo(-3.5, -9); ctx.lineTo(-9, -9); ctx.lineTo(-9, -3.5);
+      ctx.moveTo(3.5, -9); ctx.lineTo(9, -9); ctx.lineTo(9, -3.5);
+      ctx.moveTo(-3.5, 9); ctx.lineTo(-9, 9); ctx.lineTo(-9, 3.5);
+      ctx.moveTo(3.5, 9); ctx.lineTo(9, 9); ctx.lineTo(9, 3.5);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(0, 0, 3.4, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (key === 'use') {
+      // 倾斜小烧杯 + 倒出的液滴
+      ctx.rotate(-0.62);
+      ctx.moveTo(-6, -5);
+      ctx.lineTo(-6, 5);
+      ctx.quadraticCurveTo(-6, 7.5, -3.5, 7.5);
+      ctx.lineTo(3.5, 7.5);
+      ctx.quadraticCurveTo(6, 7.5, 6, 5);
+      ctx.lineTo(6, -5);
+      ctx.stroke();
+      ctx.rotate(0.62);
+      ctx.beginPath(); ctx.arc(10.5, -2, 1.7, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(13, 4, 2.0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(11, 10.5, 2.3, 0, Math.PI * 2); ctx.fill();
+    } else if (key === 'collect') {
+      // 马蹄磁铁（开口朝下，两极短杠）——"吸集"沉淀
+      ctx.moveTo(-7.5, 5);
+      ctx.lineTo(-7.5, -1);
+      ctx.arc(0, -1, 7.5, Math.PI, 0);
+      ctx.lineTo(7.5, 5);
+      ctx.moveTo(-3, 5);
+      ctx.lineTo(-3, -1);
+      ctx.arc(0, -1, 3, Math.PI, 0);
+      ctx.lineTo(3, 5);
+      ctx.stroke();
+      ctx.fillRect(-7.5, 6.6, 4.5, 3);
+      ctx.fillRect(3, 6.6, 4.5, 3);
+    } else if (key === 'place') {
+      // 下落箭头 + 地面基线（"放下去"）
+      ctx.moveTo(0, -10);
+      ctx.lineTo(0, 2);
+      ctx.moveTo(-4.5, -2.5);
+      ctx.lineTo(0, 2);
+      ctx.lineTo(4.5, -2.5);
+      ctx.moveTo(-8.5, 8);
+      ctx.lineTo(8.5, 8);
+      ctx.stroke();
     }
     ctx.restore();
   }
@@ -10506,8 +10574,8 @@ class Hud {
     const p = scene.player;
     const barW = 250;
     const px = W - barW - 10;
-    // 右上角状态条（堆叠面板的当前顶 y）
-    let top = 10;
+    // 右上角状态条（堆叠面板的当前顶 y；触屏下移避让悬浮钮/系统按钮）
+    let top = hudTopOffset(scene);
     panel(ctx, px, top, barW, 22, THEME.gold.deep, 8);
     clearText(ctx, `调试 ${scene.debugPaused ? '[暂停] F5继续 F6步进' : '[运行] F5暂停'}·悬停查源·X切换`, px, top + 11, scene.debugPaused ? '#ffd23f' : '#7fe0ff', 'bold 11px "Segoe UI", sans-serif');
     top += 28;
@@ -10787,174 +10855,10 @@ class Hud {
     ctx.restore();
   }
 
-  // ---- 玩家面板（物质 + 血量药瓶）----
-  playerPanel(ctx, p, time) {
-    panel(ctx, 10, 10, 232, 66, THEME.gold.deep, 12);
-    const sub = getSubstance(p.substance);
-    const color = sub?.solid?.[0] ?? '#7fe0ff';
-    const ratio = p.maxHp ? Math.max(0, Math.min(1, p.hp / p.maxHp)) : 0;
-    this.vial(ctx, 24, 20, 34, 44, ratio, color, time);
-    clearText(ctx, p.substance, 70, 34, THEME.gold.text, 'bold 16px "Segoe UI", sans-serif');
-    clearText(ctx, `${p.hp.toFixed(1)} g 体质`, 70, 56, '#ffffff', 'bold 12px monospace');
-  }
-
-  /** 血量药瓶：玻璃烧瓶 + 发光液体填充 */
-  vial(ctx, x, y, w, h, ratio, color, time) {
-    ctx.save();
-    rr(ctx, x, y, w, h, w / 2.4);
-    ctx.fillStyle = 'rgba(190,225,255,0.10)';
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(200,235,255,0.6)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    // 液体
-    const lh = h * Math.max(0.06, Math.min(1, ratio));
-    ctx.save();
-    rr(ctx, x + 1.5, y + h - lh, w - 3, lh, w / 3);
-    ctx.clip();
-    const g = ctx.createLinearGradient(x, y, x, y + h);
-    g.addColorStop(0, '#d8f6ff');
-    g.addColorStop(0.5, color);
-    g.addColorStop(1, '#0e2a44');
-    ctx.fillStyle = g;
-    ctx.fillRect(x, y, w, h);
-    ctx.restore();
-    // 液面辉光（随血量轻微脉动）
-    const pulse = 6 + 4 * Math.sin(time * 3);
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.shadowColor = color;
-    ctx.shadowBlur = pulse;
-    ctx.fillStyle = 'rgba(255,255,255,0.55)';
-    ctx.fillRect(x + 1, y + h - lh, w - 2, 2);
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.restore();
-  }
-
-  // ---- 身体组成面板（玩家身上多物质时：色点 + 化学式 + 占比条 + 克数）----
-  compositionPanel(ctx, p) {
-    const masses = p.grid ? p.grid.masses() : null;
-    if (!masses) return;
-    const entries = Object.entries(masses).filter(([, m]) => m > 1e-6).sort((a, b) => b[1] - a[1]);
-    if (entries.length <= 1) return; // 单物质身体不显示（就是血量）
-    const total = entries.reduce((s, [, m]) => s + m, 0);
-    const shown = Math.min(5, entries.length);
-    const W = 264;
-    const H = 20 + shown * 22 + (entries.length > 5 ? 16 : 0);
-    this._compH = H; // 供反应日志面板定位
-    panel(ctx, 10, 136, W, H, THEME.water.base, 10);
-    clearText(ctx, '身体组成', 22, 148, THEME.gold.text, 'bold 11px "Segoe UI", sans-serif');
-    let y = 162;
-    for (const [id, m] of entries.slice(0, shown)) {
-      const sub = getSubstance(id);
-      const color = sub?.solid?.[0] ?? '#7fe0ff';
-      const frac = m / total;
-      const isCore = id === p.substance;
-      // 色点
-      ctx.save();
-      if (isCore) {
-        ctx.shadowColor = THEME.gold.text;
-        ctx.shadowBlur = 6;
-      }
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(28, y + 8, 4.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-      // 占比条
-      ctx.fillStyle = 'rgba(255,255,255,0.09)';
-      ctx.fillRect(120, y + 5, 100, 7);
-      ctx.fillStyle = color;
-      ctx.fillRect(120, y + 5, 100 * frac, 7);
-      // 化学式 + 克数
-      ctx.textAlign = 'right';
-      clearText(ctx, id, 112, y + 8, isCore ? THEME.gold.text : '#dfe8f2', isCore ? 'bold 10px monospace' : '10px monospace');
-      ctx.textAlign = 'left';
-      clearText(ctx, `${m.toFixed(1)}g`, 226, y + 8, '#9fb2c8', '9px monospace');
-      y += 22;
-    }
-    if (entries.length > 5) {
-      clearText(ctx, `…另有 ${entries.length - 5} 种`, 22, y + 9, '#9fb2c8', '10px monospace');
-    }
-  }
-
-  // ---- 玩家反应日志（最近发生在玩家身上的反应；调试模式专属）----
-  reactionPanel(ctx, p) {
-    if (!p.reactions || p.reactions.length === 0) return;
-    const shown = Math.min(4, p.reactions.length);
-    const W = 264;
-    const H = 22 + shown * 17;
-    // 桌面：固定排在组成/空气面板下方；触屏：紧凑卡高度可变，按实际高度堆叠
-    const top = this._isTouch() ? 10 + (this._leftH ?? 126) + 6 : 136 + (this._compH ?? 0) + 4;
-    panel(ctx, 10, top, W, H, THEME.gold.deep, 10);
-    clearText(ctx, '最近反应', 22, top + 12, THEME.gold.text, 'bold 11px "Segoe UI", sans-serif');
-    let y = top + 26;
-    for (let i = 0; i < shown; i++) {
-      clearText(ctx, `› ${p.reactions[i]}`, 22, y + 6, '#dfe8f2', '10px monospace');
-      y += 17;
-    }
-  }
-
-  // ---- 空气计（O2/CO2 常驻；其它反应气有质量才显示，避免"生成了却看不到"）----
-  airPanel(ctx, scene, time) {
-    const atm = scene.atmosphere;
-    if (!atm) return;
-    const o2 = atm.fraction('O2') * 100;
-    const co2 = atm.fraction('CO2') * 100;
-    const extras = EXTRA_GAS_IDS
-      .map((id) => ({ id, mass: atm.mass(id), frac: atm.fraction(id) * 100 }))
-      .filter((g) => g.mass > 0.01);
-    const H = 46 + (extras.length ? 22 : 0);
-    panel(ctx, 10, 82, 264, H, THEME.water.base, 10);
-    // 第一行：氧（青）+ 二氧化碳（金）
-    ctx.fillStyle = THEME.water.glow;
-    ctx.beginPath();
-    ctx.arc(26, 100, 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowColor = THEME.water.light;
-    ctx.shadowBlur = 6;
-    ctx.beginPath();
-    ctx.arc(26, 100, 2.4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    clearText(ctx, `O2  ${o2.toFixed(1)}%  ${fmtMass(atm.mass('O2'))}`, 38, 104, '#aeeaff', 'bold 11px monospace');
-    ctx.fillStyle = THEME.gold.dim;
-    ctx.beginPath();
-    ctx.arc(104, 100, 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowColor = THEME.gold.light;
-    ctx.shadowBlur = 6;
-    ctx.beginPath();
-    ctx.arc(104, 100, 2.4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    // 少量 CO2 时如实显示"微量"，避免面板显示 0.0% 却仍在发生碳化反应的误解
-    const co2Mass = atm.mass('CO2');
-    const co2Text = co2 >= 0.05 ? `${co2.toFixed(1)}%` : co2Mass > 1e-6 ? '<0.1%' : '0%';
-    clearText(ctx, `CO2  ${co2Text}  ${co2Mass > 1e-6 ? fmtMass(co2Mass) : ''}`, 116, 104, '#ffe9b0', 'bold 11px monospace');
-    // 第二行：其它燃料气（CO/H2/CH4/H2S）——有质量才显示，爆鸣预警
-    if (extras.length) {
-      let gx = 18;
-      for (const g of extras) {
-        const color = GAS_COLORS[g.id] ?? '#ffffff';
-        ctx.fillStyle = color;
-        ctx.shadowColor = color;
-        ctx.shadowBlur = 5;
-        ctx.beginPath();
-        ctx.arc(gx + 6, 123, 4, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.shadowBlur = 0;
-        const t = g.frac >= 0.05 ? `${g.frac.toFixed(1)}%` : '<0.1%';
-        const label = `${g.id} ${t} ${fmtMass(g.mass)}`;
-        clearText(ctx, label, gx + 14, 127, color, 'bold 10px monospace');
-        gx += 14 + label.length * 6.4 + 8;
-      }
-    }
-  }
-
-  // ---- 移动端紧凑玩家卡：物质/体质 + 身体组成 + 大气，合并成一张左上卡 ----
-  // 小屏金贵：原来三张卡（玩家/组成/空气）竖着排会占掉小半屏——合并后一张卡
-  // 解决；面板体按 CFG.touch.hudAlpha 降透明度（文字不降，保可读）。
-  playerPanelCompact(ctx, p, scene, time) {
+  // ---- 玩家信息卡（双端统一紧凑单卡）：物质/体质 + 身体组成 + 大气一行 ----
+  // 原桌面三张卡（玩家/组成/空气）竖排 + 移动端重复一套——统一成这一张：
+  // 屏幕占用最小、信息不缺；移动端面板体按 CFG.touch.hudAlpha 降透明（文字不降）。
+  playerPanelCompact(ctx, p, scene, time, top = 10) {
     const atm = scene.atmosphere;
     // 身体组成（多物质才显示，单物质=血量本身）
     const masses = p.grid ? p.grid.masses() : null;
@@ -10973,21 +10877,20 @@ class Hud {
       + airLines * 14 + 8;
     this._leftH = h; // 左上卡实际高度（调试模式"最近反应"面板的堆叠定位用）
     ctx.save();
-    ctx.globalAlpha = CFG.touch.hudAlpha;
-    panel(ctx, 10, 10, w, h, THEME.gold.deep, 12);
+    ctx.globalAlpha = this._isTouch() ? CFG.touch.hudAlpha : 1;
+    panel(ctx, 10, top, w, h, THEME.gold.deep, 12);
     ctx.restore();
     // 头部：血量药瓶 + 物质 + 体质
     const sub = getSubstance(p.substance);
     const color = sub?.solid?.[0] ?? '#7fe0ff';
     const ratio = p.maxHp ? Math.max(0, Math.min(1, p.hp / p.maxHp)) : 0;
-    this.vial(ctx, 22, 18, 26, 40, ratio, color, time);
-    clearText(ctx, p.substance, 58, 32, THEME.gold.text, 'bold 14px "Segoe UI", sans-serif');
-    clearText(ctx, `${p.hp.toFixed(1)} g 体质`, 58, 50, '#ffffff', 'bold 11px monospace');
-    let y = 74;
+    this.vial(ctx, 22, top + 8, 26, 40, ratio, color, time);
+    clearText(ctx, p.substance, 58, top + 22, THEME.gold.text, 'bold 14px "Segoe UI", sans-serif');
+    clearText(ctx, `${p.hp.toFixed(1)} g 体质`, 58, top + 40, '#ffffff', 'bold 11px monospace');
+    let y = top + 64;
     if (compRows) {
       clearText(ctx, '身体组成', 20, y, 'rgba(255,233,176,0.85)', 'bold 9px "Segoe UI", sans-serif');
       y += 13;
-      const total = entries.reduce((s, [, m]) => s + m, 0);
       for (const [id, m] of entries.slice(0, compRows)) {
         const sc = getSubstance(id);
         const isCore = id === p.substance;
@@ -11038,6 +10941,56 @@ class Hud {
       if (extras.length > 3) clearText(ctx, `+${extras.length - 3}`, gx + 4, y + 3, '#9fb2c8', '9px monospace');
     }
   }
+
+  /** 血量药瓶：玻璃烧瓶 + 发光液体填充 */
+  vial(ctx, x, y, w, h, ratio, color, time) {
+    ctx.save();
+    rr(ctx, x, y, w, h, w / 2.4);
+    ctx.fillStyle = 'rgba(190,225,255,0.10)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(200,235,255,0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // 液体
+    const lh = h * Math.max(0.06, Math.min(1, ratio));
+    ctx.save();
+    rr(ctx, x + 1.5, y + h - lh, w - 3, lh, w / 3);
+    ctx.clip();
+    const g = ctx.createLinearGradient(x, y, x, y + h);
+    g.addColorStop(0, '#d8f6ff');
+    g.addColorStop(0.5, color);
+    g.addColorStop(1, '#0e2a44');
+    ctx.fillStyle = g;
+    ctx.fillRect(x, y, w, h);
+    ctx.restore();
+    // 液面辉光（随血量轻微脉动）
+    const pulse = 6 + 4 * Math.sin(time * 3);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.shadowColor = color;
+    ctx.shadowBlur = pulse;
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fillRect(x + 1, y + h - lh, w - 2, 2);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.restore();
+  }
+
+  // ---- 玩家反应日志（最近发生在玩家身上的反应；调试模式专属）----
+  reactionPanel(ctx, p) {
+    if (!p.reactions || p.reactions.length === 0) return;
+    const shown = Math.min(4, p.reactions.length);
+    const W = 264;
+    const H = 22 + shown * 17;
+    // 排在左上信息卡下方（卡高度可变，按实际高度堆叠）
+    const top = hudTopOffset(this.scene) + (this._leftH ?? 126) + 6;
+    panel(ctx, 10, top, W, H, THEME.gold.deep, 10);
+    clearText(ctx, '最近反应', 22, top + 12, THEME.gold.text, 'bold 11px "Segoe UI", sans-serif');
+    let y = top + 26;
+    for (let i = 0; i < shown; i++) {
+      clearText(ctx, `› ${p.reactions[i]}`, 22, y + 6, '#dfe8f2', '10px monospace');
+      y += 17;
+    }
+  }
+
 
   // ---- 物品栏（宝石槽）：装物品的格子放大 + 内容物溶质显示 + 获取弹跳 ----
   inventory(ctx, p, W, H, time) {
@@ -11377,9 +11330,9 @@ class Hud {
   }
 
   // ---- 提示按钮 ----
-  tipButton(ctx, W, H, time) {
+  tipButton(ctx, W, H, top = 10) {
     const x = W - 72;
-    const y = 10;
+    const y = top;
     ctx.save();
     rr(ctx, x, y, 62, 28, 8);
     const g = ctx.createLinearGradient(x, y, x, y + 28);
@@ -11400,7 +11353,7 @@ class Hud {
     ctx.textAlign = 'left';
     if (this.showTip && this.scene.tip) {
       ctx.save();
-      rr(ctx, 10, 44, Math.min(W - 20, 430), 88, 10);
+      rr(ctx, 10, top + 34, Math.min(W - 20, 430), 88, 10);
       ctx.fillStyle = THEME.panel;
       ctx.fill();
       ctx.strokeStyle = THEME.gold.deep;
@@ -11410,7 +11363,7 @@ class Hud {
       ctx.fillStyle = THEME.gold.text;
       ctx.font = 'bold 12px "Segoe UI", sans-serif';
       const lines = this.scene.tip.split('\n');
-      for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], 22, 66 + i * 16);
+      for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], 22, top + 56 + i * 16);
     }
   }
 

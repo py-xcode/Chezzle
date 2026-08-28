@@ -178,16 +178,45 @@ test('移动端 focusBias：视窗中心下移 → 玩家屏幕 y 上移；桌�
   // 偏移量 = 视野高度 × focusBias × scale（未钳制段精确匹配）
   const expectShift = VH * saved * a.scale;
   assert.ok(Math.abs((pcyB - pcyA) - expectShift) < 1e-6, `偏移 ${pcyB - pcyA} ≈ ${expectShift}`);
-  // 世界顶/底钳制仍然生效（玩家贴顶时不再上移出界）
+  // 世界顶/底钳制：上缘放宽 padTop（可探出世界顶）、下缘放宽 biasY
   const topFocus = { x: 1400, y: -200, w: 60, h: 90 };
   const m2 = camA.compute(844, 390, topFocus);
-  assert.ok(m2.oy >= 0, 'oy 钳制 ≥ 0');
+  const padTop = VH * CFG.touch.padTop;
+  assert.ok(m2.oy >= -padTop - 1e-9 && m2.oy < 0, `贴顶时探出世界顶但不超 padTop：oy=${m2.oy}`);
   // 桌面（mobileViewH=0）永远无偏置：跟随照常（世界宽 3000 > 视口 1000，横向有余量）
   const camDesk = new Camera({ viewW: 1000, viewH: 800, worldW: 3000, worldH: 800 });
   const d1 = camDesk.compute(844, 390, focus);
   const d2 = camDesk.compute(844, 390, { ...focus, x: focus.x + 50 });
   assert.ok(d1.scale < 1, '桌面 scale 独立');
   assert.ok(d2.ox > d1.ox, '桌面跟随不变（focus 右移 → 视窗右移）');
+});
+
+// ---- 6b. padTop 顶部探出：爬到世界顶相机跟进天空（双端） ----------------------
+test('padTop：玩家爬高时视角继续上移（探出世界顶），玩家不被钉在屏幕顶缘', () => {
+  // 玩家爬到 cy=100（世界顶部区域）——旧行为相机停在世界顶 oy=0，玩家被钉在
+  // 屏幕最上缘、被左上卡片盖住；现在相机探出世界顶继续跟随 → 玩家画得更低
+  const saved = CFG.touch.padTop;
+  const mk = () => new Camera({ viewW: 1000, viewH: 800, worldW: 3000, worldH: 800 });
+  const focusTop = { x: 1400, y: 55, w: 60, h: 90 };
+  // 移动端
+  const camM = mk();
+  camM.mobileViewH = CFG.touch.viewH;
+  const mOn = camM.compute(844, 390, focusTop);
+  CFG.touch.padTop = 0;
+  const mOff = mk(); mOff.mobileViewH = CFG.touch.viewH;
+  const m0 = mOff.compute(844, 390, focusTop);
+  CFG.touch.padTop = saved;
+  assert.ok(mOn.oy < 0, `探出世界顶：oy=${mOn.oy}`);
+  assert.ok(m0.oy === 0, '关闭 padTop 时相机停在世界顶');
+  const pcyOn = 100 * mOn.scale + mOn.offsetY;
+  const pcy0 = 100 * m0.scale + m0.offsetY;
+  assert.ok(pcyOn > pcy0, `玩家离开屏幕顶缘：${pcyOn.toFixed(0)} > 钉顶 ${pcy0.toFixed(0)}`);
+  // 桌面同样跟进（世界高=视口高 800 时旧相机完全不动，玩家贴顶被卡片挡）
+  const camD = mk();
+  const d = camD.compute(1100, 700, focusTop);
+  assert.ok(d.oy < 0, `桌面也探出世界顶：oy=${d.oy}`);
+  const dFloor = camD.compute(1100, 700, { x: 1400, y: 600, w: 60, h: 90 });
+  assert.ok(dFloor.oy === 0, '地面时桌面相机不动（整关可见）');
 });
 
 // ---- 7. .debugmode() 废弃：不报错、不生效（node 无 location → 恒 false） -----
