@@ -10425,7 +10425,7 @@ class Hud {
   }
 
   /** 触控按钮矢量图标（canvas 路径画的"SVG 小图"，原点 = 图标中心）：
-   *  grab=一只手（抓取） / use=倾斜烧杯倒液（倒出） /
+   *  grab=捏取手势（照参考图的手） / use=倾斜烧杯倒液（倒出） /
    *  collect=马蹄磁铁（吸集） / place=落点箭头（放置到地上） */
   _touchIcon(ctx, key, cx, cy, color) {
     ctx.save();
@@ -10438,19 +10438,41 @@ class Hud {
     ctx.lineJoin = 'round';
     ctx.beginPath();
     if (key === 'grab') {
-      // 一只手：四指 + 掌 + 拇指（"伸手抓取"）
-      ctx.moveTo(-6.5, -4); ctx.lineTo(-6.5, 1); // 食指
-      ctx.moveTo(-2.2, -6.5); ctx.lineTo(-2.2, 1); // 中指
-      ctx.moveTo(2.2, -5.5); ctx.lineTo(2.2, 1); // 无名指
-      ctx.moveTo(6.5, -3.5); ctx.lineTo(6.5, 1); // 小指
-      ctx.moveTo(-8, 0); // 掌（上缘开口由指根补齐）
-      ctx.lineTo(-8, 3.5);
-      ctx.quadraticCurveTo(-8, 8.5, -3, 8.5);
-      ctx.lineTo(3, 8.5);
-      ctx.quadraticCurveTo(8, 8.5, 8, 3.5);
-      ctx.lineTo(8, 0);
-      ctx.moveTo(-8, 2.5); // 拇指
-      ctx.quadraticCurveTo(-11.5, 1, -10.5, -4);
+      // 捏取手势（照参考图）：手身（拇指/指节凸/手背/腕）+ 粗食指（独立的
+      // 圆头棒，斜向左上；与手身的接缝正好充当指根褶皱）。两个子路径合并成
+      // 一个路径一次填充（避免半透明叠加出现深色接痕），再统一描边。
+      ctx.beginPath();
+      // —— 手身 ——
+      ctx.moveTo(-3.2, 1.4); // 捏合点（虎口缝）
+      ctx.quadraticCurveTo(-0.9, 0.8, -0.15, -1); // 指蹼上升
+      ctx.quadraticCurveTo(0.15, -2.2, -0.6, -3.4); // 指根凹口
+      ctx.quadraticCurveTo(0.6, -5.6, 2.2, -5); // 指节凸 1
+      ctx.quadraticCurveTo(3.8, -7.2, 5.4, -5.6); // 指节凸 2
+      ctx.quadraticCurveTo(7, -7.2, 7.9, -5.4); // 指节凸 3
+      ctx.quadraticCurveTo(10, -2.6, 9.9, 0.8); // 手背右缘
+      ctx.quadraticCurveTo(9.8, 4.2, 8.4, 7); // 右缘下行
+      ctx.lineTo(6.6, 10.8); // 腕右
+      ctx.lineTo(1.2, 10.8); // 腕底
+      ctx.quadraticCurveTo(0.4, 7.2, -2, 6.2); // 腕左侧上行
+      ctx.quadraticCurveTo(-5.6, 5.4, -7, 4); // 掌下缘
+      ctx.quadraticCurveTo(-9.8, 2.8, -10.5, 0.5); // 拇指尖
+      ctx.quadraticCurveTo(-7.5, 2.6, -5, 2.6); // 拇指上缘
+      ctx.quadraticCurveTo(-4.2, 2.4, -3.2, 1.4); // 收回捏合点
+      ctx.closePath();
+      // —— 食指（旋转的圆头粗棒，斜向左上）——
+      ctx.rotate(0.47);
+      ctx.moveTo(0.5, -2.1);
+      ctx.lineTo(-6.5, -2.1);
+      ctx.quadraticCurveTo(-10.2, -2.1, -10.2, 0);
+      ctx.quadraticCurveTo(-10.2, 2.1, -6.5, 2.1);
+      ctx.lineTo(0.5, 2.1);
+      ctx.quadraticCurveTo(1.8, 0, 0.5, -2.1);
+      ctx.closePath();
+      ctx.rotate(-0.47);
+      ctx.save();
+      ctx.globalAlpha = 0.3;
+      ctx.fill();
+      ctx.restore();
       ctx.stroke();
     } else if (key === 'use') {
       // 倾斜小烧杯（顺时针倒向右侧）+ 液滴从口沿洒落
