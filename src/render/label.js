@@ -91,7 +91,8 @@ export function labelPlacement(ctx, scene, rect, key = null) {
   const W = ctx.canvas.width;
   const H = ctx.canvas.height;
   const occ = hudOccluders(scene, W, H);
-  const prev = key ? _lastPlace.get(key) : null;
+  const rawPrev = key ? _lastPlace.get(key) : null;
+  const prev = rawPrev && Math.abs(rawPrev.dx) <= 240 && Math.abs(rawPrev.dy) <= 240 ? rawPrev : null;
   if (!occ.length) {
     if (prev && (prev.dx || prev.dy)) _lastPlace.delete(key);
     // 空地也做画面内钳制（长标签贴边时收进来）
@@ -134,12 +135,17 @@ export function labelPlacement(ctx, scene, rect, key = null) {
       }
     }
     if (worst) {
-      cands.push([0, worst.y - rect.h - 6 - rect.y]); // 推到面板上缘之上
-      cands.push([0, worst.y + worst.h + 6 - rect.y]); // 推到面板下缘之下
-      // 水平推出（次优先）：物体本身在 HUD 簇里时竖直方向可能被夹死——
-      // 就近水平挪出比飞远好；空地标签永远走不到这些候选（原位得分最低）
-      cands.push([worst.x - rect.w - 6 - rect.x, 0]);
-      cands.push([worst.x + worst.w + 6 - rect.x, 0]);
+      // 推出面板边缘的候选带距离上限（240px）：超远即说明该尺寸下面板布局
+      // 异常，宁可贴着面板半遮也不把标签送到离物件很远的地方
+      const esc = [
+        [0, worst.y - rect.h - 6 - rect.y], // 推到面板上缘之上
+        [0, worst.y + worst.h + 6 - rect.y], // 推到面板下缘之下
+        [worst.x - rect.w - 6 - rect.x, 0], // 推到面板左缘之左
+        [worst.x + worst.w + 6 - rect.x, 0], // 推到面板右缘之右
+      ];
+      for (const c of esc) {
+        if (Math.abs(c[0]) <= 240 && Math.abs(c[1]) <= 240) cands.push(c);
+      }
     }
   }
 
@@ -173,9 +179,15 @@ export function flushLabels(ctx) {
   for (const c of labelQueue) {
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0); // 命令存的是屏幕坐标
+    // 入队后画布可能又 resize 过（转屏/分屏）：按当前画布尺寸再钳一次，
+    // 防止用旧尺寸算出的坐标画出错位标签
+    const cw = ctx.canvas ? ctx.canvas.width : 9999;
+    const ch = ctx.canvas ? ctx.canvas.height : 9999;
+    const bx = Math.max(4, Math.min(cw - 4 - c.bw, c.bx));
+    const by = Math.max(4, Math.min(ch - 4 - c.bh, c.by));
     ctx.font = `bold ${c.fs}px monospace`;
     ctx.fillStyle = 'rgba(12,9,34,0.72)';
-    rr(ctx, c.bx, c.by, c.bw, c.bh, 5);
+    rr(ctx, bx, by, c.bw, c.bh, 5);
     ctx.fill();
     ctx.strokeStyle = 'rgba(232,184,75,0.4)';
     ctx.lineWidth = 1;
@@ -185,8 +197,8 @@ export function flushLabels(ctx) {
     ctx.lineWidth = 3;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.strokeText(c.text, c.bx + c.bw / 2, c.by + c.bh / 2);
-    ctx.fillText(c.text, c.bx + c.bw / 2, c.by + c.bh / 2);
+    ctx.strokeText(c.text, bx + c.bw / 2, by + c.bh / 2);
+    ctx.fillText(c.text, bx + c.bw / 2, by + c.bh / 2);
     ctx.restore();
   }
   labelQueue.length = 0;
@@ -231,6 +243,9 @@ export function renderFormula(ctx, x, y, text, opts = {}) {
   }
   const W = ctx.canvas ? ctx.canvas.width : 9999;
   const H = ctx.canvas ? ctx.canvas.height : 9999;
+  // 锚点在画面外（物件不可见）→ 标签直接不入队：钳制会把画面外物件的标签
+  // 拉回屏幕边缘，看起来就像'东西不在屏幕内、标签却跑进来了'（用户实测）
+  if (sx < -2 || sx > W + 2 || sy < -2 || sy > H + 2) return;
   const bx = Math.max(4, Math.min(W - 4 - bw, rect.x + dx));
   const by = Math.max(4, Math.min(H - 4 - bh, rect.y + dy));
   if (labelQueue.length > 256) labelQueue.length = 0; // 兜底：异常帧不无限堆积

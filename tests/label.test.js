@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Scene } from '../src/core/scene.js';
 import { Player } from '../src/objects/player.js';
-import { hudOccluders, labelPlacement } from '../src/render/label.js';
+import { hudOccluders, labelPlacement, renderFormula, flushLabels, clearLabelQueue } from '../src/render/label.js';
 import { touchButtonRects } from '../src/core/touch.js';
 
 const W = 668;
@@ -162,4 +162,65 @@ test('labelPlacement 粘性：同 id 相邻两帧在面板边缘不来回换位'
   // 不同 id 互不干扰
   const other = labelPlacement(ctx, scene, { x: topBar.x + 30, y: topBar.y + topBar.h - 6, w: 120, h: 20 }, 'pool1:c');
   assert.deepEqual(other, first, '不同标签同位置 → 同样落点');
+});
+
+// ---- 6. 画面外物件不画标签 + flush 按当前画布重钳 ----------------------------
+function recordingCtx(w, h) {
+  const ops = [];
+  const ctx = {
+    canvas: { width: w, height: h },
+    ops,
+    getTransform: () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }),
+    setTransform: (...a) => ops.push(['setTransform', ...a]),
+    save: () => ops.push(['save']),
+    restore: () => ops.push(['restore']),
+    measureText: (t) => ({ width: t.length * 10 }),
+    font: '',
+    fillStyle: '',
+    strokeStyle: '',
+    lineWidth: 1,
+    textAlign: '',
+    textBaseline: '',
+    beginPath: () => ops.push(['beginPath']),
+    moveTo: () => {},
+    lineTo: () => {},
+    arc: () => {},
+    arcTo: () => {},
+    closePath: () => {},
+    fill: () => ops.push(['fill']),
+    stroke: () => {},
+    fillRect: () => {},
+    strokeText: (t, x, y) => ops.push(['strokeText', t, Math.round(x), Math.round(y)]),
+    fillText: (t, x, y) => ops.push(['fillText', t, Math.round(x), Math.round(y)]),
+    quadraticCurveTo: () => {},
+  };
+  return ctx;
+}
+
+test('renderFormula：画面外物件的标签不入队；flush 按当前画布重钳', () => {
+  const scene = sceneWith();
+  // ① 锚点在画面左侧外 → 不入队
+  const off = recordingCtx(668, 360);
+  renderFormula(off, -300, 200, 'Zn', { scene });
+  flushLabels(off);
+  assert.equal(off.ops.filter((o) => o[0] === 'fillText').length, 0, '画面外物件无标签');
+  // ② 锚点在画面内 → 入队一次，且盒在画面内
+  clearLabelQueue();
+  const on = recordingCtx(668, 360);
+  renderFormula(on, 300, 200, 'Zn', { scene });
+  flushLabels(on);
+  const texts = on.ops.filter((o) => o[0] === 'fillText');
+  assert.equal(texts.length, 1, '画面内物件有标签');
+  assert.equal(texts[0][1], 'Zn');
+  assert.ok(texts[0][2] > 0 && texts[0][2] < 668, `居中且在画面内：x=${texts[0][2]}`);
+  // ③ 入队后画布变小（转屏/resize）→ flush 按新尺寸钳回画面内
+  clearLabelQueue();
+  const rs = recordingCtx(668, 360);
+  renderFormula(rs, 640, 200, 'HCl + NaCl + K', { scene }); // 长标签，靠右
+  rs.canvas.width = 400; // 画布缩到 400 宽
+  flushLabels(rs);
+  const texts2 = rs.ops.filter((o) => o[0] === 'fillText');
+  assert.equal(texts2.length, 1, '仍画出');
+  const drawnX = texts2[0][2];
+  assert.ok(drawnX > 4 && drawnX < 400, `flush 重钳进新画布：x=${drawnX}`);
 });
