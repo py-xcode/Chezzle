@@ -335,10 +335,13 @@ export class TouchUI {
 
   // ---- 单点管线（触点按下/移动/抬起 → 分派角色） ----
 
-  /** 触点按下（画布坐标）。返回 'joy' | 'btn' | 'ui' | 'scene' | 'ov' | null */
+  /** 触点按下（画布坐标）。返回 'joy' | 'btn' | 'ui' | 'scene' | 'ov' | 'rot' | 'died' | null */
   down(id, x, y) {
     const act = this.getActive();
     if (!act || !act.scene) return null;
+    // 竖屏：旋转提示遮罩下**禁止游玩**——一切触点不吃（摇杆/按钮/场景/鸟瞰都不响应），
+    // 游戏画面照常运行、抬指/失焦仍走 releaseAll 清理（见 up/releaseAll 无竖屏门槛）
+    if (this.isPortrait()) return 'rot';
     const scene = act.scene;
     const hud = act.hud ?? null;
     // 死亡：轻触重开（桌面按 R）
@@ -417,6 +420,8 @@ export class TouchUI {
   move(id, x, y) {
     const act = this.getActive();
     if (!act || !act.scene) return;
+    // 竖屏（旋转中翻面）：不处理移动；已按住的触点由 up/releaseAll 正常清理
+    if (this.isPortrait()) return;
     const scene = act.scene;
     if (this.ovTouches.has(id)) {
       this._applyOverviewGesture(id, x, y);

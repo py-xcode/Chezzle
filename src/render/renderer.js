@@ -59,8 +59,9 @@ export class Renderer {
     }
     renderParticles(ctx, particles, opts);
     ctx.restore();
-    // 标签二次绘制：移到 HUD 之后（见 flushLabels 注释——标签浮在一切之上）
-    if (opts.hud && typeof opts.hud.render === 'function') opts.hud.render(ctx, opts.time ?? 0);
+    // 标签二次绘制：世界物件全部画完后、HUD 之前（标签浮于物件之上、
+    // 但被 HUD 覆盖——信息卡/按钮/遮罩永远压在标签上层）
     flushLabels(ctx);
+    if (opts.hud && typeof opts.hud.render === 'function') opts.hud.render(ctx, opts.time ?? 0);
   }
 }

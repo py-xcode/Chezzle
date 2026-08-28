@@ -118,12 +118,18 @@ function dist(a, b) {
   );
 }
 
+/** 触屏端竖屏（旋转提示中）？旋转提示遮罩下冻结场景管线——与 scene.overview 同级的全局守卫 */
+function portraitScene(scene) {
+  const t = scene && scene._touchUI;
+  return !!(t && typeof t.isPortrait === 'function' && t.isPortrait());
+}
+
 /**
  * 处理一次"点击"（提示按钮 / 物品栏选格 / 鸟瞰与全屏按钮）。
  * hud 可为空。返回 true = 已消费。onInfo（可选）诊断回调。
  */
 export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
-  if (!scene) return false;
+  if (!scene || portraitScene(scene)) return false;
   const top = hudTopOffset(scene);
   const right = touchInsetsOf(scene).right || 0;
   // 0) 鸟瞰模式：只认"返回"按钮（暂停态；未中 → 交给鸟瞰拖动/缩放管线）
@@ -179,7 +185,7 @@ export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
  * 未命中 → 清除按住标记并返回 false。
  */
 export function handleSceneTapDown(scene, canvas, sx, sy, onInfo = null, pad = 6) {
-  if (!scene || scene.overview) return false; // 鸟瞰：场景管线冻结（拖动/缩放走鸟瞰输入）
+  if (!scene || scene.overview || portraitScene(scene)) return false; // 鸟瞰/竖屏：场景管线冻结
   scene._pressHome = null;
   const hit = hitTap(scene, canvas, sx, sy, pad);
   if (!hit) {
@@ -213,7 +219,7 @@ export function handleSceneTapUp(scene) {
  * 落在滴管玻璃段但玩家太远 / 无容器等 → 未命中（不滴也不拖）。
  */
 export function handleScenePressDown(scene, canvas, sx, sy, onInfo = null, pad = 6) {
-  if (!scene || scene.overview) return false; // 鸟瞰：场景管线冻结
+  if (!scene || scene.overview || portraitScene(scene)) return false; // 鸟瞰/竖屏：场景管线冻结
   scene._pressHome = null;
   const hit = hitTap(scene, canvas, sx, sy, pad);
   if (!hit) {
@@ -249,7 +255,7 @@ export function handleScenePressDown(scene, canvas, sx, sy, onInfo = null, pad =
 /** 移动（按住期间）：拖动 = 移动滴管位置；胶头/玻璃段都允许拖。
  *  候选期拖出 dragStartPx → 拖动（不滴）；已开滴/开吸再拖出 dragAbortPx → 停转拖动 */
 export function handleScenePressMove(scene, canvas, sx, sy) {
-  if (!scene || scene.overview) return;
+  if (!scene || scene.overview || portraitScene(scene)) return;
   const c = scene._pressCand;
   if (c && !c.moved && Math.hypot(sx - c.startX, sy - c.startY) > CFG.item.dragStartPx) {
     c.moved = true;
@@ -305,7 +311,7 @@ export function handleScenePressMove(scene, canvas, sx, sy) {
 /** 抬起：快速单击胶头 = 滴一滴（长按/液下吸取已在 stepPressTap 觉醒）；
  *  玻璃段候选不滴（松开即完成，仅拖动会移动位置）；结束一切按住状态 */
 export function handleScenePressUp(scene, canvas = null, pad = 6) {
-  if (!scene || scene.overview) return;
+  if (!scene || scene.overview || portraitScene(scene)) return;
   const c = scene._pressCand;
   if (c && c.mode === 'bulb' && !c.moved && c.downT < CFG.item.dripArmDelay && canvas) {
     scene._pressCand = null;
@@ -321,7 +327,7 @@ export function handleScenePressUp(scene, canvas = null, pad = 6) {
 /** 每 tick 推进：候选长按觉醒（≥ dripArmDelay：液下→吸取 / 液上→持续滴，胶头专属）
  *  + 液下持续吸取节奏 + 长按持续滴节奏 */
 export function stepPressTap(scene, dt) {
-  if (!scene || scene.overview) return;
+  if (!scene || scene.overview || portraitScene(scene)) return;
   const c = scene._pressCand;
   if (c && c.mode === 'bulb' && !c.moved) {
     c.downT = (c.downT ?? 0) + dt;

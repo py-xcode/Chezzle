@@ -7365,11 +7365,11 @@ exports.Container = Container;
 // 设计定论（多轮迭代后的最终形态，勿再引入"避让搬移"）：
 //  - 标签永远居中锚定在物件标注点上，只做**画面内钳制**（长标签贴边收进来，
 //    永不截断、永不飞远）；
-//  - 二次绘制：renderFormula 只入队（屏幕坐标），Renderer 在世界与 HUD 都画完
-//    之后调 flushLabels 统一画出——标签浮在一切之上。曾试过"避开 HUD 面板"
-//    的各种搬移（上下翻转/推出边缘/粘性记忆），在面板又大又多的手机上全部
-//    产生新的错位或"标签飞到天上"，已全部移除——标签压住面板一角远比
-//    标签飞到天上/错位可接受；
+//  - 二次绘制：renderFormula 只入队（屏幕坐标），Renderer 在世界物件画完后、
+//    HUD 之前调 flushLabels 统一画出——标签**浮于物件之上、被 HUD 覆盖**
+//    （信息卡/按钮/通关遮罩不被标签压住）。曾试过"避开 HUD 面板"的各种搬移
+//    （上下翻转/推出边缘/粘性记忆），在面板又大又多的手机上全部产生新的错位
+//    或"标签飞到天上"，已全部移除——分层（HUD 在上）比搬移更可靠；
 //  - 字号按屏幕实际像素保底（低分手机不再糊）；
 //  - 锚点在画面外的物件（不可见）不画标签。
 // ============================================================================
@@ -7380,7 +7380,7 @@ const { THEME, rr } = __require('src/render/theme.js');;
 
 const labelQueue = [];
 
-/** HUD（含通关/死亡遮罩）画完之后调用：统一画出本帧入队的全部标签 */
+/** 世界物件画完之后、HUD 之前调用：统一画出本帧入队的全部标签（浮于物件之上、HUD 之下） */
 function flushLabels(ctx) {
   const W = ctx.canvas ? ctx.canvas.width : 9999;
   const H = ctx.canvas ? ctx.canvas.height : 9999;
@@ -7921,12 +7921,18 @@ function dist(a, b) {
   );
 }
 
+/** 触屏端竖屏（旋转提示中）？旋转提示遮罩下冻结场景管线——与 scene.overview 同级的全局守卫 */
+function portraitScene(scene) {
+  const t = scene && scene._touchUI;
+  return !!(t && typeof t.isPortrait === 'function' && t.isPortrait());
+}
+
 /**
  * 处理一次"点击"（提示按钮 / 物品栏选格 / 鸟瞰与全屏按钮）。
  * hud 可为空。返回 true = 已消费。onInfo（可选）诊断回调。
  */
 function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
-  if (!scene) return false;
+  if (!scene || portraitScene(scene)) return false;
   const top = hudTopOffset(scene);
   const right = touchInsetsOf(scene).right || 0;
   // 0) 鸟瞰模式：只认"返回"按钮（暂停态；未中 → 交给鸟瞰拖动/缩放管线）
@@ -7982,7 +7988,7 @@ function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
  * 未命中 → 清除按住标记并返回 false。
  */
 function handleSceneTapDown(scene, canvas, sx, sy, onInfo = null, pad = 6) {
-  if (!scene || scene.overview) return false; // 鸟瞰：场景管线冻结（拖动/缩放走鸟瞰输入）
+  if (!scene || scene.overview || portraitScene(scene)) return false; // 鸟瞰/竖屏：场景管线冻结
   scene._pressHome = null;
   const hit = hitTap(scene, canvas, sx, sy, pad);
   if (!hit) {
@@ -8016,7 +8022,7 @@ function handleSceneTapUp(scene) {
  * 落在滴管玻璃段但玩家太远 / 无容器等 → 未命中（不滴也不拖）。
  */
 function handleScenePressDown(scene, canvas, sx, sy, onInfo = null, pad = 6) {
-  if (!scene || scene.overview) return false; // 鸟瞰：场景管线冻结
+  if (!scene || scene.overview || portraitScene(scene)) return false; // 鸟瞰/竖屏：场景管线冻结
   scene._pressHome = null;
   const hit = hitTap(scene, canvas, sx, sy, pad);
   if (!hit) {
@@ -8052,7 +8058,7 @@ function handleScenePressDown(scene, canvas, sx, sy, onInfo = null, pad = 6) {
 /** 移动（按住期间）：拖动 = 移动滴管位置；胶头/玻璃段都允许拖。
  *  候选期拖出 dragStartPx → 拖动（不滴）；已开滴/开吸再拖出 dragAbortPx → 停转拖动 */
 function handleScenePressMove(scene, canvas, sx, sy) {
-  if (!scene || scene.overview) return;
+  if (!scene || scene.overview || portraitScene(scene)) return;
   const c = scene._pressCand;
   if (c && !c.moved && Math.hypot(sx - c.startX, sy - c.startY) > CFG.item.dragStartPx) {
     c.moved = true;
@@ -8108,7 +8114,7 @@ function handleScenePressMove(scene, canvas, sx, sy) {
 /** 抬起：快速单击胶头 = 滴一滴（长按/液下吸取已在 stepPressTap 觉醒）；
  *  玻璃段候选不滴（松开即完成，仅拖动会移动位置）；结束一切按住状态 */
 function handleScenePressUp(scene, canvas = null, pad = 6) {
-  if (!scene || scene.overview) return;
+  if (!scene || scene.overview || portraitScene(scene)) return;
   const c = scene._pressCand;
   if (c && c.mode === 'bulb' && !c.moved && c.downT < CFG.item.dripArmDelay && canvas) {
     scene._pressCand = null;
@@ -8124,7 +8130,7 @@ function handleScenePressUp(scene, canvas = null, pad = 6) {
 /** 每 tick 推进：候选长按觉醒（≥ dripArmDelay：液下→吸取 / 液上→持续滴，胶头专属）
  *  + 液下持续吸取节奏 + 长按持续滴节奏 */
 function stepPressTap(scene, dt) {
-  if (!scene || scene.overview) return;
+  if (!scene || scene.overview || portraitScene(scene)) return;
   const c = scene._pressCand;
   if (c && c.mode === 'bulb' && !c.moved) {
     c.downT = (c.downT ?? 0) + dt;
@@ -8767,10 +8773,13 @@ class TouchUI {
 
   // ---- 单点管线（触点按下/移动/抬起 → 分派角色） ----
 
-  /** 触点按下（画布坐标）。返回 'joy' | 'btn' | 'ui' | 'scene' | 'ov' | null */
+  /** 触点按下（画布坐标）。返回 'joy' | 'btn' | 'ui' | 'scene' | 'ov' | 'rot' | 'died' | null */
   down(id, x, y) {
     const act = this.getActive();
     if (!act || !act.scene) return null;
+    // 竖屏：旋转提示遮罩下**禁止游玩**——一切触点不吃（摇杆/按钮/场景/鸟瞰都不响应），
+    // 游戏画面照常运行、抬指/失焦仍走 releaseAll 清理（见 up/releaseAll 无竖屏门槛）
+    if (this.isPortrait()) return 'rot';
     const scene = act.scene;
     const hud = act.hud ?? null;
     // 死亡：轻触重开（桌面按 R）
@@ -8849,6 +8858,8 @@ class TouchUI {
   move(id, x, y) {
     const act = this.getActive();
     if (!act || !act.scene) return;
+    // 竖屏（旋转中翻面）：不处理移动；已按住的触点由 up/releaseAll 正常清理
+    if (this.isPortrait()) return;
     const scene = act.scene;
     if (this.ovTouches.has(id)) {
       this._applyOverviewGesture(id, x, y);
@@ -10048,9 +10059,10 @@ class Renderer {
     }
     renderParticles(ctx, particles, opts);
     ctx.restore();
-    // 标签二次绘制：移到 HUD 之后（见 flushLabels 注释——标签浮在一切之上）
-    if (opts.hud && typeof opts.hud.render === 'function') opts.hud.render(ctx, opts.time ?? 0);
+    // 标签二次绘制：世界物件全部画完后、HUD 之前（标签浮于物件之上、
+    // 但被 HUD 覆盖——信息卡/按钮/遮罩永远压在标签上层）
     flushLabels(ctx);
+    if (opts.hud && typeof opts.hud.render === 'function') opts.hud.render(ctx, opts.time ?? 0);
   }
 }
 
@@ -10511,8 +10523,9 @@ class Hud {
   }
 
   /** 触控按钮矢量图标（canvas 路径画的"SVG 小图"，原点 = 图标中心）：
-   *  grab=一只手（抓取） / use=倾斜烧杯倒液（倒出） /
-   *  collect=马蹄磁铁（吸集） / place=落点箭头（放置到地上） */
+   *  grab=上举箭头+烧杯（拾取容器；与"放置"下箭头成对） / use=倾斜烧杯倒液（倒出） /
+   *  collect=马蹄磁铁（吸集） / place=落点箭头（放置到地上）。
+   *  （"手"造型尝试过多版（四指/捏取/握拳）都读不出来，按用户指示改走抽象图标。） */
   _touchIcon(ctx, key, cx, cy, color) {
     ctx.save();
     ctx.translate(cx, cy);
@@ -10524,19 +10537,36 @@ class Hud {
     ctx.lineJoin = 'round';
     ctx.beginPath();
     if (key === 'grab') {
-      // 一只手：四指 + 掌 + 拇指（"伸手抓取"）
-      ctx.moveTo(-6.5, -4); ctx.lineTo(-6.5, 1); // 食指
-      ctx.moveTo(-2.2, -6.5); ctx.lineTo(-2.2, 1); // 中指
-      ctx.moveTo(2.2, -5.5); ctx.lineTo(2.2, 1); // 无名指
-      ctx.moveTo(6.5, -3.5); ctx.lineTo(6.5, 1); // 小指
-      ctx.moveTo(-8, 0); // 掌（上缘开口由指根补齐）
-      ctx.lineTo(-8, 3.5);
-      ctx.quadraticCurveTo(-8, 8.5, -3, 8.5);
-      ctx.lineTo(3, 8.5);
-      ctx.quadraticCurveTo(8, 8.5, 8, 3.5);
-      ctx.lineTo(8, 0);
-      ctx.moveTo(-8, 2.5); // 拇指
-      ctx.quadraticCurveTo(-11.5, 1, -10.5, -4);
+      // 拾取：上举箭头（左）+ 小烧杯（右）——"拿起容器"；箭头方向与"放置"（下）成对
+      ctx.lineWidth = 3.0;
+      ctx.moveTo(-5.0, 9.0); ctx.lineTo(-5.0, -2.2); // 箭杆
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-7.6, -1.6); ctx.lineTo(-5.0, -6.8); ctx.lineTo(-2.4, -1.6); // 箭头
+      ctx.closePath();
+      ctx.fill();
+      // 小烧杯（白描边 + 青色液体）
+      ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.moveTo(2.6, -4.8); ctx.lineTo(2.6, -0.2);
+      ctx.quadraticCurveTo(2.6, 4.0, 4.6, 4.0);
+      ctx.quadraticCurveTo(6.6, 4.0, 6.6, -0.2);
+      ctx.lineTo(6.6, -4.8);
+      ctx.moveTo(1.9, -4.8); ctx.lineTo(7.3, -4.8); // 杯沿
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(122,224,255,0.75)';
+      ctx.beginPath();
+      ctx.moveTo(3.2, 3.5); ctx.lineTo(3.2, 1.4);
+      ctx.quadraticCurveTo(3.2, 3.4, 4.6, 3.4);
+      ctx.quadraticCurveTo(6.0, 3.4, 6.0, 1.4);
+      ctx.lineTo(6.0, 3.5);
+      ctx.fill();
+      // 星闪（右下侧)
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.moveTo(8.6, -8.0); ctx.lineTo(8.6, -5.6); ctx.moveTo(7.4, -6.8); ctx.lineTo(9.8, -6.8);
       ctx.stroke();
     } else if (key === 'use') {
       // 倾斜小烧杯（顺时针倒向右侧）+ 液滴从口沿洒落

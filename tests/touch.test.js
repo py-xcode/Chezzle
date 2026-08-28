@@ -3,7 +3,7 @@
 // 覆盖：设备检测/覆盖开关、摇杆 5 向吸附（上/左上/右上/左/右，下半圆不触发）、
 //       几何布局（摇杆半圆、按钮 2×2 与物品栏不重叠）、TouchUI 单点/多点管线
 //       （摇杆→control、按钮 按住/边缘、物品栏选格、滴管点击滴液、玻璃段拖动、
-//       死亡轻触重开）、移动端相机视野放大。
+//       死亡轻触重开）、竖屏（请旋转设备）触点冻结、移动端相机视野放大。
 // ============================================================================
 
 import { test, after } from 'node:test';
@@ -18,7 +18,7 @@ import { CFG } from '../src/core/config.js';
 import {
   TouchUI, joyInput, joyGeom, touchButtonRects, isTouchDevice, forceTouch,
 } from '../src/core/touch.js';
-import { inventorySlotRects, uiMargins, overviewButtonRect } from '../src/level/click.js';
+import { inventorySlotRects, uiMargins, overviewButtonRect, handleSceneClick } from '../src/level/click.js';
 
 const W = 844;
 const H = 390;
@@ -271,6 +271,39 @@ test('isPortrait：竖屏画布（触屏端）为 true', () => {
   assert.equal(ui2.isPortrait(), false);
   forceTouch(false);
   assert.equal(ui.isPortrait(), false, '桌面端不做竖屏限制');
+});
+
+// ---- 10b. 竖屏（请旋转设备）：一切触点不吃，无法游玩 ---------------------------
+test('竖屏：触点一律 rot，摇杆/按钮/场景输入全冻结；旋转中抬指仍清理', () => {
+  forceTouch(true);
+  const canvas = fakeCanvas(390, 844); // 竖屏
+  const scene = flatScene();
+  const p = new Player({ x: 500, y: 600, mass: 30, id: 'p1' });
+  scene.addObject(p);
+  run(scene, 40); // 落地
+  const ui = new TouchUI(canvas, () => ({ scene, hud: null }));
+  scene._touchUI = ui;
+  assert.equal(ui.isPortrait(), true, '竖屏判定成立');
+  // 摇杆区按下 → rot，不写任何输入
+  const g = joyGeom(390, 844, ui.insets);
+  assert.equal(ui.down(1, g.cx - 60, g.cy - 60), 'rot', '摇杆不吃');
+  assert.equal(scene.control.size, 0, '无输入写入');
+  // 场景区 / 按钮区 / 物品栏区 同样不吃
+  assert.equal(ui.down(2, 300, 300), 'rot', '场景不吃');
+  assert.equal(ui.down(3, 300, 60), 'rot', '按钮/HUD 不吃');
+  assert.equal(handleSceneClick(scene, null, canvas, 40, 30), false, '鼠标点击管线同样冻结');
+  const x0 = p.x;
+  run(scene, 20);
+  assert.equal(p.x, x0, '玩家不动（无输入泄漏）');
+  // 横屏按下（摇杆激活）→ 转竖屏 → move 无效、up 仍释放（清理不设竖屏门槛）
+  canvas.width = W; canvas.height = H; // 转回横屏
+  const gl = joyGeom(W, H, ui.insets);
+  assert.equal(ui.down(4, gl.cx - 90, gl.cy - 4), 'joy');
+  assert.equal(scene.control.has('left'), true, '横屏可操作');
+  canvas.width = 390; canvas.height = 844; // 竖屏（按住中）
+  ui.move(4, 100, 100);
+  ui.up(4);
+  assert.equal(scene.control.size, 0, '抬指释放（竖屏不拦清理）');
 });
 
 // ---- 11. 鸟瞰手势：单指平移 / 双指捏合缩放 / 返回按钮退出 ----------------------

@@ -249,8 +249,9 @@ export class Hud {
   }
 
   /** 触控按钮矢量图标（canvas 路径画的"SVG 小图"，原点 = 图标中心）：
-   *  grab=一只手（抓取） / use=倾斜烧杯倒液（倒出） /
-   *  collect=马蹄磁铁（吸集） / place=落点箭头（放置到地上） */
+   *  grab=上举箭头+烧杯（拾取容器；与"放置"下箭头成对） / use=倾斜烧杯倒液（倒出） /
+   *  collect=马蹄磁铁（吸集） / place=落点箭头（放置到地上）。
+   *  （"手"造型尝试过多版（四指/捏取/握拳）都读不出来，按用户指示改走抽象图标。） */
   _touchIcon(ctx, key, cx, cy, color) {
     ctx.save();
     ctx.translate(cx, cy);
@@ -262,19 +263,36 @@ export class Hud {
     ctx.lineJoin = 'round';
     ctx.beginPath();
     if (key === 'grab') {
-      // 一只手：四指 + 掌 + 拇指（"伸手抓取"）
-      ctx.moveTo(-6.5, -4); ctx.lineTo(-6.5, 1); // 食指
-      ctx.moveTo(-2.2, -6.5); ctx.lineTo(-2.2, 1); // 中指
-      ctx.moveTo(2.2, -5.5); ctx.lineTo(2.2, 1); // 无名指
-      ctx.moveTo(6.5, -3.5); ctx.lineTo(6.5, 1); // 小指
-      ctx.moveTo(-8, 0); // 掌（上缘开口由指根补齐）
-      ctx.lineTo(-8, 3.5);
-      ctx.quadraticCurveTo(-8, 8.5, -3, 8.5);
-      ctx.lineTo(3, 8.5);
-      ctx.quadraticCurveTo(8, 8.5, 8, 3.5);
-      ctx.lineTo(8, 0);
-      ctx.moveTo(-8, 2.5); // 拇指
-      ctx.quadraticCurveTo(-11.5, 1, -10.5, -4);
+      // 拾取：上举箭头（左）+ 小烧杯（右）——"拿起容器"；箭头方向与"放置"（下）成对
+      ctx.lineWidth = 3.0;
+      ctx.moveTo(-5.0, 9.0); ctx.lineTo(-5.0, -2.2); // 箭杆
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-7.6, -1.6); ctx.lineTo(-5.0, -6.8); ctx.lineTo(-2.4, -1.6); // 箭头
+      ctx.closePath();
+      ctx.fill();
+      // 小烧杯（白描边 + 青色液体）
+      ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.moveTo(2.6, -4.8); ctx.lineTo(2.6, -0.2);
+      ctx.quadraticCurveTo(2.6, 4.0, 4.6, 4.0);
+      ctx.quadraticCurveTo(6.6, 4.0, 6.6, -0.2);
+      ctx.lineTo(6.6, -4.8);
+      ctx.moveTo(1.9, -4.8); ctx.lineTo(7.3, -4.8); // 杯沿
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(122,224,255,0.75)';
+      ctx.beginPath();
+      ctx.moveTo(3.2, 3.5); ctx.lineTo(3.2, 1.4);
+      ctx.quadraticCurveTo(3.2, 3.4, 4.6, 3.4);
+      ctx.quadraticCurveTo(6.0, 3.4, 6.0, 1.4);
+      ctx.lineTo(6.0, 3.5);
+      ctx.fill();
+      // 星闪（右下侧)
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.moveTo(8.6, -8.0); ctx.lineTo(8.6, -5.6); ctx.moveTo(7.4, -6.8); ctx.lineTo(9.8, -6.8);
       ctx.stroke();
     } else if (key === 'use') {
       // 倾斜小烧杯（顺时针倒向右侧）+ 液滴从口沿洒落
