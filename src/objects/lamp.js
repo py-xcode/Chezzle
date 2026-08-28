@@ -201,7 +201,7 @@ export class Lamp extends Container {
       ctx.fillRect(bx - 60, fy - 60, 120, 120);
       ctx.restore();
     }
-    this.renderContentsLabel(ctx);
+    this.renderContentsLabel(ctx, opts);
     // 灯上放置的沉淀：颗粒从火焰附近生成并物理堆叠（不再均匀悬空）
     this.renderGrains(ctx);
   }

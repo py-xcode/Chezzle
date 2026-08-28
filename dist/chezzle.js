@@ -6889,7 +6889,7 @@ class Container extends Obj {
   }
 
   /** 显示容器当前内容（溶液溶质 + 沉淀；纯水显示 H2O），供子类 render 调用 */
-  renderContentsLabel(ctx) {
+  renderContentsLabel(ctx, opts = {}) {
     if (this.formulaVisible === false) return;
     const parts = [];
     for (const [id, mass] of this.solution.solutes) {
@@ -6912,7 +6912,7 @@ class Container extends Obj {
       }
       if (hasIndicator) parts.push(`pH=${this.solution.pH().toFixed(1)}`);
     }
-    if (parts.length) renderFormula(ctx, this.x + this.w / 2, this.y + this.h + 14, parts.join(' + '));
+    if (parts.length) renderFormula(ctx, this.x + this.w / 2, this.y + this.h + 14, parts.join(' + '), { scene: opts.scene });
   }
 
   get material() {
@@ -7361,26 +7361,164 @@ exports.Container = Container;
   };
   __modules["src/render/label.js"] = function (module, exports, __require) {
 // ============================================================================
-// 化学式/标签：暗底圆角 + 金色发光文字
+// 化学式/标签：暗底圆角 + 金色发光文字。
+// 标签画在世界变换里，字号按屏幕实际像素保底（低分手机不再糊）；
+// 同时会自动避让 HUD 面板（左上信息卡/右下物品栏+按钮/摇杆/顶栏按钮）——
+// 压住时在附近挑一个不被挡的位置，不挪远处的物体、不改字号。
 // ============================================================================
 
 const { THEME, rr } = __require('src/render/theme.js');;
+const { hudTopOffset, inventorySlotRects, uiMargins } = __require('src/level/click.js');;
+const { joyGeom, touchButtonRects } = __require('src/core/touch.js');;
+
+/** HUD 常驻面板在画布坐标上的占位矩形（标签/悬浮物的避让依据，保守取整）。
+ *  w = 遮挡权重：实心面板 2；摇杆是 7% 透明度的幽灵圈，压到一点无伤（1）。 */
+function hudOccluders(scene, W, H) {
+  const rects = [];
+  if (!scene || scene.overview) return rects; // 鸟瞰：HUD 只剩顶栏小按钮
+  const top = hudTopOffset(scene);
+  // 右上按钮排（⛶/鸟瞰/提示）
+  rects.push({ x: W - 226, y: top - 6, w: 218, h: 52, weight: 2 });
+  if (scene.player) {
+    // 左上信息卡
+    rects.push({ x: 6, y: top - 6, w: 292, h: 216, weight: 2 });
+    // 右下整块：物品栏 + 触屏按钮块 + 选中物品面板
+    const inv = scene.player.inventory;
+    if (inv && Array.isArray(inv.slots) && inv.slots.length) {
+      const ms = uiMargins(scene);
+      const rs = inventorySlotRects(W, H, inv.slots, ms);
+      let x0 = Infinity;
+      let y0 = Infinity;
+      for (const r of rs) {
+        x0 = Math.min(x0, r.x);
+        y0 = Math.min(y0, r.y);
+      }
+      let bandTop = y0 - 62; // 桌面：选中物品面板带
+      const t = scene._touchUI;
+      if (t && typeof t.enabled === 'function' && t.enabled()) {
+        for (const b of touchButtonRects(W, H, inv.slots, t.insets || {})) bandTop = Math.min(bandTop, b.y);
+        bandTop -= 52; // 触屏端选中物品面板再往上
+      }
+      rects.push({ x: x0 - 10, y: bandTop - 6, w: W - x0 + 18, h: H - bandTop + 12, weight: 2 });
+      // 摇杆（左下半圆带容差；透明幽灵圈，权重轻）
+      if (t && typeof t.enabled === 'function' && t.enabled()) {
+        const g = joyGeom(W, H, t.insets || {});
+        rects.push({ x: g.cx - g.R - 14, y: g.cy - g.R - 14, w: 2 * (g.R + 14), h: g.R + 14, weight: 1 });
+      }
+    }
+  }
+  return rects;
+}
+
+function overlapArea(a, b) {
+  const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  return w > 0 && h > 0 ? w * h : 0;
+}
+
+/**
+ * 为标签挑一个不被 HUD 挡住的落点。
+ * @param rect 标签盒（画布坐标，原位）
+ * @returns { dx, dy } 屏幕像素偏移（应转回世界偏移后应用）
+ */
+function labelPlacement(ctx, scene, rect) {
+  const W = ctx.canvas.width;
+  const H = ctx.canvas.height;
+  const occ = hudOccluders(scene, W, H);
+  if (!occ.length) return { dx: 0, dy: 0 };
+  const area = rect.w * rect.h;
+  const cx0 = rect.x + rect.w / 2;
+  const cy0 = rect.y + rect.h / 2;
+
+  const score = (r, dx, dy) => {
+    let ov = 0;
+    for (const o of occ) ov += overlapArea(r, o) * (o.weight ?? 2);
+    // 越界重罚（×8）：挪出画布外 = 彻底看不见，比压在半透明面板上更糟
+    let oob = 0;
+    if (r.x < 4) oob += 4 - r.x;
+    if (r.y < 4) oob += 4 - r.y;
+    if (r.x + r.w > W - 4) oob += r.x + r.w - (W - 4);
+    if (r.y + r.h > H - 4) oob += r.y + r.h - (H - 4);
+    // 挪得越远越不优先（贴着锚点的原位永远最优先）
+    return ov + oob * 20 + Math.hypot(dx, dy) * 0.35;
+  };
+
+  // 候选：原位 → 竖直翻/远移 → 左右半宽/全宽 → 斜向组合
+  const cands = [[0, 0]];
+  for (const k of [1, 2.1]) {
+    for (const sg of [-1, 1]) cands.push([0, sg * (rect.h + 8) * k]);
+  }
+  for (const sg of [-1, 1]) {
+    cands.push([sg * rect.w * 0.62, 0]);
+    cands.push([sg * rect.w * 1.45, 0]);
+  }
+  cands.push([-rect.w * 0.62, -(rect.h + 8)]);
+  cands.push([rect.w * 0.62, -(rect.h + 8)]);
+
+  // 原位被压住过 1/3 → 追加"推出面板边缘"的候选（左/右/上/下，钳在画布内），
+  // 与其它候选同一打分竞争——离屏候选有 ×8 越界重罚，赢不过它们
+  const baseOv = occ.reduce((sum, o) => sum + overlapArea(rect, o) * (o.weight ?? 2), 0);
+  if (baseOv > area * 0.35) {
+    let worst = null;
+    let worstOv = 0;
+    for (const o of occ) {
+      const ov = overlapArea(rect, o) * (o.weight ?? 2);
+      if (ov > worstOv) {
+        worstOv = ov;
+        worst = o;
+      }
+    }
+    if (worst) {
+      const escapes = [
+        [worst.x - rect.w - 6, rect.y],
+        [worst.x + worst.w + 6, rect.y],
+        [rect.x, worst.y - rect.h - 6],
+        [rect.x, worst.y + worst.h + 6],
+      ];
+      for (const [ex, ey] of escapes) {
+        cands.push([Math.max(4, Math.min(W - 4 - rect.w, ex)) - rect.x, Math.max(4, Math.min(H - 4 - rect.h, ey)) - rect.y]);
+      }
+    }
+  }
+
+  let best = null;
+  for (const [dx, dy] of cands) {
+    const r = { x: rect.x + dx, y: rect.y + dy, w: rect.w, h: rect.h };
+    const sc = score(r, dx, dy);
+    if (!best || sc < best.sc) best = { sc, dx, dy, r };
+  }
+  return { dx: best.dx, dy: best.dy };
+}
 
 function renderFormula(ctx, x, y, text, opts = {}) {
   // 字号按"屏幕实际像素"保证：标签画在世界变换里，低分辨率手机上会被相机
   // 缩到 6-7px（糊成一团）——从当前变换读出缩放，把字号补足到屏幕上至少
   // 12px（封顶 22 世界像素，免得鸟瞰/大缩放时标签大得离谱）
   let size = opts.size ?? 12;
+  let m = null;
   try {
-    const m = ctx.getTransform ? ctx.getTransform() : null;
-    const s = m ? Math.hypot(m.a, m.b) : 1;
-    if (s > 0.01 && !opts.size) size = Math.max(size, Math.min(22, Math.round(12 / s)));
-  } catch (e) { /* 无 getTransform（老浏览器）：用基准字号 */ }
+    m = ctx.getTransform ? ctx.getTransform() : null;
+  } catch (e) { /* 老浏览器 */ }
+  const s = m ? Math.hypot(m.a, m.b) : 1;
+  if (s > 0.01 && !opts.size) size = Math.max(size, Math.min(22, Math.round(12 / s)));
   const color = opts.color ?? THEME.gold.text;
   ctx.save();
   ctx.font = `bold ${size}px monospace`;
   ctx.textAlign = 'left';
   const w = ctx.measureText(text).width + 12;
+  // HUD 避让：算出标签盒的屏幕位置，被面板压住就在附近挪一个不被挡的落点
+  if (opts.scene && s > 0.01) {
+    const wx = x - 4;
+    const wy = y - size - 2;
+    const sx = m.a * wx + m.c * wy + m.e;
+    const sy = m.b * wx + m.d * wy + m.f;
+    const rect = { x: sx, y: sy, w: w * s, h: (size + 7) * s };
+    const { dx, dy } = labelPlacement(ctx, opts.scene, rect);
+    if (dx || dy) {
+      x += dx / s;
+      y += dy / s;
+    }
+  }
   ctx.fillStyle = 'rgba(12,9,34,0.72)';
   rr(ctx, x - 4, y - size - 2, w, size + 7, 5);
   ctx.fill();
@@ -7396,352 +7534,9 @@ function renderFormula(ctx, x, y, text, opts = {}) {
   ctx.restore();
 }
 
+exports.hudOccluders = hudOccluders;
+exports.labelPlacement = labelPlacement;
 exports.renderFormula = renderFormula;
-
-  };
-  __modules["src/objects/portal.js"] = function (module, exports, __require) {
-// ============================================================================
-// 传送门：同色两个为一组。物体（玩家/物块/沉淀）走入一门即传送到另一门。
-// 传送规则 = "每扇门各自的进入/走出"（非冷却，针对单门）：
-//   - 对象记录 _portalLast（上次进过的门）
-//   - 与某门重叠且 _portalLast !== 该门 → 刚走入该门 → 传送到同色对侧，_portalLast = 对侧
-//   - 不与该门重叠但 _portalLast === 该门 → 已走出该门 → 清空
-// 效果：没离开 A 不能再进 A（避免来回弹）；但站在 A 里仍可进入别的门 B（小房间里
-//   玩家太大出不了 A 时，能靠另一扇门逃生）。落点避开其它门 → 密集摆放也不连环传。
-// n次门：可设可用次数（整组共享预算），每用一次扣 1，用尽后整组消失（旧 once:true = 1 次）。
-// 落点检查：目标门脚底对齐、水平居中；被实心体/其它门堵住时按 8px 细步进退开找空位，
-// 全堵死则本次不传——避免把物体塞进墙里被碰撞系统甩飞（"拥挤空间瞬移"）。
-// ============================================================================
-
-const { Obj } = __require('src/objects/obj.js');;
-const { overlaps } = __require('src/physics/collision.js');;
-
-const EMBED_TOL = 8; // 落点嵌入实心体多少 px 以内仍可落（物理一帧即可温柔推开）
-function overlapsBox(box, o, m = EMBED_TOL) {
-  // 只有穿透明显（>m px）才算"挡住"：传送门旁常有薄墙/柱，落点伸进去几 px 很常见，
-  // 交给碰撞封顶解压（≤16px/帧）即可；落点整个埋进厚墙（大穿透）才判堵。
-  return box.x + m < o.x + o.w && box.x + box.w - m > o.x && box.y + m < o.y + o.h && box.y + box.h - m > o.y;
-}
-
-/** 落点 (x,y)（obj 的左上角）是否被挡：
- *  - 静态实心（地板/灯/开关/提取器…）挡
- *  - 动态实心里：可推动的物块让玩家推开即可（不挡），沉淀粒子可落脚（不挡）
- *  - 其它传送门（目标门 pair 除外）挡：落到别的门里会立即连环传
- *  strict=true（优先模式）：动态体一律挡——传送落点与其他物体（含可推物块）
- *  重叠会在下一帧被碰撞系统反复推挤：玩家推物体过门后两者落点重叠 → 抖动 /
- *  被弹飞（物体被推回门内又触发传送、来回瞬移）。找不到严格空位时再放宽。 */
-function spotBlocked(obj, x, y, scene, pair, strict = false) {
-  const box = { x, y, w: obj.w, h: obj.h };
-  for (const s of scene.statics) if (s.solid && overlapsBox(box, s)) return true;
-  for (const d of scene.dynamics) {
-    if (d === obj || !d.solid || d.amount !== undefined) continue;
-    if (strict) {
-      if (overlapsBox(box, d, 0)) return true;
-    } else if (!d.pushable && overlapsBox(box, d)) {
-      return true;
-    }
-  }
-  for (const p of scene.portals) {
-    if (p === pair) continue;
-    if (overlapsBox(box, p, 0)) return true; // 严格：任何重叠都不落在别的门里
-  }
-  return false;
-}
-
-/** 在同色门找落点：基准 = 脚底对齐门底边、水平居中（站在门里，脚踩门底座，而非对心
- *  ——对心会把高物体探出门底、撞上地板导致乱找空位）。被堵则按 8px 细步进在门旁退开
- *  （薄墙/柱挡个 5~10px 也轻松滑过去），全堵死返回 null。
- *  先用 strict 模式找"与其他物体零重叠"的落点（防传送后重叠抖动/弹飞），
- *  找不到再放宽为"不挡实心体即可"（保证传送不被完全阻塞）。 */
-function findFreeSpot(obj, pair, scene) {
-  const spot = searchSpot(obj, pair, scene, true);
-  if (spot) return spot;
-  return searchSpot(obj, pair, scene, false);
-}
-
-function searchSpot(obj, pair, scene, strict) {
-  const cx = pair.x + pair.w / 2 - obj.w / 2;
-  const cy = pair.y + pair.h - obj.h;
-  // 螺旋候选：按距离门心由近到远，同一步长左右各试一次（否则会在窄通道里滑向一侧的远端）
-  for (let dy = 0; dy <= Math.max(80, obj.h); dy += 20) {
-    const y = Math.round(cy - dy);
-    for (let dx = 0; dx <= obj.w + 16; dx += 8) {
-      const xr = Math.round(cx + dx);
-      if (!spotBlocked(obj, xr, y, scene, pair, strict)) return { x: xr, y };
-      if (dx !== 0) {
-        const xl = Math.round(cx - dx);
-        if (!spotBlocked(obj, xl, y, scene, pair, strict)) return { x: xl, y };
-      }
-    }
-  }
-  return null;
-}
-
-class Portal extends Obj {
-  constructor({ x, y, w = 40, h = 64, color = '#c78bff', once = false, uses = Infinity, switchId = null, ...rest } = {}) {
-    super({ x, y, w, h, solid: false, physicsKind: 'none', ...rest });
-    this.color = color; // 组标识：同色两个为一组
-    // n次门：可设可用次数（整组共享，任一扇配置的有限次数为整组预算），用尽整组消失；
-    // once:true（旧数据）= 1 次
-    this.uses = once ? 1 : uses;
-    this.usesLeft = Number.isFinite(this.uses) ? this.uses : Infinity;
-    this.switchId = switchId; // 绑定开关 id：开关有效开启时才可传送（null = 常开）
-    this.pair = null; // 对侧门（惰性解析）
-  }
-
-  get hoverLabel() {
-    if (this.switchId) return Number.isFinite(this.usesLeft) ? `传送门（需开关·可用${this.usesLeft}次）` : '传送门（需开关）';
-    if (Number.isFinite(this.usesLeft)) return `传送门（可用${this.usesLeft}次）`;
-    return '传送门';
-  }
-
-  /** 是否可传送：绑定开关时要求开关有效开启（支持"&"联锁）；开关不存在视为关闭 */
-  _isActive(scene) {
-    if (!this.switchId) return true;
-    const sw = scene.byId[this.switchId];
-    if (!sw) return false;
-    return typeof sw.effectiveOpen === 'function' ? sw.effectiveOpen(scene) : sw.open;
-  }
-
-  /** 解析对侧门：scene.portals 中同色且非自身的另一扇（对侧被移除时重新解析） */
-  _resolvePair(scene) {
-    if (this.pair && scene.portals.includes(this.pair)) return this.pair;
-    this.pair = null;
-    for (const o of scene.portals) {
-      if (o !== this && o.color === this.color) {
-        this.pair = o;
-        break;
-      }
-    }
-    return this.pair;
-  }
-
-  update(dt, scene) {
-    const pair = this._resolvePair(scene);
-    if (!pair) return;
-    const active = this._isActive(scene); // 绑定开关时只有开关开启才传送
-    // 候选：动态体（玩家/物块）+ 自由沉淀粒子
-    for (const obj of [...scene.dynamics, ...scene.particles]) {
-      if (obj === this || obj.static) continue;
-      const inside = overlaps(this, obj);
-      if (inside && active && obj._portalLast !== this) {
-        // 刚走入本门：传送到同色对侧门（落点避开实心体/其它门）。找不到空位说明对侧
-        // 被完全堵死 → 本次不传，避免塞进墙里被碰撞系统甩飞。
-        const spot = findFreeSpot(obj, pair, scene);
-        if (!spot) continue;
-        obj.x = spot.x;
-        obj.y = spot.y;
-        obj._portalLast = pair; // 站在对侧门内：本门不重复触发；离开本门后才能再进本门
-        // n次门：整组共享剩余次数，用尽后整组消失（任一扇配置的有限次数 = 整组预算）
-        const lThis = Number.isFinite(this.usesLeft) ? this.usesLeft : Infinity;
-        const lPair = pair && Number.isFinite(pair.usesLeft) ? pair.usesLeft : Infinity;
-        const left = Math.min(lThis, lPair);
-        if (left !== Infinity) {
-          const newLeft = left - 1;
-          if (newLeft <= 0) {
-            scene.removeObject(this);
-            if (pair) scene.removeObject(pair);
-          } else {
-            this.usesLeft = newLeft;
-            if (pair) pair.usesLeft = newLeft;
-          }
-        }
-      } else if (!inside && obj._portalLast === this) {
-        // 已走出本门：允许下次再进本门
-        obj._portalLast = null;
-      }
-    }
-  }
-
-  render(ctx, opts) {
-    // 渲染器传的是 opts（{ scene, time, ... }），必须先解出 scene 再访问 scene.byId
-    const scene = opts?.scene ?? null;
-    const t = scene?.time ?? 0;
-    const cx = this.x + this.w / 2;
-    const cy = this.y + this.h / 2;
-    const active = this._isActive(scene); // 绑定开关未开 → 熄灭
-    const col = active ? this.color : '#4a4f70';
-    const blur = active ? 14 : 0;
-    ctx.save();
-    // 外框（同色发光；未激活时熄灭）
-    ctx.strokeStyle = col;
-    ctx.lineWidth = 2;
-    ctx.shadowColor = active ? this.color : 'transparent';
-    ctx.shadowBlur = blur;
-    this._arch(ctx, 0);
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-    // 内部漩涡（径向渐变 + 旋转符文粒子）
-    const g = ctx.createRadialGradient(cx, cy, 2, cx, cy, this.w * 0.55);
-    g.addColorStop(0, active ? '#f2e6ff' : '#5a5f74');
-    g.addColorStop(0.45, col);
-    g.addColorStop(1, active ? 'rgba(90,42,154,0)' : 'rgba(60,60,80,0)');
-    ctx.save();
-    this._arch(ctx, 3);
-    ctx.clip();
-    ctx.fillStyle = g;
-    ctx.fillRect(this.x, this.y, this.w, this.h);
-    const n = 10;
-    for (let i = 0; i < n; i++) {
-      const a = t * 1.6 + (i / n) * Math.PI * 2;
-      const rr = 4 + ((i * 37) % (this.w / 2));
-      const px = cx + Math.cos(a) * rr;
-      const py = cy + Math.sin(a) * rr * 0.8;
-      ctx.fillStyle = 'rgba(242,230,255,0.85)';
-      ctx.beginPath();
-      ctx.arc(px, py, 1.8, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.restore();
-    // 顶部小标记（组色圆点）；一次性门再画个 ×（用后消失）
-    ctx.fillStyle = col;
-    ctx.shadowColor = active ? this.color : 'transparent';
-    ctx.shadowBlur = active ? 8 : 0;
-    ctx.beginPath();
-    ctx.arc(cx, this.y - 5, 3, 0, Math.PI * 2);
-    ctx.fill();
-    // n次门：顶部显示剩余次数（无限次数不显示）——大号数字 + 深色底板（任何背景下可读）
-    if (Number.isFinite(this.usesLeft)) {
-      ctx.shadowBlur = 0;
-      ctx.font = 'bold 16px monospace';
-      ctx.textAlign = 'center';
-      const txt = String(this.usesLeft);
-      const tw = ctx.measureText(txt).width;
-      ctx.fillStyle = 'rgba(16,20,40,0.78)';
-      ctx.beginPath();
-      ctx.roundRect(cx - tw / 2 - 5, this.y - 31, tw + 10, 21, 6);
-      ctx.fill();
-      ctx.fillStyle = active ? '#ffffff' : '#9fb2c8';
-      ctx.fillText(txt, cx, this.y - 16);
-      ctx.textAlign = 'left';
-    }
-    ctx.restore();
-  }
-
-  /** 拱形门路径 */
-  _arch(ctx, inset) {
-    const x = this.x + inset;
-    const y = this.y + inset;
-    const w = this.w - inset * 2;
-    const h = this.h - inset * 2;
-    const r = w / 2;
-    ctx.beginPath();
-    ctx.moveTo(x, y + h);
-    ctx.lineTo(x, y + r);
-    ctx.arcTo(x, y, x + r, y, r);
-    ctx.arcTo(x + w, y, x + w, y + r, r);
-    ctx.lineTo(x + w, y + h);
-    ctx.closePath();
-  }
-}
-
-exports.Portal = Portal;
-
-  };
-  __modules["src/objects/rope.js"] = function (module, exports, __require) {
-// ============================================================================
-// 绳子：细线，悬挂一个物体。锚点可为固定坐标或跟随某物体（相对坐标）。
-// 悬挂物体的位置完全由绳子决定（lateUpdate：物理结算后再定位，避免被推走）。
-// 每刻检查：锚点物体不存在，或悬挂物体目标位置被实心体卡住 → 断绳。
-// 断绳后绳子消失，悬挂物体恢复重力。
-// ============================================================================
-
-const { Obj } = __require('src/objects/obj.js');;
-const { overlaps } = __require('src/physics/collision.js');;
-const { THEME } = __require('src/render/theme.js');;
-
-class Rope extends Obj {
-  constructor({ x = 0, y = 0, length = 100, anchor, hanging, ...rest } = {}) {
-    super({ x, y, w: 2, h: length, solid: false, physicsKind: 'none', ...rest });
-    this.length = length;
-    this.anchor = anchor; // {fixed:{x,y}} | {obj, dx?, dy?}
-    this.hanging = hanging; // 悬挂物体（Obj）
-    this.broken = false;
-    // 悬挂期间物体不受重力，位置由绳子决定
-    if (hanging) {
-      hanging.gravity = 0;
-      // 初始把悬挂物放到锚点+长度处，避免构造时的初始偏移被误判为"被推动"
-      const a = this.anchorPoint();
-      hanging.x = a.x - hanging.w / 2;
-      hanging.y = a.y + length - hanging.h;
-    }
-  }
-
-  anchorPoint() {
-    if (this.anchor.fixed) return { x: this.anchor.fixed.x, y: this.anchor.fixed.y };
-    const o = this.anchor.obj;
-    return { x: o.x + (this.anchor.dx ?? 0), y: o.y + (this.anchor.dy ?? 0) };
-  }
-
-  lateUpdate(dt, scene) {
-    if (this.broken || !this.hanging) return;
-    // 锚点物体消失 → 断绳
-    if (this.anchor.obj && !scene.byId[this.anchor.obj.id]) {
-      this.break(scene);
-      return;
-    }
-    // 悬挂物体被删除（如开关 deleteId 移除了它）→ 断绳
-    if (!scene.byId[this.hanging.id]) {
-      this.break(scene);
-      return;
-    }
-    let a = this.anchorPoint();
-    // 区分"推的是锚点"还是"推的是悬挂物"：
-    //  - 锚点本 tick 移动（玩家推锚点）→ 悬挂物跟随即可，不平移锚点
-    //  - 锚点没动但悬挂物被推离期望 → 平移锚点（绳子刚性，整个系统一起动）
-    const anchorDx = a.x - (this._prevAnchorX ?? a.x);
-    const tx = a.x - this.hanging.w / 2;
-    const dx = this.hanging.x - tx;
-    if (!(Math.abs(anchorDx) > 0.5) && this.anchor.obj && Math.abs(dx) > 0.5) {
-      this.anchor.obj.x += dx;
-      a.x += dx;
-    }
-    this._prevAnchorX = a.x;
-    this.x = a.x;
-    this.y = a.y;
-    const nx = a.x - this.hanging.w / 2;
-    const ny = a.y + this.length - this.hanging.h;
-    this.hanging.x = nx;
-    this.hanging.y = ny;
-    this.hanging.vel = { x: 0, y: 0 };
-    // 目标位置被实心体卡住 → 断绳
-    for (const s of scene.statics) {
-      if (overlaps(this.hanging, s)) {
-        this.break(scene);
-        return;
-      }
-    }
-  }
-
-  break(scene) {
-    this.broken = true;
-    if (this.hanging) this.hanging.gravity = 1;
-    scene.removeObject(this);
-  }
-
-  render(ctx) {
-    ctx.save();
-    ctx.strokeStyle = THEME.gold.base;
-    ctx.lineWidth = 2;
-    ctx.shadowColor = THEME.gold.light;
-    ctx.shadowBlur = 5;
-    ctx.setLineDash([5, 4]);
-    ctx.beginPath();
-    ctx.moveTo(this.x, this.y);
-    ctx.lineTo(this.x, this.y + this.length);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    // 顶端小锚环
-    ctx.strokeStyle = THEME.gold.light;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(this.x, this.y, 3, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.restore();
-  }
-}
-
-exports.Rope = Rope;
 
   };
   __modules["src/level/click.js"] = function (module, exports, __require) {
@@ -8226,151 +8021,6 @@ exports.enterFullscreen = enterFullscreen;
 exports.exitFullscreen = exitFullscreen;
 exports.toggleFullscreen = toggleFullscreen;
 exports.requestFullscreenOnce = requestFullscreenOnce;
-
-  };
-  __modules["src/core/input.js"] = function (module, exports, __require) {
-// ============================================================================
-// 键盘输入 → Scene.control（长按）/ Scene.pressed（本刻刚按下）
-// 触控暂不实现（接口位预留）。
-// ============================================================================
-
-const KEYMAP = {
-  KeyA: 'left',
-  KeyD: 'right',
-  Space: 'jump',
-  ShiftLeft: 'place',
-  ShiftRight: 'place',
-  KeyQ: 'collect',
-  KeyC: 'grab', // 拾取物品/吸液/（按住）集气
-  KeyX: 'use', // 烧杯倒入 /（按住）集气瓶通气
-};
-
-function bindKeyboard(scene) {
-  // 立即清空：右键菜单、焦点切换、页面隐藏等会吞掉 keyup 的场景
-  const onClear = () => {
-    scene.control.clear();
-    scene.pressed.clear();
-  };
-  const onDown = (e) => {
-    // 页面不在前台时忽略按键
-    if (typeof document !== 'undefined' && !document.hasFocus()) return;
-    // 运行时钩子：任意键都可被插件/关卡脚本监听（返回 true 表示已处理）
-    scene._fireKey('down', e);
-    if (e.code === 'KeyR') {
-      scene.restart();
-      return;
-    }
-    // 鸟瞰模式（灵魂出窍）：V 进出（暂停模拟，自由缩放/平移看整关）
-    if (e.code === 'KeyV' && typeof scene.toggleOverview === 'function') {
-      scene.toggleOverview();
-      e.preventDefault();
-      return;
-    }
-    // 调试模式：F5 暂停/继续，F6 步进一 tick，X 循环切换悬停重叠目标
-    if (scene.debugMode) {
-      if (e.code === 'F5') {
-        scene.debugPaused = !scene.debugPaused;
-        e.preventDefault();
-        return;
-      }
-      if (e.code === 'F6') {
-        scene.debugStepOnce = true;
-        e.preventDefault();
-        return;
-      }
-      if (e.code === 'KeyX') {
-        // 选中格是可携带物品时，X = 倒出/通气（物品交互优先）；仅普通物质时
-        // 才用作"悬停重叠循环"调试键（试玩常开调试模式，不能抢玩家的 X）
-        const slot = scene.player?.inventory?.selectedSlot?.();
-        if (!slot || !slot.item) {
-          scene.debugHoverCycle = true;
-          e.preventDefault();
-          return;
-        }
-      }
-    }
-    const c = KEYMAP[e.code];
-    if (!c) return;
-    e.preventDefault();
-    if (!scene.control.has(c)) scene.pressed.add(c);
-    scene.control.add(c);
-  };
-  const onUp = (e) => {
-    scene._fireKey('up', e);
-    const c = KEYMAP[e.code];
-    if (c) scene.control.delete(c);
-  };
-  window.addEventListener('keydown', onDown);
-  window.addEventListener('keyup', onUp);
-  window.addEventListener('blur', onClear);
-  window.addEventListener('contextmenu', onClear); // 右键菜单会吞 keyup
-  window.addEventListener('focusout', onClear); // 焦点移出（点击别处、切换焦点）
-  document.addEventListener('visibilitychange', onClear);
-  return () => {
-    window.removeEventListener('keydown', onDown);
-    window.removeEventListener('keyup', onUp);
-    window.removeEventListener('blur', onClear);
-    window.removeEventListener('contextmenu', onClear);
-    window.removeEventListener('focusout', onClear);
-    document.removeEventListener('visibilitychange', onClear);
-  };
-}
-
-exports.bindKeyboard = bindKeyboard;
-
-  };
-  __modules["src/core/loop.js"] = function (module, exports, __require) {
-// ============================================================================
-// 固定步长主循环：tick 30/s，rAF 驱动渲染。
-// scene 可以是 Scene 实例（单场景），也可以是 () => {scene, renderer, hud}（多场景管理器
-// 用：每条循环只推进/渲染"当前激活"的场景，切换即热切换）。
-// ============================================================================
-
-const { CFG } = __require('src/core/config.js');;
-
-function startLoop(scene, renderer, opts = {}) {
-  const TICK = 1 / CFG.tickRate;
-  let last = performance.now();
-  let acc = 0;
-  let raf = 0;
-
-  const getActive = typeof scene === 'function' ? scene : () => ({ scene, renderer, hud: opts.hud });
-
-  function frame(now) {
-    const dt = Math.min((now - last) / 1000, 0.25);
-    last = now;
-    acc += dt;
-    const active = getActive();
-    if (active && active.scene) {
-      const S = active.scene;
-      let guard = 0;
-      if (S.overview) {
-        // 鸟瞰（灵魂出窍）：暂停推进（保持画面），自由缩放/平移由输入管线驱动
-        acc = 0;
-      } else if (S.debugMode && S.debugPaused) {
-        // 调试暂停：不推进 tick（保持画面），F6 手动步进一 tick
-        if (S.debugStepOnce) {
-          S.debugStepOnce = false;
-          S.step(TICK);
-        }
-      } else {
-        while (acc >= TICK && guard < 10) {
-          S.step(TICK);
-          acc -= TICK;
-          guard++;
-        }
-        if (acc >= TICK) acc = 0; // 追不上就丢帧
-      }
-      const R = active.renderer ?? renderer;
-      R.frame(S.objects, { hud: active.hud ?? opts.hud, time: S.time, scene: S, focus: S.player ?? S.cameraFocus ?? null });
-    }
-    raf = requestAnimationFrame(frame);
-  }
-  raf = requestAnimationFrame(frame);
-  return () => cancelAnimationFrame(raf);
-}
-
-exports.startLoop = startLoop;
 
   };
   __modules["src/core/touch.js"] = function (module, exports, __require) {
@@ -8964,6 +8614,496 @@ exports.touchButtonRects = touchButtonRects;
 exports.joyInput = joyInput;
 exports.TouchUI = TouchUI;
 exports.bindTouchUI = bindTouchUI;
+
+  };
+  __modules["src/objects/portal.js"] = function (module, exports, __require) {
+// ============================================================================
+// 传送门：同色两个为一组。物体（玩家/物块/沉淀）走入一门即传送到另一门。
+// 传送规则 = "每扇门各自的进入/走出"（非冷却，针对单门）：
+//   - 对象记录 _portalLast（上次进过的门）
+//   - 与某门重叠且 _portalLast !== 该门 → 刚走入该门 → 传送到同色对侧，_portalLast = 对侧
+//   - 不与该门重叠但 _portalLast === 该门 → 已走出该门 → 清空
+// 效果：没离开 A 不能再进 A（避免来回弹）；但站在 A 里仍可进入别的门 B（小房间里
+//   玩家太大出不了 A 时，能靠另一扇门逃生）。落点避开其它门 → 密集摆放也不连环传。
+// n次门：可设可用次数（整组共享预算），每用一次扣 1，用尽后整组消失（旧 once:true = 1 次）。
+// 落点检查：目标门脚底对齐、水平居中；被实心体/其它门堵住时按 8px 细步进退开找空位，
+// 全堵死则本次不传——避免把物体塞进墙里被碰撞系统甩飞（"拥挤空间瞬移"）。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+const { overlaps } = __require('src/physics/collision.js');;
+
+const EMBED_TOL = 8; // 落点嵌入实心体多少 px 以内仍可落（物理一帧即可温柔推开）
+function overlapsBox(box, o, m = EMBED_TOL) {
+  // 只有穿透明显（>m px）才算"挡住"：传送门旁常有薄墙/柱，落点伸进去几 px 很常见，
+  // 交给碰撞封顶解压（≤16px/帧）即可；落点整个埋进厚墙（大穿透）才判堵。
+  return box.x + m < o.x + o.w && box.x + box.w - m > o.x && box.y + m < o.y + o.h && box.y + box.h - m > o.y;
+}
+
+/** 落点 (x,y)（obj 的左上角）是否被挡：
+ *  - 静态实心（地板/灯/开关/提取器…）挡
+ *  - 动态实心里：可推动的物块让玩家推开即可（不挡），沉淀粒子可落脚（不挡）
+ *  - 其它传送门（目标门 pair 除外）挡：落到别的门里会立即连环传
+ *  strict=true（优先模式）：动态体一律挡——传送落点与其他物体（含可推物块）
+ *  重叠会在下一帧被碰撞系统反复推挤：玩家推物体过门后两者落点重叠 → 抖动 /
+ *  被弹飞（物体被推回门内又触发传送、来回瞬移）。找不到严格空位时再放宽。 */
+function spotBlocked(obj, x, y, scene, pair, strict = false) {
+  const box = { x, y, w: obj.w, h: obj.h };
+  for (const s of scene.statics) if (s.solid && overlapsBox(box, s)) return true;
+  for (const d of scene.dynamics) {
+    if (d === obj || !d.solid || d.amount !== undefined) continue;
+    if (strict) {
+      if (overlapsBox(box, d, 0)) return true;
+    } else if (!d.pushable && overlapsBox(box, d)) {
+      return true;
+    }
+  }
+  for (const p of scene.portals) {
+    if (p === pair) continue;
+    if (overlapsBox(box, p, 0)) return true; // 严格：任何重叠都不落在别的门里
+  }
+  return false;
+}
+
+/** 在同色门找落点：基准 = 脚底对齐门底边、水平居中（站在门里，脚踩门底座，而非对心
+ *  ——对心会把高物体探出门底、撞上地板导致乱找空位）。被堵则按 8px 细步进在门旁退开
+ *  （薄墙/柱挡个 5~10px 也轻松滑过去），全堵死返回 null。
+ *  先用 strict 模式找"与其他物体零重叠"的落点（防传送后重叠抖动/弹飞），
+ *  找不到再放宽为"不挡实心体即可"（保证传送不被完全阻塞）。 */
+function findFreeSpot(obj, pair, scene) {
+  const spot = searchSpot(obj, pair, scene, true);
+  if (spot) return spot;
+  return searchSpot(obj, pair, scene, false);
+}
+
+function searchSpot(obj, pair, scene, strict) {
+  const cx = pair.x + pair.w / 2 - obj.w / 2;
+  const cy = pair.y + pair.h - obj.h;
+  // 螺旋候选：按距离门心由近到远，同一步长左右各试一次（否则会在窄通道里滑向一侧的远端）
+  for (let dy = 0; dy <= Math.max(80, obj.h); dy += 20) {
+    const y = Math.round(cy - dy);
+    for (let dx = 0; dx <= obj.w + 16; dx += 8) {
+      const xr = Math.round(cx + dx);
+      if (!spotBlocked(obj, xr, y, scene, pair, strict)) return { x: xr, y };
+      if (dx !== 0) {
+        const xl = Math.round(cx - dx);
+        if (!spotBlocked(obj, xl, y, scene, pair, strict)) return { x: xl, y };
+      }
+    }
+  }
+  return null;
+}
+
+class Portal extends Obj {
+  constructor({ x, y, w = 40, h = 64, color = '#c78bff', once = false, uses = Infinity, switchId = null, ...rest } = {}) {
+    super({ x, y, w, h, solid: false, physicsKind: 'none', ...rest });
+    this.color = color; // 组标识：同色两个为一组
+    // n次门：可设可用次数（整组共享，任一扇配置的有限次数为整组预算），用尽整组消失；
+    // once:true（旧数据）= 1 次
+    this.uses = once ? 1 : uses;
+    this.usesLeft = Number.isFinite(this.uses) ? this.uses : Infinity;
+    this.switchId = switchId; // 绑定开关 id：开关有效开启时才可传送（null = 常开）
+    this.pair = null; // 对侧门（惰性解析）
+  }
+
+  get hoverLabel() {
+    if (this.switchId) return Number.isFinite(this.usesLeft) ? `传送门（需开关·可用${this.usesLeft}次）` : '传送门（需开关）';
+    if (Number.isFinite(this.usesLeft)) return `传送门（可用${this.usesLeft}次）`;
+    return '传送门';
+  }
+
+  /** 是否可传送：绑定开关时要求开关有效开启（支持"&"联锁）；开关不存在视为关闭 */
+  _isActive(scene) {
+    if (!this.switchId) return true;
+    const sw = scene.byId[this.switchId];
+    if (!sw) return false;
+    return typeof sw.effectiveOpen === 'function' ? sw.effectiveOpen(scene) : sw.open;
+  }
+
+  /** 解析对侧门：scene.portals 中同色且非自身的另一扇（对侧被移除时重新解析） */
+  _resolvePair(scene) {
+    if (this.pair && scene.portals.includes(this.pair)) return this.pair;
+    this.pair = null;
+    for (const o of scene.portals) {
+      if (o !== this && o.color === this.color) {
+        this.pair = o;
+        break;
+      }
+    }
+    return this.pair;
+  }
+
+  update(dt, scene) {
+    const pair = this._resolvePair(scene);
+    if (!pair) return;
+    const active = this._isActive(scene); // 绑定开关时只有开关开启才传送
+    // 候选：动态体（玩家/物块）+ 自由沉淀粒子
+    for (const obj of [...scene.dynamics, ...scene.particles]) {
+      if (obj === this || obj.static) continue;
+      const inside = overlaps(this, obj);
+      if (inside && active && obj._portalLast !== this) {
+        // 刚走入本门：传送到同色对侧门（落点避开实心体/其它门）。找不到空位说明对侧
+        // 被完全堵死 → 本次不传，避免塞进墙里被碰撞系统甩飞。
+        const spot = findFreeSpot(obj, pair, scene);
+        if (!spot) continue;
+        obj.x = spot.x;
+        obj.y = spot.y;
+        obj._portalLast = pair; // 站在对侧门内：本门不重复触发；离开本门后才能再进本门
+        // n次门：整组共享剩余次数，用尽后整组消失（任一扇配置的有限次数 = 整组预算）
+        const lThis = Number.isFinite(this.usesLeft) ? this.usesLeft : Infinity;
+        const lPair = pair && Number.isFinite(pair.usesLeft) ? pair.usesLeft : Infinity;
+        const left = Math.min(lThis, lPair);
+        if (left !== Infinity) {
+          const newLeft = left - 1;
+          if (newLeft <= 0) {
+            scene.removeObject(this);
+            if (pair) scene.removeObject(pair);
+          } else {
+            this.usesLeft = newLeft;
+            if (pair) pair.usesLeft = newLeft;
+          }
+        }
+      } else if (!inside && obj._portalLast === this) {
+        // 已走出本门：允许下次再进本门
+        obj._portalLast = null;
+      }
+    }
+  }
+
+  render(ctx, opts) {
+    // 渲染器传的是 opts（{ scene, time, ... }），必须先解出 scene 再访问 scene.byId
+    const scene = opts?.scene ?? null;
+    const t = scene?.time ?? 0;
+    const cx = this.x + this.w / 2;
+    const cy = this.y + this.h / 2;
+    const active = this._isActive(scene); // 绑定开关未开 → 熄灭
+    const col = active ? this.color : '#4a4f70';
+    const blur = active ? 14 : 0;
+    ctx.save();
+    // 外框（同色发光；未激活时熄灭）
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 2;
+    ctx.shadowColor = active ? this.color : 'transparent';
+    ctx.shadowBlur = blur;
+    this._arch(ctx, 0);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // 内部漩涡（径向渐变 + 旋转符文粒子）
+    const g = ctx.createRadialGradient(cx, cy, 2, cx, cy, this.w * 0.55);
+    g.addColorStop(0, active ? '#f2e6ff' : '#5a5f74');
+    g.addColorStop(0.45, col);
+    g.addColorStop(1, active ? 'rgba(90,42,154,0)' : 'rgba(60,60,80,0)');
+    ctx.save();
+    this._arch(ctx, 3);
+    ctx.clip();
+    ctx.fillStyle = g;
+    ctx.fillRect(this.x, this.y, this.w, this.h);
+    const n = 10;
+    for (let i = 0; i < n; i++) {
+      const a = t * 1.6 + (i / n) * Math.PI * 2;
+      const rr = 4 + ((i * 37) % (this.w / 2));
+      const px = cx + Math.cos(a) * rr;
+      const py = cy + Math.sin(a) * rr * 0.8;
+      ctx.fillStyle = 'rgba(242,230,255,0.85)';
+      ctx.beginPath();
+      ctx.arc(px, py, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+    // 顶部小标记（组色圆点）；一次性门再画个 ×（用后消失）
+    ctx.fillStyle = col;
+    ctx.shadowColor = active ? this.color : 'transparent';
+    ctx.shadowBlur = active ? 8 : 0;
+    ctx.beginPath();
+    ctx.arc(cx, this.y - 5, 3, 0, Math.PI * 2);
+    ctx.fill();
+    // n次门：顶部显示剩余次数（无限次数不显示）——大号数字 + 深色底板（任何背景下可读）
+    if (Number.isFinite(this.usesLeft)) {
+      ctx.shadowBlur = 0;
+      ctx.font = 'bold 16px monospace';
+      ctx.textAlign = 'center';
+      const txt = String(this.usesLeft);
+      const tw = ctx.measureText(txt).width;
+      ctx.fillStyle = 'rgba(16,20,40,0.78)';
+      ctx.beginPath();
+      ctx.roundRect(cx - tw / 2 - 5, this.y - 31, tw + 10, 21, 6);
+      ctx.fill();
+      ctx.fillStyle = active ? '#ffffff' : '#9fb2c8';
+      ctx.fillText(txt, cx, this.y - 16);
+      ctx.textAlign = 'left';
+    }
+    ctx.restore();
+  }
+
+  /** 拱形门路径 */
+  _arch(ctx, inset) {
+    const x = this.x + inset;
+    const y = this.y + inset;
+    const w = this.w - inset * 2;
+    const h = this.h - inset * 2;
+    const r = w / 2;
+    ctx.beginPath();
+    ctx.moveTo(x, y + h);
+    ctx.lineTo(x, y + r);
+    ctx.arcTo(x, y, x + r, y, r);
+    ctx.arcTo(x + w, y, x + w, y + r, r);
+    ctx.lineTo(x + w, y + h);
+    ctx.closePath();
+  }
+}
+
+exports.Portal = Portal;
+
+  };
+  __modules["src/objects/rope.js"] = function (module, exports, __require) {
+// ============================================================================
+// 绳子：细线，悬挂一个物体。锚点可为固定坐标或跟随某物体（相对坐标）。
+// 悬挂物体的位置完全由绳子决定（lateUpdate：物理结算后再定位，避免被推走）。
+// 每刻检查：锚点物体不存在，或悬挂物体目标位置被实心体卡住 → 断绳。
+// 断绳后绳子消失，悬挂物体恢复重力。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+const { overlaps } = __require('src/physics/collision.js');;
+const { THEME } = __require('src/render/theme.js');;
+
+class Rope extends Obj {
+  constructor({ x = 0, y = 0, length = 100, anchor, hanging, ...rest } = {}) {
+    super({ x, y, w: 2, h: length, solid: false, physicsKind: 'none', ...rest });
+    this.length = length;
+    this.anchor = anchor; // {fixed:{x,y}} | {obj, dx?, dy?}
+    this.hanging = hanging; // 悬挂物体（Obj）
+    this.broken = false;
+    // 悬挂期间物体不受重力，位置由绳子决定
+    if (hanging) {
+      hanging.gravity = 0;
+      // 初始把悬挂物放到锚点+长度处，避免构造时的初始偏移被误判为"被推动"
+      const a = this.anchorPoint();
+      hanging.x = a.x - hanging.w / 2;
+      hanging.y = a.y + length - hanging.h;
+    }
+  }
+
+  anchorPoint() {
+    if (this.anchor.fixed) return { x: this.anchor.fixed.x, y: this.anchor.fixed.y };
+    const o = this.anchor.obj;
+    return { x: o.x + (this.anchor.dx ?? 0), y: o.y + (this.anchor.dy ?? 0) };
+  }
+
+  lateUpdate(dt, scene) {
+    if (this.broken || !this.hanging) return;
+    // 锚点物体消失 → 断绳
+    if (this.anchor.obj && !scene.byId[this.anchor.obj.id]) {
+      this.break(scene);
+      return;
+    }
+    // 悬挂物体被删除（如开关 deleteId 移除了它）→ 断绳
+    if (!scene.byId[this.hanging.id]) {
+      this.break(scene);
+      return;
+    }
+    let a = this.anchorPoint();
+    // 区分"推的是锚点"还是"推的是悬挂物"：
+    //  - 锚点本 tick 移动（玩家推锚点）→ 悬挂物跟随即可，不平移锚点
+    //  - 锚点没动但悬挂物被推离期望 → 平移锚点（绳子刚性，整个系统一起动）
+    const anchorDx = a.x - (this._prevAnchorX ?? a.x);
+    const tx = a.x - this.hanging.w / 2;
+    const dx = this.hanging.x - tx;
+    if (!(Math.abs(anchorDx) > 0.5) && this.anchor.obj && Math.abs(dx) > 0.5) {
+      this.anchor.obj.x += dx;
+      a.x += dx;
+    }
+    this._prevAnchorX = a.x;
+    this.x = a.x;
+    this.y = a.y;
+    const nx = a.x - this.hanging.w / 2;
+    const ny = a.y + this.length - this.hanging.h;
+    this.hanging.x = nx;
+    this.hanging.y = ny;
+    this.hanging.vel = { x: 0, y: 0 };
+    // 目标位置被实心体卡住 → 断绳
+    for (const s of scene.statics) {
+      if (overlaps(this.hanging, s)) {
+        this.break(scene);
+        return;
+      }
+    }
+  }
+
+  break(scene) {
+    this.broken = true;
+    if (this.hanging) this.hanging.gravity = 1;
+    scene.removeObject(this);
+  }
+
+  render(ctx) {
+    ctx.save();
+    ctx.strokeStyle = THEME.gold.base;
+    ctx.lineWidth = 2;
+    ctx.shadowColor = THEME.gold.light;
+    ctx.shadowBlur = 5;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.moveTo(this.x, this.y);
+    ctx.lineTo(this.x, this.y + this.length);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // 顶端小锚环
+    ctx.strokeStyle = THEME.gold.light;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, 3, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+exports.Rope = Rope;
+
+  };
+  __modules["src/core/input.js"] = function (module, exports, __require) {
+// ============================================================================
+// 键盘输入 → Scene.control（长按）/ Scene.pressed（本刻刚按下）
+// 触控暂不实现（接口位预留）。
+// ============================================================================
+
+const KEYMAP = {
+  KeyA: 'left',
+  KeyD: 'right',
+  Space: 'jump',
+  ShiftLeft: 'place',
+  ShiftRight: 'place',
+  KeyQ: 'collect',
+  KeyC: 'grab', // 拾取物品/吸液/（按住）集气
+  KeyX: 'use', // 烧杯倒入 /（按住）集气瓶通气
+};
+
+function bindKeyboard(scene) {
+  // 立即清空：右键菜单、焦点切换、页面隐藏等会吞掉 keyup 的场景
+  const onClear = () => {
+    scene.control.clear();
+    scene.pressed.clear();
+  };
+  const onDown = (e) => {
+    // 页面不在前台时忽略按键
+    if (typeof document !== 'undefined' && !document.hasFocus()) return;
+    // 运行时钩子：任意键都可被插件/关卡脚本监听（返回 true 表示已处理）
+    scene._fireKey('down', e);
+    if (e.code === 'KeyR') {
+      scene.restart();
+      return;
+    }
+    // 鸟瞰模式（灵魂出窍）：V 进出（暂停模拟，自由缩放/平移看整关）
+    if (e.code === 'KeyV' && typeof scene.toggleOverview === 'function') {
+      scene.toggleOverview();
+      e.preventDefault();
+      return;
+    }
+    // 调试模式：F5 暂停/继续，F6 步进一 tick，X 循环切换悬停重叠目标
+    if (scene.debugMode) {
+      if (e.code === 'F5') {
+        scene.debugPaused = !scene.debugPaused;
+        e.preventDefault();
+        return;
+      }
+      if (e.code === 'F6') {
+        scene.debugStepOnce = true;
+        e.preventDefault();
+        return;
+      }
+      if (e.code === 'KeyX') {
+        // 选中格是可携带物品时，X = 倒出/通气（物品交互优先）；仅普通物质时
+        // 才用作"悬停重叠循环"调试键（试玩常开调试模式，不能抢玩家的 X）
+        const slot = scene.player?.inventory?.selectedSlot?.();
+        if (!slot || !slot.item) {
+          scene.debugHoverCycle = true;
+          e.preventDefault();
+          return;
+        }
+      }
+    }
+    const c = KEYMAP[e.code];
+    if (!c) return;
+    e.preventDefault();
+    if (!scene.control.has(c)) scene.pressed.add(c);
+    scene.control.add(c);
+  };
+  const onUp = (e) => {
+    scene._fireKey('up', e);
+    const c = KEYMAP[e.code];
+    if (c) scene.control.delete(c);
+  };
+  window.addEventListener('keydown', onDown);
+  window.addEventListener('keyup', onUp);
+  window.addEventListener('blur', onClear);
+  window.addEventListener('contextmenu', onClear); // 右键菜单会吞 keyup
+  window.addEventListener('focusout', onClear); // 焦点移出（点击别处、切换焦点）
+  document.addEventListener('visibilitychange', onClear);
+  return () => {
+    window.removeEventListener('keydown', onDown);
+    window.removeEventListener('keyup', onUp);
+    window.removeEventListener('blur', onClear);
+    window.removeEventListener('contextmenu', onClear);
+    window.removeEventListener('focusout', onClear);
+    document.removeEventListener('visibilitychange', onClear);
+  };
+}
+
+exports.bindKeyboard = bindKeyboard;
+
+  };
+  __modules["src/core/loop.js"] = function (module, exports, __require) {
+// ============================================================================
+// 固定步长主循环：tick 30/s，rAF 驱动渲染。
+// scene 可以是 Scene 实例（单场景），也可以是 () => {scene, renderer, hud}（多场景管理器
+// 用：每条循环只推进/渲染"当前激活"的场景，切换即热切换）。
+// ============================================================================
+
+const { CFG } = __require('src/core/config.js');;
+
+function startLoop(scene, renderer, opts = {}) {
+  const TICK = 1 / CFG.tickRate;
+  let last = performance.now();
+  let acc = 0;
+  let raf = 0;
+
+  const getActive = typeof scene === 'function' ? scene : () => ({ scene, renderer, hud: opts.hud });
+
+  function frame(now) {
+    const dt = Math.min((now - last) / 1000, 0.25);
+    last = now;
+    acc += dt;
+    const active = getActive();
+    if (active && active.scene) {
+      const S = active.scene;
+      let guard = 0;
+      if (S.overview) {
+        // 鸟瞰（灵魂出窍）：暂停推进（保持画面），自由缩放/平移由输入管线驱动
+        acc = 0;
+      } else if (S.debugMode && S.debugPaused) {
+        // 调试暂停：不推进 tick（保持画面），F6 手动步进一 tick
+        if (S.debugStepOnce) {
+          S.debugStepOnce = false;
+          S.step(TICK);
+        }
+      } else {
+        while (acc >= TICK && guard < 10) {
+          S.step(TICK);
+          acc -= TICK;
+          guard++;
+        }
+        if (acc >= TICK) acc = 0; // 追不上就丢帧
+      }
+      const R = active.renderer ?? renderer;
+      R.frame(S.objects, { hud: active.hud ?? opts.hud, time: S.time, scene: S, focus: S.player ?? S.cameraFocus ?? null });
+    }
+    raf = requestAnimationFrame(frame);
+  }
+  raf = requestAnimationFrame(frame);
+  return () => cancelAnimationFrame(raf);
+}
+
+exports.startLoop = startLoop;
 
   };
   __modules["src/core/overview.js"] = function (module, exports, __require) {
@@ -11654,7 +11794,7 @@ class Block extends Obj {
     return added;
   }
 
-  render(ctx) {
+  render(ctx, opts) {
     const aabb = this.grid.minAABB();
     if (!aabb) return;
     const ox = this.gridOrigin.x;
@@ -11684,7 +11824,7 @@ class Block extends Obj {
     ctx.restore();
     if (this.formulaVisible) {
       const ids = this.grid.ids();
-      if (ids.length) renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.join(' + '));
+      if (ids.length) renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.join(' + '), { scene: opts?.scene });
     }
   }
 }
@@ -11802,7 +11942,7 @@ class Pool extends Container {
 
     // 沉淀：从反应位置生成的视觉颗粒，物理堆叠成堆
     this.renderGrains(ctx);
-    this.renderContentsLabel(ctx);
+    this.renderContentsLabel(ctx, scene);
   }
 }
 
@@ -11911,7 +12051,7 @@ class Deposit extends Obj {
   }
 
   /** 编辑器预览：梯形堆轮廓 + 网格（物化后网格为空，不渲染） */
-  render(ctx) {
+  render(ctx, opts) {
     if (!this.grid) return;
     const aabb = this.grid.minAABB();
     if (!aabb) return;
@@ -11941,7 +12081,7 @@ class Deposit extends Obj {
     ctx.stroke();
     ctx.restore();
     if (this.formulaVisible && ids.length) {
-      renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.join(' + '));
+      renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.join(' + '), { scene: opts?.scene });
     }
   }
 }
@@ -13622,7 +13762,7 @@ class Lamp extends Container {
       ctx.fillRect(bx - 60, fy - 60, 120, 120);
       ctx.restore();
     }
-    this.renderContentsLabel(ctx);
+    this.renderContentsLabel(ctx, opts);
     // 灯上放置的沉淀：颗粒从火焰附近生成并物理堆叠（不再均匀悬空）
     this.renderGrains(ctx);
   }
@@ -13844,7 +13984,7 @@ class BlastLamp extends Lamp {
       ctx.fillRect(bx - 60, fy - 60, 120, 120);
       ctx.restore();
     }
-    this.renderContentsLabel(ctx);
+    this.renderContentsLabel(ctx, opts);
     this.renderGrains(ctx);
   }
 }
@@ -14144,7 +14284,7 @@ class Beaker extends Container {
     ctx.fillRect(this.x + 1, this.y + 2, 2, this.h - 4);
     ctx.restore();
     ctx.restore(); // 倾旋包裹结束
-    this.renderContentsLabel(ctx);
+    this.renderContentsLabel(ctx, scene);
   }
 }
 

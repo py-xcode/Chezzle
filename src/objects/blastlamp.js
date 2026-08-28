@@ -173,7 +173,7 @@ export class BlastLamp extends Lamp {
       ctx.fillRect(bx - 60, fy - 60, 120, 120);
       ctx.restore();
     }
-    this.renderContentsLabel(ctx);
+    this.renderContentsLabel(ctx, opts);
     this.renderGrains(ctx);
   }
 }

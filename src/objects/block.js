@@ -74,7 +74,7 @@ export class Block extends Obj {
     return added;
   }
 
-  render(ctx) {
+  render(ctx, opts) {
     const aabb = this.grid.minAABB();
     if (!aabb) return;
     const ox = this.gridOrigin.x;
@@ -104,7 +104,7 @@ export class Block extends Obj {
     ctx.restore();
     if (this.formulaVisible) {
       const ids = this.grid.ids();
-      if (ids.length) renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.join(' + '));
+      if (ids.length) renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.join(' + '), { scene: opts?.scene });
     }
   }
 }

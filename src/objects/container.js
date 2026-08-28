@@ -39,7 +39,7 @@ export class Container extends Obj {
   }
 
   /** 显示容器当前内容（溶液溶质 + 沉淀；纯水显示 H2O），供子类 render 调用 */
-  renderContentsLabel(ctx) {
+  renderContentsLabel(ctx, opts = {}) {
     if (this.formulaVisible === false) return;
     const parts = [];
     for (const [id, mass] of this.solution.solutes) {
@@ -62,7 +62,7 @@ export class Container extends Obj {
       }
       if (hasIndicator) parts.push(`pH=${this.solution.pH().toFixed(1)}`);
     }
-    if (parts.length) renderFormula(ctx, this.x + this.w / 2, this.y + this.h + 14, parts.join(' + '));
+    if (parts.length) renderFormula(ctx, this.x + this.w / 2, this.y + this.h + 14, parts.join(' + '), { scene: opts.scene });
   }
 
   get material() {

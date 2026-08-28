@@ -99,7 +99,7 @@ export class Deposit extends Obj {
   }
 
   /** 编辑器预览：梯形堆轮廓 + 网格（物化后网格为空，不渲染） */
-  render(ctx) {
+  render(ctx, opts) {
     if (!this.grid) return;
     const aabb = this.grid.minAABB();
     if (!aabb) return;
@@ -129,7 +129,7 @@ export class Deposit extends Obj {
     ctx.stroke();
     ctx.restore();
     if (this.formulaVisible && ids.length) {
-      renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.join(' + '));
+      renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.join(' + '), { scene: opts?.scene });
     }
   }
 }

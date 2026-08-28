@@ -236,6 +236,6 @@ export class Beaker extends Container {
     ctx.fillRect(this.x + 1, this.y + 2, 2, this.h - 4);
     ctx.restore();
     ctx.restore(); // 倾旋包裹结束
-    this.renderContentsLabel(ctx);
+    this.renderContentsLabel(ctx, scene);
   }
 }

@@ -39,6 +39,6 @@ export class Pool extends Container {
 
     // 沉淀：从反应位置生成的视觉颗粒，物理堆叠成堆
     this.renderGrains(ctx);
-    this.renderContentsLabel(ctx);
+    this.renderContentsLabel(ctx, scene);
   }
 }
