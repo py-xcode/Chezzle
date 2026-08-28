@@ -40,6 +40,29 @@
   .rx-item .rx-del:hover { background: #7a2a2a; }
   #rxAddRow { display: flex; gap: 4px; }
   #rxAdd { flex: 1; min-width: 0; background: #0e1432; color: #fff; border: 1px solid var(--edge); padding: 3px 5px; font-size: 11px; }
+  /* 条件提示面板 */
+  #tipPanel { padding: 10px; border-bottom: 1px solid var(--edge); max-height: 36%; overflow-y: auto; flex-shrink: 0; }
+  #tipPanel h3 { color: var(--gold); font-size: 13px; margin-bottom: 6px; }
+  #tipPanel .tip-note { color: #6a7a96; font-size: 10px; margin-bottom: 6px; }
+  .tip-item { background: #0e1432; border: 1px solid var(--edge); border-radius: 4px; margin-bottom: 4px; }
+  .tip-item.open { border-color: var(--gold); }
+  .tip-head { display: flex; align-items: center; gap: 4px; padding: 4px 6px; cursor: pointer; }
+  .tip-head .tip-no { color: var(--gold); font-weight: bold; font-size: 11px; flex-shrink: 0; }
+  .tip-head .tip-prev { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #9fe8ff; font-size: 11px; }
+  .tip-head .tip-sig { color: #6a7a96; font-size: 10px; flex-shrink: 0; }
+  .tip-head button { background: #2a3060; color: #fff; border: 1px solid #3a4178; border-radius: 3px; cursor: pointer; font-size: 10px; padding: 1px 5px; flex-shrink: 0; }
+  .tip-head .tip-del { background: #5a2a2a; color: #ffd9d9; border-color: #7a3a3a; }
+  .tip-edit { padding: 6px; border-top: 1px solid var(--edge); display: none; }
+  .tip-item.open .tip-edit { display: block; }
+  .tip-edit textarea { width: 100%; background: #121a3e; color: #fff; border: 1px solid var(--edge); padding: 3px 5px; font-size: 11px; min-height: 30px; resize: vertical; font-family: inherit; }
+  .tip-edit select, .tip-edit input { background: #121a3e; color: #fff; border: 1px solid var(--edge); padding: 2px 4px; font-size: 11px; }
+  .tip-edit input[type=number] { width: 54px; }
+  .tip-edit .tip-fld { display: flex; align-items: center; gap: 4px; margin: 4px 0; flex-wrap: wrap; }
+  .tip-edit .tip-fld .fl { color: #9fb2c8; font-size: 10px; }
+  .tip-cond { display: flex; align-items: center; gap: 4px; margin: 3px 0; flex-wrap: wrap; }
+  .tip-cond .fl { color: #9fb2c8; font-size: 10px; }
+  .tip-cond .cc-del { background: #5a2a2a; color: #ffd9d9; border: 1px solid #7a3a3a; border-radius: 3px; cursor: pointer; padding: 0 5px; font-size: 10px; }
+  .tip-cond .cc-body { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
   /* 插件面板 */
   #pluginPanel { padding: 10px; border-bottom: 1px solid var(--edge); max-height: 38%; overflow-y: auto; flex-shrink: 0; }
   #pluginPanel h3 { color: var(--gold); font-size: 13px; margin-bottom: 8px; }
@@ -112,6 +135,12 @@
         <div id="rxList"></div>
         <div id="rxAddRow"><input type="text" id="rxAdd" placeholder="Cu + FeCl3 → CuCl2 + FeCl2"><button id="rxAddBtn" class="btn">+ 添加</button></div>
       </div>
+      <div id="tipPanel">
+        <h3>💬 条件提示 <small style="color:#6a7a96">按玩家状态自动出现</small></h3>
+        <div class="tip-note">按顺序逐条触发（触发后不重复）。条件：玩家位置范围 / 物品栏有·没有某物 / 提示序号比较；一条提示可多条条件，且/或连接。示例：走到左侧平台且第 5 条提示之后才出。</div>
+        <div id="tipList"></div>
+        <button id="tipAdd" class="btn" style="width:100%">+ 添加提示</button>
+      </div>
       <div id="props"><div class="empty">选中一个物体编辑属性</div></div>
     </div>
   </div>
@@ -147,9 +176,9 @@ const F = {
 };
 const CATALOG = [
   { type: 'floor', label: '地板', dsl: 'floor', color: '#8a6a48', rect: true,
-    construct: (o) => new C.Floor({ x: o.x, y: o.y, w: o.w, h: o.h, id: o.id }),
-    collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, id: o.id }),
-    fields: [F.num('x'), F.num('y'), F.num('w', '宽'), F.num('h', '高'), F.txt('id', 'id')] },
+    construct: (o) => new C.Floor({ x: o.x, y: o.y, w: o.w, h: o.h, ice: o.ice, id: o.id }),
+    collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, ice: o.ice, id: o.id }),
+    fields: [F.num('x'), F.num('y'), F.num('w', '宽'), F.num('h', '高'), F.bool('ice', '冰面(极滑·禁搭高)', false), F.txt('id', 'id')] },
   { type: 'pool', label: '药品池', dsl: 'pool', color: '#2fa8e0', rect: true,
     construct: (o) => new C.Pool({ x: o.x, y: o.y, w: o.w, h: o.h, volume: o.volume ?? 200, solutes: o.solutes, gasHeight: o.gasHeight, id: o.id }),
     collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, volume: o.solution.volume, solutes: mapToObj(o.solution.solutes), gasHeight: o.gasHeight ?? 80, id: o.id }),
@@ -787,7 +816,7 @@ for (const e of CATALOG) {
 // ---- 状态 ----------------------------------------------------------------
 // 单场景编辑器：场景/章节这类"不常用玩法"由**编辑器插件**实现（ed API 可加 UI/按钮/
 // 导出钩子/持久化；官方示例 docs/plugins/chapters.js 演示）。
-const state = { worldW: 3000, worldH: 800, palette: 'floor', placed: [], selected: null, sel: new Set(), selBox: null, playing: false, customReactions: [], plugins: [], atmosphere: {} };
+const state = { worldW: 3000, worldH: 800, palette: 'floor', placed: [], selected: null, sel: new Set(), selBox: null, playing: false, customReactions: [], plugins: [], atmosphere: {}, tips: [] };
 const view = { scale: 1, ox: 0, oy: 0 }; // 屏幕→世界：world=(screen-offset)/scale
 let renderScene = new C.Scene({ worldW: state.worldW, worldH: state.worldH });
 let drag = null; // {mode:'place'|'move'|'resize'|'select'|'rect'|'pan', ...}
@@ -1442,7 +1471,7 @@ function dslLine(item) {
   const HID = o.hidden ? true : undefined; // 初始隐藏 → 导出 hidden: true
   switch (t) {
     case 'floor': {
-      const opts = { id: o.id, hidden: HID };
+      const opts = { ice: o.ice ? true : undefined, id: o.id, hidden: HID };
       return `.floor(${pos}, ${R(o.w)}, ${R(o.h)}${fmtOpts(opts) ? ', ' + fmtOpts(opts) : ''})`;
     }
     case 'pool': {
@@ -1555,6 +1584,8 @@ function buildScript() {
   for (const rx of state.customReactions) {
     lines.push(`  .reaction('${rx.replace(/'/g, "\\'")}')`); // 关卡自定义反应（最高优先级）
   }
+  // 条件提示：按列表顺序逐条触发（位置/物品栏/序号条件，且/或）
+  if (state.tips.length) lines.push(...dslTips());
   lines.push(';');
   lines.push('', 'const scene = L.build();');
   lines.push(...post);
@@ -1666,6 +1697,7 @@ function saveState() {
       plugins: state.plugins, // 插件引用清单（源码缓存另存 localStorage，刷新自动恢复）
       rx: state.customReactions,
       atmosphere: state.atmosphere, // 编辑器自带：关卡大气（多场景下随场景快照保存）
+      tips: state.tips, // 条件提示清单（文本 + 条件组）
       editorState: Object.fromEntries([...editorStates].map(([k, v]) => [k, v])), // 编辑器插件的持久化状态
       objects: state.placed.map((p) => ({ type: p.type, opts: byType[p.type].collect(p.obj) })),
     };
@@ -1722,7 +1754,9 @@ function loadState() {
     $('inH').value = state.worldH;
     state.customReactions = Array.isArray(src.rx) ? src.rx : (src.rx ? [src.rx] : []);
     state.atmosphere = { ...(src.atmosphere ?? {}) };
+    state.tips = Array.isArray(src.tips) ? src.tips.map((t) => ({ text: t.text ?? '', mode: t.mode ?? 'and', items: Array.isArray(t.items) ? t.items : [] })) : [];
     refreshAtmInput();
+    renderTipPanel();
     state.placed = (src.objects || [])
       .filter((o) => byType[o.type])
       .map((o) => ({ type: o.type, obj: byType[o.type].construct(gridOpts(o.type, o.opts)) }));
@@ -1804,6 +1838,9 @@ function togglePlay() {
     const rule = C.parseReactionStr(rx);
     if (rule) scene.customReactions.push(rule);
   }
+  // 条件提示（试玩与导出同一清单：位置/物品栏/序号 → 自动出现，HUD 提示按钮可见）
+  const tps = tipsToScene(state.tips);
+  for (const t of tps) scene.tips.push(t);
   // 无玩家时相机聚焦关卡内容（包围盒）：否则试玩显示世界中央，物体（滴管/池等）
   // 可能不在视口内——看着"一切正常"但点击没反应（用户反馈）
   if (!scene.player) {
@@ -2099,7 +2136,7 @@ $('pluginFile').onchange = (e) => {
 };
 $('pluginList').addEventListener('change', onPluginPanelChange);
 $('pluginList').addEventListener('click', onPluginPanelClick);
-$('btnClear').onclick = () => { pushUndo(); state.placed = []; state.customReactions = []; state.plugins = []; editorStates.clear(); state.selected = null; state.sel = new Set(); syncIdSeq(); buildRenderScene(); renderEdit(); refreshProps(); renderRxPanel(); renderPluginPanel(); refreshExport(); saveState(); for (const fns of editorStateLoadedHooks.values()) for (const fn of fns) { try { fn(); } catch (e) {} } };
+$('btnClear').onclick = () => { pushUndo(); state.placed = []; state.customReactions = []; state.plugins = []; state.tips = []; editorStates.clear(); state.selected = null; state.sel = new Set(); syncIdSeq(); buildRenderScene(); renderEdit(); refreshProps(); renderRxPanel(); renderTipPanel(); renderPluginPanel(); refreshExport(); saveState(); for (const fns of editorStateLoadedHooks.values()) for (const fn of fns) { try { fn(); } catch (e) {} } };
 $('btnClearStorage').onclick = () => {
   localStorage.removeItem(STORAGE_KEY); // 清掉自动存档
   localStorage.removeItem(LEGACY_KEY);  // 旧 key 一并清掉
@@ -2178,6 +2215,177 @@ function addRx() {
 }
 $('rxAddBtn').onclick = addRx;
 $('rxAdd').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addRx(); } });
+
+// ---- 条件提示管理面板（列表 + 展开编辑 + 条件组 且/或） ------------------------
+let openTip = -1;
+const TIP_OPS = [['==', '等于'], ['>', '大于'], ['<', '小于'], ['>=', '大于等于'], ['<=', '小于等于']];
+const TIP_TYPES = [['pos', '玩家位置范围'], ['inv', '物品栏 有/没有某物'], ['seq', '提示序号比较']];
+
+/** 编辑器提示数据 → 引擎场景提示对象（导出 .tips([...]) 与试玩注入共用同一规格） */
+function tipsToScene(tips) {
+  return (tips ?? [])
+    .map((t) => {
+      if (!t || typeof t.text !== 'string') return null;
+      const items = (Array.isArray(t.items) ? t.items : [])
+        .filter((c) => c && c.type)
+        .map((c) => {
+          const o = { type: c.type };
+          for (const k of ['x', 'y', 'w', 'h', 'item', 'has', 'op', 'n']) {
+            if (c[k] !== undefined && c[k] !== null && c[k] !== '') o[k] = c[k];
+          }
+          return o;
+        });
+      return { text: t.text, when: { mode: t.mode === 'any' ? 'any' : 'and', items }, shown: false };
+    })
+    .filter(Boolean);
+}
+
+/** 导出为 L.tips([...]) 链式行（无条件项的 when 省略=恒真） */
+function dslTips() {
+  const lines = ['  .tips(['];
+  for (const t of tipsToScene(state.tips)) {
+    const when = t.when.items.length ? { mode: t.when.mode, items: t.when.items } : null;
+    lines.push(`    { text: ${JSON.stringify(t.text)}${when ? `, when: ${JSON.stringify(when)}` : ''}},`);
+  }
+  lines.push('  ])');
+  return lines;
+}
+
+function tipSig(t) {
+  const s = (t.items ?? []).map((c) => {
+    if (c.type === 'pos') return `位置(${c.x ?? 0},${c.y ?? 0},${c.w ?? 0}×${c.h ?? 0})`;
+    if (c.type === 'inv') return `${c.has === false ? '没有' : '有'} ${c.item ?? ''}`;
+    if (c.type === 'seq') return `序号${c.op ?? '=='}${c.n ?? 0}`;
+    return '?';
+  }).join(t.mode === 'any' ? ' 或 ' : ' 且 ');
+  return s || '无条件';
+}
+
+function tipCondHTML(c, i) {
+  const selType = `<select class="cct"><option value="pos">玩家位置范围</option><option value="inv">物品栏 有/没有</option><option value="seq">提示序号比较</option></select>`;
+  let body = '';
+  if (c.type === 'pos') {
+    body = `<span class="fl">范围</span>x<input type="number" class="ccx" value="${c.x ?? 0}"> y<input type="number" class="ccy" value="${c.y ?? 0}"> 宽<input type="number" class="ccw" value="${c.w ?? 200}"> 高<input type="number" class="cch" value="${c.h ?? 120}">`;
+  } else if (c.type === 'inv') {
+    body = `<select class="cch1"><option value="true"${c.has !== false ? ' selected' : ''}>有</option><option value="false"${c.has === false ? ' selected' : ''}>没有</option></select><input class="cci" list="substances" placeholder="物质名 / 物品名" value="${(c.item ?? '').replace(/"/g, '&quot;')}" style="width:110px">`;
+  } else {
+    body = `<select class="cco">${TIP_OPS.map(([v, l]) => `<option value="${v}"${(c.op ?? '>') === v ? ' selected' : ''}>${l} ${v}</option>`).join('')}</select><input type="number" class="ccn" value="${c.n ?? 1}">`;
+  }
+  return `<div class="tip-cond" data-i="${i}"><span class="fl">条件${i + 1}</span>${selType}${body}<button class="cc-del" title="删除条件">✕</button></div>`;
+}
+
+function renderTipPanel() {
+  const list = $('tipList');
+  if (!state.tips.length) {
+    list.innerHTML = '<div class="empty">还没有条件提示<br>点下方 + 添加（触发顺序 = 从上到下，触发后不重复）</div>';
+    return;
+  }
+  list.innerHTML = state.tips.map((t, i) => `
+    <div class="tip-item${openTip === i ? ' open' : ''}" data-i="${i}">
+      <div class="tip-head">
+        <span class="tip-no">#${i + 1}</span>
+        <span class="tip-prev">${(t.text || '（空提示）').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</span>
+        <span class="tip-sig">${tipSig(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</span>
+        <button class="tip-mv" data-mv="-1" title="上移">↑</button>
+        <button class="tip-mv" data-mv="1" title="下移">↓</button>
+        <button class="tip-del" title="删除提示">✕</button>
+      </div>
+      <div class="tip-edit">
+        <div class="tip-fld"><span class="fl">提示文本</span><textarea class="ttx" rows="2">${t.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</textarea></div>
+        <div class="tip-fld">
+          <span class="fl">多个条件之间</span>
+          <select class="tmd"><option value="and"${t.mode !== 'any' ? ' selected' : ''}>全部满足（且）</option><option value="any"${t.mode === 'any' ? ' selected' : ''}>任一满足（或）</option></select>
+          <span class="fl" style="margin-left:6px">条件列表</span>
+        </div>
+        <div class="tip-conds">${(t.items ?? []).map((c, ci) => tipCondHTML(c, ci)).join('')}</div>
+        <div class="tip-fld"><button class="btn cc-add" style="font-size:10px;padding:2px 10px">+ 添加条件</button></div>
+      </div>
+    </div>`).join('');
+
+  const tipOf = (el) => state.tips[+el.closest('.tip-item').dataset.i];
+  list.querySelectorAll('.tip-head').forEach((head) => {
+    head.onclick = (e) => {
+      if (e.target.closest('button')) return; // 按钮自己处理
+      const i = +head.closest('.tip-item').dataset.i;
+      openTip = openTip === i ? -1 : i;
+      renderTipPanel();
+    };
+  });
+  list.querySelectorAll('.tip-mv').forEach((btn) => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const i = +btn.closest('.tip-item').dataset.i;
+      const j = i + (+btn.dataset.mv);
+      if (j < 0 || j >= state.tips.length) return;
+      pushUndo();
+      const [t] = state.tips.splice(i, 1);
+      state.tips.splice(j, 0, t);
+      openTip = j;
+      saveState(); renderTipPanel(); refreshExport();
+    };
+  });
+  list.querySelectorAll('.tip-del').forEach((btn) => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const i = +btn.closest('.tip-item').dataset.i;
+      pushUndo();
+      state.tips.splice(i, 1);
+      openTip = -1;
+      saveState(); renderTipPanel(); refreshExport();
+    };
+  });
+  // 展开编辑区：文本/条件连接/条件行
+  list.querySelectorAll('.ttx').forEach((ta) => {
+    ta.oninput = () => { tipOf(ta).text = ta.value; saveState(); refreshExport(); };
+  });
+  list.querySelectorAll('.tmd').forEach((sel) => {
+    sel.onchange = () => { tipOf(sel).mode = sel.value; saveState(); renderTipPanel(); refreshExport(); };
+  });
+  list.querySelectorAll('.cc-add').forEach((btn) => {
+    btn.onclick = () => {
+      pushUndo();
+      tipOf(btn).items = tipOf(btn).items ?? [];
+      tipOf(btn).items.push({ type: 'pos', x: 0, y: 0, w: 200, h: 120 });
+      saveState(); renderTipPanel(); refreshExport();
+    };
+  });
+  list.querySelectorAll('.tip-cond').forEach((row) => {
+    const c = tipOf(row).items[+row.dataset.i];
+    const save = () => { saveState(); refreshExport(); };
+    row.querySelector('.cct').onchange = (e) => {
+      pushUndo();
+      const type = e.target.value;
+      if (type === 'pos') Object.assign(c, { type, x: 0, y: 0, w: 200, h: 120 });
+      else if (type === 'inv') Object.assign(c, { type, item: 'K', has: true });
+      else Object.assign(c, { type, op: '>', n: 1 });
+      save(); renderTipPanel();
+    };
+    row.querySelector('.cc-del').onclick = () => {
+      pushUndo();
+      const t = tipOf(row);
+      t.items.splice(+row.dataset.i, 1);
+      save(); renderTipPanel();
+    };
+    if (c.type === 'pos') {
+      row.querySelector('.ccx').oninput = (e) => { c.x = +e.target.value || 0; save(); };
+      row.querySelector('.ccy').oninput = (e) => { c.y = +e.target.value || 0; save(); };
+      row.querySelector('.ccw').oninput = (e) => { c.w = +e.target.value || 0; save(); };
+      row.querySelector('.cch').oninput = (e) => { c.h = +e.target.value || 0; save(); };
+    } else if (c.type === 'inv') {
+      row.querySelector('.cch1').onchange = (e) => { c.has = e.target.value === 'true'; save(); };
+      row.querySelector('.cci').oninput = (e) => { c.item = e.target.value; save(); };
+    } else {
+      row.querySelector('.cco').onchange = (e) => { c.op = e.target.value; save(); };
+      row.querySelector('.ccn').oninput = (e) => { c.n = +e.target.value || 0; save(); };
+    }
+  });
+}
+$('tipAdd').onclick = () => {
+  pushUndo();
+  state.tips.push({ text: '新提示：走到……', mode: 'and', items: [] });
+  openTip = state.tips.length - 1;
+  saveState(); renderTipPanel(); refreshExport();
+};
 window.addEventListener('resize', resizeCanvas);
 
 buildPalette();
@@ -2206,6 +2414,7 @@ if (!loadedFromStorage) {
 }
 refreshExport();
 renderRxPanel();                          // 渲染自定义反应列表
+renderTipPanel();                          // 渲染条件提示列表
 renderPluginPanel();                      // 渲染插件面板（含已恢复的插件引用）
 $('status').textContent = statusMsg;
 // 容器尺寸一变化就重设画布：ResizeObserver 在 observe 时立即回调一次，之后每次布局

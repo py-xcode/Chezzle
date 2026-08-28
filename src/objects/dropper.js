@@ -55,9 +55,9 @@ export class Dropper extends Obj {
     return 'dropper';
   }
 
-  /** 玩家附近可拖动（改变位置，无碰撞箱） */
+  /** 玩家附近可拖动（改变位置，无碰撞箱）；锁定（noCarry）的滴管不可拖动 */
   get isDraggable() {
-    return true;
+    return !this.noCarry;
   }
 
   /** 点击点是否落在"红色胶头"上——只有胶头区能触发滴加（单击=滴一滴、

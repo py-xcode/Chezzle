@@ -1,6 +1,8 @@
 // ============================================================================
 // 地板：静态实心体，无化学性质，不可移动。
 // 渲染为神殿石砖：纵向石色渐变 + 砖缝 + 顶部亮边（可站立面）。
+// 冰面（ice:true）：滑冰场视觉（冰蓝渐变 + 高光斜纹）——物理上极滑
+// （冰摩擦 + 沉淀滑走，见 CollisionSystem/Player 的 ice 分支）。
 // ============================================================================
 
 import { Obj } from './obj.js';
@@ -8,16 +10,21 @@ import { THEME } from '../render/theme.js';
 
 export class Floor extends Obj {
   get hoverLabel() {
-    return '地板';
+    return this.ice ? '冰面(滑)' : '地板';
   }
-  constructor({ x, y, w, h, color = null, ...rest } = {}) {
+  constructor({ x, y, w, h, color = null, ice = false, ...rest } = {}) {
     super({ x, y, w, h, solid: true, static: true, physicsKind: 'static', ...rest });
     this.color = color;
+    this.ice = !!ice;
   }
 
   render(ctx) {
     const { x, y, w, h } = this;
     if (w <= 0 || h <= 0) return;
+    if (this.ice) {
+      this._renderIce(ctx, x, y, w, h);
+      return;
+    }
     const base = this.color || THEME.stone.base;
     ctx.save();
     // 基础石色渐变
@@ -48,6 +55,33 @@ export class Floor extends Obj {
     ctx.fillRect(x, y, w, 3);
     // 底部暗影
     ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.fillRect(x, y + h - 3, w, 3);
+    ctx.restore();
+  }
+
+  /** 冰面：冰蓝渐变 + 顶部高光 + 斜向滑痕（与世界坐标绑定，确定性） */
+  _renderIce(ctx, x, y, w, h) {
+    ctx.save();
+    const g = ctx.createLinearGradient(x, y, x, y + h);
+    g.addColorStop(0, '#e8f7ff');
+    g.addColorStop(0.45, '#a8d8f5');
+    g.addColorStop(1, '#4a8ec8');
+    ctx.fillStyle = g;
+    ctx.fillRect(x, y, w, h);
+    // 顶部高光（站立面）
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fillRect(x, y, w, 2.5);
+    // 斜向滑痕（低透明，斜切亮线）
+    ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+    ctx.lineWidth = 3;
+    for (let sx = Math.floor(x / 60) * 60; sx < x + w + 40; sx += 60) {
+      ctx.beginPath();
+      ctx.moveTo(sx, y + h);
+      ctx.lineTo(sx + h * 0.9, y);
+      ctx.stroke();
+    }
+    // 底部渐深影
+    ctx.fillStyle = 'rgba(20,60,110,0.35)';
     ctx.fillRect(x, y + h - 3, w, 3);
     ctx.restore();
   }

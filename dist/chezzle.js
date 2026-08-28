@@ -92,6 +92,16 @@ const CFG = {
   groundFriction: 8, // 地面摩擦（1/s）：爆炸/踢飞后的物体不会永远滑行（物理核心默认 0，Scene 层开启）
   airFriction: 3, // 空气摩擦（1/s，仅水平）：空中/气泡柱上玩家不会无限漂移，仍保留爆炸冲击感
 
+  // 冰面（地板 ice:true）：极滑——摩擦降到 iceFriction，沉淀自动滑走（搭不了高）；
+  // 玩家控制响应变慢（controlAccel，动量保持）——松手后继续滑行。
+  iceFriction: 0.35, // 冰面摩擦（1/s；普通地面 8/s，冰上滑行衰减极慢）
+  ice: {
+    controlAccel: 3.2, // 玩家在冰上的控制响应（1/s，趋近目标速度的速率）——"粘不住"，
+                       // 想急停/急转都慢慢来；石地上指令直接设定速度（不变量）
+    slipAccel: 16,     // 沉淀在冰面的滑走加速度（px/s²）：静止放置也会慢慢漂走
+    slipMax: 55,       // 滑走速度上限（px/s；超过后仅靠冰摩擦缓慢衰减）
+  },
+
   player: {
     moveSpeed: 220, // px/s
     jumpVel: 520, // px/s（向上）
@@ -227,7 +237,15 @@ class Scene {
 
     this.chem = new ChemistryEngine();
     this.atmosphere = new Atmosphere();
-    this.physics = new CollisionSystem({ gravity: CFG.gravity, autoStepMax: CFG.player.autoStepMax, groundFriction: CFG.groundFriction, airFriction: CFG.airFriction, ...physics });
+    this.physics = new CollisionSystem({
+      gravity: CFG.gravity,
+      autoStepMax: CFG.player.autoStepMax,
+      groundFriction: CFG.groundFriction,
+      airFriction: CFG.airFriction,
+      iceFriction: CFG.iceFriction,
+      iceSlip: CFG.ice,
+      ...physics,
+    });
     this.contacts = new ContactTracker();
     this.contactPairs = [];
     this.customReactions = []; // 关卡自定义反应（最高优先级）：[{reactants:[{id,coeff}], products:[{id,coeff}]}]
@@ -236,7 +254,10 @@ class Scene {
     this.status = 'init';
     this.time = 0;
     this.dt = 1 / CFG.tickRate;
-    this.tip = '';
+    this.tip = ''; // 当前提示文本（HUD 展示；由条件提示系统或关卡脚本 setTip 写入）
+    this.tips = []; // 条件提示列表：[{ text, when:{mode:'and'|'any', items:[...]}, shown }]
+    this.tipSeq = 0; // 已展示的提示条数（下一条展示时序号 = tipSeq+1，从 1 起）
+    this.tipActive = null; // 当前展示的提示对象（最近触发的）
     this.debugMode = false; // 调试模式（URL 参数 ?debug=1 开启；.debugmode() 已废弃）
     this.debugPaused = false; // 暂停 tick 推进
     this.debugStepOnce = false; // 手动步进一 tick
@@ -413,6 +434,26 @@ class Scene {
     return this.setOverview(!this.overview);
   }
 
+  // ---------------------------------------------------------------------------
+  // 条件提示系统：按列表顺序逐条触发——序号/位置/物品栏条件（且/或）满足 →
+  // 展示该提示并推进 tipSeq（触发后不再重复；最多每 tick 一条，同帧齐备按顺序出）。
+  // 关卡脚本：builder.tips([...])；HUD 提示按钮展示 scene.tip=当前提示文本。
+  // ---------------------------------------------------------------------------
+
+  _stepTips() {
+    if (!this.tips.length) return;
+    for (const t of this.tips) {
+      if (t.shown) continue;
+      if (!tipHolds(this, t)) continue;
+      t.shown = true;
+      this.tipSeq++;
+      this.tipActive = t;
+      this.tip = t.text;
+      this.fire('tip', { tip: t, seq: this.tipSeq });
+      break;
+    }
+  }
+
   addObject(obj) {
     this.byId[obj.id] = obj;
     // 初始隐藏：只登记 byId + hidden 列表（可被开关 showId 显现），不进任何活动索引
@@ -486,6 +527,7 @@ class Scene {
     this.time += dt;
     this.dt = dt;
     this._runHooks(dt); // 运行时钩子（插件/关卡脚本的 onTick/wait/interval/after）
+    this._stepTips(); // 条件提示（位置/物品栏/序号；纯读不写游戏状态，安全）
     // 页面不在前台（切走/最小化）时清空输入：失焦时 keyup/blur 可能不触发，
     // 每帧兜底检测，避免"失焦后按键一直按住"（玩家一直跳/走）。
     if (typeof document !== 'undefined' && (document.hidden || !document.hasFocus())) {
@@ -1233,6 +1275,49 @@ class Scene {
   restart() {
     if (typeof location !== 'undefined') location.reload();
   }
+}
+
+// ---------------------------------------------------------------------------
+// 条件求值（tips）：item 类型
+//  - pos: 玩家中心在矩形 {x,y,w,h} 内（无玩家=不满足）
+//  - inv: 物品栏 有/没有 某物（物质名或物品类型 beaker/dropper/bottle）
+//  - seq: 下一条展示序号（tipSeq+1）与 n 比较（op: == > < >= <=）
+// 模式：when.mode 'and'=全部满足 / 'any'=任一满足；无条件（items 空）= 恒真。
+// ---------------------------------------------------------------------------
+function tipHolds(scene, t) {
+  const items = (t.when && t.when.items) || [];
+  if (!items.length) return true;
+  const mode = (t.when && t.when.mode) || 'and';
+  return mode === 'any' ? items.some((c) => tipCond(scene, c)) : items.every((c) => tipCond(scene, c));
+}
+
+function tipCond(scene, c) {
+  if (!c || !c.type) return true;
+  if (c.type === 'pos') {
+    const p = scene.player;
+    if (!p) return false;
+    const px = p.x + (p.w ?? 0) / 2;
+    const py = p.y + (p.h ?? 0) / 2;
+    return px >= c.x && px <= c.x + (c.w ?? 0) && py >= c.y && py <= c.y + (c.h ?? 0);
+  }
+  if (c.type === 'inv') {
+    const p = scene.player;
+    if (!p || !p.inventory) return false;
+    const has = (p.inventory.slots || []).some((s) => s && (s.substance === c.item || s.item === c.item));
+    return c.has !== false ? has : !has;
+  }
+  if (c.type === 'seq') {
+    const v = scene.tipSeq + 1; // 该提示作为下一条展示时的序号（从 1 起）
+    const n = Number(c.n) || 0;
+    switch (c.op) {
+      case '>': return v > n;
+      case '<': return v < n;
+      case '>=': return v >= n;
+      case '<=': return v <= n;
+      default: return v === n;
+    }
+  }
+  return true;
 }
 
 exports.Scene = Scene;
@@ -4045,7 +4130,7 @@ function resolveOverlapX(b, o) {
 }
 
 class CollisionSystem {
-  constructor({ gravity = 1200, autoStepMax = 14, maxFallSpeed = 1500, maxYStep = 6, maxXStep = 6, groundFriction = 0, airFriction = 0 } = {}) {
+  constructor({ gravity = 1200, autoStepMax = 14, maxFallSpeed = 1500, maxYStep = 6, maxXStep = 6, groundFriction = 0, airFriction = 0, iceFriction = 0, iceSlip = null } = {}) {
     this.gravity = gravity;
     this.autoStepMax = autoStepMax;
     this.maxFallSpeed = maxFallSpeed;
@@ -4053,6 +4138,8 @@ class CollisionSystem {
     this.maxXStep = maxXStep; // X 分步移动的最大步长（防穿墙 / 防推挤瞬移）
     this.groundFriction = groundFriction; // 落地物体的水平摩擦系数（1/s，衰减速度）
     this.airFriction = airFriction; // 空气摩擦（1/s，仅水平）：空中不无限漂移
+    this.iceFriction = iceFriction; // 冰面（ice 地板）摩擦（1/s）：远低于地面 → 滑
+    this.iceSlip = iceSlip ?? null; // { accel, max }：冰上沉淀的主动滑走（搭不了高）
   }
 
   step(dt, { dynamics, statics }) {
@@ -4061,6 +4148,7 @@ class CollisionSystem {
     for (const b of dynamics) {
       b.onGround = false;
       b.blockedX = false;
+      b._groundIce = false; // 本帧是否站在冰面上（_landOn 逐帧重标）
       b.collisions = [];
     }
     // 重力
@@ -4076,20 +4164,37 @@ class CollisionSystem {
     for (const b of dynamics) this.integrateY(b, dynamics, statics);
     // 残余重叠分离（斜向冲入/出生嵌入/传送落点/爆炸推挤）：4 面 MTV，小步推出
     this.resolveResidual(dynamics, statics);
-    // 地面摩擦：落地的动态体水平速度快速衰减——爆炸/踢飞后的物体不会永远滑行
+    // 地面摩擦：落地的动态体水平速度快速衰减——爆炸/踢飞后的物体不会永远滑行。
+    // 冰面（_groundIce）：摩擦换用 iceFriction（远小于地面）→ 滑行衰减极慢。
     for (const b of dynamics) {
       if (b.onGround && b.vel.x !== 0) {
-        b.vel.x *= Math.max(0, 1 - this.groundFriction * dt);
-        if (Math.abs(b.vel.x) < 5) b.vel.x = 0;
+        const fr = b._groundIce ? this.iceFriction : this.groundFriction;
+        b.vel.x *= Math.max(0, 1 - fr * dt);
+        // 微小速度清零（防视觉蠕动）；冰面豁免——滑走需要从小速度积累起来，
+        // 否则 <5px/s 每帧被清、永远滑不动
+        if (Math.abs(b.vel.x) < 5 && !b._groundIce) b.vel.x = 0;
       }
     }
-    // 空气摩擦（仅水平）：空中/气泡柱上玩家和物块不会无限漂移；不影响垂直提升
+    // 冰面微滑：沉淀（amount）在冰上被主动"漂走"（底部颗粒一滑，整摞散架——
+    // 冰面上搭不了高塔）。方向在首次落冰时随机取定（确定性不影响回放约束）。
+    if (this.iceSlip && this.iceSlip.slipAccel > 0) {
+      const { slipAccel: accel, slipMax: max } = this.iceSlip;
+      for (const b of dynamics) {
+        if (!b._groundIce || b.amount === undefined || !b._iceDir) continue;
+        if (Math.abs(b.vel.x) < max) {
+          b.vel.x += b._iceDir * accel * dt;
+          if (Math.abs(b.vel.x) > max) b.vel.x = b._iceDir * max;
+        }
+      }
+    }
+    // 空气摩擦（仅水平、仅**离地**）：空中/气泡柱上玩家和物块不会无限漂移；不影响垂直提升。
+    // 落地体只受"地面/冰面摩擦"（否则 8+3 的叠加会让冰面 0.35/s 的滑行被空气摩擦吃掉，
+    // 冰面就滑不起来了——见 groundFriction 分支）。
     if (this.airFriction > 0) {
       for (const b of dynamics) {
-        if (b.vel.x !== 0) {
-          b.vel.x *= Math.max(0, 1 - this.airFriction * dt);
-          if (Math.abs(b.vel.x) < 2) b.vel.x = 0;
-        }
+        if (b.onGround || b.vel.x === 0) continue;
+        b.vel.x *= Math.max(0, 1 - this.airFriction * dt);
+        if (Math.abs(b.vel.x) < 2) b.vel.x = 0;
       }
     }
   }
@@ -4347,6 +4452,11 @@ class CollisionSystem {
     b.y -= Math.min(lift, MAX_RESOLVE_Y);
     b.vel.y = 0;
     b.onGround = true;
+    // 冰面：标记 + 沉淀首次落冰记下漂移方向
+    if (s.ice) {
+      b._groundIce = true;
+      if (b.amount !== undefined && !b._iceDir) b._iceDir = Math.random() < 0.5 ? -1 : 1;
+    }
   }
 
   /** 从下方撞到 s 底：钳制在底面之下（配合子步提前停止，保证一帧内彻底停住） */
@@ -8051,9 +8161,10 @@ function handleScenePressDown(scene, canvas, sx, sy, onInfo = null, pad = 6) {
     onInfo?.({ type: 'press', object: hit.obj, world: hit.world });
     return true;
   }
-  // ③ 其它可点击物体（非可拖动物）：立即触发 + 长按（旧行为）
+  // ③ 其它可点击物体（非可拖动物）：立即触发 + 长按（旧行为）。
+  //    滴管除外：滴加只走①胶头路径——锁定的滴管（不可拖）玻璃段不转滴
   scene._pressCand = null;
-  if (typeof hit.obj.onTap === 'function' && !hit.obj.isDraggable) {
+  if (typeof hit.obj.onTap === 'function' && !hit.obj.isDraggable && hit.obj.isCarryItem !== 'dropper') {
     return handleSceneTapDown(scene, canvas, sx, sy, onInfo, pad);
   }
   onInfo?.({ type: 'miss', world: hit.world });
@@ -9759,6 +9870,20 @@ class LevelBuilder {
     return this;
   }
 
+  /** 条件提示列表（按顺序逐条触发，每条只触发一次）：
+   *  [{ text:'走到左侧平台', when:{ mode:'and'|'any', items:[
+   *       { type:'pos', x,y,w,h },                    // 玩家中心在矩形内
+   *       { type:'inv', item:'K'|'bottle', has:true },// 物品栏 有/没有 某物
+   *       { type:'seq', op:'>'|'<'|'>='|'<='|'==', n },// 下一条序号（从1起）满足比较
+   *   ] } }]  mode 缺省 'and'（全部满足）；items 空 = 无条件立即触发。 */
+  tips(arr) {
+    for (const t of (arr ?? [])) {
+      if (!t || typeof t.text !== 'string') continue;
+      this.scene.tips.push({ text: t.text, when: t.when ?? { mode: 'and', items: [] }, shown: false });
+    }
+    return this;
+  }
+
   on(name, fn) {
     this.scene.on(name, fn);
     return this;
@@ -10340,6 +10465,13 @@ class Hud {
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
 
+    // 条件提示：新提示触发 → 自动展开面板 + 按钮闪光（每帧对比 tipSeq，成本≈0）
+    if (scene.tips && scene.tips.length && this._tipSeqShown !== scene.tipSeq) {
+      this._tipSeqShown = scene.tipSeq;
+      this._tipFlash = time;
+      this.showTip = true;
+    }
+
     // 鸟瞰（灵魂出窍）：干净的全局视图——只画返回按钮/操作提示/玩家魂标
     if (scene.overview) {
       this.overviewUI(ctx, scene, W, H, time);
@@ -10363,7 +10495,7 @@ class Hud {
     const right = touchInsetsOf(scene).right || 0;
     this.viewButton(ctx, W, top, right);
     if (this._isTouch()) this.fsButton(ctx, W, top, right);
-    this.tipButton(ctx, W, H, top, right);
+    this.tipButton(ctx, W, top, right, time);
     this.notice(ctx, scene, W, H, time);
     this.touchControls(ctx, scene, W, H, time);
     this.rotateHint(ctx, scene, W, H);
@@ -11481,10 +11613,13 @@ class Hud {
     ctx.fillText(str, cx, y);
   }
 
-  // ---- 提示按钮 ----
-  tipButton(ctx, W, H, top = 10, right = 0) {
+  // ---- 提示按钮（条件提示：N/M 计数徽章 + 新提示闪光；面板自适应高度） ----
+  tipButton(ctx, W, top = 10, right = 0, time = 0) {
+    const scene = this.scene;
     const x = W - right - 82;
     const y = top;
+    const tips = scene.tips && scene.tips.length ? scene.tips : null;
+    const label = tips ? `提示 ${scene.tipSeq}/${tips.length}` : '提示';
     ctx.save();
     rr(ctx, x, y, 72, 34, 9);
     const g = ctx.createLinearGradient(x, y, x, y + 34);
@@ -11495,17 +11630,26 @@ class Hud {
     ctx.strokeStyle = THEME.gold.light;
     ctx.lineWidth = 1.5;
     ctx.shadowColor = THEME.gold.light;
-    ctx.shadowBlur = this.showTip ? 12 : 4;
+    // 新提示(1.2s 内)或面板展开：辉光增强
+    const flash = this._tipFlash != null && time - this._tipFlash < 1.2;
+    ctx.shadowBlur = flash ? 18 : (this.showTip ? 12 : 4);
     ctx.stroke();
     ctx.restore();
-    ctx.fillStyle = '#ffe9b0';
-    ctx.font = 'bold 15px "Segoe UI", sans-serif';
+    ctx.fillStyle = flash ? '#fff6d8' : '#ffe9b0';
+    ctx.font = tips ? 'bold 12.5px "Segoe UI", sans-serif' : 'bold 15px "Segoe UI", sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('提示', x + 36, y + 23);
+    ctx.fillText(label, x + 36, y + 23);
     ctx.textAlign = 'left';
-    if (this.showTip && this.scene.tip) {
+    if (this.showTip) {
+      // 正文：当前提示文本（条件提示=最近触发的一条；未触发=占位文案）
+      let text = scene.tip || '';
+      const empty = !text;
+      if (empty) text = tips ? '（暂无提示——到达触发条件后自动出现）' : '';
+      const lines = text.split('\n');
+      const headH = tips ? 20 : 0; // 标题行（第 N/M 条 · 条件提示）
+      const ph = 16 + headH + lines.length * 17 + 14;
       ctx.save();
-      rr(ctx, 10, top + 42, Math.min(W - 20, 470), 96, 10);
+      rr(ctx, 10, top + 42, Math.min(W - 20, 470), ph, 10);
       ctx.fillStyle = THEME.panel;
       ctx.fill();
       ctx.strokeStyle = THEME.gold.deep;
@@ -11514,8 +11658,15 @@ class Hud {
       ctx.restore();
       ctx.fillStyle = THEME.gold.text;
       ctx.font = 'bold 13px "Segoe UI", sans-serif';
-      const lines = this.scene.tip.split('\n');
-      for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], 22, top + 66 + i * 17);
+      if (tips && !empty) {
+        ctx.fillStyle = 'rgba(232,184,75,0.75)';
+        ctx.font = 'bold 11px "Segoe UI", sans-serif';
+        ctx.fillText(`条件提示 · 第 ${scene.tipSeq}/${tips.length} 条（触发后不重复）`, 22, top + 58);
+        ctx.fillStyle = THEME.gold.text;
+        ctx.font = 'bold 13px "Segoe UI", sans-serif';
+      }
+      const startY = top + 58 + headH;
+      for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], 22, startY + i * 17);
     }
   }
 
@@ -11825,6 +11976,8 @@ exports.Block = Block;
 // ============================================================================
 // 地板：静态实心体，无化学性质，不可移动。
 // 渲染为神殿石砖：纵向石色渐变 + 砖缝 + 顶部亮边（可站立面）。
+// 冰面（ice:true）：滑冰场视觉（冰蓝渐变 + 高光斜纹）——物理上极滑
+// （冰摩擦 + 沉淀滑走，见 CollisionSystem/Player 的 ice 分支）。
 // ============================================================================
 
 const { Obj } = __require('src/objects/obj.js');;
@@ -11832,16 +11985,21 @@ const { THEME } = __require('src/render/theme.js');;
 
 class Floor extends Obj {
   get hoverLabel() {
-    return '地板';
+    return this.ice ? '冰面(滑)' : '地板';
   }
-  constructor({ x, y, w, h, color = null, ...rest } = {}) {
+  constructor({ x, y, w, h, color = null, ice = false, ...rest } = {}) {
     super({ x, y, w, h, solid: true, static: true, physicsKind: 'static', ...rest });
     this.color = color;
+    this.ice = !!ice;
   }
 
   render(ctx) {
     const { x, y, w, h } = this;
     if (w <= 0 || h <= 0) return;
+    if (this.ice) {
+      this._renderIce(ctx, x, y, w, h);
+      return;
+    }
     const base = this.color || THEME.stone.base;
     ctx.save();
     // 基础石色渐变
@@ -11872,6 +12030,33 @@ class Floor extends Obj {
     ctx.fillRect(x, y, w, 3);
     // 底部暗影
     ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.fillRect(x, y + h - 3, w, 3);
+    ctx.restore();
+  }
+
+  /** 冰面：冰蓝渐变 + 顶部高光 + 斜向滑痕（与世界坐标绑定，确定性） */
+  _renderIce(ctx, x, y, w, h) {
+    ctx.save();
+    const g = ctx.createLinearGradient(x, y, x, y + h);
+    g.addColorStop(0, '#e8f7ff');
+    g.addColorStop(0.45, '#a8d8f5');
+    g.addColorStop(1, '#4a8ec8');
+    ctx.fillStyle = g;
+    ctx.fillRect(x, y, w, h);
+    // 顶部高光（站立面）
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fillRect(x, y, w, 2.5);
+    // 斜向滑痕（低透明，斜切亮线）
+    ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+    ctx.lineWidth = 3;
+    for (let sx = Math.floor(x / 60) * 60; sx < x + w + 40; sx += 60) {
+      ctx.beginPath();
+      ctx.moveTo(sx, y + h);
+      ctx.lineTo(sx + h * 0.9, y);
+      ctx.stroke();
+    }
+    // 底部渐深影
+    ctx.fillStyle = 'rgba(20,60,110,0.35)';
     ctx.fillRect(x, y + h - 3, w, 3);
     ctx.restore();
   }
@@ -12313,9 +12498,16 @@ class Player extends Obj {
     const resist = Math.min(0.9, this._grainResist ?? 0);
     this._grainResist = 0;
     // 水平控制：有输入时设定速度；无输入时**保留当前速度**（爆炸冲击等外力不被抹掉，
-    // 由地面摩擦逐渐减速——否则爆炸永远炸不动玩家）
+    // 由地面摩擦逐渐减速——否则爆炸永远炸不动玩家）。
+    // 冰面（_groundIce）：控制响应变慢（趋近目标速度的 controlAccel 速率）——很难
+    // 急停/急转，松手后动量保持继续滑；石地仍为直接设定（指令即速度，不变量）。
     const input = (c.has('right') ? 1 : 0) - (c.has('left') ? 1 : 0);
-    if (input !== 0) this.vel.x = input * this.moveSpeed * (1 - resist);
+    if (this._groundIce) {
+      const k = CFG.ice.controlAccel;
+      this.vel.x += (input * this.moveSpeed * (1 - resist) - this.vel.x) * Math.min(1, k * dt);
+    } else if (input !== 0) {
+      this.vel.x = input * this.moveSpeed * (1 - resist);
+    }
     // 推动烧杯/集气瓶（必须在本处：玩家重设 vel 之后、物理步之前——吸附+清 vel，
     // 否则"物块推动-玩家不动 / 物块不动-玩家动"推弹交替，用户逐帧确认）
     pushContainers(this, scene, dt);
@@ -14697,9 +14889,9 @@ class Dropper extends Obj {
     return 'dropper';
   }
 
-  /** 玩家附近可拖动（改变位置，无碰撞箱） */
+  /** 玩家附近可拖动（改变位置，无碰撞箱）；锁定（noCarry）的滴管不可拖动 */
   get isDraggable() {
-    return true;
+    return !this.noCarry;
   }
 
   /** 点击点是否落在"红色胶头"上——只有胶头区能触发滴加（单击=滴一滴、

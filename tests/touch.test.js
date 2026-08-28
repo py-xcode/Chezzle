@@ -274,6 +274,38 @@ test('场景触点：点击胶头滴一滴；长按玻璃段拖动滴管位置',
   assert.ok(Math.abs(beaker.solution.mass('HCl') - 1) < 1e-9, '拖动不滴液');
 });
 
+// ---- 7b. 锁定滴管（noCarry）：不可拖动，胶头仍可滴 --------------------------
+test('锁定滴管：玻璃段按下拖动无效（位置不变）；胶头点击仍滴液', () => {
+  forceTouch(true);
+  const canvas = fakeCanvas();
+  const scene = flatScene();
+  const p = new Player({ x: 430, y: 620, mass: 30, id: 'p1' });
+  scene.addObject(p);
+  const beaker = new Beaker({ x: 460, y: 660, w: 60, h: 60, volume: 150, solutes: {} });
+  scene.addObject(beaker);
+  const dr = new Dropper({ x: 500, y: 640, substance: 'HCl', capacity: 50, drop: 1, noCarry: true });
+  scene.addObject(dr);
+  run(scene, 40);
+  assert.equal(dr.isDraggable, false, '锁定的滴管不可拖动');
+  const ui = new TouchUI(canvas, () => ({ scene, hud: null }));
+  const sx = (wx) => wx * (H / 800) + (W - 1000 * (H / 800)) / 2;
+  const sy = (wy) => wy * (H / 800);
+  // 玻璃段：按下 → 拖 300px → 抬起：位置不动、不滴
+  const gx = sx(dr.x + dr.w / 2);
+  const gy = sy(dr.y + 24);
+  ui.down(2, gx, gy);
+  ui.move(2, gx + 300, gy);
+  ui.up(2);
+  assert.ok(Math.abs(dr.x - 500) < 1e-6, `锁定滴管不应被拖动：x=${dr.x.toFixed(1)}`);
+  assert.equal(beaker.solution.mass('HCl'), 0, '拖动不滴液');
+  // 胶头：快速点击 = 仍可滴 1g（锁定≠不工作，固定装置照常滴加）
+  const bx = sx(dr.x + dr.w / 2);
+  const by = sy(dr.y + 4);
+  ui.down(1, bx, by);
+  ui.up(1);
+  assert.ok(Math.abs(beaker.solution.mass('HCl') - 1) < 1e-9, '胶头点击照常滴液');
+});
+
 // ---- 8. 死亡轻触重开 -----------------------------------------------------------
 test('死亡状态：轻触屏幕 = 重开（restart）', () => {
   forceTouch(true);

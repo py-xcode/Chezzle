@@ -11,6 +11,16 @@ export const CFG = {
   groundFriction: 8, // 地面摩擦（1/s）：爆炸/踢飞后的物体不会永远滑行（物理核心默认 0，Scene 层开启）
   airFriction: 3, // 空气摩擦（1/s，仅水平）：空中/气泡柱上玩家不会无限漂移，仍保留爆炸冲击感
 
+  // 冰面（地板 ice:true）：极滑——摩擦降到 iceFriction，沉淀自动滑走（搭不了高）；
+  // 玩家控制响应变慢（controlAccel，动量保持）——松手后继续滑行。
+  iceFriction: 0.35, // 冰面摩擦（1/s；普通地面 8/s，冰上滑行衰减极慢）
+  ice: {
+    controlAccel: 3.2, // 玩家在冰上的控制响应（1/s，趋近目标速度的速率）——"粘不住"，
+                       // 想急停/急转都慢慢来；石地上指令直接设定速度（不变量）
+    slipAccel: 16,     // 沉淀在冰面的滑走加速度（px/s²）：静止放置也会慢慢漂走
+    slipMax: 55,       // 滑走速度上限（px/s；超过后仅靠冰摩擦缓慢衰减）
+  },
+
   player: {
     moveSpeed: 220, // px/s
     jumpVel: 520, // px/s（向上）

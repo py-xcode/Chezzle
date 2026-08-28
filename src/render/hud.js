@@ -54,6 +54,13 @@ export class Hud {
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
 
+    // 条件提示：新提示触发 → 自动展开面板 + 按钮闪光（每帧对比 tipSeq，成本≈0）
+    if (scene.tips && scene.tips.length && this._tipSeqShown !== scene.tipSeq) {
+      this._tipSeqShown = scene.tipSeq;
+      this._tipFlash = time;
+      this.showTip = true;
+    }
+
     // 鸟瞰（灵魂出窍）：干净的全局视图——只画返回按钮/操作提示/玩家魂标
     if (scene.overview) {
       this.overviewUI(ctx, scene, W, H, time);
@@ -77,7 +84,7 @@ export class Hud {
     const right = touchInsetsOf(scene).right || 0;
     this.viewButton(ctx, W, top, right);
     if (this._isTouch()) this.fsButton(ctx, W, top, right);
-    this.tipButton(ctx, W, H, top, right);
+    this.tipButton(ctx, W, top, right, time);
     this.notice(ctx, scene, W, H, time);
     this.touchControls(ctx, scene, W, H, time);
     this.rotateHint(ctx, scene, W, H);
@@ -1195,10 +1202,13 @@ export class Hud {
     ctx.fillText(str, cx, y);
   }
 
-  // ---- 提示按钮 ----
-  tipButton(ctx, W, H, top = 10, right = 0) {
+  // ---- 提示按钮（条件提示：N/M 计数徽章 + 新提示闪光；面板自适应高度） ----
+  tipButton(ctx, W, top = 10, right = 0, time = 0) {
+    const scene = this.scene;
     const x = W - right - 82;
     const y = top;
+    const tips = scene.tips && scene.tips.length ? scene.tips : null;
+    const label = tips ? `提示 ${scene.tipSeq}/${tips.length}` : '提示';
     ctx.save();
     rr(ctx, x, y, 72, 34, 9);
     const g = ctx.createLinearGradient(x, y, x, y + 34);
@@ -1209,17 +1219,26 @@ export class Hud {
     ctx.strokeStyle = THEME.gold.light;
     ctx.lineWidth = 1.5;
     ctx.shadowColor = THEME.gold.light;
-    ctx.shadowBlur = this.showTip ? 12 : 4;
+    // 新提示(1.2s 内)或面板展开：辉光增强
+    const flash = this._tipFlash != null && time - this._tipFlash < 1.2;
+    ctx.shadowBlur = flash ? 18 : (this.showTip ? 12 : 4);
     ctx.stroke();
     ctx.restore();
-    ctx.fillStyle = '#ffe9b0';
-    ctx.font = 'bold 15px "Segoe UI", sans-serif';
+    ctx.fillStyle = flash ? '#fff6d8' : '#ffe9b0';
+    ctx.font = tips ? 'bold 12.5px "Segoe UI", sans-serif' : 'bold 15px "Segoe UI", sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('提示', x + 36, y + 23);
+    ctx.fillText(label, x + 36, y + 23);
     ctx.textAlign = 'left';
-    if (this.showTip && this.scene.tip) {
+    if (this.showTip) {
+      // 正文：当前提示文本（条件提示=最近触发的一条；未触发=占位文案）
+      let text = scene.tip || '';
+      const empty = !text;
+      if (empty) text = tips ? '（暂无提示——到达触发条件后自动出现）' : '';
+      const lines = text.split('\n');
+      const headH = tips ? 20 : 0; // 标题行（第 N/M 条 · 条件提示）
+      const ph = 16 + headH + lines.length * 17 + 14;
       ctx.save();
-      rr(ctx, 10, top + 42, Math.min(W - 20, 470), 96, 10);
+      rr(ctx, 10, top + 42, Math.min(W - 20, 470), ph, 10);
       ctx.fillStyle = THEME.panel;
       ctx.fill();
       ctx.strokeStyle = THEME.gold.deep;
@@ -1228,8 +1247,15 @@ export class Hud {
       ctx.restore();
       ctx.fillStyle = THEME.gold.text;
       ctx.font = 'bold 13px "Segoe UI", sans-serif';
-      const lines = this.scene.tip.split('\n');
-      for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], 22, top + 66 + i * 17);
+      if (tips && !empty) {
+        ctx.fillStyle = 'rgba(232,184,75,0.75)';
+        ctx.font = 'bold 11px "Segoe UI", sans-serif';
+        ctx.fillText(`条件提示 · 第 ${scene.tipSeq}/${tips.length} 条（触发后不重复）`, 22, top + 58);
+        ctx.fillStyle = THEME.gold.text;
+        ctx.font = 'bold 13px "Segoe UI", sans-serif';
+      }
+      const startY = top + 58 + headH;
+      for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], 22, startY + i * 17);
     }
   }
 

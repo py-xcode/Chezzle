@@ -42,7 +42,15 @@ export class Scene {
 
     this.chem = new ChemistryEngine();
     this.atmosphere = new Atmosphere();
-    this.physics = new CollisionSystem({ gravity: CFG.gravity, autoStepMax: CFG.player.autoStepMax, groundFriction: CFG.groundFriction, airFriction: CFG.airFriction, ...physics });
+    this.physics = new CollisionSystem({
+      gravity: CFG.gravity,
+      autoStepMax: CFG.player.autoStepMax,
+      groundFriction: CFG.groundFriction,
+      airFriction: CFG.airFriction,
+      iceFriction: CFG.iceFriction,
+      iceSlip: CFG.ice,
+      ...physics,
+    });
     this.contacts = new ContactTracker();
     this.contactPairs = [];
     this.customReactions = []; // 关卡自定义反应（最高优先级）：[{reactants:[{id,coeff}], products:[{id,coeff}]}]
@@ -51,7 +59,10 @@ export class Scene {
     this.status = 'init';
     this.time = 0;
     this.dt = 1 / CFG.tickRate;
-    this.tip = '';
+    this.tip = ''; // 当前提示文本（HUD 展示；由条件提示系统或关卡脚本 setTip 写入）
+    this.tips = []; // 条件提示列表：[{ text, when:{mode:'and'|'any', items:[...]}, shown }]
+    this.tipSeq = 0; // 已展示的提示条数（下一条展示时序号 = tipSeq+1，从 1 起）
+    this.tipActive = null; // 当前展示的提示对象（最近触发的）
     this.debugMode = false; // 调试模式（URL 参数 ?debug=1 开启；.debugmode() 已废弃）
     this.debugPaused = false; // 暂停 tick 推进
     this.debugStepOnce = false; // 手动步进一 tick
@@ -228,6 +239,26 @@ export class Scene {
     return this.setOverview(!this.overview);
   }
 
+  // ---------------------------------------------------------------------------
+  // 条件提示系统：按列表顺序逐条触发——序号/位置/物品栏条件（且/或）满足 →
+  // 展示该提示并推进 tipSeq（触发后不再重复；最多每 tick 一条，同帧齐备按顺序出）。
+  // 关卡脚本：builder.tips([...])；HUD 提示按钮展示 scene.tip=当前提示文本。
+  // ---------------------------------------------------------------------------
+
+  _stepTips() {
+    if (!this.tips.length) return;
+    for (const t of this.tips) {
+      if (t.shown) continue;
+      if (!tipHolds(this, t)) continue;
+      t.shown = true;
+      this.tipSeq++;
+      this.tipActive = t;
+      this.tip = t.text;
+      this.fire('tip', { tip: t, seq: this.tipSeq });
+      break;
+    }
+  }
+
   addObject(obj) {
     this.byId[obj.id] = obj;
     // 初始隐藏：只登记 byId + hidden 列表（可被开关 showId 显现），不进任何活动索引
@@ -301,6 +332,7 @@ export class Scene {
     this.time += dt;
     this.dt = dt;
     this._runHooks(dt); // 运行时钩子（插件/关卡脚本的 onTick/wait/interval/after）
+    this._stepTips(); // 条件提示（位置/物品栏/序号；纯读不写游戏状态，安全）
     // 页面不在前台（切走/最小化）时清空输入：失焦时 keyup/blur 可能不触发，
     // 每帧兜底检测，避免"失焦后按键一直按住"（玩家一直跳/走）。
     if (typeof document !== 'undefined' && (document.hidden || !document.hasFocus())) {
@@ -1048,4 +1080,47 @@ export class Scene {
   restart() {
     if (typeof location !== 'undefined') location.reload();
   }
+}
+
+// ---------------------------------------------------------------------------
+// 条件求值（tips）：item 类型
+//  - pos: 玩家中心在矩形 {x,y,w,h} 内（无玩家=不满足）
+//  - inv: 物品栏 有/没有 某物（物质名或物品类型 beaker/dropper/bottle）
+//  - seq: 下一条展示序号（tipSeq+1）与 n 比较（op: == > < >= <=）
+// 模式：when.mode 'and'=全部满足 / 'any'=任一满足；无条件（items 空）= 恒真。
+// ---------------------------------------------------------------------------
+function tipHolds(scene, t) {
+  const items = (t.when && t.when.items) || [];
+  if (!items.length) return true;
+  const mode = (t.when && t.when.mode) || 'and';
+  return mode === 'any' ? items.some((c) => tipCond(scene, c)) : items.every((c) => tipCond(scene, c));
+}
+
+function tipCond(scene, c) {
+  if (!c || !c.type) return true;
+  if (c.type === 'pos') {
+    const p = scene.player;
+    if (!p) return false;
+    const px = p.x + (p.w ?? 0) / 2;
+    const py = p.y + (p.h ?? 0) / 2;
+    return px >= c.x && px <= c.x + (c.w ?? 0) && py >= c.y && py <= c.y + (c.h ?? 0);
+  }
+  if (c.type === 'inv') {
+    const p = scene.player;
+    if (!p || !p.inventory) return false;
+    const has = (p.inventory.slots || []).some((s) => s && (s.substance === c.item || s.item === c.item));
+    return c.has !== false ? has : !has;
+  }
+  if (c.type === 'seq') {
+    const v = scene.tipSeq + 1; // 该提示作为下一条展示时的序号（从 1 起）
+    const n = Number(c.n) || 0;
+    switch (c.op) {
+      case '>': return v > n;
+      case '<': return v < n;
+      case '>=': return v >= n;
+      case '<=': return v <= n;
+      default: return v === n;
+    }
+  }
+  return true;
 }

@@ -232,9 +232,16 @@ export class Player extends Obj {
     const resist = Math.min(0.9, this._grainResist ?? 0);
     this._grainResist = 0;
     // 水平控制：有输入时设定速度；无输入时**保留当前速度**（爆炸冲击等外力不被抹掉，
-    // 由地面摩擦逐渐减速——否则爆炸永远炸不动玩家）
+    // 由地面摩擦逐渐减速——否则爆炸永远炸不动玩家）。
+    // 冰面（_groundIce）：控制响应变慢（趋近目标速度的 controlAccel 速率）——很难
+    // 急停/急转，松手后动量保持继续滑；石地仍为直接设定（指令即速度，不变量）。
     const input = (c.has('right') ? 1 : 0) - (c.has('left') ? 1 : 0);
-    if (input !== 0) this.vel.x = input * this.moveSpeed * (1 - resist);
+    if (this._groundIce) {
+      const k = CFG.ice.controlAccel;
+      this.vel.x += (input * this.moveSpeed * (1 - resist) - this.vel.x) * Math.min(1, k * dt);
+    } else if (input !== 0) {
+      this.vel.x = input * this.moveSpeed * (1 - resist);
+    }
     // 推动烧杯/集气瓶（必须在本处：玩家重设 vel 之后、物理步之前——吸附+清 vel，
     // 否则"物块推动-玩家不动 / 物块不动-玩家动"推弹交替，用户逐帧确认）
     pushContainers(this, scene, dt);

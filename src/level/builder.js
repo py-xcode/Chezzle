@@ -153,6 +153,20 @@ export class LevelBuilder {
     return this;
   }
 
+  /** 条件提示列表（按顺序逐条触发，每条只触发一次）：
+   *  [{ text:'走到左侧平台', when:{ mode:'and'|'any', items:[
+   *       { type:'pos', x,y,w,h },                    // 玩家中心在矩形内
+   *       { type:'inv', item:'K'|'bottle', has:true },// 物品栏 有/没有 某物
+   *       { type:'seq', op:'>'|'<'|'>='|'<='|'==', n },// 下一条序号（从1起）满足比较
+   *   ] } }]  mode 缺省 'and'（全部满足）；items 空 = 无条件立即触发。 */
+  tips(arr) {
+    for (const t of (arr ?? [])) {
+      if (!t || typeof t.text !== 'string') continue;
+      this.scene.tips.push({ text: t.text, when: t.when ?? { mode: 'and', items: [] }, shown: false });
+    }
+    return this;
+  }
+
   on(name, fn) {
     this.scene.on(name, fn);
     return this;

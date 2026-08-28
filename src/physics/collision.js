@@ -170,7 +170,7 @@ function resolveOverlapX(b, o) {
 }
 
 export class CollisionSystem {
-  constructor({ gravity = 1200, autoStepMax = 14, maxFallSpeed = 1500, maxYStep = 6, maxXStep = 6, groundFriction = 0, airFriction = 0 } = {}) {
+  constructor({ gravity = 1200, autoStepMax = 14, maxFallSpeed = 1500, maxYStep = 6, maxXStep = 6, groundFriction = 0, airFriction = 0, iceFriction = 0, iceSlip = null } = {}) {
     this.gravity = gravity;
     this.autoStepMax = autoStepMax;
     this.maxFallSpeed = maxFallSpeed;
@@ -178,6 +178,8 @@ export class CollisionSystem {
     this.maxXStep = maxXStep; // X 分步移动的最大步长（防穿墙 / 防推挤瞬移）
     this.groundFriction = groundFriction; // 落地物体的水平摩擦系数（1/s，衰减速度）
     this.airFriction = airFriction; // 空气摩擦（1/s，仅水平）：空中不无限漂移
+    this.iceFriction = iceFriction; // 冰面（ice 地板）摩擦（1/s）：远低于地面 → 滑
+    this.iceSlip = iceSlip ?? null; // { accel, max }：冰上沉淀的主动滑走（搭不了高）
   }
 
   step(dt, { dynamics, statics }) {
@@ -186,6 +188,7 @@ export class CollisionSystem {
     for (const b of dynamics) {
       b.onGround = false;
       b.blockedX = false;
+      b._groundIce = false; // 本帧是否站在冰面上（_landOn 逐帧重标）
       b.collisions = [];
     }
     // 重力
@@ -201,20 +204,37 @@ export class CollisionSystem {
     for (const b of dynamics) this.integrateY(b, dynamics, statics);
     // 残余重叠分离（斜向冲入/出生嵌入/传送落点/爆炸推挤）：4 面 MTV，小步推出
     this.resolveResidual(dynamics, statics);
-    // 地面摩擦：落地的动态体水平速度快速衰减——爆炸/踢飞后的物体不会永远滑行
+    // 地面摩擦：落地的动态体水平速度快速衰减——爆炸/踢飞后的物体不会永远滑行。
+    // 冰面（_groundIce）：摩擦换用 iceFriction（远小于地面）→ 滑行衰减极慢。
     for (const b of dynamics) {
       if (b.onGround && b.vel.x !== 0) {
-        b.vel.x *= Math.max(0, 1 - this.groundFriction * dt);
-        if (Math.abs(b.vel.x) < 5) b.vel.x = 0;
+        const fr = b._groundIce ? this.iceFriction : this.groundFriction;
+        b.vel.x *= Math.max(0, 1 - fr * dt);
+        // 微小速度清零（防视觉蠕动）；冰面豁免——滑走需要从小速度积累起来，
+        // 否则 <5px/s 每帧被清、永远滑不动
+        if (Math.abs(b.vel.x) < 5 && !b._groundIce) b.vel.x = 0;
       }
     }
-    // 空气摩擦（仅水平）：空中/气泡柱上玩家和物块不会无限漂移；不影响垂直提升
+    // 冰面微滑：沉淀（amount）在冰上被主动"漂走"（底部颗粒一滑，整摞散架——
+    // 冰面上搭不了高塔）。方向在首次落冰时随机取定（确定性不影响回放约束）。
+    if (this.iceSlip && this.iceSlip.slipAccel > 0) {
+      const { slipAccel: accel, slipMax: max } = this.iceSlip;
+      for (const b of dynamics) {
+        if (!b._groundIce || b.amount === undefined || !b._iceDir) continue;
+        if (Math.abs(b.vel.x) < max) {
+          b.vel.x += b._iceDir * accel * dt;
+          if (Math.abs(b.vel.x) > max) b.vel.x = b._iceDir * max;
+        }
+      }
+    }
+    // 空气摩擦（仅水平、仅**离地**）：空中/气泡柱上玩家和物块不会无限漂移；不影响垂直提升。
+    // 落地体只受"地面/冰面摩擦"（否则 8+3 的叠加会让冰面 0.35/s 的滑行被空气摩擦吃掉，
+    // 冰面就滑不起来了——见 groundFriction 分支）。
     if (this.airFriction > 0) {
       for (const b of dynamics) {
-        if (b.vel.x !== 0) {
-          b.vel.x *= Math.max(0, 1 - this.airFriction * dt);
-          if (Math.abs(b.vel.x) < 2) b.vel.x = 0;
-        }
+        if (b.onGround || b.vel.x === 0) continue;
+        b.vel.x *= Math.max(0, 1 - this.airFriction * dt);
+        if (Math.abs(b.vel.x) < 2) b.vel.x = 0;
       }
     }
   }
@@ -472,6 +492,11 @@ export class CollisionSystem {
     b.y -= Math.min(lift, MAX_RESOLVE_Y);
     b.vel.y = 0;
     b.onGround = true;
+    // 冰面：标记 + 沉淀首次落冰记下漂移方向
+    if (s.ice) {
+      b._groundIce = true;
+      if (b.amount !== undefined && !b._iceDir) b._iceDir = Math.random() < 0.5 ? -1 : 1;
+    }
   }
 
   /** 从下方撞到 s 底：钳制在底面之下（配合子步提前停止，保证一帧内彻底停住） */

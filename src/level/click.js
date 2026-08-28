@@ -243,9 +243,10 @@ export function handleScenePressDown(scene, canvas, sx, sy, onInfo = null, pad =
     onInfo?.({ type: 'press', object: hit.obj, world: hit.world });
     return true;
   }
-  // ③ 其它可点击物体（非可拖动物）：立即触发 + 长按（旧行为）
+  // ③ 其它可点击物体（非可拖动物）：立即触发 + 长按（旧行为）。
+  //    滴管除外：滴加只走①胶头路径——锁定的滴管（不可拖）玻璃段不转滴
   scene._pressCand = null;
-  if (typeof hit.obj.onTap === 'function' && !hit.obj.isDraggable) {
+  if (typeof hit.obj.onTap === 'function' && !hit.obj.isDraggable && hit.obj.isCarryItem !== 'dropper') {
     return handleSceneTapDown(scene, canvas, sx, sy, onInfo, pad);
   }
   onInfo?.({ type: 'miss', world: hit.world });
