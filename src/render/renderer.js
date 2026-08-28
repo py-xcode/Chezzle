@@ -59,8 +59,8 @@ export class Renderer {
     }
     renderParticles(ctx, particles, opts);
     ctx.restore();
-    // 标签二次绘制：世界物件全部画完之后统一画出（浮在地板/物块之上）
-    flushLabels(ctx);
+    // 标签二次绘制：移到 HUD 之后（见 flushLabels 注释——标签浮在一切之上）
     if (opts.hud && typeof opts.hud.render === 'function') opts.hud.render(ctx, opts.time ?? 0);
+    flushLabels(ctx);
   }
 }
