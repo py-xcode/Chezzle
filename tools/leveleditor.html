@@ -40,6 +40,12 @@
   .rx-item .rx-del:hover { background: #7a2a2a; }
   #rxAddRow { display: flex; gap: 4px; }
   #rxAdd { flex: 1; min-width: 0; background: #0e1432; color: #fff; border: 1px solid var(--edge); padding: 3px 5px; font-size: 11px; }
+  /* 可收缩面板（自定义反应/条件提示）：点头部折叠 */
+  .pc-head { cursor: pointer; user-select: none; display: flex; align-items: center; gap: 4px; }
+  .pc-head small { flex: 1; }
+  .pc-arrow { color: #6a7a96; font-size: 11px; transition: transform .15s; flex-shrink: 0; }
+  .pc.collapsed .pc-arrow { transform: rotate(-90deg); }
+  .pc.collapsed .pc-body { display: none; }
   /* 条件提示面板 */
   #tipPanel { padding: 10px; border-bottom: 1px solid var(--edge); max-height: 36%; overflow-y: auto; flex-shrink: 0; }
   #tipPanel h3 { color: var(--gold); font-size: 13px; margin-bottom: 6px; }
@@ -130,16 +136,20 @@
         <div id="pluginList"></div>
         <input type="file" id="pluginFile" accept=".js" multiple style="display:none">
       </div>
-      <div id="rxPanel">
-        <h3>⚗ 自定义反应 <small style="color:#6a7a96">最高优先级</small></h3>
-        <div id="rxList"></div>
-        <div id="rxAddRow"><input type="text" id="rxAdd" placeholder="Cu + FeCl3 → CuCl2 + FeCl2"><button id="rxAddBtn" class="btn">+ 添加</button></div>
+      <div id="rxPanel" class="pc">
+        <h3 class="pc-head">⚗ 自定义反应 <small style="color:#6a7a96">最高优先级</small><span class="pc-arrow">▾</span></h3>
+        <div class="pc-body">
+          <div id="rxList"></div>
+          <div id="rxAddRow"><input type="text" id="rxAdd" placeholder="Cu + FeCl3 → CuCl2 + FeCl2"><button id="rxAddBtn" class="btn">+ 添加</button></div>
+        </div>
       </div>
-      <div id="tipPanel">
-        <h3>💬 条件提示 <small style="color:#6a7a96">按玩家状态自动出现</small></h3>
-        <div class="tip-note">按顺序逐条触发（触发后不重复）。条件：玩家位置范围 / 物品栏有·没有某物 / 提示序号比较；一条提示可多条条件，且/或连接。示例：走到左侧平台且第 5 条提示之后才出。</div>
-        <div id="tipList"></div>
-        <button id="tipAdd" class="btn" style="width:100%">+ 添加提示</button>
+      <div id="tipPanel" class="pc">
+        <h3 class="pc-head">💬 条件提示 <small style="color:#6a7a96">点提示按钮才展示</small><span class="pc-arrow">▾</span></h3>
+        <div class="pc-body">
+          <div class="tip-note">按顺序逐条展示（触发后不重复）。条件：玩家位置范围 / 物品栏有·没有某物 / 提示序号比较；多条条件可且/或连接。玩家满足条件后点击 HUD 提示按钮才会看到。</div>
+          <div id="tipList"></div>
+          <button id="tipAdd" class="btn" style="width:100%">+ 添加提示</button>
+        </div>
       </div>
       <div id="props"><div class="empty">选中一个物体编辑属性</div></div>
     </div>
@@ -2386,6 +2396,10 @@ $('tipAdd').onclick = () => {
   openTip = state.tips.length - 1;
   saveState(); renderTipPanel(); refreshExport();
 };
+// 可收缩面板：点头部折叠/展开（自定义反应/条件提示）
+document.querySelectorAll('.pc-head').forEach((h) => {
+  h.onclick = () => h.closest('.pc').classList.toggle('collapsed');
+});
 window.addEventListener('resize', resizeCanvas);
 
 buildPalette();

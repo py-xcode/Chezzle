@@ -62,7 +62,8 @@ export class Scene {
     this.tip = ''; // 当前提示文本（HUD 展示；由条件提示系统或关卡脚本 setTip 写入）
     this.tips = []; // 条件提示列表：[{ text, when:{mode:'and'|'any', items:[...]}, shown }]
     this.tipSeq = 0; // 已展示的提示条数（下一条展示时序号 = tipSeq+1，从 1 起）
-    this.tipActive = null; // 当前展示的提示对象（最近触发的）
+    this.tipReady = null; // 当前"可点击展示"的提示（条件满足且未展示；不自动出现）
+    this.tipActive = null; // 当前展示的提示对象（最近点击展示的）
     this.debugMode = false; // 调试模式（URL 参数 ?debug=1 开启；.debugmode() 已废弃）
     this.debugPaused = false; // 暂停 tick 推进
     this.debugStepOnce = false; // 手动步进一 tick
@@ -240,23 +241,35 @@ export class Scene {
   }
 
   // ---------------------------------------------------------------------------
-  // 条件提示系统：按列表顺序逐条触发——序号/位置/物品栏条件（且/或）满足 →
-  // 展示该提示并推进 tipSeq（触发后不再重复；最多每 tick 一条，同帧齐备按顺序出）。
-  // 关卡脚本：builder.tips([...])；HUD 提示按钮展示 scene.tip=当前提示文本。
+  // 条件提示系统：**不自动出现**——每 tick 只求值"可点击展示的提示"（tipReady =
+  // 按列表顺序第一条 未展示且 序号/位置/物品栏条件（且/或）满足 的提示），
+  // 玩家点击 HUD 提示按钮时 showNextTip() 才真正展示（推进 tipSeq，触发不重复）。
   // ---------------------------------------------------------------------------
 
-  _stepTips() {
-    if (!this.tips.length) return;
+  /** 每 tick 求值可用提示（纯读，无副作用）：tipReady = 可按列表顺序展示的下一条 */
+  _updateTipReady() {
+    let ready = null;
     for (const t of this.tips) {
       if (t.shown) continue;
-      if (!tipHolds(this, t)) continue;
-      t.shown = true;
-      this.tipSeq++;
-      this.tipActive = t;
-      this.tip = t.text;
-      this.fire('tip', { tip: t, seq: this.tipSeq });
-      break;
+      if (tipHolds(this, t)) { ready = t; break; }
     }
+    if (this.tipReady !== ready) {
+      this.tipReady = ready;
+      this.fire('tipReady', { tip: ready });
+    }
+  }
+
+  /** 点击提示按钮：展示下一条可用提示（返回文本）；无可用 → null（HUD 显示俏皮话） */
+  showNextTip() {
+    const t = this.tipReady;
+    if (!t) return null;
+    t.shown = true;
+    this.tipSeq++;
+    this.tipActive = t;
+    this.tip = t.text;
+    this.fire('tip', { tip: t, seq: this.tipSeq, source: 'button' });
+    this._updateTipReady(); // 本帧刚展示：立刻刷新可用性（同一帧连点能连出提示）
+    return t.text;
   }
 
   addObject(obj) {
@@ -332,7 +345,7 @@ export class Scene {
     this.time += dt;
     this.dt = dt;
     this._runHooks(dt); // 运行时钩子（插件/关卡脚本的 onTick/wait/interval/after）
-    this._stepTips(); // 条件提示（位置/物品栏/序号；纯读不写游戏状态，安全）
+    this._updateTipReady(); // 条件提示：只求值"可点击展示"（不自动出现，纯读安全）
     // 页面不在前台（切走/最小化）时清空输入：失焦时 keyup/blur 可能不触发，
     // 每帧兜底检测，避免"失焦后按键一直按住"（玩家一直跳/走）。
     if (typeof document !== 'undefined' && (document.hidden || !document.hasFocus())) {

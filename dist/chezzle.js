@@ -257,7 +257,8 @@ class Scene {
     this.tip = ''; // 当前提示文本（HUD 展示；由条件提示系统或关卡脚本 setTip 写入）
     this.tips = []; // 条件提示列表：[{ text, when:{mode:'and'|'any', items:[...]}, shown }]
     this.tipSeq = 0; // 已展示的提示条数（下一条展示时序号 = tipSeq+1，从 1 起）
-    this.tipActive = null; // 当前展示的提示对象（最近触发的）
+    this.tipReady = null; // 当前"可点击展示"的提示（条件满足且未展示；不自动出现）
+    this.tipActive = null; // 当前展示的提示对象（最近点击展示的）
     this.debugMode = false; // 调试模式（URL 参数 ?debug=1 开启；.debugmode() 已废弃）
     this.debugPaused = false; // 暂停 tick 推进
     this.debugStepOnce = false; // 手动步进一 tick
@@ -435,23 +436,35 @@ class Scene {
   }
 
   // ---------------------------------------------------------------------------
-  // 条件提示系统：按列表顺序逐条触发——序号/位置/物品栏条件（且/或）满足 →
-  // 展示该提示并推进 tipSeq（触发后不再重复；最多每 tick 一条，同帧齐备按顺序出）。
-  // 关卡脚本：builder.tips([...])；HUD 提示按钮展示 scene.tip=当前提示文本。
+  // 条件提示系统：**不自动出现**——每 tick 只求值"可点击展示的提示"（tipReady =
+  // 按列表顺序第一条 未展示且 序号/位置/物品栏条件（且/或）满足 的提示），
+  // 玩家点击 HUD 提示按钮时 showNextTip() 才真正展示（推进 tipSeq，触发不重复）。
   // ---------------------------------------------------------------------------
 
-  _stepTips() {
-    if (!this.tips.length) return;
+  /** 每 tick 求值可用提示（纯读，无副作用）：tipReady = 可按列表顺序展示的下一条 */
+  _updateTipReady() {
+    let ready = null;
     for (const t of this.tips) {
       if (t.shown) continue;
-      if (!tipHolds(this, t)) continue;
-      t.shown = true;
-      this.tipSeq++;
-      this.tipActive = t;
-      this.tip = t.text;
-      this.fire('tip', { tip: t, seq: this.tipSeq });
-      break;
+      if (tipHolds(this, t)) { ready = t; break; }
     }
+    if (this.tipReady !== ready) {
+      this.tipReady = ready;
+      this.fire('tipReady', { tip: ready });
+    }
+  }
+
+  /** 点击提示按钮：展示下一条可用提示（返回文本）；无可用 → null（HUD 显示俏皮话） */
+  showNextTip() {
+    const t = this.tipReady;
+    if (!t) return null;
+    t.shown = true;
+    this.tipSeq++;
+    this.tipActive = t;
+    this.tip = t.text;
+    this.fire('tip', { tip: t, seq: this.tipSeq, source: 'button' });
+    this._updateTipReady(); // 本帧刚展示：立刻刷新可用性（同一帧连点能连出提示）
+    return t.text;
   }
 
   addObject(obj) {
@@ -527,7 +540,7 @@ class Scene {
     this.time += dt;
     this.dt = dt;
     this._runHooks(dt); // 运行时钩子（插件/关卡脚本的 onTick/wait/interval/after）
-    this._stepTips(); // 条件提示（位置/物品栏/序号；纯读不写游戏状态，安全）
+    this._updateTipReady(); // 条件提示：只求值"可点击展示"（不自动出现，纯读安全）
     // 页面不在前台（切走/最小化）时清空输入：失焦时 keyup/blur 可能不触发，
     // 每帧兜底检测，避免"失焦后按键一直按住"（玩家一直跳/走）。
     if (typeof document !== 'undefined' && (document.hidden || !document.hasFocus())) {
@@ -8075,8 +8088,9 @@ function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
     return true;
   }
   // 3) 提示按钮（右上；hud.tipButton 同几何：top..top+34）
+  //    点击 = 展示下一条可用提示（没有则俏皮话/收起）——面板/文案由 hud.onTipClick 管理
   if (sx > canvas.width - right - 84 && sx < canvas.width - right - 8 && sy > top && sy < top + 34) {
-    if (hud) hud.showTip = !hud.showTip;
+    if (hud && typeof hud.onTipClick === 'function') hud.onTipClick(scene);
     onInfo?.({ type: 'tip' });
     return true;
   }
@@ -10444,6 +10458,21 @@ const GAS_COLORS = {
 };
 const EXTRA_GAS_IDS = ['CO', 'H2', 'CH4', 'H2S', 'NO', 'NO2', 'SO2', 'Cl2', 'NH3'];
 
+// 提示按钮的俏皮话：完全没有提示的关卡 / 有提示但时机未到（点击时随机抽取）
+const QUIPS_NONE = [
+  '这么简单的关卡还需要提示？',
+  '没有提示！！自己想！！',
+  '这关不需要提示，冲就完了！',
+  '提示？不存在的！',
+  '自己想吧！',
+];
+const QUIPS_WAIT = [
+  '提示时机还不对呢~自己多想想再来看看',
+  '时机未到，再探索探索吧',
+  '现在还不到给提示的时候，先自己想想',
+  '再等等——再过会儿说不定就有了',
+];
+
 class Hud {
   constructor(scene) {
     this.scene = scene;
@@ -10465,12 +10494,13 @@ class Hud {
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
 
-    // 条件提示：新提示触发 → 自动展开面板 + 按钮闪光（每帧对比 tipSeq，成本≈0）
-    if (scene.tips && scene.tips.length && this._tipSeqShown !== scene.tipSeq) {
-      this._tipSeqShown = scene.tipSeq;
+    // 条件提示：出现"可点击展示"的新提示 → 按钮闪光（提示只在点按钮时展示，
+    // 不自动弹面板；点按钮后由 onTipClick 拉取/收起）
+    if (scene.tipReady && this._tipReadyShown !== scene.tipReady) {
+      this._tipReadyShown = scene.tipReady;
       this._tipFlash = time;
-      this.showTip = true;
     }
+    if (!scene.tipReady) this._tipReadyShown = null;
 
     // 鸟瞰（灵魂出窍）：干净的全局视图——只画返回按钮/操作提示/玩家魂标
     if (scene.overview) {
@@ -11613,7 +11643,35 @@ class Hud {
     ctx.fillText(str, cx, y);
   }
 
-  // ---- 提示按钮（条件提示：N/M 计数徽章 + 新提示闪光；面板自适应高度） ----
+  // ---- 提示按钮（N/M 计数徽章 + 可点提示闪光；面板在按钮正下方，右对齐） ----
+  /** 点击提示按钮：有可用提示 → 展示下一条并展开面板；无可用 → 已开则收起、
+   *  未开则显示俏皮话（无提示关卡/时机未到）。 */
+  onTipClick(scene) {
+    const text = scene.showNextTip ? scene.showNextTip() : null;
+    if (text) {
+      this._tipText = text;
+      this._tipSource = 'tip';
+      this.showTip = true;
+      return;
+    }
+    if (this.showTip) {
+      this.showTip = false; // 已开且无新提示 → 收起
+      return;
+    }
+    this._tipText = this.quipFor(scene);
+    this._tipSource = 'quip';
+    this.showTip = true;
+  }
+
+  /** 无提示可展示时的俏皮话：完全没有提示（更没配置）→ 嘲讽；有时机未到 → 提示时机 */
+  quipFor(scene) {
+    if (scene.tips && scene.tips.length) {
+      return QUIPS_WAIT[Math.floor(Math.random() * QUIPS_WAIT.length)];
+    }
+    if (scene.tip) return scene.tip; // 旧式单条提示（setTip）：照常展示
+    return QUIPS_NONE[Math.floor(Math.random() * QUIPS_NONE.length)];
+  }
+
   tipButton(ctx, W, top = 10, right = 0, time = 0) {
     const scene = this.scene;
     const x = W - right - 82;
@@ -11630,7 +11688,7 @@ class Hud {
     ctx.strokeStyle = THEME.gold.light;
     ctx.lineWidth = 1.5;
     ctx.shadowColor = THEME.gold.light;
-    // 新提示(1.2s 内)或面板展开：辉光增强
+    // 有可点提示(1.2s 内)或面板展开：辉光增强
     const flash = this._tipFlash != null && time - this._tipFlash < 1.2;
     ctx.shadowBlur = flash ? 18 : (this.showTip ? 12 : 4);
     ctx.stroke();
@@ -11641,15 +11699,15 @@ class Hud {
     ctx.fillText(label, x + 36, y + 23);
     ctx.textAlign = 'left';
     if (this.showTip) {
-      // 正文：当前提示文本（条件提示=最近触发的一条；未触发=占位文案）
-      let text = scene.tip || '';
-      const empty = !text;
-      if (empty) text = tips ? '（暂无提示——到达触发条件后自动出现）' : '';
+      // 面板：提示按钮正下方、右对齐（不压左上信息卡；未到时机/无提示=俏皮话）
+      const text = this._tipText ?? scene.tip ?? '';
       const lines = text.split('\n');
-      const headH = tips ? 20 : 0; // 标题行（第 N/M 条 · 条件提示）
-      const ph = 16 + headH + lines.length * 17 + 14;
+      const pw = Math.min(W - 20, 440);
+      const px = W - right - 10 - pw;
+      const py = top + 42;
+      const ph = 16 + 22 + lines.length * 17 + 12;
       ctx.save();
-      rr(ctx, 10, top + 42, Math.min(W - 20, 470), ph, 10);
+      rr(ctx, px, py, pw, ph, 10);
       ctx.fillStyle = THEME.panel;
       ctx.fill();
       ctx.strokeStyle = THEME.gold.deep;
@@ -11658,15 +11716,10 @@ class Hud {
       ctx.restore();
       ctx.fillStyle = THEME.gold.text;
       ctx.font = 'bold 13px "Segoe UI", sans-serif';
-      if (tips && !empty) {
-        ctx.fillStyle = 'rgba(232,184,75,0.75)';
-        ctx.font = 'bold 11px "Segoe UI", sans-serif';
-        ctx.fillText(`条件提示 · 第 ${scene.tipSeq}/${tips.length} 条（触发后不重复）`, 22, top + 58);
-        ctx.fillStyle = THEME.gold.text;
-        ctx.font = 'bold 13px "Segoe UI", sans-serif';
-      }
-      const startY = top + 58 + headH;
-      for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], 22, startY + i * 17);
+      ctx.fillText('提示', px + 14, py + 22);
+      ctx.fillStyle = '#e8f2ff';
+      ctx.font = '13px "Segoe UI", "Microsoft YaHei", sans-serif';
+      for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], px + 14, py + 44 + i * 17);
     }
   }
 
@@ -12034,7 +12087,7 @@ class Floor extends Obj {
     ctx.restore();
   }
 
-  /** 冰面：冰蓝渐变 + 顶部高光 + 斜向滑痕（与世界坐标绑定，确定性） */
+  /** 冰面：冰蓝渐变 + 顶部高光（无多余纹理；斜线曾反馈不好看，已移除） */
   _renderIce(ctx, x, y, w, h) {
     ctx.save();
     const g = ctx.createLinearGradient(x, y, x, y + h);
@@ -12046,15 +12099,6 @@ class Floor extends Obj {
     // 顶部高光（站立面）
     ctx.fillStyle = 'rgba(255,255,255,0.55)';
     ctx.fillRect(x, y, w, 2.5);
-    // 斜向滑痕（低透明，斜切亮线）
-    ctx.strokeStyle = 'rgba(255,255,255,0.16)';
-    ctx.lineWidth = 3;
-    for (let sx = Math.floor(x / 60) * 60; sx < x + w + 40; sx += 60) {
-      ctx.beginPath();
-      ctx.moveTo(sx, y + h);
-      ctx.lineTo(sx + h * 0.9, y);
-      ctx.stroke();
-    }
     // 底部渐深影
     ctx.fillStyle = 'rgba(20,60,110,0.35)';
     ctx.fillRect(x, y + h - 3, w, 3);
@@ -13266,7 +13310,12 @@ function settleBodyOnSupport(body, dt, support, accel = 600, maxV = 400) {
 function pushContainers(p, scene, dt) {
   const dir = (scene.control && scene.control.has('right') ? 1 : 0) - (scene.control && scene.control.has('left') ? 1 : 0);
   if (dir === 0) return;
-  const push = dir * p.moveSpeed * dt;
+  // 冰面（_groundIce）：推动速度受玩家**实际速度**限制——冰上抓不住，推东西
+  // 像"推不动"（速度由冰控 accel 缓慢建立，每帧归零后重新起步）；
+  // 石地维持旧行为：指令即满推速。
+  const ice = !!p._groundIce;
+  const spd = ice ? Math.min(Math.abs(p.vel.x), p.moveSpeed) : p.moveSpeed;
+  const push = dir * spd * dt;
   // 注意遍历 scene.objects（集气瓶不是 Container 子类，不在 scene.containers）
   for (const c of scene.objects) {
     if (c.isCarryItem !== 'beaker' && c.isCarryItem !== 'bottle') continue;

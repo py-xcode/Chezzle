@@ -59,7 +59,7 @@ export class Floor extends Obj {
     ctx.restore();
   }
 
-  /** 冰面：冰蓝渐变 + 顶部高光 + 斜向滑痕（与世界坐标绑定，确定性） */
+  /** 冰面：冰蓝渐变 + 顶部高光（无多余纹理；斜线曾反馈不好看，已移除） */
   _renderIce(ctx, x, y, w, h) {
     ctx.save();
     const g = ctx.createLinearGradient(x, y, x, y + h);
@@ -71,15 +71,6 @@ export class Floor extends Obj {
     // 顶部高光（站立面）
     ctx.fillStyle = 'rgba(255,255,255,0.55)';
     ctx.fillRect(x, y, w, 2.5);
-    // 斜向滑痕（低透明，斜切亮线）
-    ctx.strokeStyle = 'rgba(255,255,255,0.16)';
-    ctx.lineWidth = 3;
-    for (let sx = Math.floor(x / 60) * 60; sx < x + w + 40; sx += 60) {
-      ctx.beginPath();
-      ctx.moveTo(sx, y + h);
-      ctx.lineTo(sx + h * 0.9, y);
-      ctx.stroke();
-    }
     // 底部渐深影
     ctx.fillStyle = 'rgba(20,60,110,0.35)';
     ctx.fillRect(x, y + h - 3, w, 3);

@@ -157,8 +157,9 @@ export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
     return true;
   }
   // 3) 提示按钮（右上；hud.tipButton 同几何：top..top+34）
+  //    点击 = 展示下一条可用提示（没有则俏皮话/收起）——面板/文案由 hud.onTipClick 管理
   if (sx > canvas.width - right - 84 && sx < canvas.width - right - 8 && sy > top && sy < top + 34) {
-    if (hud) hud.showTip = !hud.showTip;
+    if (hud && typeof hud.onTipClick === 'function') hud.onTipClick(scene);
     onInfo?.({ type: 'tip' });
     return true;
   }

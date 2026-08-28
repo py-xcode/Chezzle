@@ -12,6 +12,7 @@ import { Beaker } from '../src/objects/beaker.js';
 import { Floor } from '../src/objects/floor.js';
 import { Pool } from '../src/objects/pool.js';
 import { Camera } from '../src/render/camera.js';
+import { Hud } from '../src/render/hud.js';
 import { handleSceneClick, handleSceneTapDown, handleSceneTapUp } from '../src/level/click.js';
 
 const TICK = 1 / 30;
@@ -143,7 +144,7 @@ test('handleSceneTapDown/Up + 长按：按下滴一滴并标记按住，按住�
   scene.addObject(beaker);
   const dr = new Dropper({ x: 425, y: 622, substance: 'HCl', capacity: 50, drop: 1 });
   scene.addObject(dr);
-  const hud = { showTip: false, slotSize: 36 };
+  const hud = new Hud(scene); // 真实 HUD：提示按钮点击走 onTipClick（无提示 → 俏皮话）
   const canvas = { width: 1000, height: 800 };
   // 按下（世界 430,630）→ 滴一滴 + 进入长按
   assert.equal(handleSceneTapDown(scene, canvas, 430, 630), true, '按下应命中滴管');

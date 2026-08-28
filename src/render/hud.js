@@ -33,6 +33,21 @@ const GAS_COLORS = {
 };
 const EXTRA_GAS_IDS = ['CO', 'H2', 'CH4', 'H2S', 'NO', 'NO2', 'SO2', 'Cl2', 'NH3'];
 
+// 提示按钮的俏皮话：完全没有提示的关卡 / 有提示但时机未到（点击时随机抽取）
+const QUIPS_NONE = [
+  '这么简单的关卡还需要提示？',
+  '没有提示！！自己想！！',
+  '这关不需要提示，冲就完了！',
+  '提示？不存在的！',
+  '自己想吧！',
+];
+const QUIPS_WAIT = [
+  '提示时机还不对呢~自己多想想再来看看',
+  '时机未到，再探索探索吧',
+  '现在还不到给提示的时候，先自己想想',
+  '再等等——再过会儿说不定就有了',
+];
+
 export class Hud {
   constructor(scene) {
     this.scene = scene;
@@ -54,12 +69,13 @@ export class Hud {
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
 
-    // 条件提示：新提示触发 → 自动展开面板 + 按钮闪光（每帧对比 tipSeq，成本≈0）
-    if (scene.tips && scene.tips.length && this._tipSeqShown !== scene.tipSeq) {
-      this._tipSeqShown = scene.tipSeq;
+    // 条件提示：出现"可点击展示"的新提示 → 按钮闪光（提示只在点按钮时展示，
+    // 不自动弹面板；点按钮后由 onTipClick 拉取/收起）
+    if (scene.tipReady && this._tipReadyShown !== scene.tipReady) {
+      this._tipReadyShown = scene.tipReady;
       this._tipFlash = time;
-      this.showTip = true;
     }
+    if (!scene.tipReady) this._tipReadyShown = null;
 
     // 鸟瞰（灵魂出窍）：干净的全局视图——只画返回按钮/操作提示/玩家魂标
     if (scene.overview) {
@@ -1202,7 +1218,35 @@ export class Hud {
     ctx.fillText(str, cx, y);
   }
 
-  // ---- 提示按钮（条件提示：N/M 计数徽章 + 新提示闪光；面板自适应高度） ----
+  // ---- 提示按钮（N/M 计数徽章 + 可点提示闪光；面板在按钮正下方，右对齐） ----
+  /** 点击提示按钮：有可用提示 → 展示下一条并展开面板；无可用 → 已开则收起、
+   *  未开则显示俏皮话（无提示关卡/时机未到）。 */
+  onTipClick(scene) {
+    const text = scene.showNextTip ? scene.showNextTip() : null;
+    if (text) {
+      this._tipText = text;
+      this._tipSource = 'tip';
+      this.showTip = true;
+      return;
+    }
+    if (this.showTip) {
+      this.showTip = false; // 已开且无新提示 → 收起
+      return;
+    }
+    this._tipText = this.quipFor(scene);
+    this._tipSource = 'quip';
+    this.showTip = true;
+  }
+
+  /** 无提示可展示时的俏皮话：完全没有提示（更没配置）→ 嘲讽；有时机未到 → 提示时机 */
+  quipFor(scene) {
+    if (scene.tips && scene.tips.length) {
+      return QUIPS_WAIT[Math.floor(Math.random() * QUIPS_WAIT.length)];
+    }
+    if (scene.tip) return scene.tip; // 旧式单条提示（setTip）：照常展示
+    return QUIPS_NONE[Math.floor(Math.random() * QUIPS_NONE.length)];
+  }
+
   tipButton(ctx, W, top = 10, right = 0, time = 0) {
     const scene = this.scene;
     const x = W - right - 82;
@@ -1219,7 +1263,7 @@ export class Hud {
     ctx.strokeStyle = THEME.gold.light;
     ctx.lineWidth = 1.5;
     ctx.shadowColor = THEME.gold.light;
-    // 新提示(1.2s 内)或面板展开：辉光增强
+    // 有可点提示(1.2s 内)或面板展开：辉光增强
     const flash = this._tipFlash != null && time - this._tipFlash < 1.2;
     ctx.shadowBlur = flash ? 18 : (this.showTip ? 12 : 4);
     ctx.stroke();
@@ -1230,15 +1274,15 @@ export class Hud {
     ctx.fillText(label, x + 36, y + 23);
     ctx.textAlign = 'left';
     if (this.showTip) {
-      // 正文：当前提示文本（条件提示=最近触发的一条；未触发=占位文案）
-      let text = scene.tip || '';
-      const empty = !text;
-      if (empty) text = tips ? '（暂无提示——到达触发条件后自动出现）' : '';
+      // 面板：提示按钮正下方、右对齐（不压左上信息卡；未到时机/无提示=俏皮话）
+      const text = this._tipText ?? scene.tip ?? '';
       const lines = text.split('\n');
-      const headH = tips ? 20 : 0; // 标题行（第 N/M 条 · 条件提示）
-      const ph = 16 + headH + lines.length * 17 + 14;
+      const pw = Math.min(W - 20, 440);
+      const px = W - right - 10 - pw;
+      const py = top + 42;
+      const ph = 16 + 22 + lines.length * 17 + 12;
       ctx.save();
-      rr(ctx, 10, top + 42, Math.min(W - 20, 470), ph, 10);
+      rr(ctx, px, py, pw, ph, 10);
       ctx.fillStyle = THEME.panel;
       ctx.fill();
       ctx.strokeStyle = THEME.gold.deep;
@@ -1247,15 +1291,10 @@ export class Hud {
       ctx.restore();
       ctx.fillStyle = THEME.gold.text;
       ctx.font = 'bold 13px "Segoe UI", sans-serif';
-      if (tips && !empty) {
-        ctx.fillStyle = 'rgba(232,184,75,0.75)';
-        ctx.font = 'bold 11px "Segoe UI", sans-serif';
-        ctx.fillText(`条件提示 · 第 ${scene.tipSeq}/${tips.length} 条（触发后不重复）`, 22, top + 58);
-        ctx.fillStyle = THEME.gold.text;
-        ctx.font = 'bold 13px "Segoe UI", sans-serif';
-      }
-      const startY = top + 58 + headH;
-      for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], 22, startY + i * 17);
+      ctx.fillText('提示', px + 14, py + 22);
+      ctx.fillStyle = '#e8f2ff';
+      ctx.font = '13px "Segoe UI", "Microsoft YaHei", sans-serif';
+      for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], px + 14, py + 44 + i * 17);
     }
   }
 

@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { Scene } from '../src/core/scene.js';
 import { Player } from '../src/objects/player.js';
 import { Floor } from '../src/objects/floor.js';
+import { Beaker } from '../src/objects/beaker.js';
 import { CFG } from '../src/core/config.js';
 
 const run = (scene, n) => { for (let i = 0; i < n; i++) scene.step(1 / 30); };
@@ -105,4 +106,22 @@ test('冰面：玩家贴地才滑（_groundIce 逐帧重标，不残留）', () 
   run(scene, 3);
   assert.ok(!p.onGround, '跳起离地');
   assert.ok(!p._groundIce, '离地后冰面标记不残留');
+});
+
+// ---- 6. 冰上推东西：推不实（速度受玩家实际速度限制）；石地满速推 ----------
+test('冰面推烧杯：推动很慢（抓不住），石地满速推', () => {
+  const res = {};
+  for (const ice of [true, false]) {
+    const scene = mk(ice);
+    const p = new Player({ x: 300, y: 600, mass: 30, id: 'p1' });
+    scene.addObject(p);
+    const bk = new Beaker({ x: 386, y: 620, w: 60, h: 70, volume: 150, solutes: {} });
+    scene.addObject(bk);
+    run(scene, 40); // 落地
+    const x0 = bk.x;
+    for (let i = 0; i < 60; i++) { scene.control.add('right'); scene.step(1 / 30); } // 推 2s
+    res[ice ? 'ice' : 'stone'] = { moved: bk.x - x0, px: p.x };
+  }
+  assert.ok(res.stone.moved > 380, `石地满速推：${res.stone.moved.toFixed(1)}px`);
+  assert.ok(res.ice.moved < res.stone.moved * 0.4, `冰上推不动：${res.ice.moved.toFixed(1)}px vs 石地 ${res.stone.moved.toFixed(1)}px`);
 });

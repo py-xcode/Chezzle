@@ -73,7 +73,12 @@ export function settleBodyOnSupport(body, dt, support, accel = 600, maxV = 400) 
 export function pushContainers(p, scene, dt) {
   const dir = (scene.control && scene.control.has('right') ? 1 : 0) - (scene.control && scene.control.has('left') ? 1 : 0);
   if (dir === 0) return;
-  const push = dir * p.moveSpeed * dt;
+  // 冰面（_groundIce）：推动速度受玩家**实际速度**限制——冰上抓不住，推东西
+  // 像"推不动"（速度由冰控 accel 缓慢建立，每帧归零后重新起步）；
+  // 石地维持旧行为：指令即满推速。
+  const ice = !!p._groundIce;
+  const spd = ice ? Math.min(Math.abs(p.vel.x), p.moveSpeed) : p.moveSpeed;
+  const push = dir * spd * dt;
   // 注意遍历 scene.objects（集气瓶不是 Container 子类，不在 scene.containers）
   for (const c of scene.objects) {
     if (c.isCarryItem !== 'beaker' && c.isCarryItem !== 'bottle') continue;
