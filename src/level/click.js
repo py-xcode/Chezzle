@@ -27,29 +27,42 @@ export function pushNotice(scene, text) {
 }
 
 /** 物品栏槽位几何（HUD 渲染与点击命中**共用这一套数字**，保证点哪是哪）：
- *  普通格 CFG.inventory.slotPx，装物品的格子放大为 itemSlotPx；底边对齐、右缘贴边。 */
-export function inventorySlotRects(W, H, slots) {
+ *  普通格 CFG.inventory.slotPx，装物品的格子放大为 itemSlotPx；底边对齐、右缘贴边。
+ *  margins：触屏设备传 {bottom, right}（含安全区），桌面默认 10。 */
+export function inventorySlotRects(W, H, slots, margins = { bottom: 10, right: 10 }) {
   const gap = 4;
   const margin = 10;
   const n = slots.length;
   const rects = new Array(n);
-  let right = W - margin;
+  let right = W - (margins.right ?? 10);
   for (let i = n - 1; i >= 0; i--) {
     const size = slots[i] && slots[i].item ? CFG.inventory.itemSlotPx : CFG.inventory.slotPx;
     right -= size;
-    rects[i] = { x: right, y: H - margin - size, size };
+    rects[i] = { x: right, y: H - (margins.bottom ?? 10) - size, size };
     right -= gap;
   }
   return rects;
 }
 
-/** 命中可点击物体（onTap；bbox ±6px 宽容——滴管等细长物体好点中） */
-function hitTap(scene, canvas, sx, sy) {
+/** 触屏设备上的物品栏边距（安全区 + 固定边距）；桌面=默认值。
+ *  HUD 渲染 / touch 命中 / 物品栏点击共用，保证"点哪是哪"。 */
+export function uiMargins(scene) {
+  const t = scene && scene._touchUI;
+  if (t && t.enabled()) {
+    const i = t.insets;
+    return { bottom: (i.bottom ?? 0) + 10, right: (i.right ?? 0) + 10 };
+  }
+  return { bottom: 10, right: 10 };
+}
+
+/** 命中可点击物体（onTap；bbox ±pad 宽容——滴管等细长物体好点中；
+ *   desktop 默认 6，触屏手指传 14（由 touchui 管线传入）） */
+function hitTap(scene, canvas, sx, sy, pad = 6) {
   const w = screenToWorld(scene, canvas, sx, sy);
   for (let i = scene.objects.length - 1; i >= 0; i--) {
     const o = scene.objects[i];
     if (typeof o.onTap !== 'function') continue;
-    if (w.x >= o.x - 6 && w.x <= o.x + o.w + 6 && w.y >= o.y - 6 && w.y <= o.y + o.h + 6) {
+    if (w.x >= o.x - pad && w.x <= o.x + o.w + pad && w.y >= o.y - pad && w.y <= o.y + o.h + pad) {
       return { obj: o, world: w };
     }
   }
@@ -79,7 +92,7 @@ export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   // 2) 物品栏选格（右下；几何与 HUD 渲染共用 inventorySlotRects）
   const p = scene.player;
   if (p && p.inventory) {
-    const rects = inventorySlotRects(canvas.width, canvas.height, p.inventory.slots);
+    const rects = inventorySlotRects(canvas.width, canvas.height, p.inventory.slots, uiMargins(scene));
     for (let i = 0; i < rects.length; i++) {
       const r = rects[i];
       if (sx >= r.x && sx <= r.x + r.size && sy >= r.y && sy <= r.y + r.size) {
@@ -98,10 +111,10 @@ export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
  * 按住期间 stepPressTap 会以 0.08s 间隔持续触发（长按=持续滴加）。
  * 未命中 → 清除按住标记并返回 false。
  */
-export function handleSceneTapDown(scene, canvas, sx, sy, onInfo = null) {
+export function handleSceneTapDown(scene, canvas, sx, sy, onInfo = null, pad = 6) {
   if (!scene) return false;
   scene._pressHome = null;
-  const hit = hitTap(scene, canvas, sx, sy);
+  const hit = hitTap(scene, canvas, sx, sy, pad);
   if (!hit) {
     scene._pressTap = null;
     scene._pressTapT = 0;
@@ -132,10 +145,10 @@ export function handleSceneTapUp(scene) {
  * ③ 其它可点击物体（非可拖动类）：立即触发 + 长按（旧行为）。
  * 落在滴管玻璃段但玩家太远 / 无容器等 → 未命中（不滴也不拖）。
  */
-export function handleScenePressDown(scene, canvas, sx, sy, onInfo = null) {
+export function handleScenePressDown(scene, canvas, sx, sy, onInfo = null, pad = 6) {
   if (!scene) return false;
   scene._pressHome = null;
-  const hit = hitTap(scene, canvas, sx, sy);
+  const hit = hitTap(scene, canvas, sx, sy, pad);
   if (!hit) {
     scene._pressCand = null;
     onInfo?.({ type: 'miss', world: screenToWorld(scene, canvas, sx, sy) });
@@ -160,7 +173,7 @@ export function handleScenePressDown(scene, canvas, sx, sy, onInfo = null) {
   // ③ 其它可点击物体（非可拖动物）：立即触发 + 长按（旧行为）
   scene._pressCand = null;
   if (typeof hit.obj.onTap === 'function' && !hit.obj.isDraggable) {
-    return handleSceneTapDown(scene, canvas, sx, sy, onInfo);
+    return handleSceneTapDown(scene, canvas, sx, sy, onInfo, pad);
   }
   onInfo?.({ type: 'miss', world: hit.world });
   return false;
@@ -224,12 +237,12 @@ export function handleScenePressMove(scene, canvas, sx, sy) {
 
 /** 抬起：快速单击胶头 = 滴一滴（长按/液下吸取已在 stepPressTap 觉醒）；
  *  玻璃段候选不滴（松开即完成，仅拖动会移动位置）；结束一切按住状态 */
-export function handleScenePressUp(scene, canvas = null) {
+export function handleScenePressUp(scene, canvas = null, pad = 6) {
   if (!scene) return;
   const c = scene._pressCand;
   if (c && c.mode === 'bulb' && !c.moved && c.downT < CFG.item.dripArmDelay && canvas) {
     scene._pressCand = null;
-    handleSceneTapDown(scene, canvas, c.startX, c.startY); // 单击：在按下位置滴一滴
+    handleSceneTapDown(scene, canvas, c.startX, c.startY, null, pad); // 单击：在按下位置滴一滴
   }
   scene._pressCand = null;
   scene._drag = null;

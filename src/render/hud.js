@@ -11,7 +11,8 @@ import { solutionColor } from './liquidrender.js';
 import { CFG } from '../core/config.js';
 import { GasColumn } from '../objects/gascolumn.js';
 import { Block } from '../objects/block.js';
-import { inventorySlotRects } from '../level/click.js';
+import { inventorySlotRects, uiMargins } from '../level/click.js';
+import { joyGeom, touchButtonRects } from '../core/touch.js';
 
 /** 质量短格式：1.2g / 0.30g / 12g（空气计百分比旁同显质量） */
 function fmtMass(m) {
@@ -57,7 +58,132 @@ export class Hud {
     if (scene.debugMode) this.hoverPanel(ctx, scene, W, H);
     this.tipButton(ctx, W, H, time);
     this.notice(ctx, scene, W, H, time);
+    this.touchControls(ctx, scene, W, H, time);
+    this.rotateHint(ctx, scene, W, H);
     this.overlay(ctx, scene, W, H);
+    ctx.restore();
+  }
+
+  // ---- 移动端触控（摇杆 + 右下按钮；仅触屏设备绘制） ----
+  touchControls(ctx, scene, W, H, time) {
+    const ui = scene._touchUI;
+    if (!ui || !ui.enabled()) return;
+    const touch = ui.insets;
+    ctx.save();
+    // —— 左下：半透明半圆摇杆基座（直径贴底边）——
+    const g = joyGeom(W, H, touch);    ctx.beginPath();
+    ctx.arc(g.cx, g.cy, g.R, Math.PI, 0); // 上半圆
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(255,255,255,0.07)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(232,184,75,0.32)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // 5 向刻度（上/左上/右上/左/右），激活方向高亮
+    const TICKS = [
+      { ux: 0, uy: -1, on: () => ui.joy && ui.joy.dir.jump && !ui.joy.dir.left && !ui.joy.dir.right },
+      { ux: -0.7071, uy: -0.7071, on: () => ui.joy && ui.joy.dir.jump && ui.joy.dir.left },
+      { ux: 0.7071, uy: -0.7071, on: () => ui.joy && ui.joy.dir.jump && ui.joy.dir.right },
+      { ux: -1, uy: 0, on: () => ui.joy && ui.joy.dir.left && !ui.joy.dir.jump },
+      { ux: 1, uy: 0, on: () => ui.joy && ui.joy.dir.right && !ui.joy.dir.jump },
+    ];
+    for (const t of TICKS) {
+      const tx = g.cx + t.ux * (g.R - 11);
+      const ty = g.cy + t.uy * (g.R - 11);
+      const active = t.on();
+      ctx.beginPath();
+      ctx.arc(tx, ty, active ? 5 : 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = active ? 'rgba(255,215,106,0.9)' : 'rgba(232,184,75,0.35)';
+      ctx.fill();
+    }
+    // 摇杆球（吸附位置；未触摸时居中淡显）
+    const ox = ui.joy ? ui.joy.sx : 0;
+    const oy = ui.joy ? ui.joy.sy : 0;
+    ctx.beginPath();
+    ctx.arc(g.cx + ox, g.cy + oy, 34, 0, Math.PI * 2);
+    ctx.fillStyle = ui.joy ? 'rgba(255,255,255,0.30)' : 'rgba(255,255,255,0.12)';
+    ctx.fill();
+    ctx.strokeStyle = ui.joy ? 'rgba(255,215,106,0.85)' : 'rgba(232,184,75,0.4)';
+    ctx.lineWidth = ui.joy ? 2 : 1.2;
+    ctx.stroke();
+    // —— 右下：Q/⇧/C/X 四键（按住=长按语义同键盘；无玩家场景不画）——
+    if (scene.player) {
+      const LABELS = { grab: ['C', '拾取'], use: ['X', '倒出'], collect: ['Q', '收集'], place: ['⇧', '放置'] };
+      for (const r of ui.buttonRects()) {
+        const [glyph, cap] = LABELS[r.key] ?? ['', ''];
+        const down = ui.isPressed(r.key);
+        ctx.save();
+        rr(ctx, r.x, r.y, r.size, r.size, 14);
+        const gr = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.size);
+        gr.addColorStop(0, down ? 'rgba(90,64,20,0.95)' : 'rgba(38,32,74,0.88)');
+        gr.addColorStop(1, down ? 'rgba(48,32,10,0.95)' : 'rgba(14,11,36,0.88)');
+        ctx.fillStyle = gr;
+        ctx.fill();
+        ctx.strokeStyle = down ? 'rgba(255,215,106,0.95)' : 'rgba(232,184,75,0.45)';
+        ctx.lineWidth = down ? 2 : 1.2;
+        if (down) {
+          ctx.shadowColor = 'rgba(255,215,106,0.8)';
+          ctx.shadowBlur = 12;
+        }
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = down ? '#fff6d8' : '#ffe9b0';
+        ctx.font = 'bold 17px "Segoe UI", sans-serif';
+        ctx.fillText(glyph, r.x + r.size / 2, r.y + r.size / 2 + 2);
+        ctx.fillStyle = down ? '#ffd76a' : 'rgba(255,233,176,0.62)';
+        ctx.font = '9.5px "Segoe UI", "Microsoft YaHei", sans-serif';
+        ctx.fillText(cap, r.x + r.size / 2, r.y + r.size - 9);
+        ctx.restore();
+      }
+    }
+    ctx.restore();
+  }
+
+  /** 竖屏提示（移动端）：半透明压暗 + 手机旋转图标 + 文案（游戏照常运行） */
+  rotateHint(ctx, scene, W, H) {
+    const ui = scene._touchUI;
+    if (!ui || !ui.isPortrait()) return;
+    ctx.save();
+    ctx.fillStyle = 'rgba(6,5,20,0.82)';
+    ctx.fillRect(0, 0, W, H);
+    const cx = W / 2;
+    const cy = H / 2;
+    ctx.translate(cx, cy);
+    ctx.rotate(Math.PI / 2); // 手机框画成"横过来的手机 + 箭头"
+    // 手机机身
+    rr(ctx, -34, -58, 68, 116, 12);
+    ctx.strokeStyle = '#e8b84b';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, -44, 4, 0, Math.PI * 2);
+    ctx.fillStyle = '#e8b84b';
+    ctx.fill();
+    ctx.rotate(0.62);
+    // 旋转箭头（弧 + 箭头尖）
+    ctx.beginPath();
+    ctx.arc(0, 0, 88, -0.4, 2.4);
+    ctx.strokeStyle = 'rgba(232,184,75,0.55)';
+    ctx.lineWidth = 7;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+    const fx = 88 * Math.cos(2.4);
+    const fy = 88 * Math.sin(2.4);
+    ctx.beginPath();
+    ctx.moveTo(fx - 4, fy + 16);
+    ctx.lineTo(fx + 14, fy + 3);
+    ctx.lineTo(fx + 6, fy - 14);
+    ctx.stroke();
+    ctx.resetTransform();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffd76a';
+    ctx.font = 'bold 20px "Segoe UI", "Microsoft YaHei", sans-serif';
+    ctx.fillText('请旋转设备', cx, cy + 68);
+    ctx.fillStyle = '#9fb2c8';
+    ctx.font = '13px "Segoe UI", "Microsoft YaHei", sans-serif';
+    ctx.fillText('横屏游玩体验更佳', cx, cy + 92);
     ctx.restore();
   }
 
@@ -553,7 +679,7 @@ export class Hud {
   // ---- 物品栏（宝石槽）：装物品的格子放大 + 内容物溶质显示 + 获取弹跳 ----
   inventory(ctx, p, W, H, time) {
     const slots = p.inventory.slots;
-    const rects = inventorySlotRects(W, H, slots);
+    const rects = inventorySlotRects(W, H, slots, uiMargins(this.scene));
     if (!this._pop) this._pop = {}; // 物品格弹跳计时 {i:{sig,t}}
     let minTop = Infinity;
     for (let i = 0; i < rects.length; i++) {
@@ -947,7 +1073,8 @@ export class Hud {
     ctx.fillText(win ? '通关！' : '死亡', cx, cy + 58);
     ctx.fillStyle = '#e8d8b0';
     ctx.font = '15px "Segoe UI", sans-serif';
-    ctx.fillText('按 R 重开', cx, cy + 90);
+    const touch = scene._touchUI && scene._touchUI.enabled();
+    ctx.fillText(touch ? '轻触屏幕重新开始' : '按 R 重开', cx, cy + 90);
     ctx.textAlign = 'left';
     ctx.restore();
   }

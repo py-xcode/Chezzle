@@ -281,15 +281,19 @@ const L = new Chezzle.LevelBuilder(canvas, { worldW: 3000, worldH: 800 });
 L
   .debugmode()
   .floor(536, 732, 1480, 200, { id: 'floor2' })
-  .pool(1148, 564, 419, 164, { volume: 200, solutes: {"CuSO4":50}, id: 'pool3' })
+  .pool(2277, 533, 419, 164, { volume: 200, solutes: {"HCl":50}, id: 'pool3' })
   .block(1849, 309, { substance: 'K', w: 110, h: 115, id: 'block2' })
-  .blastlamp(735, 686, { autoOn: true, highTemp: true, id: 'blastlamp1' })
-  .dropper(1244, 385, { substance: 'NaOH', capacity: 50, drop: 0.5, id: 'dropper1' })
+  .dropper(1033, 575, { substance: 'Na2CO3', capacity: 50, drop: 0.5, liquid: 0, id: 'dropper1' })
+  .pool(498, 662, 397, 75, { volume: 200, solutes: {"CaCrO4":50}, id: 'pool4' })
+  .pool(1724, 656, 352, 57, { volume: 1000, solutes: {"HCl":50}, id: 'pool6' })
+  .dropper(633, 575, { substance: 'AgNO3', capacity: 50, drop: 0.5, id: 'dropper2' })
+  .player(916, 583, { substance: 'NaOH', mass: 30, id: 'player1' })
+  .beaker(916, 404, 72, 73, { volume: 200, solutes: {"CuSO4":50}, id: 'beaker1' })
+  .gasbottle(1086, 656, { gases: {}, id: 'gasbottle1' })
+  .block(1851, 509, { substance: 'Zn', w: 110, h: 115, id: 'block3' })
 ;
 
 const scene = L.build();
-scene.byId['blastlamp1'].addPrecipitate('Fe2O3', 10);
-scene.byId['blastlamp1'].addPrecipitate('Al', 10);
 
 // ⚡ 接线（示例，按需取消注释）：
 // scene.byId['sw'].onOpen(() => scene.byId['lamp'].ignite());

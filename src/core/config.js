@@ -59,6 +59,17 @@ export const CFG = {
   placeLampRange: 120, // px（放置沉淀到灯上的半径）
   inventory: { slots: 5, capacity: 100, slotPx: 46, itemSlotPx: 58 }, // 物品格在 HUD 中放大（装烧杯/滴管/集气瓶看得清）
 
+  // 移动端（触屏/小屏；桌面 fine-pointer 完全不受影响）
+  touch: {
+    viewH: 560,    // 移动端相机视野高度（世界坐标；宽度按屏幕比例推出——玩家更大更清晰）
+    joyR: 105,     // 摇杆基座半径（px）
+    joyDead: 0.22, // 摇杆死区（半径比例；死区内不触发任何方向）
+    horizDead: 0.14, // 水平方向死区（半径比例：小幅下倾/抖动不会误触左右）
+    btnSize: 58,   // 右下状态按钮边长（px）
+    btnGap: 10,    // 按钮间距
+    pad: 10,       // 控件到屏幕边距（安全区之外再留）
+  },
+
   doorWinRadius: 80, // px
   worldMargin: 200, // px（出界判定）
 

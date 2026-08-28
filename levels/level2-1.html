@@ -18,8 +18,7 @@ const canvas = document.getElementById('game');
 canvas.width = 1100;
 canvas.height = 700;
 const L = new Chezzle.LevelBuilder(canvas, { worldW: 1500, worldH: 800 });
-L
-  .debugmode()
+L.debugmode()
   .floor(16, 703, 296, 50, { id: 'floor1' })
   .player(45, 580, { substance: 'Fe2O3', mass: 30, id: 'player1' })
   .blastlamp(182, 665, { autoOn: true, highTemp: true, id: 'blastlamp1' })

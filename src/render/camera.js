@@ -8,6 +8,7 @@ export class Camera {
   constructor({ viewW = 1000, viewH = 800, worldW = 1000, worldH = 800 } = {}) {
     this.viewW = viewW;
     this.viewH = viewH;
+    this.mobileViewH = 0; // 移动端视野高度（0 = 桌面默认）；由 touchui 按设备设置
     this.worldW = worldW;
     this.worldH = worldH;
     this._shake = 0; // 屏幕震动强度（px），每帧衰减
@@ -30,12 +31,20 @@ export class Camera {
   /**
    * 计算缩放与屏幕偏移。focus 为可选跟随目标（{x,y,w,h}，通常是玩家）。
    * 世界 ≤ 视口时居中显示整个世界；世界 > 视口时跟随 focus 滚动（钳制在世界内）。
+   * 移动端（mobileViewH>0 且横屏）：高度按 mobileViewH 收窄 → 世界内容按屏幕
+   * 比例变宽（跟随玩家），玩家在手机上不再缩成小点。
    */
   compute(vw, vh, focus = null) {
-    const scale = Math.min(vw / this.viewW, vh / this.viewH);
+    let viewW = this.viewW;
+    let viewH = this.viewH;
+    if (this.mobileViewH > 0 && vw > 0 && vh > 0 && vh < vw) {
+      viewH = this.mobileViewH;
+      viewW = Math.max(1, viewH * (vw / vh));
+    }
+    const scale = Math.min(vw / viewW, vh / viewH);
     // 实际显示的世界窗口（单位：世界坐标）
-    const vx = Math.min(this.worldW, this.viewW);
-    const vy = Math.min(this.worldH, this.viewH);
+    const vx = Math.min(this.worldW, viewW);
+    const vy = Math.min(this.worldH, viewH);
     // 窗口原点 ox, oy
     let ox;
     let oy;
