@@ -6,7 +6,7 @@
 // ============================================================================
 
 import { THEME, rr } from './theme.js';
-import { hudTopOffset, inventorySlotRects, uiMargins } from '../level/click.js';
+import { hudTopOffset, inventorySlotRects, uiMargins, touchInsetsOf } from '../level/click.js';
 import { joyGeom, touchButtonRects } from '../core/touch.js';
 
 /** HUD 常驻面板在画布坐标上的占位矩形（标签/悬浮物的避让依据，保守取整）。
@@ -14,12 +14,15 @@ import { joyGeom, touchButtonRects } from '../core/touch.js';
 export function hudOccluders(scene, W, H) {
   const rects = [];
   if (!scene || scene.overview) return rects; // 鸟瞰：HUD 只剩顶栏小按钮
+  const ins = touchInsetsOf(scene);
+  const left = ins.left || 0;
+  const right = ins.right || 0;
   const top = hudTopOffset(scene);
-  // 右上按钮排（⛶/鸟瞰/提示）
-  rects.push({ x: W - 226, y: top - 6, w: 218, h: 52, weight: 2 });
+  // 右上按钮排（⛶/鸟瞰/提示；刘海横屏时让出右缘安全区）
+  rects.push({ x: W - right - 226, y: top - 6, w: 218, h: 52, weight: 2 });
   if (scene.player) {
     // 左上信息卡
-    rects.push({ x: 6, y: top - 6, w: 292, h: 216, weight: 2 });
+    rects.push({ x: 6 + left, y: top - 6, w: 292, h: 216, weight: 2 });
     // 右下整块：物品栏 + 触屏按钮块 + 选中物品面板
     const inv = scene.player.inventory;
     if (inv && Array.isArray(inv.slots) && inv.slots.length) {
@@ -59,11 +62,21 @@ function overlapArea(a, b) {
  * @param rect 标签盒（画布坐标，原位）
  * @returns { dx, dy } 屏幕像素偏移（应转回世界偏移后应用）
  */
-export function labelPlacement(ctx, scene, rect) {
+// 落点粘性记忆（key → 上次偏移）：走路时相机移动，标签在面板边缘会一帧挪一帧
+// 回——记住上次的落点并给粘性加分，只有明显更优才换位。tick 老化防泄漏。
+const _lastPlace = new Map();
+let _placeTick = 0;
+
+export function labelPlacement(ctx, scene, rect, key = null) {
+  _placeTick++;
   const W = ctx.canvas.width;
   const H = ctx.canvas.height;
   const occ = hudOccluders(scene, W, H);
-  if (!occ.length) return { dx: 0, dy: 0 };
+  const prev = key ? _lastPlace.get(key) : null;
+  if (!occ.length) {
+    if (prev && (prev.dx || prev.dy)) _lastPlace.delete(key);
+    return { dx: 0, dy: 0 };
+  }
   const area = rect.w * rect.h;
   const cx0 = rect.x + rect.w / 2;
   const cy0 = rect.y + rect.h / 2;
@@ -77,8 +90,10 @@ export function labelPlacement(ctx, scene, rect) {
     if (r.y < 4) oob += 4 - r.y;
     if (r.x + r.w > W - 4) oob += r.x + r.w - (W - 4);
     if (r.y + r.h > H - 4) oob += r.y + r.h - (H - 4);
-    // 挪得越远越不优先（贴着锚点的原位永远最优先）
-    return ov + oob * 20 + Math.hypot(dx, dy) * 0.35;
+    // 挪得越远越不优先（贴着锚点的原位永远最优先）；与上次落点一致 → 粘性加分
+    let sc = ov + oob * 20 + Math.hypot(dx, dy) * 0.35;
+    if (prev && Math.abs(dx - prev.dx) <= 2 && Math.abs(dy - prev.dy) <= 2) sc -= 80;
+    return sc;
   };
 
   // 候选：原位 → 竖直翻/远移 → 左右半宽/全宽 → 斜向组合
@@ -125,6 +140,12 @@ export function labelPlacement(ctx, scene, rect) {
     const sc = score(r, dx, dy);
     if (!best || sc < best.sc) best = { sc, dx, dy, r };
   }
+  if (key) {
+    _lastPlace.set(key, { dx: best.dx, dy: best.dy, tick: _placeTick });
+    if (_lastPlace.size > 96) {
+      for (const [k, v] of _lastPlace) if (_placeTick - v.tick > 240) _lastPlace.delete(k);
+    }
+  }
   return { dx: best.dx, dy: best.dy };
 }
 
@@ -151,7 +172,7 @@ export function renderFormula(ctx, x, y, text, opts = {}) {
     const sx = m.a * wx + m.c * wy + m.e;
     const sy = m.b * wx + m.d * wy + m.f;
     const rect = { x: sx, y: sy, w: w * s, h: (size + 7) * s };
-    const { dx, dy } = labelPlacement(ctx, opts.scene, rect);
+    const { dx, dy } = labelPlacement(ctx, opts.scene, rect, opts.id);
     if (dx || dy) {
       x += dx / s;
       y += dy / s;

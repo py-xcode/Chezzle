@@ -348,7 +348,7 @@ export class TouchUI {
     }
     // ⓪ 鸟瞰模式：返回按钮 = 退出；其余触点进手势管线（1指平移 / 2指捏合缩放）
     if (scene.overview) {
-      const b = overviewButtonRect(this.canvas.width, hudTopOffset(scene));
+      const b = overviewButtonRect(this.canvas.width, hudTopOffset(scene), (scene._touchUI && scene._touchUI.insets.right) || 0);
       if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
         scene.toggleOverview();
         return 'ui';

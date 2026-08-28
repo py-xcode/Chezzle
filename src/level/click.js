@@ -38,16 +38,23 @@ export function hudTopOffset(scene) {
   return 10;
 }
 
-// ---- 顶部按钮几何（HUD 渲染与点击命中共用；top 缺省 10 = 桌面） --------------
+/** 触屏端的安全区 insets；桌面/未启用 → 全 0（刘海横屏时 left/right 才有值） */
+export function touchInsetsOf(scene) {
+  const t = scene && scene._touchUI;
+  if (t && typeof t.enabled === 'function' && t.enabled()) return t.insets || {};
+  return {};
+}
+
+// ---- 顶部按钮几何（HUD 渲染与点击命中共用；top 缺省 10 = 桌面，right = 安全区右缘）--
 
 /** 鸟瞰按钮（提示按钮左侧；双端显示）：返回 {x,y,w,h} */
-export function overviewButtonRect(W, top = 10) {
-  return { x: W - 158, y: top, w: 72, h: 34 };
+export function overviewButtonRect(W, top = 10, right = 0) {
+  return { x: W - right - 158, y: top, w: 72, h: 34 };
 }
 
 /** 全屏按钮（仅触屏端显示，图标 ⛶）：在鸟瞰按钮左侧 */
-export function fullscreenButtonRect(W, top = 10) {
-  return { x: W - 214, y: top, w: 52, h: 34 };
+export function fullscreenButtonRect(W, top = 10, right = 0) {
+  return { x: W - right - 214, y: top, w: 52, h: 34 };
 }
 
 function inRect(r, sx, sy) {
@@ -118,9 +125,10 @@ function dist(a, b) {
 export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   if (!scene) return false;
   const top = hudTopOffset(scene);
+  const right = touchInsetsOf(scene).right || 0;
   // 0) 鸟瞰模式：只认"返回"按钮（暂停态；未中 → 交给鸟瞰拖动/缩放管线）
   if (scene.overview) {
-    if (inRect(overviewButtonRect(canvas.width, top), sx, sy)) {
+    if (inRect(overviewButtonRect(canvas.width, top, right), sx, sy)) {
       scene.toggleOverview();
       onInfo?.({ type: 'overview-exit' });
     }
@@ -129,7 +137,7 @@ export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   // 1) 全屏按钮（仅触屏端显示；click/触点都在用户手势内，可请求全屏）。
   //    老设备/浏览器不支持元素全屏 API → 明确提示（不静默失效）
   if (scene._touchUI && typeof scene._touchUI.enabled === 'function' && scene._touchUI.enabled()) {
-    if (inRect(fullscreenButtonRect(canvas.width, top), sx, sy)) {
+    if (inRect(fullscreenButtonRect(canvas.width, top, right), sx, sy)) {
       if (fullscreenSupported()) toggleFullscreen();
       else pushNotice(scene, '此浏览器不支持全屏');
       onInfo?.({ type: 'fullscreen' });
@@ -137,13 +145,13 @@ export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
     }
   }
   // 2) 鸟瞰按钮（双端）
-  if (inRect(overviewButtonRect(canvas.width, top), sx, sy)) {
+  if (inRect(overviewButtonRect(canvas.width, top, right), sx, sy)) {
     scene.toggleOverview();
     onInfo?.({ type: 'overview' });
     return true;
   }
   // 3) 提示按钮（右上；hud.tipButton 同几何：top..top+34）
-  if (sx > canvas.width - 84 && sx < canvas.width - 8 && sy > top && sy < top + 34) {
+  if (sx > canvas.width - right - 84 && sx < canvas.width - right - 8 && sy > top && sy < top + 34) {
     if (hud) hud.showTip = !hud.showTip;
     onInfo?.({ type: 'tip' });
     return true;

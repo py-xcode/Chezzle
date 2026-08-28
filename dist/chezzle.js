@@ -6912,7 +6912,7 @@ class Container extends Obj {
       }
       if (hasIndicator) parts.push(`pH=${this.solution.pH().toFixed(1)}`);
     }
-    if (parts.length) renderFormula(ctx, this.x + this.w / 2, this.y + this.h + 14, parts.join(' + '), { scene: opts.scene });
+    if (parts.length) renderFormula(ctx, this.x + this.w / 2, this.y + this.h + 14, parts.join(' + '), { scene: opts.scene, id: this.id + ':c' });
   }
 
   get material() {
@@ -7368,7 +7368,7 @@ exports.Container = Container;
 // ============================================================================
 
 const { THEME, rr } = __require('src/render/theme.js');;
-const { hudTopOffset, inventorySlotRects, uiMargins } = __require('src/level/click.js');;
+const { hudTopOffset, inventorySlotRects, uiMargins, touchInsetsOf } = __require('src/level/click.js');;
 const { joyGeom, touchButtonRects } = __require('src/core/touch.js');;
 
 /** HUD 常驻面板在画布坐标上的占位矩形（标签/悬浮物的避让依据，保守取整）。
@@ -7376,12 +7376,15 @@ const { joyGeom, touchButtonRects } = __require('src/core/touch.js');;
 function hudOccluders(scene, W, H) {
   const rects = [];
   if (!scene || scene.overview) return rects; // 鸟瞰：HUD 只剩顶栏小按钮
+  const ins = touchInsetsOf(scene);
+  const left = ins.left || 0;
+  const right = ins.right || 0;
   const top = hudTopOffset(scene);
-  // 右上按钮排（⛶/鸟瞰/提示）
-  rects.push({ x: W - 226, y: top - 6, w: 218, h: 52, weight: 2 });
+  // 右上按钮排（⛶/鸟瞰/提示；刘海横屏时让出右缘安全区）
+  rects.push({ x: W - right - 226, y: top - 6, w: 218, h: 52, weight: 2 });
   if (scene.player) {
     // 左上信息卡
-    rects.push({ x: 6, y: top - 6, w: 292, h: 216, weight: 2 });
+    rects.push({ x: 6 + left, y: top - 6, w: 292, h: 216, weight: 2 });
     // 右下整块：物品栏 + 触屏按钮块 + 选中物品面板
     const inv = scene.player.inventory;
     if (inv && Array.isArray(inv.slots) && inv.slots.length) {
@@ -7421,11 +7424,21 @@ function overlapArea(a, b) {
  * @param rect 标签盒（画布坐标，原位）
  * @returns { dx, dy } 屏幕像素偏移（应转回世界偏移后应用）
  */
-function labelPlacement(ctx, scene, rect) {
+// 落点粘性记忆（key → 上次偏移）：走路时相机移动，标签在面板边缘会一帧挪一帧
+// 回——记住上次的落点并给粘性加分，只有明显更优才换位。tick 老化防泄漏。
+const _lastPlace = new Map();
+let _placeTick = 0;
+
+function labelPlacement(ctx, scene, rect, key = null) {
+  _placeTick++;
   const W = ctx.canvas.width;
   const H = ctx.canvas.height;
   const occ = hudOccluders(scene, W, H);
-  if (!occ.length) return { dx: 0, dy: 0 };
+  const prev = key ? _lastPlace.get(key) : null;
+  if (!occ.length) {
+    if (prev && (prev.dx || prev.dy)) _lastPlace.delete(key);
+    return { dx: 0, dy: 0 };
+  }
   const area = rect.w * rect.h;
   const cx0 = rect.x + rect.w / 2;
   const cy0 = rect.y + rect.h / 2;
@@ -7439,8 +7452,10 @@ function labelPlacement(ctx, scene, rect) {
     if (r.y < 4) oob += 4 - r.y;
     if (r.x + r.w > W - 4) oob += r.x + r.w - (W - 4);
     if (r.y + r.h > H - 4) oob += r.y + r.h - (H - 4);
-    // 挪得越远越不优先（贴着锚点的原位永远最优先）
-    return ov + oob * 20 + Math.hypot(dx, dy) * 0.35;
+    // 挪得越远越不优先（贴着锚点的原位永远最优先）；与上次落点一致 → 粘性加分
+    let sc = ov + oob * 20 + Math.hypot(dx, dy) * 0.35;
+    if (prev && Math.abs(dx - prev.dx) <= 2 && Math.abs(dy - prev.dy) <= 2) sc -= 80;
+    return sc;
   };
 
   // 候选：原位 → 竖直翻/远移 → 左右半宽/全宽 → 斜向组合
@@ -7487,6 +7502,12 @@ function labelPlacement(ctx, scene, rect) {
     const sc = score(r, dx, dy);
     if (!best || sc < best.sc) best = { sc, dx, dy, r };
   }
+  if (key) {
+    _lastPlace.set(key, { dx: best.dx, dy: best.dy, tick: _placeTick });
+    if (_lastPlace.size > 96) {
+      for (const [k, v] of _lastPlace) if (_placeTick - v.tick > 240) _lastPlace.delete(k);
+    }
+  }
   return { dx: best.dx, dy: best.dy };
 }
 
@@ -7513,7 +7534,7 @@ function renderFormula(ctx, x, y, text, opts = {}) {
     const sx = m.a * wx + m.c * wy + m.e;
     const sy = m.b * wx + m.d * wy + m.f;
     const rect = { x: sx, y: sy, w: w * s, h: (size + 7) * s };
-    const { dx, dy } = labelPlacement(ctx, opts.scene, rect);
+    const { dx, dy } = labelPlacement(ctx, opts.scene, rect, opts.id);
     if (dx || dy) {
       x += dx / s;
       y += dy / s;
@@ -7580,16 +7601,23 @@ function hudTopOffset(scene) {
   return 10;
 }
 
-// ---- 顶部按钮几何（HUD 渲染与点击命中共用；top 缺省 10 = 桌面） --------------
+/** 触屏端的安全区 insets；桌面/未启用 → 全 0（刘海横屏时 left/right 才有值） */
+function touchInsetsOf(scene) {
+  const t = scene && scene._touchUI;
+  if (t && typeof t.enabled === 'function' && t.enabled()) return t.insets || {};
+  return {};
+}
+
+// ---- 顶部按钮几何（HUD 渲染与点击命中共用；top 缺省 10 = 桌面，right = 安全区右缘）--
 
 /** 鸟瞰按钮（提示按钮左侧；双端显示）：返回 {x,y,w,h} */
-function overviewButtonRect(W, top = 10) {
-  return { x: W - 158, y: top, w: 72, h: 34 };
+function overviewButtonRect(W, top = 10, right = 0) {
+  return { x: W - right - 158, y: top, w: 72, h: 34 };
 }
 
 /** 全屏按钮（仅触屏端显示，图标 ⛶）：在鸟瞰按钮左侧 */
-function fullscreenButtonRect(W, top = 10) {
-  return { x: W - 214, y: top, w: 52, h: 34 };
+function fullscreenButtonRect(W, top = 10, right = 0) {
+  return { x: W - right - 214, y: top, w: 52, h: 34 };
 }
 
 function inRect(r, sx, sy) {
@@ -7660,9 +7688,10 @@ function dist(a, b) {
 function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   if (!scene) return false;
   const top = hudTopOffset(scene);
+  const right = touchInsetsOf(scene).right || 0;
   // 0) 鸟瞰模式：只认"返回"按钮（暂停态；未中 → 交给鸟瞰拖动/缩放管线）
   if (scene.overview) {
-    if (inRect(overviewButtonRect(canvas.width, top), sx, sy)) {
+    if (inRect(overviewButtonRect(canvas.width, top, right), sx, sy)) {
       scene.toggleOverview();
       onInfo?.({ type: 'overview-exit' });
     }
@@ -7671,7 +7700,7 @@ function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   // 1) 全屏按钮（仅触屏端显示；click/触点都在用户手势内，可请求全屏）。
   //    老设备/浏览器不支持元素全屏 API → 明确提示（不静默失效）
   if (scene._touchUI && typeof scene._touchUI.enabled === 'function' && scene._touchUI.enabled()) {
-    if (inRect(fullscreenButtonRect(canvas.width, top), sx, sy)) {
+    if (inRect(fullscreenButtonRect(canvas.width, top, right), sx, sy)) {
       if (fullscreenSupported()) toggleFullscreen();
       else pushNotice(scene, '此浏览器不支持全屏');
       onInfo?.({ type: 'fullscreen' });
@@ -7679,13 +7708,13 @@ function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
     }
   }
   // 2) 鸟瞰按钮（双端）
-  if (inRect(overviewButtonRect(canvas.width, top), sx, sy)) {
+  if (inRect(overviewButtonRect(canvas.width, top, right), sx, sy)) {
     scene.toggleOverview();
     onInfo?.({ type: 'overview' });
     return true;
   }
   // 3) 提示按钮（右上；hud.tipButton 同几何：top..top+34）
-  if (sx > canvas.width - 84 && sx < canvas.width - 8 && sy > top && sy < top + 34) {
+  if (sx > canvas.width - right - 84 && sx < canvas.width - right - 8 && sy > top && sy < top + 34) {
     if (hud) hud.showTip = !hud.showTip;
     onInfo?.({ type: 'tip' });
     return true;
@@ -7941,6 +7970,7 @@ function bindSceneClick(canvas, getScreenPos, getActive) {
 
 exports.screenToWorld = screenToWorld;
 exports.hudTopOffset = hudTopOffset;
+exports.touchInsetsOf = touchInsetsOf;
 exports.overviewButtonRect = overviewButtonRect;
 exports.fullscreenButtonRect = fullscreenButtonRect;
 exports.pushNotice = pushNotice;
@@ -8365,7 +8395,7 @@ class TouchUI {
     }
     // ⓪ 鸟瞰模式：返回按钮 = 退出；其余触点进手势管线（1指平移 / 2指捏合缩放）
     if (scene.overview) {
-      const b = overviewButtonRect(this.canvas.width, hudTopOffset(scene));
+      const b = overviewButtonRect(this.canvas.width, hudTopOffset(scene), (scene._touchUI && scene._touchUI.insets.right) || 0);
       if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
         scene.toggleOverview();
         return 'ui';
@@ -9115,7 +9145,7 @@ exports.startLoop = startLoop;
 // 几何约定：overviewButtonRect（HUD 渲染与命中共用）在 level/click.js。
 // ============================================================================
 
-const { overviewButtonRect, hudTopOffset } = __require('src/level/click.js');;
+const { overviewButtonRect, hudTopOffset, touchInsetsOf } = __require('src/level/click.js');;
 
 /**
  * 给画布绑定鸟瞰输入。
@@ -9153,7 +9183,7 @@ function bindOverviewInput(canvas, getActive) {
     const px = e.clientX - r.left;
     const py = e.clientY - r.top;
     // "返回"按钮：不进入拖动（click 事件负责切换）
-    const b = overviewButtonRect(canvas.width, hudTopOffset(scene));
+    const b = overviewButtonRect(canvas.width, hudTopOffset(scene), touchInsetsOf(scene).right || 0);
     if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) return;
     pan = { x: e.clientX, y: e.clientY };
   };
@@ -10347,7 +10377,7 @@ const { solutionColor } = __require('src/render/liquidrender.js');;
 const { CFG } = __require('src/core/config.js');;
 const { GasColumn } = __require('src/objects/gascolumn.js');;
 const { Block } = __require('src/objects/block.js');;
-const { inventorySlotRects, uiMargins, overviewButtonRect, fullscreenButtonRect, hudTopOffset } = __require('src/level/click.js');;
+const { inventorySlotRects, uiMargins, overviewButtonRect, fullscreenButtonRect, hudTopOffset, touchInsetsOf } = __require('src/level/click.js');;
 const { joyGeom, touchButtonRects } = __require('src/core/touch.js');;
 
 // 溯源 kind → 中文（调试悬停显示物体"为何存在"）
@@ -10408,9 +10438,10 @@ class Hud {
     this.debugPanel(ctx, scene, W, H, time);
     if (scene.debugMode) this.hoverPanel(ctx, scene, W, H);
     const top = hudTopOffset(scene);
-    this.viewButton(ctx, W, top);
-    if (this._isTouch()) this.fsButton(ctx, W, top);
-    this.tipButton(ctx, W, H, top);
+    const right = touchInsetsOf(scene).right || 0;
+    this.viewButton(ctx, W, top, right);
+    if (this._isTouch()) this.fsButton(ctx, W, top, right);
+    this.tipButton(ctx, W, H, top, right);
     this.notice(ctx, scene, W, H, time);
     this.touchControls(ctx, scene, W, H, time);
     this.rotateHint(ctx, scene, W, H);
@@ -10422,8 +10453,8 @@ class Hud {
   //      "返回选关"悬浮钮与 iOS 系统全屏关闭钮；渲染与命中同源）--------------
 
   /** 鸟瞰按钮（提示按钮左侧；桌面 V 键同效） */
-  viewButton(ctx, W, top = 10) {
-    const r = overviewButtonRect(W, top);
+  viewButton(ctx, W, top = 10, right = 0) {
+    const r = overviewButtonRect(W, top, right);
     ctx.save();
     rr(ctx, r.x, r.y, r.w, r.h, 9);
     const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
@@ -10445,8 +10476,8 @@ class Hud {
   }
 
   /** 全屏按钮（仅触屏端；图标 ⛶。首次触点已自动请求全屏，此按钮供随时切换） */
-  fsButton(ctx, W, top = 10) {
-    const r = fullscreenButtonRect(W, top);
+  fsButton(ctx, W, top = 10, right = 0) {
+    const r = fullscreenButtonRect(W, top, right);
     ctx.save();
     rr(ctx, r.x, r.y, r.w, r.h, 9);
     const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
@@ -10470,7 +10501,7 @@ class Hud {
   overviewUI(ctx, scene, W, H, time) {
     const top = hudTopOffset(scene);
     // 返回按钮（命中几何走 overviewButtonRect，点击/触点均可退出）
-    const r = overviewButtonRect(W, top);
+    const r = overviewButtonRect(W, top, touchInsetsOf(scene).right || 0);
     ctx.save();
     rr(ctx, r.x, r.y, r.w, r.h, 8);
     const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
@@ -11022,6 +11053,7 @@ class Hud {
   // 原桌面三张卡（玩家/组成/空气）竖排 + 移动端重复一套——统一成这一张：
   // 屏幕占用最小、信息不缺；移动端面板体按 CFG.touch.hudAlpha 降透明（文字不降）。
   playerPanelCompact(ctx, p, scene, time, top = 10) {
+    const x0 = 10 + (touchInsetsOf(scene).left || 0); // 刘海横屏：卡片让出左缘安全区
     const atm = scene.atmosphere;
     // 身体组成（多物质才显示，单物质=血量本身）
     const masses = p.grid ? p.grid.masses() : null;
@@ -11041,18 +11073,18 @@ class Hud {
     this._leftH = h; // 左上卡实际高度（调试模式"最近反应"面板的堆叠定位用）
     ctx.save();
     ctx.globalAlpha = this._isTouch() ? CFG.touch.hudAlpha : 1;
-    panel(ctx, 10, top, w, h, THEME.gold.deep, 12);
+    panel(ctx, x0, top, w, h, THEME.gold.deep, 12);
     ctx.restore();
     // 头部：血量药瓶 + 物质 + 体质
     const sub = getSubstance(p.substance);
     const color = sub?.solid?.[0] ?? '#7fe0ff';
     const ratio = p.maxHp ? Math.max(0, Math.min(1, p.hp / p.maxHp)) : 0;
-    this.vial(ctx, 24, top + 9, 30, 46, ratio, color, time);
-    clearText(ctx, p.substance, 66, top + 26, THEME.gold.text, 'bold 16px "Segoe UI", sans-serif');
-    clearText(ctx, `${p.hp.toFixed(1)} g 体质`, 66, top + 47, '#ffffff', 'bold 12.5px monospace');
+    this.vial(ctx, x0 + 14, top + 9, 30, 46, ratio, color, time);
+    clearText(ctx, p.substance, x0 + 56, top + 26, THEME.gold.text, 'bold 16px "Segoe UI", sans-serif');
+    clearText(ctx, `${p.hp.toFixed(1)} g 体质`, x0 + 56, top + 47, '#ffffff', 'bold 12.5px monospace');
     let y = top + 72;
     if (compRows) {
-      clearText(ctx, '身体组成', 20, y, 'rgba(255,233,176,0.85)', 'bold 10px "Segoe UI", sans-serif');
+      clearText(ctx, '身体组成', x0 + 10, y, 'rgba(255,233,176,0.85)', 'bold 10px "Segoe UI", sans-serif');
       y += 15;
       for (const [id, m] of entries.slice(0, compRows)) {
         const sc = getSubstance(id);
@@ -11064,17 +11096,17 @@ class Hud {
         }
         ctx.fillStyle = sc?.solid?.[0] ?? '#7fe0ff';
         ctx.beginPath();
-        ctx.arc(28, y + 3, 4, 0, Math.PI * 2);
+        ctx.arc(x0 + 18, y + 3, 4, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
-        clearText(ctx, id, 39, y + 7, isCore ? THEME.gold.text : '#dfe8f2', '10.5px monospace');
+        clearText(ctx, id, x0 + 29, y + 7, isCore ? THEME.gold.text : '#dfe8f2', '10.5px monospace');
         ctx.textAlign = 'right';
-        clearText(ctx, `${m.toFixed(1)}g`, w - 16, y + 7, '#9fb2c8', '10px monospace');
+        clearText(ctx, `${m.toFixed(1)}g`, x0 + w - 16, y + 7, '#9fb2c8', '10px monospace');
         ctx.textAlign = 'left';
         y += 17;
       }
       if (entries.length > compRows) {
-        clearText(ctx, `…另有 ${entries.length - compRows} 种`, 20, y + 6, '#9fb2c8', '10px monospace');
+        clearText(ctx, `…另有 ${entries.length - compRows} 种`, x0 + 10, y + 6, '#9fb2c8', '10px monospace');
         y += 13;
       }
       y += 2;
@@ -11084,12 +11116,12 @@ class Hud {
     const co2 = atm ? atm.fraction('CO2') * 100 : 0;
     const co2Mass = atm ? atm.mass('CO2') : 0;
     const co2Text = co2 >= 0.05 ? `${co2.toFixed(1)}%` : co2Mass > 1e-6 ? '<0.1%' : '0%';
-    clearText(ctx, `O2 ${o2.toFixed(1)}%`, 20, y + 6, '#aeeaff', 'bold 11px monospace');
-    clearText(ctx, `CO2 ${co2Text}`, 118, y + 6, '#ffe9b0', 'bold 11px monospace');
+    clearText(ctx, `O2 ${o2.toFixed(1)}%`, x0 + 10, y + 6, '#aeeaff', 'bold 11px monospace');
+    clearText(ctx, `CO2 ${co2Text}`, x0 + 108, y + 6, '#ffe9b0', 'bold 11px monospace');
     y += 16;
     // 预警气体行（有质量才显示）：色点 + 缩略列表
     if (extras.length) {
-      let gx = 20;
+      let gx = x0 + 10;
       for (const g of extras.slice(0, 3)) {
         const c = GAS_COLORS[g.id] ?? '#ffffff';
         ctx.fillStyle = c;
@@ -11250,7 +11282,7 @@ class Hud {
       ctx.font = 'bold 11px monospace';
       const w2 = ctx.measureText(comp).width;
       const bw = Math.max(w1, w2) + 24;
-      const bx = W - bw - 12; // 右对齐：贴物品栏右缘上方
+      const bx = W - (this._isTouch() ? (this.scene._touchUI.insets.right || 0) : 0) - bw - 12; // 右对齐：贴物品栏右缘上方
       let by = minTop - 56;
       // 触屏端：物品栏上方是 C/X/Q/⇧ 按钮块——面板再往上挪，不叠在按钮上
       if (this._isTouch()) {
@@ -11493,8 +11525,8 @@ class Hud {
   }
 
   // ---- 提示按钮 ----
-  tipButton(ctx, W, H, top = 10) {
-    const x = W - 82;
+  tipButton(ctx, W, H, top = 10, right = 0) {
+    const x = W - right - 82;
     const y = top;
     ctx.save();
     rr(ctx, x, y, 72, 34, 9);
@@ -11824,7 +11856,7 @@ class Block extends Obj {
     ctx.restore();
     if (this.formulaVisible) {
       const ids = this.grid.ids();
-      if (ids.length) renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.join(' + '), { scene: opts?.scene });
+      if (ids.length) renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.join(' + '), { scene: opts?.scene, id: this.id + ':b' });
     }
   }
 }
@@ -12081,7 +12113,7 @@ class Deposit extends Obj {
     ctx.stroke();
     ctx.restore();
     if (this.formulaVisible && ids.length) {
-      renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.join(' + '), { scene: opts?.scene });
+      renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.join(' + '), { scene: opts?.scene, id: this.id + ':d' });
     }
   }
 }

@@ -26,7 +26,7 @@ function sceneWith(opts = {}) {
     scene.addObject(new Player({ x: 500, y: 600, mass: 30, id: 'p1' }));
   }
   if (opts.touch) {
-    scene._touchUI = { enabled: () => true, insets: { top: 0, bottom: 0, left: 0, right: 0 } };
+    scene._touchUI = { enabled: () => true, insets: opts.insets || { top: 0, bottom: 0, left: 0, right: 0 } };
   }
   return scene;
 }
@@ -118,4 +118,39 @@ test('labelPlacement：轻微压边就近小挪，优先级贴原位', () => {
   const w = Math.min(moved.x + 120, topBar.x + topBar.w) - Math.max(moved.x, topBar.x);
   const h = Math.min(moved.y + 20, topBar.y + topBar.h) - Math.max(moved.y, topBar.y);
   assert.ok(!(w > 0 && h > 0), '脱离占位');
+});
+
+// ---- 4. 刘海横屏安全区：占位矩形让出左/右缘 ----------------------------------
+test('hudOccluders：刘海横屏 insets.left/right 把卡片与顶栏占位内推', () => {
+  const scene = sceneWith({ touch: true, insets: { top: 0, bottom: 21, left: 47, right: 47 } });
+  const occ = hudOccluders(scene, W, H);
+  // 顶栏按钮排右缘 ≤ W − 47 + 余量
+  const topBar = occ.find((r) => r.x >= W - 300 && r.w <= 240);
+  assert.ok(topBar, '找到顶栏占位');
+  assert.ok(topBar.x + topBar.w <= W - 47 + 10, `顶栏让出右缘：${topBar.x + topBar.w} ≤ ${W - 37}`);
+  // 信息卡左缘 ≥ 47
+  const card = occ.find((r) => r.x <= 70 && r.w >= 280);
+  assert.ok(card, '找到信息卡占位');
+  assert.ok(card.x >= 47, `卡片让出左缘：x=${card.x}`);
+});
+
+// ---- 5. 粘性：走路时标签不横跳 ------------------------------------------------
+test('labelPlacement 粘性：同 id 相邻两帧在面板边缘不来回换位', () => {
+  const scene = sceneWith();
+  const ctx = fakeCtx();
+  const occ = hudOccluders(scene, W, H);
+  // 顶栏按钮带下缘附近：基础位置每帧小幅横移（模拟相机跟随）
+  const topBar = occ.find((r) => r.x >= W - 300 && r.w <= 240);
+  let first = null;
+  for (let i = 0; i < 6; i++) {
+    const r = { x: topBar.x + 30 + (i % 2) * 6, y: topBar.y + topBar.h - 6, w: 120, h: 20 };
+    const p = labelPlacement(ctx, scene, r, 'block1:b');
+    if (first === null) first = p;
+    else {
+      assert.deepEqual(p, first, `第 ${i} 帧落点应与首次一致：${JSON.stringify(p)} vs ${JSON.stringify(first)}`);
+    }
+  }
+  // 不同 id 互不干扰
+  const other = labelPlacement(ctx, scene, { x: topBar.x + 30, y: topBar.y + topBar.h - 6, w: 120, h: 20 }, 'pool1:c');
+  assert.deepEqual(other, first, '不同标签同位置 → 同样落点');
 });

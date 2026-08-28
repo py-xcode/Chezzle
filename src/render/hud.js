@@ -13,7 +13,7 @@ import { solutionColor } from './liquidrender.js';
 import { CFG } from '../core/config.js';
 import { GasColumn } from '../objects/gascolumn.js';
 import { Block } from '../objects/block.js';
-import { inventorySlotRects, uiMargins, overviewButtonRect, fullscreenButtonRect, hudTopOffset } from '../level/click.js';
+import { inventorySlotRects, uiMargins, overviewButtonRect, fullscreenButtonRect, hudTopOffset, touchInsetsOf } from '../level/click.js';
 import { joyGeom, touchButtonRects } from '../core/touch.js';
 
 // 溯源 kind → 中文（调试悬停显示物体"为何存在"）
@@ -74,9 +74,10 @@ export class Hud {
     this.debugPanel(ctx, scene, W, H, time);
     if (scene.debugMode) this.hoverPanel(ctx, scene, W, H);
     const top = hudTopOffset(scene);
-    this.viewButton(ctx, W, top);
-    if (this._isTouch()) this.fsButton(ctx, W, top);
-    this.tipButton(ctx, W, H, top);
+    const right = touchInsetsOf(scene).right || 0;
+    this.viewButton(ctx, W, top, right);
+    if (this._isTouch()) this.fsButton(ctx, W, top, right);
+    this.tipButton(ctx, W, H, top, right);
     this.notice(ctx, scene, W, H, time);
     this.touchControls(ctx, scene, W, H, time);
     this.rotateHint(ctx, scene, W, H);
@@ -88,8 +89,8 @@ export class Hud {
   //      "返回选关"悬浮钮与 iOS 系统全屏关闭钮；渲染与命中同源）--------------
 
   /** 鸟瞰按钮（提示按钮左侧；桌面 V 键同效） */
-  viewButton(ctx, W, top = 10) {
-    const r = overviewButtonRect(W, top);
+  viewButton(ctx, W, top = 10, right = 0) {
+    const r = overviewButtonRect(W, top, right);
     ctx.save();
     rr(ctx, r.x, r.y, r.w, r.h, 9);
     const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
@@ -111,8 +112,8 @@ export class Hud {
   }
 
   /** 全屏按钮（仅触屏端；图标 ⛶。首次触点已自动请求全屏，此按钮供随时切换） */
-  fsButton(ctx, W, top = 10) {
-    const r = fullscreenButtonRect(W, top);
+  fsButton(ctx, W, top = 10, right = 0) {
+    const r = fullscreenButtonRect(W, top, right);
     ctx.save();
     rr(ctx, r.x, r.y, r.w, r.h, 9);
     const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
@@ -136,7 +137,7 @@ export class Hud {
   overviewUI(ctx, scene, W, H, time) {
     const top = hudTopOffset(scene);
     // 返回按钮（命中几何走 overviewButtonRect，点击/触点均可退出）
-    const r = overviewButtonRect(W, top);
+    const r = overviewButtonRect(W, top, touchInsetsOf(scene).right || 0);
     ctx.save();
     rr(ctx, r.x, r.y, r.w, r.h, 8);
     const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
@@ -688,6 +689,7 @@ export class Hud {
   // 原桌面三张卡（玩家/组成/空气）竖排 + 移动端重复一套——统一成这一张：
   // 屏幕占用最小、信息不缺；移动端面板体按 CFG.touch.hudAlpha 降透明（文字不降）。
   playerPanelCompact(ctx, p, scene, time, top = 10) {
+    const x0 = 10 + (touchInsetsOf(scene).left || 0); // 刘海横屏：卡片让出左缘安全区
     const atm = scene.atmosphere;
     // 身体组成（多物质才显示，单物质=血量本身）
     const masses = p.grid ? p.grid.masses() : null;
@@ -707,18 +709,18 @@ export class Hud {
     this._leftH = h; // 左上卡实际高度（调试模式"最近反应"面板的堆叠定位用）
     ctx.save();
     ctx.globalAlpha = this._isTouch() ? CFG.touch.hudAlpha : 1;
-    panel(ctx, 10, top, w, h, THEME.gold.deep, 12);
+    panel(ctx, x0, top, w, h, THEME.gold.deep, 12);
     ctx.restore();
     // 头部：血量药瓶 + 物质 + 体质
     const sub = getSubstance(p.substance);
     const color = sub?.solid?.[0] ?? '#7fe0ff';
     const ratio = p.maxHp ? Math.max(0, Math.min(1, p.hp / p.maxHp)) : 0;
-    this.vial(ctx, 24, top + 9, 30, 46, ratio, color, time);
-    clearText(ctx, p.substance, 66, top + 26, THEME.gold.text, 'bold 16px "Segoe UI", sans-serif');
-    clearText(ctx, `${p.hp.toFixed(1)} g 体质`, 66, top + 47, '#ffffff', 'bold 12.5px monospace');
+    this.vial(ctx, x0 + 14, top + 9, 30, 46, ratio, color, time);
+    clearText(ctx, p.substance, x0 + 56, top + 26, THEME.gold.text, 'bold 16px "Segoe UI", sans-serif');
+    clearText(ctx, `${p.hp.toFixed(1)} g 体质`, x0 + 56, top + 47, '#ffffff', 'bold 12.5px monospace');
     let y = top + 72;
     if (compRows) {
-      clearText(ctx, '身体组成', 20, y, 'rgba(255,233,176,0.85)', 'bold 10px "Segoe UI", sans-serif');
+      clearText(ctx, '身体组成', x0 + 10, y, 'rgba(255,233,176,0.85)', 'bold 10px "Segoe UI", sans-serif');
       y += 15;
       for (const [id, m] of entries.slice(0, compRows)) {
         const sc = getSubstance(id);
@@ -730,17 +732,17 @@ export class Hud {
         }
         ctx.fillStyle = sc?.solid?.[0] ?? '#7fe0ff';
         ctx.beginPath();
-        ctx.arc(28, y + 3, 4, 0, Math.PI * 2);
+        ctx.arc(x0 + 18, y + 3, 4, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
-        clearText(ctx, id, 39, y + 7, isCore ? THEME.gold.text : '#dfe8f2', '10.5px monospace');
+        clearText(ctx, id, x0 + 29, y + 7, isCore ? THEME.gold.text : '#dfe8f2', '10.5px monospace');
         ctx.textAlign = 'right';
-        clearText(ctx, `${m.toFixed(1)}g`, w - 16, y + 7, '#9fb2c8', '10px monospace');
+        clearText(ctx, `${m.toFixed(1)}g`, x0 + w - 16, y + 7, '#9fb2c8', '10px monospace');
         ctx.textAlign = 'left';
         y += 17;
       }
       if (entries.length > compRows) {
-        clearText(ctx, `…另有 ${entries.length - compRows} 种`, 20, y + 6, '#9fb2c8', '10px monospace');
+        clearText(ctx, `…另有 ${entries.length - compRows} 种`, x0 + 10, y + 6, '#9fb2c8', '10px monospace');
         y += 13;
       }
       y += 2;
@@ -750,12 +752,12 @@ export class Hud {
     const co2 = atm ? atm.fraction('CO2') * 100 : 0;
     const co2Mass = atm ? atm.mass('CO2') : 0;
     const co2Text = co2 >= 0.05 ? `${co2.toFixed(1)}%` : co2Mass > 1e-6 ? '<0.1%' : '0%';
-    clearText(ctx, `O2 ${o2.toFixed(1)}%`, 20, y + 6, '#aeeaff', 'bold 11px monospace');
-    clearText(ctx, `CO2 ${co2Text}`, 118, y + 6, '#ffe9b0', 'bold 11px monospace');
+    clearText(ctx, `O2 ${o2.toFixed(1)}%`, x0 + 10, y + 6, '#aeeaff', 'bold 11px monospace');
+    clearText(ctx, `CO2 ${co2Text}`, x0 + 108, y + 6, '#ffe9b0', 'bold 11px monospace');
     y += 16;
     // 预警气体行（有质量才显示）：色点 + 缩略列表
     if (extras.length) {
-      let gx = 20;
+      let gx = x0 + 10;
       for (const g of extras.slice(0, 3)) {
         const c = GAS_COLORS[g.id] ?? '#ffffff';
         ctx.fillStyle = c;
@@ -916,7 +918,7 @@ export class Hud {
       ctx.font = 'bold 11px monospace';
       const w2 = ctx.measureText(comp).width;
       const bw = Math.max(w1, w2) + 24;
-      const bx = W - bw - 12; // 右对齐：贴物品栏右缘上方
+      const bx = W - (this._isTouch() ? (this.scene._touchUI.insets.right || 0) : 0) - bw - 12; // 右对齐：贴物品栏右缘上方
       let by = minTop - 56;
       // 触屏端：物品栏上方是 C/X/Q/⇧ 按钮块——面板再往上挪，不叠在按钮上
       if (this._isTouch()) {
@@ -1159,8 +1161,8 @@ export class Hud {
   }
 
   // ---- 提示按钮 ----
-  tipButton(ctx, W, H, top = 10) {
-    const x = W - 82;
+  tipButton(ctx, W, H, top = 10, right = 0) {
+    const x = W - right - 82;
     const y = top;
     ctx.save();
     rr(ctx, x, y, 72, 34, 9);
