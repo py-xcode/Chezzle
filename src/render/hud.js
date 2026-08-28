@@ -73,6 +73,14 @@ const DEATH_RX = [
   '{sub}和{b}在异世界相遇',
   '{sub}被{b}制裁了',
 ];
+// 水中毒（玩家与水的反应致死——如活泼金属遇水；独立一类，文案最贴切）
+const DEATH_WATER = [
+  '{sub}水中毒了',
+  '{sub}泡了个要命的水澡（H2O）',
+  '{sub}把自己溶进水里了',
+  '{sub}和水谈了个彻底的融合',
+  '{sub}原地化成一池水',
+];
 const DEATH_RX_NOP = [
   '{sub}燃尽了最后一点存在',
   '{sub}把自己反应没了',
@@ -80,7 +88,7 @@ const DEATH_RX_NOP = [
 ];
 
 /** 死亡界面文案（随机抽取）：cause={ kind:'void'|'acid'|'base'|'reaction', partner }，
- *  sub=玩家核心物质（a），partner=反应致死物质（b）。 */
+ *  sub=玩家核心物质（a），partner=反应致死物质（b）；partner=H2O → 水中毒类。 */
 export function deathQuip(cause, sub) {
   const kind = cause && cause.kind;
   const b = cause && cause.partner ? cause.partner : '';
@@ -88,6 +96,7 @@ export function deathQuip(cause, sub) {
   const pick = (list) => list[Math.floor(Math.random() * list.length)];
   let t;
   if (kind === 'void') t = pick(DEATH_VOID);
+  else if (b === 'H2O') t = pick(DEATH_WATER);
   else if (kind === 'acid') t = b ? pick(DEATH_ACID) : pick(DEATH_RX_NOP);
   else if (kind === 'base') t = b ? pick(DEATH_BASE) : pick(DEATH_RX_NOP);
   else if (kind === 'reaction') t = b ? pick(DEATH_RX) : pick(DEATH_RX_NOP);

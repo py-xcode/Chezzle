@@ -70,8 +70,41 @@ test('reactionPartnerOf：解析系数/排除玩家自身物质', () => {
   assert.equal(reactionPartnerOf('Fe → 虚空', 'Fe'), null);
 });
 
+// ---- 4b. 死亡记录防污染：只认涉及玩家的反应；遇水反应报水（不报旧 Zn） ------
+test('死亡原因：邻近反应不污染记录；遇水反应报水 — K泡水不再报Zn', () => {
+  const scene = new Scene({ worldW: 1000, worldH: 800 });
+  scene.addObject(new Floor({ x: -200, y: 720, w: 3000, h: 100 }));
+  const p = new Player({ x: 500, y: 600, mass: 30, substance: 'K', id: 'p1' });
+  scene.addObject(p);
+  scene.status = 'running';
+  // 先"沾过"Zn（模拟玩家先碰了 Zn 的反应）
+  p.lastRxPartner = 'Zn';
+  p.lastRxAcid = false;
+  p.lastRxBase = false;
+  // 邻近反应（玩家没参与）：不应污染记录
+  scene.onReaction('Zn + CuSO4 → Cu + ZnSO4');
+  assert.equal(p.lastRxPartner, 'Zn', '邻近反应不影响记录');
+  // 玩家遇水反应（无其它伙伴）：water 兜底 → 伙伴=H2O（防 K 泡水死报 Zn）
+  scene.onReaction('2K + 2H2O → 2KOH + H2↑');
+  assert.equal(p.lastRxPartner, 'H2O', '遇水反应 → 伙伴=水（兜底规则）');
+  assert.equal(p.lastRxAcid, false);
+  assert.equal(p.lastRxBase, false);
+  // 耗尽死亡 → 死亡原因=水中毒类
+  for (let i = 0; i < 20 && p.hp > 0; i++) p.grid.consume(p.substance, p.grid.avail(p.substance) + 1);
+  scene.step(RUN);
+  assert.equal(scene.status, 'died');
+  assert.deepEqual(scene.deathCause, { kind: 'reaction', partner: 'H2O' });
+  assert.ok(scene.deathQuip.includes('K'), `水中毒文案：${scene.deathQuip}`);
+});
+
+// ---- 4c. 水兜底：多反应物时其它物质优先 ------------------------------------
+test('reactionParser：水兜底——Al+NaOH+H2O 报 NaOH；K+H2O 报 H2O', () => {
+  assert.equal(reactionPartnerOf('2Al + 2NaOH + 2H2O → 2NaAlO2 + 3H2↑', 'Al'), 'NaOH');
+  assert.equal(reactionPartnerOf('2K + 2H2O → 2KOH + H2↑', 'K'), 'H2O');
+});
+
 // ---- 5. 死亡文案分类 ------------------------------------------------------
-test('deathQuip：虚空/强酸/强碱/反应/无伙伴 五类（随机但仍符合分类）', () => {
+test('deathQuip：虚空/强酸/强碱/反应/水中毒/无伙伴 六类（随机但仍符合分类）', () => {
   // 虚空
   const v = deathQuip({ kind: 'void' }, 'NaOH');
   assert.ok(v.includes('NaOH'), `含玩家物质：${v}`);
@@ -84,6 +117,9 @@ test('deathQuip：虚空/强酸/强碱/反应/无伙伴 五类（随机但仍符
   // 其它伙伴
   const r = deathQuip({ kind: 'reaction', partner: 'Cl2' }, 'Fe');
   assert.ok(r.includes('Fe') && r.includes('Cl2'), `${r}`);
+  // 水中毒（K 泡水）
+  const w = deathQuip({ kind: 'reaction', partner: 'H2O' }, 'K');
+  assert.ok(w.includes('K') && (w.includes('水') || w.includes('H2O')), `水中毒类：${w}`);
   // 无伙伴（溶解/耗尽）
   const n = deathQuip({ kind: 'reaction', partner: null }, 'NaOH');
   assert.ok(n.includes('NaOH'), `${n}`);

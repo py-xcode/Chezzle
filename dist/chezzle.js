@@ -841,12 +841,14 @@ class Scene {
     const point = this._emitCtx ? this._emitCtx.point : null;
     const key = this._rxKey(text);
     const now = this.time;
-    // 死亡原因记录：玩家参与的任一生效反应 → 记住反应物伙伴（酸/碱分类）
+    // 死亡原因记录：**涉及玩家**的反应才更新记录（伙伴物质 + 酸/碱分类）；
+    // 无伙伴的反应（遇水/单质）→ 清空旧伙伴——防"先碰了 Zn 再泡水死 → 报 Zn"的
+    // 陈旧记录（用户反馈）
     if (this.player) {
-      const partner = reactionPartnerOf(text, this.player.substance);
-      if (partner) {
-        this.player.lastRxPartner = partner;
-        const sub = getSubstance(partner);
+      const r = reactionParser(text, this.player.substance);
+      if (r.involved) {
+        this.player.lastRxPartner = r.partner;
+        const sub = r.partner ? getSubstance(r.partner) : null;
         this.player.lastRxAcid = sub ? sub.kind === 'acid' : false;
         this.player.lastRxBase = sub ? sub.kind === 'base' : false;
       }
@@ -1353,25 +1355,37 @@ function tipCond(scene, c) {
 }
 
 /**
- * 从反应方程式里提取"玩家之外的唯一反应物"（死亡文案/溯源用）：
- * 'Fe + 2HCl → FeCl2 + H2'（玩家 Fe）→ 'HCl'；多反应物时取最后匹配的物质。
+ * 解析反应方程式的反应物侧：
+ *  - involved：反应物里是否包含玩家物质（excludeId）——只有涉及玩家的反应
+ *    才应更新玩家死亡记录（否则邻近反应如 Zn+CuSO4 会污染记录）；
+ *  - partner：玩家之外的**最后一个**有效反应物；水是**兜底**——其它反应物
+ *    优先，只有水是唯一反应物时才报水（'2K + 2H2O → …' 报 H2O；
+ *    '2Al + 2NaOH + 2H2O → …' 报 NaOH）。
  */
-function reactionPartnerOf(text, excludeId) {
-  if (typeof text !== 'string' || !excludeId) return null;
+function reactionParser(text, excludeId) {
+  if (typeof text !== 'string' || !excludeId) return { involved: false, partner: null };
   const lhs = text.split(/→|->/)[0] ?? text;
+  let involved = false;
   let partner = null;
   for (const raw of lhs.split('+')) {
     // 去系数/括号注记：'2HCl' → 'HCl'；'3NH3·H2O' → 'NH3·H2O'（先保留点号）
     let tok = raw.trim().replace(/^[\d.\s]+/, '').trim();
     tok = tok.replace(/[（(].*?[)）]?$/, '').trim();
     if (!tok) continue;
-    if (tok === excludeId || tok === 'H2O') continue; // 水是介质不是致死物
+    if (tok === excludeId) { involved = true; continue; }
+    if (tok === 'H2O') { if (!partner) partner = 'H2O'; continue; } // 水兜底
     if (getSubstance(tok)) partner = tok;
   }
-  return partner;
+  return { involved, partner };
+}
+
+/** 兼容入口：只返回伙伴物质（遇水/单质反应返回 null 表示"无伙伴"） */
+function reactionPartnerOf(text, excludeId) {
+  return reactionParser(text, excludeId).partner;
 }
 
 exports.Scene = Scene;
+exports.reactionParser = reactionParser;
 exports.reactionPartnerOf = reactionPartnerOf;
 
   };
@@ -8566,6 +8580,14 @@ const DEATH_RX = [
   '{sub}和{b}在异世界相遇',
   '{sub}被{b}制裁了',
 ];
+// 水中毒（玩家与水的反应致死——如活泼金属遇水；独立一类，文案最贴切）
+const DEATH_WATER = [
+  '{sub}水中毒了',
+  '{sub}泡了个要命的水澡（H2O）',
+  '{sub}把自己溶进水里了',
+  '{sub}和水谈了个彻底的融合',
+  '{sub}原地化成一池水',
+];
 const DEATH_RX_NOP = [
   '{sub}燃尽了最后一点存在',
   '{sub}把自己反应没了',
@@ -8573,7 +8595,7 @@ const DEATH_RX_NOP = [
 ];
 
 /** 死亡界面文案（随机抽取）：cause={ kind:'void'|'acid'|'base'|'reaction', partner }，
- *  sub=玩家核心物质（a），partner=反应致死物质（b）。 */
+ *  sub=玩家核心物质（a），partner=反应致死物质（b）；partner=H2O → 水中毒类。 */
 function deathQuip(cause, sub) {
   const kind = cause && cause.kind;
   const b = cause && cause.partner ? cause.partner : '';
@@ -8581,6 +8603,7 @@ function deathQuip(cause, sub) {
   const pick = (list) => list[Math.floor(Math.random() * list.length)];
   let t;
   if (kind === 'void') t = pick(DEATH_VOID);
+  else if (b === 'H2O') t = pick(DEATH_WATER);
   else if (kind === 'acid') t = b ? pick(DEATH_ACID) : pick(DEATH_RX_NOP);
   else if (kind === 'base') t = b ? pick(DEATH_BASE) : pick(DEATH_RX_NOP);
   else if (kind === 'reaction') t = b ? pick(DEATH_RX) : pick(DEATH_RX_NOP);
