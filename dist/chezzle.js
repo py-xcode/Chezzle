@@ -7458,16 +7458,19 @@ function labelPlacement(ctx, scene, rect) {
   const area = rect.w * rect.h;
 
   const score = (r, dx, dy) => {
+    // 打分用收缩 5px 的盒：轻微擦边（<5px）不算遮挡，避免为毫厘位移大挪
+    const sr = { x: r.x + 5, y: r.y + 5, w: Math.max(0, r.w - 10), h: Math.max(0, r.h - 10) };
     let ov = 0;
-    for (const o of occ) ov += overlapArea(r, o) * (o.weight ?? 2);
+    for (const o of occ) ov += overlapArea(sr, o) * (o.weight ?? 2);
     // 越界重罚（×20）：挪出画布外 = 彻底看不见，比压在半透明面板上更糟
     let oob = 0;
     if (r.x < 4) oob += 4 - r.x;
     if (r.y < 4) oob += 4 - r.y;
     if (r.x + r.w > W - 4) oob += r.x + r.w - (W - 4);
     if (r.y + r.h > H - 4) oob += r.y + r.h - (H - 4);
-    // 挪得越远越不优先（居中原位永远最优先）
-    return ov + oob * 20 + Math.hypot(dx, dy) * 0.35;
+    // 挪得越远越不优先（居中原位永远最优先）；横向位移额外罚分——
+    // 用户要求标签保持水平居中：竖直翻转好过左右错位
+    return ov + oob * 20 + Math.hypot(dx, dy) * 0.35 + Math.abs(dx) * 1.2;
   };
 
   // 候选：居中原位 → 竖直翻/远移（保持水平居中）
@@ -7491,10 +7494,10 @@ function labelPlacement(ctx, scene, rect) {
       // 推出面板边缘的候选带距离上限（240px）：超远即说明该尺寸下面板布局
       // 异常，宁可贴着面板半遮也不把标签送到离物件很远的地方
       const esc = [
-        [0, worst.y - rect.h - 6 - rect.y], // 推到面板上缘之上
-        [0, worst.y + worst.h + 6 - rect.y], // 推到面板下缘之下
-        [worst.x - rect.w - 6 - rect.x, 0], // 推到面板左缘之左
-        [worst.x + worst.w + 6 - rect.x, 0], // 推到面板右缘之右
+        [0, worst.y - rect.h - 10 - rect.y], // 推到面板上缘之上
+        [0, worst.y + worst.h + 10 - rect.y], // 推到面板下缘之下
+        [worst.x - rect.w - 10 - rect.x, 0], // 推到面板左缘之左
+        [worst.x + worst.w + 10 - rect.x, 0], // 推到面板右缘之右
       ];
       for (const c of esc) {
         if (Math.abs(c[0]) <= 240 && Math.abs(c[1]) <= 240) cands.push(c);
