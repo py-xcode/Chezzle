@@ -5,7 +5,7 @@
 //    之后调用 flushLabels 统一画出——标签浮在地板/物块之上，不会被盖住；
 //  - 字号按屏幕实际像素保底（低分手机不再糊）；
 //  - 避让：只上下翻转（保持居中）+ 画面内钳制（不再跑出屏幕），HUD 面板
-//    压住时翻到面板外；有粘性记忆，走路时不横跳。
+//    压住时翻到面板外或水平推出（就近优先，不飞远）。
 // ============================================================================
 
 import { THEME, rr } from './theme.js';
@@ -75,26 +75,19 @@ function overlapArea(a, b) {
   return w > 0 && h > 0 ? w * h : 0;
 }
 
-// 落点粘性记忆（key → 上次偏移）：走路时相机移动，标签在面板边缘会一帧挪一帧
-// 回——记住上次的落点并给粘性加分，只有明显更优才换位。tick 老化防泄漏。
-const _lastPlace = new Map();
-let _placeTick = 0;
-
 /**
  * 为标签挑一个落点（只上下翻转，保持水平居中；最后画面内钳制）。
+ * 打分恒 ≥ 0 且居中原位（零重叠、零距离）恒为 0——不要引入任何可能变负
+ * 的"粘性/记忆"奖励：负分会打赢零重叠的原位，让一次性的避让偏移永久化
+ * （实测标签因此永远偏在一边不回来）。
  * @param rect 标签盒（画布坐标，原位）
- * @param key  粘性记忆键（同标签跨帧不横跳）
  * @returns { dx, dy } 屏幕像素偏移
  */
-export function labelPlacement(ctx, scene, rect, key = null) {
-  _placeTick++;
+export function labelPlacement(ctx, scene, rect) {
   const W = ctx.canvas.width;
   const H = ctx.canvas.height;
   const occ = hudOccluders(scene, W, H);
-  const rawPrev = key ? _lastPlace.get(key) : null;
-  const prev = rawPrev && Math.abs(rawPrev.dx) <= 240 && Math.abs(rawPrev.dy) <= 240 ? rawPrev : null;
   if (!occ.length) {
-    if (prev && (prev.dx || prev.dy)) _lastPlace.delete(key);
     // 空地也做画面内钳制（长标签贴边时收进来）
     const cx = Math.max(4 - rect.x, Math.min(0, W - 4 - rect.w - rect.x));
     const cy = Math.max(4 - rect.y, Math.min(0, H - 4 - rect.h - rect.y));
@@ -111,10 +104,8 @@ export function labelPlacement(ctx, scene, rect, key = null) {
     if (r.y < 4) oob += 4 - r.y;
     if (r.x + r.w > W - 4) oob += r.x + r.w - (W - 4);
     if (r.y + r.h > H - 4) oob += r.y + r.h - (H - 4);
-    // 挪得越远越不优先（居中原位永远最优先）；与上次落点一致 → 粘性加分
-    let sc = ov + oob * 20 + Math.hypot(dx, dy) * 0.35;
-    if (prev && Math.abs(dx - prev.dx) <= 2 && Math.abs(dy - prev.dy) <= 2) sc -= 80;
-    return sc;
+    // 挪得越远越不优先（居中原位永远最优先）
+    return ov + oob * 20 + Math.hypot(dx, dy) * 0.35;
   };
 
   // 候选：居中原位 → 竖直翻/远移（保持水平居中）
@@ -161,12 +152,6 @@ export function labelPlacement(ctx, scene, rect, key = null) {
   else if (best.dx + rect.x + rect.w > W - 4) best.dx = W - 4 - rect.w - rect.x;
   if (best.dy + rect.y < 4) best.dy = 4 - rect.y;
   else if (best.dy + rect.y + rect.h > H - 4) best.dy = H - 4 - rect.h - rect.y;
-  if (key) {
-    _lastPlace.set(key, { dx: best.dx, dy: best.dy, tick: _placeTick });
-    if (_lastPlace.size > 96) {
-      for (const [k, v] of _lastPlace) if (_placeTick - v.tick > 240) _lastPlace.delete(k);
-    }
-  }
   return { dx: best.dx, dy: best.dy };
 }
 
@@ -239,7 +224,7 @@ export function renderFormula(ctx, x, y, text, opts = {}) {
   let dx = 0;
   let dy = 0;
   if (opts.scene && s > 0.01) {
-    ({ dx, dy } = labelPlacement(ctx, opts.scene, rect, opts.id));
+    ({ dx, dy } = labelPlacement(ctx, opts.scene, rect));
   }
   const W = ctx.canvas ? ctx.canvas.width : 9999;
   const H = ctx.canvas ? ctx.canvas.height : 9999;

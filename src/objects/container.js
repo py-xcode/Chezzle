@@ -62,7 +62,7 @@ export class Container extends Obj {
       }
       if (hasIndicator) parts.push(`pH=${this.solution.pH().toFixed(1)}`);
     }
-    if (parts.length) renderFormula(ctx, this.x + this.w / 2, this.y + this.h + 14, parts.join(' + '), { scene: opts.scene, id: this.id + ':c' });
+    if (parts.length) renderFormula(ctx, this.x + this.w / 2, this.y + this.h + 14, parts.join(' + '), { scene: opts.scene });
   }
 
   get material() {

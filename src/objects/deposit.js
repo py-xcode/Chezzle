@@ -129,7 +129,7 @@ export class Deposit extends Obj {
     ctx.stroke();
     ctx.restore();
     if (this.formulaVisible && ids.length) {
-      renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.join(' + '), { scene: opts?.scene, id: this.id + ':d' });
+      renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.join(' + '), { scene: opts?.scene });
     }
   }
 }

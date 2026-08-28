@@ -143,8 +143,7 @@ test('hudOccluders：刘海横屏 insets.left/right 把卡片与顶栏占位内�
   assert.ok(card.x >= 47, `卡片让出左缘：x=${card.x}`);
 });
 
-// ---- 5. 粘性：走路时标签不横跳 ------------------------------------------------
-test('labelPlacement 粘性：同 id 相邻两帧在面板边缘不来回换位', () => {
+test('labelPlacement 确定性：同一输入恒定输出，面板边缘不产生随机偏移', () => {
   const scene = sceneWith();
   const ctx = fakeCtx();
   const occ = hudOccluders(scene, W, H);
@@ -159,9 +158,9 @@ test('labelPlacement 粘性：同 id 相邻两帧在面板边缘不来回换位'
       assert.deepEqual(p, first, `第 ${i} 帧落点应与首次一致：${JSON.stringify(p)} vs ${JSON.stringify(first)}`);
     }
   }
-  // 不同 id 互不干扰
-  const other = labelPlacement(ctx, scene, { x: topBar.x + 30, y: topBar.y + topBar.h - 6, w: 120, h: 20 }, 'pool1:c');
-  assert.deepEqual(other, first, '不同标签同位置 → 同样落点');
+  // 无状态：再来一遍结果一致（无粘性/无随机——避让不允许永久偏移）
+  const other = labelPlacement(ctx, scene, { x: topBar.x + 30, y: topBar.y + topBar.h - 6, w: 120, h: 20 });
+  assert.deepEqual(other, first, '重复调用结果一致');
 });
 
 // ---- 6. 画面外物件不画标签 + flush 按当前画布重钳 ----------------------------

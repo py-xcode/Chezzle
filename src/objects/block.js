@@ -104,7 +104,7 @@ export class Block extends Obj {
     ctx.restore();
     if (this.formulaVisible) {
       const ids = this.grid.ids();
-      if (ids.length) renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.join(' + '), { scene: opts?.scene, id: this.id + ':b' });
+      if (ids.length) renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.join(' + '), { scene: opts?.scene });
     }
   }
 }
