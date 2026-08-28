@@ -83,6 +83,45 @@ test('摇杆 5 向吸附：上/左上/右上/左/右，下半圆一律不触发'
   assert.equal(ul.jump && ul.left, true, '明显向左上=左上');
 });
 
+// ---- 2b. 摇杆起手容错圈 + 启动滞回 -------------------------------------------
+test('摇杆容错：起手偏出圈内不动（点歪不跳错方向）；已启动后同幅度保持方向', () => {
+  const R = CFG.touch.joyR;
+  const ring = R * CFG.touch.joyDead;
+  // 用户场景：想右走、出手偏左上方 ~33px（≈0.27R，旧死区 0.22R 已越界→左上跳）
+  const off = joyInput(-30, -15, R);
+  assert.deepEqual(off, { left: false, right: false, jump: false, sx: 0, sy: 0 }, '起手在容错圈内 → 完全不动');
+  assert.ok(ring > 33, `容错圈 ≥33px：${ring.toFixed(0)}px`);
+  // 已启动（engaged=true）：同样幅度 → 维持方向（滞回，不回抖）
+  const on = joyInput(-30, -15, R, true);
+  assert.ok(on.left || on.jump, '已启动后同幅度 → 方向保持');
+  // 超出容错圈 → 正常 5 向吸附
+  const big = joyInput(-90, -60, R);
+  assert.ok(big.left && big.jump, '大偏移正常吸附');
+});
+
+// ---- 2c. TouchUI 用户场景：点歪起手 → 拖右 → 只向右走 -------------------------
+test('摇杆：起手偏左 30px 先不动（不左跳），拖向右侧才向右走', () => {
+  forceTouch(true);
+  const canvas = fakeCanvas();
+  const scene = flatScene();
+  const p = new Player({ x: 500, y: 600, mass: 30, id: 'p1' });
+  scene.addObject(p);
+  run(scene, 40);
+  const ui = new TouchUI(canvas, () => ({ scene, hud: null }));
+  const g = joyGeom(W, H, ui.insets);
+  // 起手偏左上 30px（旧逻辑：立即 左上=左跳）
+  assert.equal(ui.down(1, g.cx - 30, g.cy - 15), 'joy');
+  assert.equal(scene.control.size, 0, '起手偏左 → 完全不动');
+  run(scene, 10);
+  assert.ok(p.x >= 500 - 0.01, '玩家没左移');
+  // 拖向右侧 → 只有右（无左、无跳）
+  ui.move(1, g.cx + 70, g.cy - 2);
+  assert.equal(scene.control.has('right'), true, '拖右 = 右走');
+  assert.equal(scene.control.has('left'), false, '不左走');
+  assert.equal(scene.control.has('jump'), false, '不上跳');
+  ui.up(1);
+});
+
 // ---- 3. 几何布局 -------------------------------------------------------------
 test('几何：摇杆半圆在左下、按钮 2×2 贴物品栏上沿、互不重叠', () => {
   const g = joyGeom(W, H, {});

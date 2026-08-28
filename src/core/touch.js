@@ -5,6 +5,8 @@
 //  - 左下：半透明半圆摇杆基座 + 摇杆球。方向**5 向吸附**（上/左上/右上/左/右，
 //    下半圆一律不触发）：向左=左走、左上=左跳、上=跳、右上=右跳、右=右走。
 //    摇杆语义与键盘完全一致（写入 scene.control 的 left/right/jump）。
+//    起手容错圈：出手点偏离圆心 < joyDead 比例 → 完全不动（防"点歪先朝错方向
+//    跳一步"）；启动后启停阈值不同（joyDeadBack 滞回），边界不抖动。
 //  - 右下：Q 收集 / ⇧ 放置 / C 拾取… / X 倒出… 四键（C/X 支持**按住**：
 //    与键盘 keydown/keyup 完全同语义——C 按住收气、X 按住通气），下方是物品栏。
 //  - 场景内：与鼠标同一套"按下/拖动/抬起"管线（滴管点击滴液、长按持续滴、
@@ -112,10 +114,13 @@ function hitRect(r, x, y, pad = 6) {
  * 上半区按最近扇区吸附：右 [0°,22.5°] / 右上 [22.5°,67.5°] / 上 [67.5°,112.5°] /
  * 左上 [112.5°,157.5°] / 左 [157.5°,180°]（角度以竖直向上为 90°）。
  * 其余（下半区）→ 仅水平方向（左/右），水平死区内中性。
+ * 容错：`engaged`（摇杆已启动）决定半径死区——未启动用起手容错圈 joyDead
+ * （圈内完全不动，防"点歪先往错方向跳"），已启动用回中死区 joyDeadBack
+ * （启动与停止阈值不同 = 滞回，边界处不抖动）。
  */
-export function joyInput(dx, dy, R) {
+export function joyInput(dx, dy, R, engaged = false) {
   const mag = Math.hypot(dx, dy);
-  const dead = R * CFG.touch.joyDead;
+  const dead = R * (engaged ? CFG.touch.joyDeadBack : CFG.touch.joyDead);
   if (mag < dead) return { left: false, right: false, jump: false, sx: 0, sy: 0 };
   const dyUp = -dy; // y 向下 → 向上为负
   if (dyUp > 0) {
@@ -310,9 +315,11 @@ export class TouchUI {
     const joy = this.joy;
     if (!joy) return;
     const g = this.geom();
-    const inp = joyInput(x - g.cx, y - g.cy, g.R);
+    const inp = joyInput(x - g.cx, y - g.cy, g.R, joy.eng);
     joy.x = x;
     joy.y = y;
+    // 启动滞回：有方向 → 已启动；无方向且回到回中死区 → 未启动（回到起手容错圈）
+    joy.eng = !!(inp.sx || inp.sy);
     // 摇杆球视觉位置：吸附方向 → 沿吸附单位方向推到实际幅度；中性 → 实际位置
     const dx = x - g.cx;
     const dy = y - g.cy;
@@ -362,7 +369,7 @@ export class TouchUI {
     // ① 摇杆：左下半圆（上半部 hit；手指可从半圆上方/左右进入）
     const g = this.geom();
     if (!this.joy && y <= g.cy + 14 && Math.hypot(x - g.cx, y - g.cy) <= g.R + 14) {
-      this.joy = { id, x, y, sx: 0, sy: 0, dir: { left: false, right: false, jump: false } };
+      this.joy = { id, x, y, sx: 0, sy: 0, eng: false, dir: { left: false, right: false, jump: false } };
       this._applyJoy(x, y);
       return 'joy';
     }
