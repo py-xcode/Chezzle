@@ -7399,13 +7399,28 @@ function hudOccluders(scene, W, H) {
         x0 = Math.min(x0, r.x);
         y0 = Math.min(y0, r.y);
       }
-      let bandTop = y0 - 62; // 桌面：选中物品面板带
+      // 物品栏一行（贴底）
+      rects.push({ x: x0 - 8, y: y0 - 8, w: W - x0 + 16, h: H - y0 + 16, weight: 2 });
       const t = scene._touchUI;
       if (t && typeof t.enabled === 'function' && t.enabled()) {
-        for (const b of touchButtonRects(W, H, inv.slots, t.insets || {})) bandTop = Math.min(bandTop, b.y);
-        bandTop -= 52; // 触屏端选中物品面板再往上
+        // 触屏：按钮块与选中物品面板条各自成矩形——中间的空地不算遮挡，
+        // 否则池子标签会被保守大包络整个推飞（用户实测'飞到天上去'）
+        const btns = touchButtonRects(W, H, inv.slots, t.insets || {});
+        if (btns.length) {
+          let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+          for (const b of btns) {
+            bx0 = Math.min(bx0, b.x);
+            by0 = Math.min(by0, b.y);
+            bx1 = Math.max(bx1, b.x + b.size);
+            by1 = Math.max(by1, b.y + b.size);
+          }
+          rects.push({ x: bx0 - 8, y: by0 - 8, w: bx1 - bx0 + 16, h: by1 - by0 + 16, weight: 2 });
+          rects.push({ x: bx0 - 8, y: by0 - 58, w: bx1 - bx0 + 16, h: 52, weight: 2 });
+        }
+      } else {
+        // 桌面：选中物品面板带（物品栏上方一条）
+        rects.push({ x: x0 - 8, y: y0 - 62, w: W - x0 + 16, h: 56, weight: 2 });
       }
-      rects.push({ x: x0 - 10, y: bandTop - 6, w: W - x0 + 18, h: H - bandTop + 12, weight: 2 });
       // 摇杆（左下半圆带容差；透明幽灵圈，权重轻）
       if (t && typeof t.enabled === 'function' && t.enabled()) {
         const g = joyGeom(W, H, t.insets || {});
@@ -7483,6 +7498,10 @@ function labelPlacement(ctx, scene, rect, key = null) {
     if (worst) {
       cands.push([0, worst.y - rect.h - 6 - rect.y]); // 推到面板上缘之上
       cands.push([0, worst.y + worst.h + 6 - rect.y]); // 推到面板下缘之下
+      // 水平推出（次优先）：物体本身在 HUD 簇里时竖直方向可能被夹死——
+      // 就近水平挪出比飞远好；空地标签永远走不到这些候选（原位得分最低）
+      cands.push([worst.x - rect.w - 6 - rect.x, 0]);
+      cands.push([worst.x + worst.w + 6 - rect.x, 0]);
     }
   }
 

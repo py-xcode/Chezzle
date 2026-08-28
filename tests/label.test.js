@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { Scene } from '../src/core/scene.js';
 import { Player } from '../src/objects/player.js';
 import { hudOccluders, labelPlacement } from '../src/render/label.js';
+import { touchButtonRects } from '../src/core/touch.js';
 
 const W = 668;
 const H = 360;
@@ -32,20 +33,23 @@ function sceneWith(opts = {}) {
 }
 
 // ---- 1. hudOccluders：桌面/触屏/鸟瞰 ----------------------------------------
-test('hudOccluders：桌面 3 块（卡/右下带/顶栏按钮），触屏 +摇杆，鸟瞰只留顶栏', () => {
+test('hudOccluders：桌面 4 块（卡/物品栏行/面板条/顶栏按钮），触屏 +按钮块+摇杆，鸟瞰无', () => {
   const desk = hudOccluders(sceneWith(), W, H);
-  assert.equal(desk.length, 3, `桌面 ${desk.length} 块`);
+  assert.equal(desk.length, 4, `桌面 ${desk.length} 块`);
   // 左上信息卡（触屏顶部偏移 48 起）
   assert.ok(desk.some((r) => r.x <= 10 && r.y <= 60 && r.w >= 280), '含左上卡');
-  // 右下带（物品栏+面板）贴右缘
-  assert.ok(desk.some((r) => r.x + r.w >= W - 8 && r.y + r.h >= H - 8), '含右下带');
+  // 右下物品栏行贴右缘
+  assert.ok(desk.some((r) => r.x + r.w >= W - 8 && r.y + r.h >= H - 8), '含右下物品栏行');
   // 顶栏按钮
   assert.ok(desk.some((r) => r.x >= W - 240 && r.w <= 240), '含顶栏按钮');
 
   const touch = hudOccluders(sceneWith({ touch: true }), W, H);
-  assert.equal(touch.length, 4, '触屏多一块摇杆');
-  const joy = touch[3];
+  assert.equal(touch.length, 6, `触屏 6 块（多按钮块/面板条/摇杆）：${touch.length}`);
+  const joy = touch[touch.length - 1];
   assert.ok(joy.x < 260 && joy.y + joy.h >= H - 20, `摇杆占左下：${JSON.stringify(joy)}`);
+  // 按钮块与物品栏行是两个独立矩形（中间空地不遮挡）——按钮块悬空（不贴屏底）
+  const solid = touch.filter((r) => (r.weight ?? 2) >= 2);
+  assert.ok(solid.some((r) => r.y + r.h < H - 60 && r.x >= W - 700), '含悬空的按钮块');
 
   const ov = sceneWith();
   ov.overview = true;
@@ -57,15 +61,20 @@ test('labelPlacement：空白原位不动；压在摇杆上挪开且不再重叠
   const scene = sceneWith({ touch: true });
   const ctx = fakeCtx();
 
-  // ① 屏幕中部偏左（桌面布局的空地；触屏下右下占位带很宽，只有更靠左才空）
+  // ① 触屏布局：占位矩形已精确到"物品栏行 / 按钮块 / 选中面板条"各自独立——
+  //    按钮块与物品栏之间的空地不再是遮挡（旧保守大包络会把标签整个推飞）
   const deskScene = sceneWith();
   const free = labelPlacement(ctx, deskScene, { x: 300, y: 150, w: 120, h: 20 });
   assert.deepEqual(free, { dx: 0, dy: 0 }, '空地不挪');
-  // 触屏布局下同一位置：右下按钮带从 x≈352 起，120 宽的标签压进带里 57%
-  // → 必须被挪走，且挪到的是真空档（卡片右缘 298 与带左缘 352 之间的上方）
-  const tMoved = labelPlacement(ctx, scene, { x: 300, y: 150, w: 120, h: 20 });
-  assert.ok(tMoved.dx !== 0 || tMoved.dy !== 0, '触屏下压带必挪');
-  const tRect = { x: 300 + tMoved.dx, y: 150 + tMoved.dy, w: 120, h: 20 };
+  // 触屏：按钮块与物品栏之间空地 → 原位不动
+  const tFree = labelPlacement(ctx, scene, { x: 300, y: 150, w: 120, h: 20 });
+  assert.deepEqual(tFree, { dx: 0, dy: 0 }, 'HUD 簇之间空地不挪');
+  // 触屏：压进按钮块 → 必须挪开，且不与任何实心占位重叠
+  const btns = touchButtonRects(W, H, scene.player.inventory.slots, { bottom: 0, right: 0 });
+  const bb = btns[0];
+  const tMoved = labelPlacement(ctx, scene, { x: bb.x + bb.size / 2 - 60, y: bb.y + bb.size / 2 - 10, w: 120, h: 20 });
+  assert.ok(tMoved.dx !== 0 || tMoved.dy !== 0, '压按钮块必挪');
+  const tRect = { x: bb.x + bb.size / 2 - 60 + tMoved.dx, y: bb.y + bb.size / 2 - 10 + tMoved.dy, w: 120, h: 20 };
   for (const o of hudOccluders(scene, W, H)) {
     const w = Math.min(tRect.x + 120, o.x + o.w) - Math.max(tRect.x, o.x);
     const h = Math.min(tRect.y + 20, o.y + o.h) - Math.max(tRect.y, o.y);
