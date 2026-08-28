@@ -129,7 +129,7 @@ test('冰面推烧杯：满速推动（同石地）；松手后继续滑（冰�
   assert.ok(res.stone.pushed > 200, `石地满速推：${res.stone.pushed.toFixed(1)}px`);
   assert.ok(res.ice.pushed > 200, `冰上同样满速推：${res.ice.pushed.toFixed(1)}px`);
   assert.ok(res.stone.coast < 40, `石地松手急停：滑行 ${res.stone.coast.toFixed(1)}px`);
-  assert.ok(res.ice.coast > 50 && res.ice.coast < 130, `冰上滑一小段就停：${res.ice.coast.toFixed(1)}px`);
+  assert.ok(res.ice.coast > 30 && res.ice.coast < 90, `冰上跟着玩家一起滑停：${res.ice.coast.toFixed(1)}px`);
 });
 
 // ---- 7. 冰上推完松手：玩家也跟着滑（动量保留）；石地玩家急停 ----------------

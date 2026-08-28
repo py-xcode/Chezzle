@@ -22,6 +22,7 @@ import { Portal } from '../objects/portal.js';
 import { Rope } from '../objects/rope.js';
 import { CFG } from './config.js';
 import { stepPressTap } from '../level/click.js';
+import { deathQuip } from '../render/hud.js';
 
 export class Scene {
   constructor({ worldW = CFG.worldW, worldH = CFG.worldH, physics = {} } = {}) {
@@ -1082,11 +1083,14 @@ export class Scene {
         kind: p.lastRxAcid ? 'acid' : p.lastRxBase ? 'base' : 'reaction',
         partner: p.lastRxPartner ?? null,
       };
+      // 死亡文案**一次性**定案（每帧随机会闪烁——用户反馈）
+      this.deathQuip = deathQuip(this.deathCause, p.substance);
       this.setStatus('died');
       return;
     }
     if (p.y > this.worldH + CFG.worldMargin || p.bottom < -CFG.worldMargin) {
       this.deathCause = { kind: 'void' };
+      this.deathQuip = deathQuip(this.deathCause, p.substance);
       this.setStatus('died');
       return;
     }

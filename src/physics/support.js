@@ -10,8 +10,6 @@
 //      连带着杯内玩家一起嵌入池体"（用户关卡 level (15) 复现）。
 // ============================================================================
 
-import { CFG } from '../core/config.js';
-
 const EPS = 2; // 已贴合的容差（沿用旧 applyGravity 的判定宽度）
 
 /**
@@ -78,10 +76,19 @@ export function shallowestSupportY(body, scene, span = 40) {
  */
 export function pushContainers(p, scene, dt) {
   const dir = (scene.control && scene.control.has('right') ? 1 : 0) - (scene.control && scene.control.has('left') ? 1 : 0);
-  // 冰面惯性滑行：玩家不推动时，被推过的容器继续飘（冰摩擦缓慢衰减，离开冰面即停）
+  // 冰面滑行（停手耦合）：玩家不推动时，被推过的容器跟随**玩家当前速度**滑——
+  // 一起滑停（物体不再"窜出去、玩家瞬间停"的错配）；反向移动/玩家已停 → 物体停。
   if (dir === 0) {
     for (const c of scene.objects) {
-      if ((c.isCarryItem === 'beaker' || c.isCarryItem === 'bottle') && c._slideVx) iceSlide(c, dt);
+      if ((c.isCarryItem === 'beaker' || c.isCarryItem === 'bottle') && c._slideVx) {
+        const pv = p.vel.x;
+        if (Math.abs(pv) < 8 || Math.sign(pv) !== Math.sign(c._slideVx)) {
+          c._slideVx = 0; // 玩家停/反向：物体停在原地
+        } else {
+          c.x += pv * dt;
+          if (typeof c.syncWalls === 'function') c.syncWalls();
+        }
+      }
     }
     return;
   }
@@ -117,17 +124,8 @@ export function pushContainers(p, scene, dt) {
 }
 
 /**
- * 冰面惯性滑行：被推过的容器在冰上松手后继续飘（滑行摩擦缓慢衰减——
- * CFG.ice.slideFriction：比玩家冰摩擦大得多，滑一小段就停，不会永远飘），
- * 离开冰面立即停。由 pushContainers 驱动（玩家输入管线内）。
+ * 冰面滑行已并入 pushContainers（停手耦合：跟随玩家速度一起滑停）。
  */
-export function iceSlide(c, dt) {
-  if (!c._slideVx) return;
-  if (!c._onIce) { c._slideVx = 0; return; }
-  c.x += c._slideVx * dt;
-  c._slideVx *= Math.max(0, 1 - CFG.ice.slideFriction * dt);
-  if (Math.abs(c._slideVx) < 5) c._slideVx = 0;
-}
 
 /**
  * 水平阻挡探测：把 body 平移到 nx 后是否与任何实心体相交 ≥3px 深度。

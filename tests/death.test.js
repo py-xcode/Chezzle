@@ -22,6 +22,7 @@ test('死亡原因：掉出世界下方 → void', () => {
   for (let i = 0; i < 80 && p.hp > 0; i++) scene.step(RUN);
   assert.equal(scene.status, 'died');
   assert.deepEqual(scene.deathCause, { kind: 'void' });
+  assert.ok(typeof scene.deathQuip === 'string' && scene.deathQuip.includes('NaOH'), `死亡文案一次性定案：${scene.deathQuip}`);
 });
 
 // ---- 2. 反应致死记录（伙伴 + 酸/碱分类）-----------------------------------

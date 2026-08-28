@@ -1406,11 +1406,11 @@ export class Hud {
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 34px "Segoe UI", sans-serif';
     ctx.fillText(win ? '通关！' : '死亡', cx, cy + 58);
-    // 死亡原因（搞笑文案；通关不显示）
+    // 死亡原因（搞笑文案；死亡时由 scene 一次性定案，避免每帧随机闪烁；通关不显示）
     if (!win) {
       ctx.fillStyle = '#ffd9a0';
       ctx.font = 'bold 15px "Segoe UI", "Microsoft YaHei", sans-serif';
-      ctx.fillText(deathQuip(scene.deathCause, scene.player && scene.player.substance), cx, cy + 84);
+      ctx.fillText(scene.deathQuip ?? deathQuip(scene.deathCause, scene.player && scene.player.substance), cx, cy + 84);
     }
     ctx.fillStyle = '#e8d8b0';
     ctx.font = '15px "Segoe UI", sans-serif';
