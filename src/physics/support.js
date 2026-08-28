@@ -100,7 +100,7 @@ export function pushContainers(p, scene, dt) {
         c.x = nx;
         if (typeof c.syncWalls === 'function') c.syncWalls(); // 壁体**立即**跟上（否则物理步用旧壁位置 → 玩家被弹开）
         p.x = c.x - p.w; // 吸附到左壁
-        p.vel.x = 0;
+        if (!p._groundIce) p.vel.x = 0; // 石地：清速（指令驱动）；冰面：保留动量（松手玩家也跟着滑）
         c._slideVx = c._onIce ? dir * p.moveSpeed : 0; // 冰面：获得滑动余量（松手继续滑）
       }
     } else if (push < 0 && p.left <= c.x + c.w + 2 && p.left >= c.x + c.w - wall - 2) {
@@ -109,7 +109,7 @@ export function pushContainers(p, scene, dt) {
         c.x = nx;
         if (typeof c.syncWalls === 'function') c.syncWalls();
         p.x = c.x + c.w; // 吸附到右壁
-        p.vel.x = 0;
+        if (!p._groundIce) p.vel.x = 0;
         c._slideVx = c._onIce ? dir * p.moveSpeed : 0;
       }
     }
@@ -117,14 +117,15 @@ export function pushContainers(p, scene, dt) {
 }
 
 /**
- * 冰面惯性滑行：被推过的容器在冰上松手后继续飘（冰摩擦缓慢衰减），
- * 离开冰面立即停。在容器自身 update 里每帧调用（不依赖玩家在场）。
+ * 冰面惯性滑行：被推过的容器在冰上松手后继续飘（滑行摩擦缓慢衰减——
+ * CFG.ice.slideFriction：比玩家冰摩擦大得多，滑一小段就停，不会永远飘），
+ * 离开冰面立即停。由 pushContainers 驱动（玩家输入管线内）。
  */
 export function iceSlide(c, dt) {
   if (!c._slideVx) return;
   if (!c._onIce) { c._slideVx = 0; return; }
   c.x += c._slideVx * dt;
-  c._slideVx *= Math.max(0, 1 - CFG.iceFriction * dt);
+  c._slideVx *= Math.max(0, 1 - CFG.ice.slideFriction * dt);
   if (Math.abs(c._slideVx) < 5) c._slideVx = 0;
 }
 

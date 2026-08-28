@@ -100,6 +100,8 @@ const CFG = {
                        // 想急停/急转都慢慢来；石地上指令直接设定速度（不变量）
     slipAccel: 16,     // 沉淀在冰面的滑走加速度（px/s²）：静止放置也会慢慢漂走
     slipMax: 55,       // 滑走速度上限（px/s；超过后仅靠冰摩擦缓慢衰减）
+    slideFriction: 2.6, // 被推容器在冰上的滑行摩擦（1/s）：比玩家冰摩擦大得多——
+                        // 松手后滑一小段（~80px）就停，不会永远飘
   },
 
   player: {
@@ -259,6 +261,7 @@ class Scene {
     this.tipSeq = 0; // 已展示的次数（序号条件按 tipSeq+1 比较，从 1 起）
     this.tipReady = null; // 当前"可点击展示"的提示（条件满足；**靠后的优先**，不自动出现）
     this.tipActive = null; // 最近一次展示的提示对象
+    this.deathCause = null; // 死亡原因 { kind:'void'|'acid'|'base'|'reaction', partner }（死亡界面文案用）
     this.debugMode = false; // 调试模式（URL 参数 ?debug=1 开启；.debugmode() 已废弃）
     this.debugPaused = false; // 暂停 tick 推进
     this.debugStepOnce = false; // 手动步进一 tick
@@ -839,6 +842,16 @@ class Scene {
     const point = this._emitCtx ? this._emitCtx.point : null;
     const key = this._rxKey(text);
     const now = this.time;
+    // 死亡原因记录：玩家参与的任一生效反应 → 记住反应物伙伴（酸/碱分类）
+    if (this.player) {
+      const partner = reactionPartnerOf(text, this.player.substance);
+      if (partner) {
+        this.player.lastRxPartner = partner;
+        const sub = getSubstance(partner);
+        this.player.lastRxAcid = sub ? sub.kind === 'acid' : false;
+        this.player.lastRxBase = sub ? sub.kind === 'base' : false;
+      }
+    }
     // 防"反应抖动"：同一反应（规范化键：反应物排序后）在 0.5s 内只进一次
     // 调试面板/浮动标签，1s 内只进一次玩家 HUD 日志。多反应竞争或循环
     // （如氨气在大气与溶液间往返）时，每 tick 交替记录不同反应式会让
@@ -1261,10 +1274,16 @@ class Scene {
     const p = this.player;
     if (!p) return;
     if (p.hp <= 0) {
+      // 反应致死：优先用最近一次玩家反应记录（酸/碱分类 + 伙伴物质）
+      this.deathCause = {
+        kind: p.lastRxAcid ? 'acid' : p.lastRxBase ? 'base' : 'reaction',
+        partner: p.lastRxPartner ?? null,
+      };
       this.setStatus('died');
       return;
     }
     if (p.y > this.worldH + CFG.worldMargin || p.bottom < -CFG.worldMargin) {
+      this.deathCause = { kind: 'void' };
       this.setStatus('died');
       return;
     }
@@ -1331,7 +1350,27 @@ function tipCond(scene, c) {
   return true;
 }
 
+/**
+ * 从反应方程式里提取"玩家之外的唯一反应物"（死亡文案/溯源用）：
+ * 'Fe + 2HCl → FeCl2 + H2'（玩家 Fe）→ 'HCl'；多反应物时取最后匹配的物质。
+ */
+function reactionPartnerOf(text, excludeId) {
+  if (typeof text !== 'string' || !excludeId) return null;
+  const lhs = text.split(/→|->/)[0] ?? text;
+  let partner = null;
+  for (const raw of lhs.split('+')) {
+    // 去系数/括号注记：'2HCl' → 'HCl'；'3NH3·H2O' → 'NH3·H2O'（先保留点号）
+    let tok = raw.trim().replace(/^[\d.\s]+/, '').trim();
+    tok = tok.replace(/[（(].*?[)）]?$/, '').trim();
+    if (!tok) continue;
+    if (tok === excludeId || tok === 'H2O') continue; // 水是介质不是致死物
+    if (getSubstance(tok)) partner = tok;
+  }
+  return partner;
+}
+
 exports.Scene = Scene;
+exports.reactionPartnerOf = reactionPartnerOf;
 
   };
   __modules["src/chem/engine.js"] = function (module, exports, __require) {
@@ -10532,6 +10571,53 @@ const QUIPS_WAIT = [
   '再等等——再过会儿说不定就有了',
 ];
 
+// 死亡文案（死亡界面；{sub}=玩家核心物质，{b}=反应伙伴物质；随机抽取）
+const DEATH_VOID = [
+  '{sub}自走虚空',
+  '{sub}和虚空娘在异世界相遇',
+  '{sub}坠机了',
+  '{sub}走路没看路',
+  '{sub}被重力放逐了',
+  '{sub}下去看星星了（没回来）',
+];
+const DEATH_ACID = [
+  '{sub}和强酸{b}亲密接触',
+  '{sub}发现了"泳池"是用强酸{b}做的',
+  '{sub}泡澡选错了池子（强酸{b}）',
+];
+const DEATH_BASE = [
+  '{sub}和强碱{b}亲密接触',
+  '{sub}发现了"泳池"是用强碱{b}做的',
+  '{sub}碱到发涩，被{b}送走了',
+];
+const DEATH_RX = [
+  '{sub}与{b}不共戴天',
+  '{sub}感受到了{b}的力量',
+  '{sub}和{b}在异世界相遇',
+  '{sub}被{b}制裁了',
+];
+const DEATH_RX_NOP = [
+  '{sub}燃尽了最后一点存在',
+  '{sub}把自己反应没了',
+  '{sub}和这个世界告别了',
+];
+
+/** 死亡界面文案（随机抽取）：cause={ kind:'void'|'acid'|'base'|'reaction', partner }，
+ *  sub=玩家核心物质（a），partner=反应致死物质（b）。 */
+function deathQuip(cause, sub) {
+  const kind = cause && cause.kind;
+  const b = cause && cause.partner ? cause.partner : '';
+  const fill = (s) => (typeof s === 'string' && s ? s : '神秘物质');
+  const pick = (list) => list[Math.floor(Math.random() * list.length)];
+  let t;
+  if (kind === 'void') t = pick(DEATH_VOID);
+  else if (kind === 'acid') t = b ? pick(DEATH_ACID) : pick(DEATH_RX_NOP);
+  else if (kind === 'base') t = b ? pick(DEATH_BASE) : pick(DEATH_RX_NOP);
+  else if (kind === 'reaction') t = b ? pick(DEATH_RX) : pick(DEATH_RX_NOP);
+  else t = pick(DEATH_RX_NOP);
+  return t.replace('{sub}', fill(sub)).replace('{b}', b);
+}
+
 class Hud {
   constructor(scene) {
     this.scene = scene;
@@ -11843,15 +11929,22 @@ class Hud {
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 34px "Segoe UI", sans-serif';
     ctx.fillText(win ? '通关！' : '死亡', cx, cy + 58);
+    // 死亡原因（搞笑文案；通关不显示）
+    if (!win) {
+      ctx.fillStyle = '#ffd9a0';
+      ctx.font = 'bold 15px "Segoe UI", "Microsoft YaHei", sans-serif';
+      ctx.fillText(deathQuip(scene.deathCause, scene.player && scene.player.substance), cx, cy + 84);
+    }
     ctx.fillStyle = '#e8d8b0';
     ctx.font = '15px "Segoe UI", sans-serif';
     const touch = scene._touchUI && scene._touchUI.enabled();
-    ctx.fillText(touch ? '轻触屏幕重新开始' : '按 R 重开', cx, cy + 90);
+    ctx.fillText(touch ? '轻触屏幕重新开始' : '按 R 重开', cx, cy + (win ? 90 : 110));
     ctx.textAlign = 'left';
     ctx.restore();
   }
 }
 
+exports.deathQuip = deathQuip;
 exports.Hud = Hud;
 
   };
@@ -13429,7 +13522,7 @@ function pushContainers(p, scene, dt) {
         c.x = nx;
         if (typeof c.syncWalls === 'function') c.syncWalls(); // 壁体**立即**跟上（否则物理步用旧壁位置 → 玩家被弹开）
         p.x = c.x - p.w; // 吸附到左壁
-        p.vel.x = 0;
+        if (!p._groundIce) p.vel.x = 0; // 石地：清速（指令驱动）；冰面：保留动量（松手玩家也跟着滑）
         c._slideVx = c._onIce ? dir * p.moveSpeed : 0; // 冰面：获得滑动余量（松手继续滑）
       }
     } else if (push < 0 && p.left <= c.x + c.w + 2 && p.left >= c.x + c.w - wall - 2) {
@@ -13438,7 +13531,7 @@ function pushContainers(p, scene, dt) {
         c.x = nx;
         if (typeof c.syncWalls === 'function') c.syncWalls();
         p.x = c.x + c.w; // 吸附到右壁
-        p.vel.x = 0;
+        if (!p._groundIce) p.vel.x = 0;
         c._slideVx = c._onIce ? dir * p.moveSpeed : 0;
       }
     }
@@ -13446,14 +13539,15 @@ function pushContainers(p, scene, dt) {
 }
 
 /**
- * 冰面惯性滑行：被推过的容器在冰上松手后继续飘（冰摩擦缓慢衰减），
- * 离开冰面立即停。在容器自身 update 里每帧调用（不依赖玩家在场）。
+ * 冰面惯性滑行：被推过的容器在冰上松手后继续飘（滑行摩擦缓慢衰减——
+ * CFG.ice.slideFriction：比玩家冰摩擦大得多，滑一小段就停，不会永远飘），
+ * 离开冰面立即停。由 pushContainers 驱动（玩家输入管线内）。
  */
 function iceSlide(c, dt) {
   if (!c._slideVx) return;
   if (!c._onIce) { c._slideVx = 0; return; }
   c.x += c._slideVx * dt;
-  c._slideVx *= Math.max(0, 1 - CFG.iceFriction * dt);
+  c._slideVx *= Math.max(0, 1 - CFG.ice.slideFriction * dt);
   if (Math.abs(c._slideVx) < 5) c._slideVx = 0;
 }
 

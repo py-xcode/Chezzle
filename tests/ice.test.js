@@ -129,5 +129,25 @@ test('冰面推烧杯：满速推动（同石地）；松手后继续滑（冰�
   assert.ok(res.stone.pushed > 200, `石地满速推：${res.stone.pushed.toFixed(1)}px`);
   assert.ok(res.ice.pushed > 200, `冰上同样满速推：${res.ice.pushed.toFixed(1)}px`);
   assert.ok(res.stone.coast < 40, `石地松手急停：滑行 ${res.stone.coast.toFixed(1)}px`);
-  assert.ok(res.ice.coast > 150, `冰上松手继续滑（惯性）：${res.ice.coast.toFixed(1)}px`);
+  assert.ok(res.ice.coast > 50 && res.ice.coast < 130, `冰上滑一小段就停：${res.ice.coast.toFixed(1)}px`);
+});
+
+// ---- 7. 冰上推完松手：玩家也跟着滑（动量保留）；石地玩家急停 ----------------
+test('冰面推烧杯松手：玩家继续滑（与容器同步感）；石地玩家瞬间停', () => {
+  const res = {};
+  for (const ice of [true, false]) {
+    const scene = mk(ice);
+    const p = new Player({ x: 300, y: 600, mass: 30, id: 'p1' });
+    scene.addObject(p);
+    const bk = new Beaker({ x: 386, y: 620, w: 60, h: 70, volume: 150, solutes: {} });
+    scene.addObject(bk);
+    run(scene, 40);
+    for (let i = 0; i < 30; i++) { scene.control.add('right'); scene.step(1 / 30); } // 推 1s
+    scene.control.delete('right');
+    const px = p.x;
+    run(scene, 30); // 松手 1s
+    res[ice ? 'ice' : 'stone'] = { glide: p.x - px };
+  }
+  assert.ok(res.stone.glide < 2, `石地玩家瞬间停：${res.stone.glide.toFixed(1)}px`);
+  assert.ok(res.ice.glide > 25, `冰上玩家跟着滑：${res.ice.glide.toFixed(1)}px`);
 });

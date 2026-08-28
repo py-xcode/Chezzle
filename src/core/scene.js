@@ -64,6 +64,7 @@ export class Scene {
     this.tipSeq = 0; // 已展示的次数（序号条件按 tipSeq+1 比较，从 1 起）
     this.tipReady = null; // 当前"可点击展示"的提示（条件满足；**靠后的优先**，不自动出现）
     this.tipActive = null; // 最近一次展示的提示对象
+    this.deathCause = null; // 死亡原因 { kind:'void'|'acid'|'base'|'reaction', partner }（死亡界面文案用）
     this.debugMode = false; // 调试模式（URL 参数 ?debug=1 开启；.debugmode() 已废弃）
     this.debugPaused = false; // 暂停 tick 推进
     this.debugStepOnce = false; // 手动步进一 tick
@@ -644,6 +645,16 @@ export class Scene {
     const point = this._emitCtx ? this._emitCtx.point : null;
     const key = this._rxKey(text);
     const now = this.time;
+    // 死亡原因记录：玩家参与的任一生效反应 → 记住反应物伙伴（酸/碱分类）
+    if (this.player) {
+      const partner = reactionPartnerOf(text, this.player.substance);
+      if (partner) {
+        this.player.lastRxPartner = partner;
+        const sub = getSubstance(partner);
+        this.player.lastRxAcid = sub ? sub.kind === 'acid' : false;
+        this.player.lastRxBase = sub ? sub.kind === 'base' : false;
+      }
+    }
     // 防"反应抖动"：同一反应（规范化键：反应物排序后）在 0.5s 内只进一次
     // 调试面板/浮动标签，1s 内只进一次玩家 HUD 日志。多反应竞争或循环
     // （如氨气在大气与溶液间往返）时，每 tick 交替记录不同反应式会让
@@ -1066,10 +1077,16 @@ export class Scene {
     const p = this.player;
     if (!p) return;
     if (p.hp <= 0) {
+      // 反应致死：优先用最近一次玩家反应记录（酸/碱分类 + 伙伴物质）
+      this.deathCause = {
+        kind: p.lastRxAcid ? 'acid' : p.lastRxBase ? 'base' : 'reaction',
+        partner: p.lastRxPartner ?? null,
+      };
       this.setStatus('died');
       return;
     }
     if (p.y > this.worldH + CFG.worldMargin || p.bottom < -CFG.worldMargin) {
+      this.deathCause = { kind: 'void' };
       this.setStatus('died');
       return;
     }
@@ -1134,4 +1151,23 @@ function tipCond(scene, c) {
     }
   }
   return true;
+}
+
+/**
+ * 从反应方程式里提取"玩家之外的唯一反应物"（死亡文案/溯源用）：
+ * 'Fe + 2HCl → FeCl2 + H2'（玩家 Fe）→ 'HCl'；多反应物时取最后匹配的物质。
+ */
+export function reactionPartnerOf(text, excludeId) {
+  if (typeof text !== 'string' || !excludeId) return null;
+  const lhs = text.split(/→|->/)[0] ?? text;
+  let partner = null;
+  for (const raw of lhs.split('+')) {
+    // 去系数/括号注记：'2HCl' → 'HCl'；'3NH3·H2O' → 'NH3·H2O'（先保留点号）
+    let tok = raw.trim().replace(/^[\d.\s]+/, '').trim();
+    tok = tok.replace(/[（(].*?[)）]?$/, '').trim();
+    if (!tok) continue;
+    if (tok === excludeId || tok === 'H2O') continue; // 水是介质不是致死物
+    if (getSubstance(tok)) partner = tok;
+  }
+  return partner;
 }

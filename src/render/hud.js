@@ -48,6 +48,53 @@ const QUIPS_WAIT = [
   '再等等——再过会儿说不定就有了',
 ];
 
+// 死亡文案（死亡界面；{sub}=玩家核心物质，{b}=反应伙伴物质；随机抽取）
+const DEATH_VOID = [
+  '{sub}自走虚空',
+  '{sub}和虚空娘在异世界相遇',
+  '{sub}坠机了',
+  '{sub}走路没看路',
+  '{sub}被重力放逐了',
+  '{sub}下去看星星了（没回来）',
+];
+const DEATH_ACID = [
+  '{sub}和强酸{b}亲密接触',
+  '{sub}发现了"泳池"是用强酸{b}做的',
+  '{sub}泡澡选错了池子（强酸{b}）',
+];
+const DEATH_BASE = [
+  '{sub}和强碱{b}亲密接触',
+  '{sub}发现了"泳池"是用强碱{b}做的',
+  '{sub}碱到发涩，被{b}送走了',
+];
+const DEATH_RX = [
+  '{sub}与{b}不共戴天',
+  '{sub}感受到了{b}的力量',
+  '{sub}和{b}在异世界相遇',
+  '{sub}被{b}制裁了',
+];
+const DEATH_RX_NOP = [
+  '{sub}燃尽了最后一点存在',
+  '{sub}把自己反应没了',
+  '{sub}和这个世界告别了',
+];
+
+/** 死亡界面文案（随机抽取）：cause={ kind:'void'|'acid'|'base'|'reaction', partner }，
+ *  sub=玩家核心物质（a），partner=反应致死物质（b）。 */
+export function deathQuip(cause, sub) {
+  const kind = cause && cause.kind;
+  const b = cause && cause.partner ? cause.partner : '';
+  const fill = (s) => (typeof s === 'string' && s ? s : '神秘物质');
+  const pick = (list) => list[Math.floor(Math.random() * list.length)];
+  let t;
+  if (kind === 'void') t = pick(DEATH_VOID);
+  else if (kind === 'acid') t = b ? pick(DEATH_ACID) : pick(DEATH_RX_NOP);
+  else if (kind === 'base') t = b ? pick(DEATH_BASE) : pick(DEATH_RX_NOP);
+  else if (kind === 'reaction') t = b ? pick(DEATH_RX) : pick(DEATH_RX_NOP);
+  else t = pick(DEATH_RX_NOP);
+  return t.replace('{sub}', fill(sub)).replace('{b}', b);
+}
+
 export class Hud {
   constructor(scene) {
     this.scene = scene;
@@ -1359,10 +1406,16 @@ export class Hud {
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 34px "Segoe UI", sans-serif';
     ctx.fillText(win ? '通关！' : '死亡', cx, cy + 58);
+    // 死亡原因（搞笑文案；通关不显示）
+    if (!win) {
+      ctx.fillStyle = '#ffd9a0';
+      ctx.font = 'bold 15px "Segoe UI", "Microsoft YaHei", sans-serif';
+      ctx.fillText(deathQuip(scene.deathCause, scene.player && scene.player.substance), cx, cy + 84);
+    }
     ctx.fillStyle = '#e8d8b0';
     ctx.font = '15px "Segoe UI", sans-serif';
     const touch = scene._touchUI && scene._touchUI.enabled();
-    ctx.fillText(touch ? '轻触屏幕重新开始' : '按 R 重开', cx, cy + 90);
+    ctx.fillText(touch ? '轻触屏幕重新开始' : '按 R 重开', cx, cy + (win ? 90 : 110));
     ctx.textAlign = 'left';
     ctx.restore();
   }
