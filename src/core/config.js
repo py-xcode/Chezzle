@@ -57,7 +57,7 @@ export const CFG = {
   lampRange: 70, // px（灯提供加热/点燃的半径）
   lampLightRange: 180, // px（灯提供"光照"条件的半径——见光分解如 HClO）
   placeLampRange: 120, // px（放置沉淀到灯上的半径）
-  inventory: { slots: 5, capacity: 100, slotPx: 46, itemSlotPx: 58 }, // 物品格在 HUD 中放大（装烧杯/滴管/集气瓶看得清）
+  inventory: { slots: 5, capacity: 100, slotPx: 56, itemSlotPx: 70 }, // 物品格在 HUD 中放大（装烧杯/滴管/集气瓶看得清）
 
   // 移动端（触屏/小屏；桌面 fine-pointer 完全不受影响）
   touch: {
@@ -72,11 +72,11 @@ export const CFG = {
     hudAlpha: 0.78,  // 移动端左侧 HUD 卡片透明度（面板体；文字不降，保可读）
     hudTop: 48,    // 触屏端顶部 HUD（卡片/按钮）起始 y：让开"返回选关"悬浮钮
     hudTopFs: 92,  // 触屏端全屏时的顶部起始 y：再让开 iOS 系统全屏关闭按钮（左上）
-    joyR: 105,     // 摇杆基座半径（px）
+    joyR: 122,     // 摇杆基座半径（px）
     joyDead: 0.22, // 摇杆死区（半径比例；死区内不触发任何方向）
     horizDead: 0.14, // 水平方向死区（半径比例：小幅下倾/抖动不会误触左右）
-    btnSize: 58,   // 右下状态按钮边长（px）
-    btnGap: 10,    // 按钮间距
+    btnSize: 68,   // 右下状态按钮边长（px）
+    btnGap: 12,    // 按钮间距
     pad: 10,       // 控件到屏幕边距（安全区之外再留）
   },
 

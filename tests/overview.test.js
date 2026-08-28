@@ -130,11 +130,11 @@ test('按钮几何：鸟瞰在提示左侧、全屏在鸟瞰左侧、正常模�
   const W = 844;
   const ob = overviewButtonRect(W);
   const fb = fullscreenButtonRect(W);
-  // 提示按钮：W-72..W-10（62×28）——全屏 ≤ 鸟瞰 ≤ 提示（同一行、留缝不重叠）
-  assert.ok(ob.x + ob.w <= W - 72, '鸟瞰按钮不与提示按钮重叠');
+  // 提示按钮：W-82..W-10（72×34）——全屏 ≤ 鸟瞰 ≤ 提示（同一行、留缝不重叠）
+  assert.ok(ob.x + ob.w <= W - 82, '鸟瞰按钮不与提示按钮重叠');
   assert.ok(fb.x + fb.w <= ob.x, '全屏按钮不与鸟瞰按钮重叠');
-  assert.equal(ob.h, 28, '同一行高度');
-  assert.equal(fb.h, 28);
+  assert.equal(ob.h, 34, '同一行高度');
+  assert.equal(fb.h, 34);
 
   // 正常模式：点击鸟瞰按钮进入
   const scene = flatScene();

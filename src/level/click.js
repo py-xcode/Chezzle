@@ -42,12 +42,12 @@ export function hudTopOffset(scene) {
 
 /** 鸟瞰按钮（提示按钮左侧；双端显示）：返回 {x,y,w,h} */
 export function overviewButtonRect(W, top = 10) {
-  return { x: W - 142, y: top, w: 62, h: 28 };
+  return { x: W - 158, y: top, w: 72, h: 34 };
 }
 
 /** 全屏按钮（仅触屏端显示，图标 ⛶）：在鸟瞰按钮左侧 */
 export function fullscreenButtonRect(W, top = 10) {
-  return { x: W - 196, y: top, w: 44, h: 28 };
+  return { x: W - 214, y: top, w: 52, h: 34 };
 }
 
 function inRect(r, sx, sy) {
@@ -131,7 +131,7 @@ export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   if (scene._touchUI && typeof scene._touchUI.enabled === 'function' && scene._touchUI.enabled()) {
     if (inRect(fullscreenButtonRect(canvas.width, top), sx, sy)) {
       if (fullscreenSupported()) toggleFullscreen();
-      else pushNotice(scene, '此浏览器不支持全屏（可试试"添加到主屏幕"后打开）');
+      else pushNotice(scene, '此浏览器不支持全屏');
       onInfo?.({ type: 'fullscreen' });
       return true;
     }
@@ -142,8 +142,8 @@ export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
     onInfo?.({ type: 'overview' });
     return true;
   }
-  // 3) 提示按钮（右上；hud.tipButton 同几何：top..top+28）
-  if (sx > canvas.width - 68 && sx < canvas.width - 8 && sy > top && sy < top + 28) {
+  // 3) 提示按钮（右上；hud.tipButton 同几何：top..top+34）
+  if (sx > canvas.width - 84 && sx < canvas.width - 8 && sy > top && sy < top + 34) {
     if (hud) hud.showTip = !hud.showTip;
     onInfo?.({ type: 'tip' });
     return true;

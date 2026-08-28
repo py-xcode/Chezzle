@@ -91,7 +91,7 @@ export class Hud {
   viewButton(ctx, W, top = 10) {
     const r = overviewButtonRect(W, top);
     ctx.save();
-    rr(ctx, r.x, r.y, r.w, r.h, 8);
+    rr(ctx, r.x, r.y, r.w, r.h, 9);
     const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
     g.addColorStop(0, '#2a3a5e');
     g.addColorStop(1, '#141d38');
@@ -104,9 +104,9 @@ export class Hud {
     ctx.stroke();
     ctx.restore();
     ctx.fillStyle = '#bfe6ff';
-    ctx.font = 'bold 13px "Segoe UI", sans-serif';
+    ctx.font = 'bold 15px "Segoe UI", sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('鸟瞰', r.x + r.w / 2, r.y + 20);
+    ctx.fillText('鸟瞰', r.x + r.w / 2, r.y + 23);
     ctx.textAlign = 'left';
   }
 
@@ -114,7 +114,7 @@ export class Hud {
   fsButton(ctx, W, top = 10) {
     const r = fullscreenButtonRect(W, top);
     ctx.save();
-    rr(ctx, r.x, r.y, r.w, r.h, 8);
+    rr(ctx, r.x, r.y, r.w, r.h, 9);
     const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
     g.addColorStop(0, '#2a3a5e');
     g.addColorStop(1, '#141d38');
@@ -125,9 +125,9 @@ export class Hud {
     ctx.stroke();
     ctx.restore();
     ctx.fillStyle = '#bfe6ff';
-    ctx.font = '15px "Segoe UI", sans-serif';
+    ctx.font = '17px "Segoe UI", sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('⛶', r.x + r.w / 2, r.y + 20);
+    ctx.fillText('⛶', r.x + r.w / 2, r.y + 23);
     ctx.textAlign = 'left';
   }
 
@@ -151,22 +151,22 @@ export class Hud {
     ctx.stroke();
     ctx.restore();
     ctx.fillStyle = '#ffe9b0';
-    ctx.font = 'bold 13px "Segoe UI", sans-serif';
+    ctx.font = 'bold 15px "Segoe UI", sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('返回', r.x + r.w / 2, r.y + 20);
+    ctx.fillText('返回', r.x + r.w / 2, r.y + 23);
     // 操作提示
     const touch = this._isTouch();
     const hint = touch ? '鸟瞰 · 单指拖动平移 · 双指捏合缩放' : '鸟瞰 · 滚轮缩放 · 拖动平移 · V 返回';
-    ctx.font = 'bold 12px "Segoe UI", "Microsoft YaHei", sans-serif';
+    ctx.font = 'bold 13px "Segoe UI", "Microsoft YaHei", sans-serif';
     const tw = ctx.measureText(hint).width;
-    rr(ctx, W / 2 - tw / 2 - 14, top + 2, tw + 28, 24, 8);
+    rr(ctx, W / 2 - tw / 2 - 14, top + 3, tw + 28, 28, 9);
     ctx.fillStyle = 'rgba(10,12,26,0.72)';
     ctx.fill();
     ctx.strokeStyle = 'rgba(127,224,255,0.4)';
     ctx.lineWidth = 1;
     ctx.stroke();
     ctx.fillStyle = '#bfe6ff';
-    ctx.fillText(hint, W / 2, top + 18);
+    ctx.fillText(hint, W / 2, top + 22);
     ctx.textAlign = 'left';
   }
 
@@ -207,7 +207,7 @@ export class Hud {
     const ox = ui.joy ? ui.joy.sx : 0;
     const oy = ui.joy ? ui.joy.sy : 0;
     ctx.beginPath();
-    ctx.arc(g.cx + ox, g.cy + oy, 34, 0, Math.PI * 2);
+    ctx.arc(g.cx + ox, g.cy + oy, 39, 0, Math.PI * 2);
     ctx.fillStyle = ui.joy ? 'rgba(255,255,255,0.30)' : 'rgba(255,255,255,0.12)';
     ctx.fill();
     ctx.strokeStyle = ui.joy ? 'rgba(255,215,106,0.85)' : 'rgba(232,184,75,0.4)';
@@ -237,10 +237,10 @@ export class Hud {
         ctx.stroke();
         ctx.shadowBlur = 0;
         ctx.textAlign = 'center';
-        this._touchIcon(ctx, r.key, r.x + r.size / 2, r.y + r.size / 2 - 6, down ? '#fff6d8' : '#ffe9b0');
+        this._touchIcon(ctx, r.key, r.x + r.size / 2, r.y + r.size / 2 - 7, down ? '#fff6d8' : '#ffe9b0');
         ctx.fillStyle = down ? '#ffd76a' : 'rgba(255,233,176,0.62)';
-        ctx.font = '9.5px "Segoe UI", "Microsoft YaHei", sans-serif';
-        ctx.fillText(cap, r.x + r.size / 2, r.y + r.size - 9);
+        ctx.font = '11px "Segoe UI", "Microsoft YaHei", sans-serif';
+        ctx.fillText(cap, r.x + r.size / 2, r.y + r.size - 10);
         ctx.restore();
       }
     }
@@ -248,11 +248,12 @@ export class Hud {
   }
 
   /** 触控按钮矢量图标（canvas 路径画的"SVG 小图"，原点 = 图标中心）：
-   *  grab=四角框选+目标点（抓取） / use=倾斜烧杯倒液（倒出） /
+   *  grab=一只手（抓取） / use=倾斜烧杯倒液（倒出） /
    *  collect=马蹄磁铁（吸集） / place=落点箭头（放置到地上） */
   _touchIcon(ctx, key, cx, cy, color) {
     ctx.save();
     ctx.translate(cx, cy);
+    ctx.scale(1.15, 1.15);
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
     ctx.lineWidth = 2.2;
@@ -260,18 +261,23 @@ export class Hud {
     ctx.lineJoin = 'round';
     ctx.beginPath();
     if (key === 'grab') {
-      // 四角括号 + 中心目标点（"框选抓取"）
-      ctx.moveTo(-3.5, -9); ctx.lineTo(-9, -9); ctx.lineTo(-9, -3.5);
-      ctx.moveTo(3.5, -9); ctx.lineTo(9, -9); ctx.lineTo(9, -3.5);
-      ctx.moveTo(-3.5, 9); ctx.lineTo(-9, 9); ctx.lineTo(-9, 3.5);
-      ctx.moveTo(3.5, 9); ctx.lineTo(9, 9); ctx.lineTo(9, 3.5);
+      // 一只手：四指 + 掌 + 拇指（"伸手抓取"）
+      ctx.moveTo(-6.5, -4); ctx.lineTo(-6.5, 1); // 食指
+      ctx.moveTo(-2.2, -6.5); ctx.lineTo(-2.2, 1); // 中指
+      ctx.moveTo(2.2, -5.5); ctx.lineTo(2.2, 1); // 无名指
+      ctx.moveTo(6.5, -3.5); ctx.lineTo(6.5, 1); // 小指
+      ctx.moveTo(-8, 0); // 掌（上缘开口由指根补齐）
+      ctx.lineTo(-8, 3.5);
+      ctx.quadraticCurveTo(-8, 8.5, -3, 8.5);
+      ctx.lineTo(3, 8.5);
+      ctx.quadraticCurveTo(8, 8.5, 8, 3.5);
+      ctx.lineTo(8, 0);
+      ctx.moveTo(-8, 2.5); // 拇指
+      ctx.quadraticCurveTo(-11.5, 1, -10.5, -4);
       ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(0, 0, 3.4, 0, Math.PI * 2);
-      ctx.fill();
     } else if (key === 'use') {
-      // 倾斜小烧杯 + 倒出的液滴
-      ctx.rotate(-0.62);
+      // 倾斜小烧杯（顺时针倒向右侧）+ 液滴从口沿洒落
+      ctx.rotate(0.55);
       ctx.moveTo(-6, -5);
       ctx.lineTo(-6, 5);
       ctx.quadraticCurveTo(-6, 7.5, -3.5, 7.5);
@@ -279,10 +285,10 @@ export class Hud {
       ctx.quadraticCurveTo(6, 7.5, 6, 5);
       ctx.lineTo(6, -5);
       ctx.stroke();
-      ctx.rotate(0.62);
-      ctx.beginPath(); ctx.arc(10.5, -2, 1.7, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(13, 4, 2.0, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(11, 10.5, 2.3, 0, Math.PI * 2); ctx.fill();
+      ctx.rotate(-0.55);
+      ctx.beginPath(); ctx.arc(10.5, -1, 1.6, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(13, 4.5, 1.9, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(11.5, 10.5, 2.2, 0, Math.PI * 2); ctx.fill();
     } else if (key === 'collect') {
       // 马蹄磁铁（开口朝下，两极短杠）——"吸集"沉淀
       ctx.moveTo(-7.5, 5);
@@ -371,12 +377,12 @@ export class Hud {
     const a = Math.min(1, age / 0.12) * Math.max(0, Math.min(1, (1.6 - age) / 0.35));
     ctx.save();
     ctx.globalAlpha = Math.max(0, Math.min(1, a));
-    ctx.font = 'bold 13px "Segoe UI", "Microsoft YaHei", sans-serif';
+    ctx.font = 'bold 14px "Segoe UI", "Microsoft YaHei", sans-serif';
     const tw = ctx.measureText(n.text).width;
-    const bw = tw + 28;
+    const bw = tw + 30;
     const bx = W / 2 - bw / 2;
     const by = H * 0.15;
-    rr(ctx, bx, by, bw, 27, 8);
+    rr(ctx, bx, by, bw, 30, 9);
     ctx.fillStyle = 'rgba(10,12,26,0.92)';
     ctx.fill();
     ctx.strokeStyle = 'rgba(255,170,130,0.8)';
@@ -387,7 +393,7 @@ export class Hud {
     ctx.shadowBlur = 0;
     ctx.fillStyle = '#ffdcc8';
     ctx.textAlign = 'center';
-    ctx.fillText(n.text, W / 2, by + 19);
+    ctx.fillText(n.text, W / 2, by + 21);
     ctx.restore();
   }
 
@@ -395,7 +401,7 @@ export class Hud {
   debugPanel(ctx, scene, W, H, time) {
     if (!scene.debugMode) return;
     const p = scene.player;
-    const barW = 250;
+    const barW = 280;
     const px = W - barW - 10;
     // 右上角状态条（堆叠面板的当前顶 y；触屏下移避让悬浮钮/系统按钮）
     let top = hudTopOffset(scene);
@@ -694,10 +700,10 @@ export class Hud {
       ? EXTRA_GAS_IDS.map((id) => ({ id, frac: atm.fraction(id) * 100, mass: atm.mass(id) })).filter((g) => g.mass > 0.01)
       : [];
     const airLines = 1 + (extras.length ? 1 : 0);
-    const w = 240;
-    const h = 62
-      + (compRows ? 15 + compRows * 15 + (entries.length > compRows ? 11 : 0) : 0)
-      + airLines * 14 + 8;
+    const w = 280;
+    const h = 72
+      + (compRows ? 17 + compRows * 17 + (entries.length > compRows ? 13 : 0) : 0)
+      + airLines * 16 + 8;
     this._leftH = h; // 左上卡实际高度（调试模式"最近反应"面板的堆叠定位用）
     ctx.save();
     ctx.globalAlpha = this._isTouch() ? CFG.touch.hudAlpha : 1;
@@ -707,13 +713,13 @@ export class Hud {
     const sub = getSubstance(p.substance);
     const color = sub?.solid?.[0] ?? '#7fe0ff';
     const ratio = p.maxHp ? Math.max(0, Math.min(1, p.hp / p.maxHp)) : 0;
-    this.vial(ctx, 22, top + 8, 26, 40, ratio, color, time);
-    clearText(ctx, p.substance, 58, top + 22, THEME.gold.text, 'bold 14px "Segoe UI", sans-serif');
-    clearText(ctx, `${p.hp.toFixed(1)} g 体质`, 58, top + 40, '#ffffff', 'bold 11px monospace');
-    let y = top + 64;
+    this.vial(ctx, 24, top + 9, 30, 46, ratio, color, time);
+    clearText(ctx, p.substance, 66, top + 26, THEME.gold.text, 'bold 16px "Segoe UI", sans-serif');
+    clearText(ctx, `${p.hp.toFixed(1)} g 体质`, 66, top + 47, '#ffffff', 'bold 12.5px monospace');
+    let y = top + 72;
     if (compRows) {
-      clearText(ctx, '身体组成', 20, y, 'rgba(255,233,176,0.85)', 'bold 9px "Segoe UI", sans-serif');
-      y += 13;
+      clearText(ctx, '身体组成', 20, y, 'rgba(255,233,176,0.85)', 'bold 10px "Segoe UI", sans-serif');
+      y += 15;
       for (const [id, m] of entries.slice(0, compRows)) {
         const sc = getSubstance(id);
         const isCore = id === p.substance;
@@ -724,18 +730,18 @@ export class Hud {
         }
         ctx.fillStyle = sc?.solid?.[0] ?? '#7fe0ff';
         ctx.beginPath();
-        ctx.arc(26, y + 3, 3.6, 0, Math.PI * 2);
+        ctx.arc(28, y + 3, 4, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
-        clearText(ctx, id, 35, y + 6, isCore ? THEME.gold.text : '#dfe8f2', '9.5px monospace');
+        clearText(ctx, id, 39, y + 7, isCore ? THEME.gold.text : '#dfe8f2', '10.5px monospace');
         ctx.textAlign = 'right';
-        clearText(ctx, `${m.toFixed(1)}g`, w - 14, y + 6, '#9fb2c8', '9px monospace');
+        clearText(ctx, `${m.toFixed(1)}g`, w - 16, y + 7, '#9fb2c8', '10px monospace');
         ctx.textAlign = 'left';
-        y += 15;
+        y += 17;
       }
       if (entries.length > compRows) {
-        clearText(ctx, `…另有 ${entries.length - compRows} 种`, 20, y + 5, '#9fb2c8', '9px monospace');
-        y += 11;
+        clearText(ctx, `…另有 ${entries.length - compRows} 种`, 20, y + 6, '#9fb2c8', '10px monospace');
+        y += 13;
       }
       y += 2;
     }
@@ -744,9 +750,9 @@ export class Hud {
     const co2 = atm ? atm.fraction('CO2') * 100 : 0;
     const co2Mass = atm ? atm.mass('CO2') : 0;
     const co2Text = co2 >= 0.05 ? `${co2.toFixed(1)}%` : co2Mass > 1e-6 ? '<0.1%' : '0%';
-    clearText(ctx, `O2 ${o2.toFixed(1)}%`, 20, y + 5, '#aeeaff', 'bold 10px monospace');
-    clearText(ctx, `CO2 ${co2Text}`, 100, y + 5, '#ffe9b0', 'bold 10px monospace');
-    y += 14;
+    clearText(ctx, `O2 ${o2.toFixed(1)}%`, 20, y + 6, '#aeeaff', 'bold 11px monospace');
+    clearText(ctx, `CO2 ${co2Text}`, 118, y + 6, '#ffe9b0', 'bold 11px monospace');
+    y += 16;
     // 预警气体行（有质量才显示）：色点 + 缩略列表
     if (extras.length) {
       let gx = 20;
@@ -754,14 +760,14 @@ export class Hud {
         const c = GAS_COLORS[g.id] ?? '#ffffff';
         ctx.fillStyle = c;
         ctx.beginPath();
-        ctx.arc(gx + 3, y - 1, 3, 0, Math.PI * 2);
+        ctx.arc(gx + 3.5, y - 1, 3.4, 0, Math.PI * 2);
         ctx.fill();
         const t = g.frac >= 0.05 ? `${g.frac.toFixed(1)}%` : '<0.1%';
         const label = `${g.id} ${t}`;
-        clearText(ctx, label, gx + 9, y + 3, c, 'bold 9px monospace');
-        gx += 12 + label.length * 5.6 + 6;
+        clearText(ctx, label, gx + 10, y + 4, c, 'bold 10px monospace');
+        gx += 14 + label.length * 6.2 + 7;
       }
-      if (extras.length > 3) clearText(ctx, `+${extras.length - 3}`, gx + 4, y + 3, '#9fb2c8', '9px monospace');
+      if (extras.length > 3) clearText(ctx, `+${extras.length - 3}`, gx + 4, y + 4, '#9fb2c8', '10px monospace');
     }
   }
 
@@ -905,23 +911,23 @@ export class Hud {
         if (o.totalGas() > 1e-9) color = o.gasColor();
       }
       ctx.save();
-      ctx.font = 'bold 11px "Segoe UI", "Microsoft YaHei", sans-serif';
+      ctx.font = 'bold 12.5px "Segoe UI", "Microsoft YaHei", sans-serif';
       const w1 = ctx.measureText(`${title}　${mass}`).width;
-      ctx.font = 'bold 10px monospace';
+      ctx.font = 'bold 11px monospace';
       const w2 = ctx.measureText(comp).width;
-      const bw = Math.max(w1, w2) + 22;
+      const bw = Math.max(w1, w2) + 24;
       const bx = W - bw - 12; // 右对齐：贴物品栏右缘上方
-      let by = minTop - 48;
+      let by = minTop - 56;
       // 触屏端：物品栏上方是 C/X/Q/⇧ 按钮块——面板再往上挪，不叠在按钮上
       if (this._isTouch()) {
         const ui = this.scene._touchUI;
         const btns = touchButtonRects(W, H, slots, ui && ui.insets ? ui.insets : {});
         let btnTop = Infinity;
         for (const b of btns) btnTop = Math.min(btnTop, b.y);
-        if (btnTop < Infinity) by = btnTop - 44;
+        if (btnTop < Infinity) by = btnTop - 50;
       }
-      rr(ctx, bx, by, bw, 38, 9);
-      const g = ctx.createLinearGradient(bx, by, bx, by + 38);
+      rr(ctx, bx, by, bw, 44, 9);
+      const g = ctx.createLinearGradient(bx, by, bx, by + 44);
       g.addColorStop(0, 'rgba(26,22,52,0.95)');
       g.addColorStop(1, 'rgba(12,10,30,0.95)');
       ctx.fillStyle = g;
@@ -930,12 +936,12 @@ export class Hud {
       ctx.lineWidth = 1;
       ctx.stroke();
       ctx.textAlign = 'left';
-      ctx.font = 'bold 11px "Segoe UI", "Microsoft YaHei", sans-serif';
+      ctx.font = 'bold 12.5px "Segoe UI", "Microsoft YaHei", sans-serif';
       ctx.fillStyle = '#ffe9b0';
-      ctx.fillText(`${title}　${mass}`, bx + 11, by + 16);
-      ctx.font = 'bold 10px monospace';
+      ctx.fillText(`${title}　${mass}`, bx + 12, by + 18);
+      ctx.font = 'bold 11px monospace';
       ctx.fillStyle = color;
-      ctx.fillText(comp, bx + 11, by + 31);
+      ctx.fillText(comp, bx + 12, by + 36);
       ctx.restore();
     }
   }
@@ -953,10 +959,10 @@ export class Hud {
     ctx.fill();
     ctx.restore();
     ctx.fillStyle = sel ? '#fff6dd' : THEME.gold.text;
-    ctx.font = 'bold 8px monospace';
+    ctx.font = 'bold 9.5px monospace';
     ctx.textAlign = 'center';
     ctx.fillText(s.substance, x + size / 2, sy + 15);
-    ctx.font = '10px monospace';
+    ctx.font = '11px monospace';
     ctx.fillStyle = '#ffffff';
     const m = Number.isFinite(s.mass) ? s.mass : 0; // NaN 质量显示 0，不显示 NaN
     ctx.fillText(`${m.toFixed(1)}g`, x + size / 2, sy + size - 8);
@@ -1147,18 +1153,18 @@ export class Hud {
   /** 槽内唯一的小字：质量（空则不画） */
   _slotGrams(ctx, str, cx, y) {
     if (!str) return;
-    ctx.font = '9px monospace';
+    ctx.font = '10.5px monospace';
     ctx.fillStyle = 'rgba(255,255,255,0.92)';
     ctx.fillText(str, cx, y);
   }
 
   // ---- 提示按钮 ----
   tipButton(ctx, W, H, top = 10) {
-    const x = W - 72;
+    const x = W - 82;
     const y = top;
     ctx.save();
-    rr(ctx, x, y, 62, 28, 8);
-    const g = ctx.createLinearGradient(x, y, x, y + 28);
+    rr(ctx, x, y, 72, 34, 9);
+    const g = ctx.createLinearGradient(x, y, x, y + 34);
     g.addColorStop(0, '#7a5a20');
     g.addColorStop(1, '#4a3410');
     ctx.fillStyle = g;
@@ -1170,13 +1176,13 @@ export class Hud {
     ctx.stroke();
     ctx.restore();
     ctx.fillStyle = '#ffe9b0';
-    ctx.font = 'bold 13px "Segoe UI", sans-serif';
+    ctx.font = 'bold 15px "Segoe UI", sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('提示', x + 31, y + 20);
+    ctx.fillText('提示', x + 36, y + 23);
     ctx.textAlign = 'left';
     if (this.showTip && this.scene.tip) {
       ctx.save();
-      rr(ctx, 10, top + 34, Math.min(W - 20, 430), 88, 10);
+      rr(ctx, 10, top + 42, Math.min(W - 20, 470), 96, 10);
       ctx.fillStyle = THEME.panel;
       ctx.fill();
       ctx.strokeStyle = THEME.gold.deep;
@@ -1184,9 +1190,9 @@ export class Hud {
       ctx.stroke();
       ctx.restore();
       ctx.fillStyle = THEME.gold.text;
-      ctx.font = 'bold 12px "Segoe UI", sans-serif';
+      ctx.font = 'bold 13px "Segoe UI", sans-serif';
       const lines = this.scene.tip.split('\n');
-      for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], 22, top + 56 + i * 16);
+      for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], 22, top + 66 + i * 17);
     }
   }
 
