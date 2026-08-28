@@ -317,50 +317,67 @@ export class Hud {
     ctx.restore();
   }
 
-  /** 竖屏提示（移动端）：半透明压暗 + 手机旋转图标 + 文案（游戏照常运行） */
+  /** 竖屏提示（移动端）：半透明压暗 + "竖放手机 + 环绕旋转箭头"图标 + 文案
+   *  （游戏照常运行；图标与玩家当前握持方向一致——竖着的手机，箭头示意转过来） */
   rotateHint(ctx, scene, W, H) {
     const ui = scene._touchUI;
     if (!ui || !ui.isPortrait()) return;
+    const GOLD = '#e8b84b';
     ctx.save();
     ctx.fillStyle = 'rgba(6,5,20,0.82)';
     ctx.fillRect(0, 0, W, H);
     const cx = W / 2;
-    const cy = H / 2;
+    const cy = H * 0.4;
+    // —— 手机（竖放，与当前握持一致）：圆角机身 + 听筒条 + 淡淡的屏幕光 ——
+    const pw = 66;
+    const ph = 112;
+    ctx.save();
     ctx.translate(cx, cy);
-    ctx.rotate(Math.PI / 2); // 手机框画成"横过来的手机 + 箭头"
-    // 手机机身
-    rr(ctx, -34, -58, 68, 116, 12);
-    ctx.strokeStyle = '#e8b84b';
-    ctx.lineWidth = 3;
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(0, -44, 4, 0, Math.PI * 2);
-    ctx.fillStyle = '#e8b84b';
+    rr(ctx, -pw / 2, -ph / 2, pw, ph, 14);
+    ctx.fillStyle = 'rgba(232,184,75,0.08)';
     ctx.fill();
-    ctx.rotate(0.62);
-    // 旋转箭头（弧 + 箭头尖）
-    ctx.beginPath();
-    ctx.arc(0, 0, 88, -0.4, 2.4);
-    ctx.strokeStyle = 'rgba(232,184,75,0.55)';
-    ctx.lineWidth = 7;
+    ctx.strokeStyle = GOLD;
+    ctx.lineWidth = 3.5;
+    ctx.stroke();
+    ctx.beginPath(); // 听筒条
+    ctx.moveTo(-11, -ph / 2 + 11);
+    ctx.lineTo(11, -ph / 2 + 11);
+    ctx.lineWidth = 3;
     ctx.lineCap = 'round';
     ctx.stroke();
-    const fx = 88 * Math.cos(2.4);
-    const fy = 88 * Math.sin(2.4);
+    ctx.restore();
+    // —— 环绕旋转箭头：约 240° 的圆弧，缺口在右上，箭头指向缺口（顺时针转）——
+    const r = Math.max(pw, ph) / 2 + 24;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.strokeStyle = GOLD;
+    ctx.lineWidth = 6;
+    ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(fx - 4, fy + 16);
-    ctx.lineTo(fx + 14, fy + 3);
-    ctx.lineTo(fx + 6, fy - 14);
+    ctx.arc(0, 0, r, -0.5, Math.PI + 0.5);
     ctx.stroke();
-    ctx.resetTransform();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const ea = Math.PI + 0.5; // 弧终点（左上），切线指向右上 → 顺时针
+    const ex = r * Math.cos(ea);
+    const ey = r * Math.sin(ea);
+    const tx = -Math.sin(ea);
+    const ty = Math.cos(ea);
+    ctx.beginPath();
+    ctx.moveTo(ex + tx * 17, ey + ty * 17); // 箭头尖（沿切线）
+    ctx.lineTo(ex - ty * 10, ey + tx * 10); // 底边两点（垂直于切线）
+    ctx.lineTo(ex + ty * 10, ey - tx * 10);
+    ctx.closePath();
+    ctx.fillStyle = GOLD;
+    ctx.fill();
+    ctx.restore();
+    // —— 文案 ——
     ctx.textAlign = 'center';
     ctx.fillStyle = '#ffd76a';
-    ctx.font = 'bold 20px "Segoe UI", "Microsoft YaHei", sans-serif';
-    ctx.fillText('请旋转设备', cx, cy + 68);
+    ctx.font = 'bold 22px "Segoe UI", "Microsoft YaHei", sans-serif';
+    ctx.fillText('请旋转设备', cx, cy + r + 50);
     ctx.fillStyle = '#9fb2c8';
-    ctx.font = '13px "Segoe UI", "Microsoft YaHei", sans-serif';
-    ctx.fillText('横屏游玩体验更佳', cx, cy + 92);
+    ctx.font = '14px "Segoe UI", "Microsoft YaHei", sans-serif';
+    ctx.fillText('横屏游玩体验更佳', cx, cy + r + 78);
+    ctx.textAlign = 'left';
     ctx.restore();
   }
 
