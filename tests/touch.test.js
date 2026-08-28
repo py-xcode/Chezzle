@@ -18,7 +18,8 @@ import { CFG } from '../src/core/config.js';
 import {
   TouchUI, joyInput, joyGeom, touchButtonRects, isTouchDevice, forceTouch,
 } from '../src/core/touch.js';
-import { inventorySlotRects, uiMargins, overviewButtonRect, handleSceneClick } from '../src/level/click.js';
+import { inventorySlotRects, uiMargins, overviewButtonRect, handleSceneClick, tipPanelRect, hudTopOffset } from '../src/level/click.js';
+import { Hud } from '../src/render/hud.js';
 
 const W = 844;
 const H = 390;
@@ -420,7 +421,38 @@ test('鸟瞰按钮（触屏）：TouchUI 命中 → toggleOverview', () => {
   ui.up(1);
 });
 
-// ---- 13. 鸟瞰下 releaseAll 兜底 ------------------------------------------------
+// ---- 14. 提示面板：触屏 ✕ 关闭 / 右滑关闭 / 面板点按不穿透 --------------------
+test('提示面板（触屏）：✕ 与右滑(>60px)都关闭；面板点按不触发场景', () => {
+  forceTouch(true);
+  const canvas = fakeCanvas();
+  const scene = flatScene();
+  scene.tips.push({ text: 'A', when: { mode: 'and', items: [] } });
+  const hud = new Hud(scene);
+  const ui = new TouchUI(canvas, () => ({ scene, hud }));
+  // 打开面板（模拟点击提示按钮后的状态）
+  hud.onTipClick(scene);
+  assert.equal(hud.showTip, true);
+  const pr = tipPanelRect(W, hudTopOffset(scene), 0);
+  // ① 面板上点按 = 消费（'ui'，不进场景管线、不移动玩家）
+  assert.equal(ui.down(1, pr.x + 80, pr.y + 40), 'ui');
+  assert.equal(scene.control.size, 0, '面板消费：无输入写入');
+  ui.up(1);
+  // ② 右滑 100px → 关闭
+  assert.equal(ui.down(2, pr.x + 40, pr.y + 40), 'ui');
+  ui.move(2, pr.x + 140, pr.y + 40);
+  assert.equal(hud.showTip, false, '右滑超 60px → 关闭');
+  assert.equal(hud._tipSwipeDx, 0, '关闭后滑距复位');
+  ui.up(2);
+  // ③ ✕ 关闭
+  hud.showTip = true;
+  hud._tipText = 'A';
+  const r = hud._tipRect ?? pr;
+  assert.equal(ui.down(3, r.x + r.w - 16, r.y + 16), 'ui');
+  assert.equal(hud.showTip, false, '右上 ✕ → 关闭');
+  ui.up(3);
+});
+
+// ---- 15. 鸟瞰下 releaseAll 兜底 ------------------------------------------------
 test('鸟瞰：releaseAll 清空手势触点（失焦/切场景不泄漏）', () => {
   forceTouch(true);
   const canvas = fakeCanvas();

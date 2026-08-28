@@ -1218,8 +1218,8 @@ export class Hud {
     ctx.fillText(str, cx, y);
   }
 
-  // ---- 提示按钮（N/M 计数徽章 + 可点提示闪光；面板在按钮正下方，右对齐） ----
-  /** 点击提示按钮：有可用提示 → 展示下一条并展开面板；无可用 → 已开则收起、
+  // ---- 提示按钮（有可点提示闪光；面板在按钮正下方、右对齐，动画开合） ----
+  /** 点击提示按钮：有可用提示 → 展示并展开面板；无可用 → 已开则收起、
    *  未开则显示俏皮话（无提示关卡/时机未到）。 */
   onTipClick(scene) {
     const text = scene.showNextTip ? scene.showNextTip() : null;
@@ -1238,6 +1238,21 @@ export class Hud {
     this.showTip = true;
   }
 
+  /** 关闭提示面板（✕ / 移动端右滑；动画淡出由 _tipA 驱动） */
+  closeTip() {
+    this.showTip = false;
+  }
+
+  /** 移动端右滑提示面板：面板跟随手指（dx≥0），超阈值后由 touch 管线调 closeTip */
+  tipSwipe(dx) {
+    this._tipSwipeDx = Math.max(0, Math.min(dx, 220));
+  }
+
+  /** 滑动手势结束：面板回位（未关闭） */
+  tipSwipeEnd() {
+    this._tipSwipeDx = 0;
+  }
+
   /** 无提示可展示时的俏皮话：完全没有提示（更没配置）→ 嘲讽；有时机未到 → 提示时机 */
   quipFor(scene) {
     if (scene.tips && scene.tips.length) {
@@ -1251,8 +1266,6 @@ export class Hud {
     const scene = this.scene;
     const x = W - right - 82;
     const y = top;
-    const tips = scene.tips && scene.tips.length ? scene.tips : null;
-    const label = tips ? `提示 ${scene.tipSeq}/${tips.length}` : '提示';
     ctx.save();
     rr(ctx, x, y, 72, 34, 9);
     const g = ctx.createLinearGradient(x, y, x, y + 34);
@@ -1269,33 +1282,53 @@ export class Hud {
     ctx.stroke();
     ctx.restore();
     ctx.fillStyle = flash ? '#fff6d8' : '#ffe9b0';
-    ctx.font = tips ? 'bold 12.5px "Segoe UI", sans-serif' : 'bold 15px "Segoe UI", sans-serif';
+    ctx.font = 'bold 15px "Segoe UI", sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(label, x + 36, y + 23);
+    ctx.fillText('提示', x + 36, y + 23);
     ctx.textAlign = 'left';
-    if (this.showTip) {
-      // 面板：提示按钮正下方、右对齐（不压左上信息卡；未到时机/无提示=俏皮话）
-      const text = this._tipText ?? scene.tip ?? '';
-      const lines = text.split('\n');
-      const pw = Math.min(W - 20, 440);
-      const px = W - right - 10 - pw;
-      const py = top + 42;
-      const ph = 16 + 22 + lines.length * 17 + 12;
-      ctx.save();
-      rr(ctx, px, py, pw, ph, 10);
-      ctx.fillStyle = THEME.panel;
-      ctx.fill();
-      ctx.strokeStyle = THEME.gold.deep;
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      ctx.restore();
-      ctx.fillStyle = THEME.gold.text;
-      ctx.font = 'bold 13px "Segoe UI", sans-serif';
-      ctx.fillText('提示', px + 14, py + 22);
-      ctx.fillStyle = '#e8f2ff';
-      ctx.font = '13px "Segoe UI", "Microsoft YaHei", sans-serif';
-      for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], px + 14, py + 44 + i * 17);
-    }
+    // 面板开合动画：_tipA 平滑趋近目标（开=淡入滑入；关=淡出滑出）
+    const target = this.showTip ? 1 : 0;
+    const cur = this._tipA ?? 0;
+    const a = cur + (target - cur) * 0.22;
+    this._tipA = Math.abs(a - target) < 0.01 ? target : a;
+    if (this._tipA <= 0.01) return;
+    const text = this._tipText ?? scene.tip ?? '';
+    const lines = text.split('\n');
+    const pw = Math.min(W - 20, 440);
+    const py = top + 42;
+    const ph = 16 + 22 + lines.length * 17 + 14;
+    const px0 = W - right - 10 - pw;
+    const swipe = Math.max(0, this._tipSwipeDx ?? 0);
+    const slide = (1 - this._tipA) * 26; // 开合滑入/滑出（右下方向）
+    const alpha = this._tipA * Math.max(0, 1 - swipe / 110);
+    const px = px0 + swipe + slide;
+    this._tipRect = { x: px, y: py, w: pw, h: ph };
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    rr(ctx, px, py, pw, ph, 10);
+    ctx.fillStyle = THEME.panel;
+    ctx.fill();
+    ctx.strokeStyle = THEME.gold.deep;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // 关闭按钮 ✕（右上角；面板上可点击关闭）
+    const cxB = px + pw - 22;
+    const cyB = py + 15;
+    ctx.strokeStyle = 'rgba(232,184,75,0.85)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cxB - 6, cyB - 6);
+    ctx.lineTo(cxB + 6, cyB + 6);
+    ctx.moveTo(cxB + 6, cyB - 6);
+    ctx.lineTo(cxB - 6, cyB + 6);
+    ctx.stroke();
+    ctx.fillStyle = THEME.gold.text;
+    ctx.font = 'bold 13px "Segoe UI", sans-serif';
+    ctx.fillText('提示', px + 14, py + 23);
+    ctx.fillStyle = '#e8f2ff';
+    ctx.font = '13px "Segoe UI", "Microsoft YaHei", sans-serif';
+    for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], px + 14, py + 45 + i * 17);
+    ctx.restore();
   }
 
   // ---- 通关 / 死亡遮罩 ----

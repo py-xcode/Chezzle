@@ -162,7 +162,7 @@ export class LevelBuilder {
   tips(arr) {
     for (const t of (arr ?? [])) {
       if (!t || typeof t.text !== 'string') continue;
-      this.scene.tips.push({ text: t.text, when: t.when ?? { mode: 'and', items: [] }, shown: false });
+      this.scene.tips.push({ text: t.text, when: t.when ?? { mode: 'and', items: [] } });
     }
     return this;
   }

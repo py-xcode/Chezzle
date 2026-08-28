@@ -123,5 +123,6 @@ test('冰面推烧杯：推动很慢（抓不住），石地满速推', () => {
     res[ice ? 'ice' : 'stone'] = { moved: bk.x - x0, px: p.x };
   }
   assert.ok(res.stone.moved > 380, `石地满速推：${res.stone.moved.toFixed(1)}px`);
-  assert.ok(res.ice.moved < res.stone.moved * 0.4, `冰上推不动：${res.ice.moved.toFixed(1)}px vs 石地 ${res.stone.moved.toFixed(1)}px`);
+  assert.ok(res.ice.moved > 100, `冰上能推（保底半速）：${res.ice.moved.toFixed(1)}px`);
+  assert.ok(res.ice.moved < res.stone.moved * 0.75, `冰上明显吃力（~半速）：${res.ice.moved.toFixed(1)}px vs 石地 ${res.stone.moved.toFixed(1)}px`);
 });

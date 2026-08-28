@@ -255,10 +255,10 @@ class Scene {
     this.time = 0;
     this.dt = 1 / CFG.tickRate;
     this.tip = ''; // 当前提示文本（HUD 展示；由条件提示系统或关卡脚本 setTip 写入）
-    this.tips = []; // 条件提示列表：[{ text, when:{mode:'and'|'any', items:[...]}, shown }]
-    this.tipSeq = 0; // 已展示的提示条数（下一条展示时序号 = tipSeq+1，从 1 起）
-    this.tipReady = null; // 当前"可点击展示"的提示（条件满足且未展示；不自动出现）
-    this.tipActive = null; // 当前展示的提示对象（最近点击展示的）
+    this.tips = []; // 条件提示列表：[{ text, when:{mode:'and'|'any', items:[...]} }]（触发可重复）
+    this.tipSeq = 0; // 已展示的次数（序号条件按 tipSeq+1 比较，从 1 起）
+    this.tipReady = null; // 当前"可点击展示"的提示（条件满足；**靠后的优先**，不自动出现）
+    this.tipActive = null; // 最近一次展示的提示对象
     this.debugMode = false; // 调试模式（URL 参数 ?debug=1 开启；.debugmode() 已废弃）
     this.debugPaused = false; // 暂停 tick 推进
     this.debugStepOnce = false; // 手动步进一 tick
@@ -437,16 +437,16 @@ class Scene {
 
   // ---------------------------------------------------------------------------
   // 条件提示系统：**不自动出现**——每 tick 只求值"可点击展示的提示"（tipReady =
-  // 按列表顺序第一条 未展示且 序号/位置/物品栏条件（且/或）满足 的提示），
-  // 玩家点击 HUD 提示按钮时 showNextTip() 才真正展示（推进 tipSeq，触发不重复）。
+  // **最后一条**满足条件（且/或）的提示：靠后的提示被满足时，靠前的就不显示）。
+  // 触发可重复（无 shown 标记）：同一提示满足条件即一直可点。玩家点击 HUD 提示
+  // 按钮时 showNextTip() 才真正展示（推进 tipSeq，供序号条件比较）。
   // ---------------------------------------------------------------------------
 
-  /** 每 tick 求值可用提示（纯读，无副作用）：tipReady = 可按列表顺序展示的下一条 */
+  /** 每 tick 求值可用提示（纯读，无副作用）：tipReady = 满足条件的**最后**一条 */
   _updateTipReady() {
     let ready = null;
     for (const t of this.tips) {
-      if (t.shown) continue;
-      if (tipHolds(this, t)) { ready = t; break; }
+      if (tipHolds(this, t)) ready = t; // 遍历取最后一个满足者（靠后优先）
     }
     if (this.tipReady !== ready) {
       this.tipReady = ready;
@@ -454,16 +454,14 @@ class Scene {
     }
   }
 
-  /** 点击提示按钮：展示下一条可用提示（返回文本）；无可用 → null（HUD 显示俏皮话） */
+  /** 点击提示按钮：展示可用的提示（返回文本）；无可用 → null（HUD 显示俏皮话） */
   showNextTip() {
     const t = this.tipReady;
     if (!t) return null;
-    t.shown = true;
     this.tipSeq++;
     this.tipActive = t;
     this.tip = t.text;
     this.fire('tip', { tip: t, seq: this.tipSeq, source: 'button' });
-    this._updateTipReady(); // 本帧刚展示：立刻刷新可用性（同一帧连点能连出提示）
     return t.text;
   }
 
@@ -4270,6 +4268,8 @@ class CollisionSystem {
       let blocked = false;
       for (const s of this._near(b)) {
         if (s === b || !s.solid || !this._stSet.has(s)) continue;
+        // 头戴携带（装置壁 noCollidePlayer）：杯/瓶坐在玩家头上时壁体不挡该玩家
+        if (s.noCollidePlayer && b.isPlayerObj) continue;
         if (!overlaps(b, s)) continue;
         // 自动上台阶：低台阶直接抬升并通过（不夹紧 X，让玩家走上台阶）
         if (b.autoStep && this.tryAutoStep(b, s, dir)) continue;
@@ -4414,6 +4414,8 @@ class CollisionSystem {
     const dir = Math.sign(b.vel.y);
     for (const s of this._near(b)) {
       if (!s.solid || !this._stSet.has(s) || !overlaps(b, s)) continue;
+      // 头戴携带（noCollidePlayer）：杯/瓶坐在该玩家头上时壁体不顶住玩家的跳
+      if (s.noCollidePlayer && b.isPlayerObj) continue;
       b.collisions.push(s);
       // 按"本子步移动前"的相对位置判定接触面：前一子步脚在 s 顶上方才落地，
       // 头在 s 底下方才撞顶；其余（斜向嵌入等）留给 tick 末尾的 MTV 残余解算。
@@ -4522,6 +4524,8 @@ class CollisionSystem {
         if (b.static) continue;
         for (const s of this._near(b)) {
           if (!s.solid || !this._stSet.has(s) || !overlaps(b, s)) continue;
+          // 头戴携带（noCollidePlayer）：杯/瓶坐在该玩家头上时壁体不与该玩家解算
+          if (s.noCollidePlayer && b.isPlayerObj) continue;
           if (resolveEmbed(b, s)) moved = true;
         }
         for (const o of this._near(b)) {
@@ -8055,6 +8059,12 @@ function portraitScene(scene) {
   return !!(t && typeof t.isPortrait === 'function' && t.isPortrait());
 }
 
+/** 提示面板区域（HUD 渲染与触控滑闭/点击共用的命中几何，与 tipButton 同源） */
+function tipPanelRect(W, top = 10, right = 0) {
+  const pw = Math.min(W - 20, 440);
+  return { x: W - right - 10 - pw, y: top + 42, w: pw, h: 120 };
+}
+
 /**
  * 处理一次"点击"（提示按钮 / 物品栏选格 / 鸟瞰与全屏按钮）。
  * hud 可为空。返回 true = 已消费。onInfo（可选）诊断回调。
@@ -8093,6 +8103,21 @@ function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
     if (hud && typeof hud.onTipClick === 'function') hud.onTipClick(scene);
     onInfo?.({ type: 'tip' });
     return true;
+  }
+  // 3.5) 提示面板（展开中）：面板上点击 = 消费（不穿透到场景）；右上 ✕ = 关闭
+  if (hud && hud.showTip) {
+    const pr = tipPanelRect(canvas.width, top, right);
+    if (sx >= pr.x && sx <= pr.x + pr.w && sy >= pr.y && sy <= pr.y + pr.h) {
+      const r = hud._tipRect ?? pr;
+      if (sx >= r.x + r.w - 32 && sy <= r.y + 32) {
+        if (typeof hud.closeTip === 'function') hud.closeTip();
+        else hud.showTip = false;
+        onInfo?.({ type: 'tip-close' });
+      } else {
+        onInfo?.({ type: 'tip-panel' });
+      }
+      return true;
+    }
   }
   // 4) 物品栏选格（右下；几何与 HUD 渲染共用 inventorySlotRects）
   const p = scene.player;
@@ -8352,6 +8377,7 @@ exports.fullscreenButtonRect = fullscreenButtonRect;
 exports.pushNotice = pushNotice;
 exports.inventorySlotRects = inventorySlotRects;
 exports.uiMargins = uiMargins;
+exports.tipPanelRect = tipPanelRect;
 exports.handleSceneClick = handleSceneClick;
 exports.handleSceneTapDown = handleSceneTapDown;
 exports.handleSceneTapUp = handleSceneTapUp;
@@ -8599,7 +8625,7 @@ exports.startLoop = startLoop;
 // ============================================================================
 
 const { CFG } = __require('src/core/config.js');;
-const { handleSceneClick, handleScenePressDown, handleScenePressMove, handleScenePressUp, inventorySlotRects, uiMargins, overviewButtonRect, hudTopOffset } = __require('src/level/click.js');;
+const { handleSceneClick, handleScenePressDown, handleScenePressMove, handleScenePressUp, inventorySlotRects, uiMargins, overviewButtonRect, hudTopOffset, touchInsetsOf, tipPanelRect } = __require('src/level/click.js');;
 const { requestFullscreenOnce } = __require('src/core/fullscreen.js');;
 
 // ---------------------------------------------------------------------------
@@ -8806,6 +8832,7 @@ class TouchUI {
     this.joy = null; // { id, x, y, sx, sy, dir }（sx/sy 为吸附后单位方向）
     this.buttons = new Map(); // touchId → key（按下中的按键）
     this.uiTouches = new Set(); // 被 HUD UI（提示/物品栏）消费的触点
+    this.tipSwipe = null; // 提示面板右滑手势 { id, x0 }（移动端关闭提示用）
     this.sceneTouch = null; // { id }：进入场景按下/拖动管线的触点（单指）
     this.ovTouches = new Map(); // 鸟瞰手势触点 id → {x,y}（1指平移 / 2指捏合缩放）
     this._ctlScene = null; // 摇杆控制写入的 scene（切场景时释放旧场景的按键）
@@ -8950,6 +8977,21 @@ class TouchUI {
         return 'btn';
       }
     }
+    // ②.5 提示面板（展开中）：点面板 = 消费（不穿透到场景）；右上 ✕ = 关闭；
+    //     按住右滑 = 关闭（面板跟随手指，超 60px 触发关闭）
+    if (hud && hud.showTip) {
+      const pr = tipPanelRect(this.canvas.width, hudTopOffset(scene), touchInsetsOf(scene).right || 0);
+      if (x >= pr.x && x <= pr.x + pr.w && y >= pr.y && y <= pr.y + pr.h) {
+        const r = hud._tipRect ?? pr;
+        if (x >= r.x + r.w - 32 && y <= r.y + 32) {
+          if (typeof hud.closeTip === 'function') hud.closeTip();
+          else hud.showTip = false;
+          return 'ui';
+        }
+        this.tipSwipe = { id, x0: x };
+        return 'ui';
+      }
+    }
     // ③ HUD：提示按钮 / 物品栏选格（与桌面同一命中几何；hud 可空，showTip 跳过）
     if (handleSceneClick(scene, hud, this.canvas, x, y)) {
       this.uiTouches.add(id);
@@ -8995,6 +9037,18 @@ class TouchUI {
   move(id, x, y) {
     const act = this.getActive();
     if (!act || !act.scene) return;
+    // 提示面板右滑：面板跟随手指；超阈值立即关闭
+    if (this.tipSwipe && this.tipSwipe.id === id) {
+      const hud = act.hud ?? null;
+      const dx = x - this.tipSwipe.x0;
+      if (hud && typeof hud.tipSwipe === 'function') hud.tipSwipe(dx);
+      if (dx > 60) {
+        if (hud && typeof hud.closeTip === 'function') hud.closeTip();
+        if (hud && typeof hud.tipSwipeEnd === 'function') hud.tipSwipeEnd(); // 滑距复位
+        this.tipSwipe = null;
+      }
+      return;
+    }
     // 竖屏（旋转中翻面）：不处理移动；已按住的触点由 up/releaseAll 正常清理
     if (this.isPortrait()) return;
     const scene = act.scene;
@@ -9017,6 +9071,14 @@ class TouchUI {
   up(id) {
     if (this.ovTouches.has(id)) {
       this.ovTouches.delete(id);
+      return;
+    }
+    if (this.tipSwipe && this.tipSwipe.id === id) {
+      // 右滑结束：未触发关闭 → 面板回位（tipSwipeEnd）
+      const act = this.getActive();
+      const hud = act && act.hud ? act.hud : null;
+      if (hud && typeof hud.tipSwipeEnd === 'function') hud.tipSwipeEnd();
+      this.tipSwipe = null;
       return;
     }
     const act = this.getActive();
@@ -9047,7 +9109,10 @@ class TouchUI {
   releaseAll() {
     const act = this.getActive();
     const scene = act && act.scene ? act.scene : null;
+    const hud = act && act.hud ? act.hud : null;
     this.ovTouches.clear();
+    if (hud && typeof hud.tipSwipeEnd === 'function') hud.tipSwipeEnd();
+    this.tipSwipe = null;
     this._releaseJoyControl(this._ctlScene ?? scene);
     this._ctlScene = null;
     this.joy = null;
@@ -9893,7 +9958,7 @@ class LevelBuilder {
   tips(arr) {
     for (const t of (arr ?? [])) {
       if (!t || typeof t.text !== 'string') continue;
-      this.scene.tips.push({ text: t.text, when: t.when ?? { mode: 'and', items: [] }, shown: false });
+      this.scene.tips.push({ text: t.text, when: t.when ?? { mode: 'and', items: [] } });
     }
     return this;
   }
@@ -11643,8 +11708,8 @@ class Hud {
     ctx.fillText(str, cx, y);
   }
 
-  // ---- 提示按钮（N/M 计数徽章 + 可点提示闪光；面板在按钮正下方，右对齐） ----
-  /** 点击提示按钮：有可用提示 → 展示下一条并展开面板；无可用 → 已开则收起、
+  // ---- 提示按钮（有可点提示闪光；面板在按钮正下方、右对齐，动画开合） ----
+  /** 点击提示按钮：有可用提示 → 展示并展开面板；无可用 → 已开则收起、
    *  未开则显示俏皮话（无提示关卡/时机未到）。 */
   onTipClick(scene) {
     const text = scene.showNextTip ? scene.showNextTip() : null;
@@ -11663,6 +11728,21 @@ class Hud {
     this.showTip = true;
   }
 
+  /** 关闭提示面板（✕ / 移动端右滑；动画淡出由 _tipA 驱动） */
+  closeTip() {
+    this.showTip = false;
+  }
+
+  /** 移动端右滑提示面板：面板跟随手指（dx≥0），超阈值后由 touch 管线调 closeTip */
+  tipSwipe(dx) {
+    this._tipSwipeDx = Math.max(0, Math.min(dx, 220));
+  }
+
+  /** 滑动手势结束：面板回位（未关闭） */
+  tipSwipeEnd() {
+    this._tipSwipeDx = 0;
+  }
+
   /** 无提示可展示时的俏皮话：完全没有提示（更没配置）→ 嘲讽；有时机未到 → 提示时机 */
   quipFor(scene) {
     if (scene.tips && scene.tips.length) {
@@ -11676,8 +11756,6 @@ class Hud {
     const scene = this.scene;
     const x = W - right - 82;
     const y = top;
-    const tips = scene.tips && scene.tips.length ? scene.tips : null;
-    const label = tips ? `提示 ${scene.tipSeq}/${tips.length}` : '提示';
     ctx.save();
     rr(ctx, x, y, 72, 34, 9);
     const g = ctx.createLinearGradient(x, y, x, y + 34);
@@ -11694,33 +11772,53 @@ class Hud {
     ctx.stroke();
     ctx.restore();
     ctx.fillStyle = flash ? '#fff6d8' : '#ffe9b0';
-    ctx.font = tips ? 'bold 12.5px "Segoe UI", sans-serif' : 'bold 15px "Segoe UI", sans-serif';
+    ctx.font = 'bold 15px "Segoe UI", sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(label, x + 36, y + 23);
+    ctx.fillText('提示', x + 36, y + 23);
     ctx.textAlign = 'left';
-    if (this.showTip) {
-      // 面板：提示按钮正下方、右对齐（不压左上信息卡；未到时机/无提示=俏皮话）
-      const text = this._tipText ?? scene.tip ?? '';
-      const lines = text.split('\n');
-      const pw = Math.min(W - 20, 440);
-      const px = W - right - 10 - pw;
-      const py = top + 42;
-      const ph = 16 + 22 + lines.length * 17 + 12;
-      ctx.save();
-      rr(ctx, px, py, pw, ph, 10);
-      ctx.fillStyle = THEME.panel;
-      ctx.fill();
-      ctx.strokeStyle = THEME.gold.deep;
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      ctx.restore();
-      ctx.fillStyle = THEME.gold.text;
-      ctx.font = 'bold 13px "Segoe UI", sans-serif';
-      ctx.fillText('提示', px + 14, py + 22);
-      ctx.fillStyle = '#e8f2ff';
-      ctx.font = '13px "Segoe UI", "Microsoft YaHei", sans-serif';
-      for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], px + 14, py + 44 + i * 17);
-    }
+    // 面板开合动画：_tipA 平滑趋近目标（开=淡入滑入；关=淡出滑出）
+    const target = this.showTip ? 1 : 0;
+    const cur = this._tipA ?? 0;
+    const a = cur + (target - cur) * 0.22;
+    this._tipA = Math.abs(a - target) < 0.01 ? target : a;
+    if (this._tipA <= 0.01) return;
+    const text = this._tipText ?? scene.tip ?? '';
+    const lines = text.split('\n');
+    const pw = Math.min(W - 20, 440);
+    const py = top + 42;
+    const ph = 16 + 22 + lines.length * 17 + 14;
+    const px0 = W - right - 10 - pw;
+    const swipe = Math.max(0, this._tipSwipeDx ?? 0);
+    const slide = (1 - this._tipA) * 26; // 开合滑入/滑出（右下方向）
+    const alpha = this._tipA * Math.max(0, 1 - swipe / 110);
+    const px = px0 + swipe + slide;
+    this._tipRect = { x: px, y: py, w: pw, h: ph };
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    rr(ctx, px, py, pw, ph, 10);
+    ctx.fillStyle = THEME.panel;
+    ctx.fill();
+    ctx.strokeStyle = THEME.gold.deep;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // 关闭按钮 ✕（右上角；面板上可点击关闭）
+    const cxB = px + pw - 22;
+    const cyB = py + 15;
+    ctx.strokeStyle = 'rgba(232,184,75,0.85)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cxB - 6, cyB - 6);
+    ctx.lineTo(cxB + 6, cyB + 6);
+    ctx.moveTo(cxB + 6, cyB - 6);
+    ctx.lineTo(cxB - 6, cyB + 6);
+    ctx.stroke();
+    ctx.fillStyle = THEME.gold.text;
+    ctx.font = 'bold 13px "Segoe UI", sans-serif';
+    ctx.fillText('提示', px + 14, py + 23);
+    ctx.fillStyle = '#e8f2ff';
+    ctx.font = '13px "Segoe UI", "Microsoft YaHei", sans-serif';
+    for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], px + 14, py + 45 + i * 17);
+    ctx.restore();
   }
 
   // ---- 通关 / 死亡遮罩 ----
@@ -13248,9 +13346,17 @@ exports.flowFx = flowFx;
 // ============================================================================
 
 const EPS = 2; // 已贴合的容差（沿用旧 applyGravity 的判定宽度）
+// 前一动态支撑的"跟随窗口"：支撑面（如玩家头顶）上移后仍算有效——
+// 否则玩家一跳，头顶的烧杯立刻"失去支撑"→ 壁体豁免关闭 → 头撞回杯底墙 →
+// 烧杯又落回 → 互相较劲（用户反馈的"头顶烧杯一跳就抖动"）。跟随逐帧贴合，
+// 每帧偏差 ≤ 一个 tick 的位移，200px 上限只作保险。
+const TRACK = 200;
 
 /**
  * 返回给定位体正下方最近的实心支撑面顶边 y；找不到返回 Infinity。
+ * 返回 { y, body }：y = 顶边世界坐标（∞=无支撑）；body = 支撑面所属的动态体
+ * （静态体/装置壁返回 null）——用于"头戴携带"判定（烧杯/集气瓶坐在玩家头顶时
+ * 壁体要与玩家互不碰撞，否则玩家一跳就被自己的头戴装置卡住 → 抖动）。
  * span = 探测深度（px）：只在底部下方 span 内找（默认 40，与旧行为一致，
  * 保证下落逐帧检测不瞬移）；贴合恢复（轻微陷入弹回表面）也靠这个窗口。
  */
@@ -13258,23 +13364,30 @@ function shallowestSupportY(body, scene, span = 40) {
   const l = body.x;
   const r = body.x + body.w;
   const b0 = body.y + body.h;
-  let best = Infinity;
+  let bestY = Infinity;
+  let bestBody = null;
   const sub = body.subBodies;
+  const prev = body._supportBody; // 上一帧的动态支撑（爬头跟随规则用）
   // statics/dynamics 都要排除**自身子体**（烧杯/集气瓶的壁体在 static 化后
   // 进了 statics——不排除的话"自己撑住自己/自己挡自己"）
   const skipSelf = (s) => (sub && sub.includes(s));
-  const scan = (list, skip) => {
+  const scan = (list, skip, dynBody) => {
     for (const s of list) {
       if (!s || !s.solid || (skip && skip(s))) continue;
       if (!(s.x < r && s.x + s.w > l)) continue; // 水平重叠才算
-      if (s.y >= b0 - EPS && s.y <= b0 + span) best = Math.min(best, s.y);
+      const dy = s.y - b0;
+      const inWindow = (dy >= -EPS && dy <= span);
+      const prevFollow = (dynBody && s === prev && dy >= -TRACK && dy <= span);
+      if (inWindow || prevFollow) {
+        if (s.y < bestY) { bestY = s.y; bestBody = dynBody ? s : null; }
+      }
     }
   };
-  if (scene.statics) scan(scene.statics, skipSelf);
+  if (scene.statics) scan(scene.statics, skipSelf, false);
   if (scene.dynamics) {
-    scan(scene.dynamics, (d) => d === body || skipSelf(d) || typeof d.amount === 'number');
+    scan(scene.dynamics, (d) => d === body || skipSelf(d) || typeof d.amount === 'number', true);
   }
-  return best;
+  return { y: bestY, body: bestBody };
 }
 
 /** 与作用力无关的通用"落到支撑面停住"推进（重力累加 ≤400，钳位贴合）。
@@ -13310,16 +13423,17 @@ function settleBodyOnSupport(body, dt, support, accel = 600, maxV = 400) {
 function pushContainers(p, scene, dt) {
   const dir = (scene.control && scene.control.has('right') ? 1 : 0) - (scene.control && scene.control.has('left') ? 1 : 0);
   if (dir === 0) return;
-  // 冰面（_groundIce）：推动速度受玩家**实际速度**限制——冰上抓不住，推东西
-  // 像"推不动"（速度由冰控 accel 缓慢建立，每帧归零后重新起步）；
-  // 石地维持旧行为：指令即满推速。
+  // 冰面（_groundIce）：推动速度受玩家**实际速度**影响，但保底 ~半速——
+  // 纯用 vel 会慢到"推不动"（用户反馈：冰上推集气瓶非常费劲）；半速+打滑感
+  // 既有"冰上使不上劲"的手感，又不至于寸步难行。石地维持旧行为：指令即满推速。
   const ice = !!p._groundIce;
-  const spd = ice ? Math.min(Math.abs(p.vel.x), p.moveSpeed) : p.moveSpeed;
+  const spd = ice ? Math.max(Math.abs(p.vel.x), p.moveSpeed * 0.5) : p.moveSpeed;
   const push = dir * spd * dt;
   // 注意遍历 scene.objects（集气瓶不是 Container 子类，不在 scene.containers）
   for (const c of scene.objects) {
     if (c.isCarryItem !== 'beaker' && c.isCarryItem !== 'bottle') continue;
     if (typeof c.containsObj === 'function' && c.containsObj(p)) continue; // 杯内携带：走 lateUpdate 带动
+    if (c._supportBody === p) continue; // 头戴携带：帽子式跟随（lateUpdate 处理，防双推）
     if (p.bottom <= c.y || p.top >= c.y + c.h) continue; // 高度不重叠（贴不到壁）
     const wall = c.wall ?? 4;
     if (push > 0 && p.right >= c.x - 2 && p.right <= c.x + wall + 2) {
@@ -14431,22 +14545,43 @@ class Beaker extends Container {
   /** 无支撑时受重力下落，落到**最浅**支撑面停住（statics + 玩家等实心动态体；
    *  跨在池沿/台阶上不沉入更深的盆底——见 physics/support.js 的语义说明） */
   applyGravity(dt, scene) {
-    settleBodyOnSupport(this, dt, shallowestSupportY(this, scene));
+    const sup = shallowestSupportY(this, scene);
+    this._supportBody = sup.body ?? null; // 最近支撑的动态体（头戴携带判定用）
+    settleBodyOnSupport(this, dt, sup.y);
   }
 
   update(dt, scene) {
     super.update(dt, scene); // 颗粒沉降等容器逻辑
     this.applyGravity(dt, scene);
+    // 头戴携带：烧杯坐在玩家头顶（支撑=玩家）→ 壁体与该玩家不再碰撞——
+    // 否则玩家一跳就被头顶杯底墙顶住、烧杯又跟着头走 → 两者互相较劲=抖动（用户反馈）
+    const onHead = this._supportBody === scene.player;
+    for (const w of this.subBodies) w.noCollidePlayer = !!onHead;
     this.updatePour(dt, scene);
     // 玩家贴壁推动已挪到 Player.update（pushContainers——时序要求：玩家重设 vel 之后、
     // 物理步之前：吸附+清 vel，否则推-弹交替"一卡一卡"——用户反馈）
   }
 
-  /** 物理结算后：杯内玩家与烧杯互相带动——烧杯跟随玩家的水平位移；玩家跟随烧杯的竖直位移。
-   *  **下行带动护栏**：玩家跟随下移时不得被压进任何实心静态体（嵌池穿模根因——
-   *  原实现是裸 p.y += dy 瞬移）；脚部将越过原本位于其下方的实心顶面时裁剪到表面。 */
+  /** 物理结算后：
+   *  ① 头戴携带（烧杯坐在玩家头顶，_supportBody=玩家）→ **帽子式跟随**：烧杯整体
+   *     跟随玩家的位移，但绝不反过来带动玩家——否则"跳→烧杯跟随→再推玩家"
+   *     正反馈 = 火箭跳/抖动（用户反馈）。壁体已对该玩家豁免碰撞（update 里）。
+   *  ② 杯内携带：杯内玩家与烧杯互相带动——烧杯跟随玩家的水平位移；玩家跟随
+   *     烧杯的竖直位移。**下行带动护栏**：玩家跟随下移时不得被压进任何实心静态体
+   *     （嵌池穿模根因——原实现是裸 p.y += dy 瞬移）；脚部将越过原本位于其下方的
+   *     实心顶面时裁剪到表面。 */
   lateUpdate(dt, scene) {
     const p = scene.player;
+    if (p && this._supportBody === p) {
+      const dx = p.x - (this._headPX ?? p.x);
+      const dy = p.y - (this._headPY ?? p.y);
+      if (Math.abs(dx) > 0.01) this.x += dx;
+      if (Math.abs(dy) > 0.01) this.y += dy;
+      this._headPX = p.x;
+      this._headPY = p.y;
+      this.syncWalls();
+      return;
+    }
     if (p && this.containsObj(p)) {
       // 烧杯跟随玩家的水平位移（杯壁挡住时玩家不移动 → 烧杯也不动，不甩出）
       const dx = p.x - (this._prevPx ?? p.x);
@@ -15333,11 +15468,16 @@ class GasBottle extends Obj {
   /** 无支撑时受重力下落，落到**最浅**支撑面停住（与烧杯同款：statics + 实心动态体，
    *  不沉入池盆/高台侧面——见 physics/support.js） */
   applyGravity(dt, scene) {
-    settleBodyOnSupport(this, dt, shallowestSupportY(this, scene));
+    const sup = shallowestSupportY(this, scene);
+    this._supportBody = sup.body ?? null; // 最近支撑的动态体（头戴携带判定用）
+    settleBodyOnSupport(this, dt, sup.y);
   }
 
   update(dt, scene) {
     this.applyGravity(dt, scene);
+    // 头戴携带：瓶坐在玩家头顶 → 壁体与该玩家不再碰撞（防一跳被顶住→抖动）
+    const onHead = this._supportBody === scene.player;
+    for (const w of this.subBodies) w.noCollidePlayer = !!onHead;
     // 玩家贴壁推动已挪到 Player.update（pushContainers——时序要求：玩家重设 vel 之后、
     // 物理步之前：吸附+清 vel，否则推-弹交替"一卡一卡"——用户反馈）
     // 动画计时衰减（盖板回落、辉光消退）
@@ -15345,8 +15485,18 @@ class GasBottle extends Obj {
     if (this._fillPulse > 0) this._fillPulse = Math.max(0, this._fillPulse - dt * 1.8);
   }
 
-  /** 物理结算后：壁体贴回瓶身当前位置（爆炸推散等下一帧即复位） */
-  lateUpdate() {
+  /** 物理结算后：壁体贴回瓶身当前位置（爆炸推散等下一帧即复位）；
+   *  头戴携带（瓶坐在玩家头顶）→ 帽子式跟随玩家的位移（不倒推玩家：防火箭跳/抖动） */
+  lateUpdate(dt, scene) {
+    const p = scene.player;
+    if (p && this._supportBody === p) {
+      const dx = p.x - (this._headPX ?? p.x);
+      const dy = p.y - (this._headPY ?? p.y);
+      if (Math.abs(dx) > 0.01) this.x += dx;
+      if (Math.abs(dy) > 0.01) this.y += dy;
+      this._headPX = p.x;
+      this._headPY = p.y;
+    }
     this.syncWalls();
   }
 

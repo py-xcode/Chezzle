@@ -31,6 +31,8 @@ import {
   uiMargins,
   overviewButtonRect,
   hudTopOffset,
+  touchInsetsOf,
+  tipPanelRect,
 } from '../level/click.js';
 import { requestFullscreenOnce } from './fullscreen.js';
 
@@ -238,6 +240,7 @@ export class TouchUI {
     this.joy = null; // { id, x, y, sx, sy, dir }（sx/sy 为吸附后单位方向）
     this.buttons = new Map(); // touchId → key（按下中的按键）
     this.uiTouches = new Set(); // 被 HUD UI（提示/物品栏）消费的触点
+    this.tipSwipe = null; // 提示面板右滑手势 { id, x0 }（移动端关闭提示用）
     this.sceneTouch = null; // { id }：进入场景按下/拖动管线的触点（单指）
     this.ovTouches = new Map(); // 鸟瞰手势触点 id → {x,y}（1指平移 / 2指捏合缩放）
     this._ctlScene = null; // 摇杆控制写入的 scene（切场景时释放旧场景的按键）
@@ -382,6 +385,21 @@ export class TouchUI {
         return 'btn';
       }
     }
+    // ②.5 提示面板（展开中）：点面板 = 消费（不穿透到场景）；右上 ✕ = 关闭；
+    //     按住右滑 = 关闭（面板跟随手指，超 60px 触发关闭）
+    if (hud && hud.showTip) {
+      const pr = tipPanelRect(this.canvas.width, hudTopOffset(scene), touchInsetsOf(scene).right || 0);
+      if (x >= pr.x && x <= pr.x + pr.w && y >= pr.y && y <= pr.y + pr.h) {
+        const r = hud._tipRect ?? pr;
+        if (x >= r.x + r.w - 32 && y <= r.y + 32) {
+          if (typeof hud.closeTip === 'function') hud.closeTip();
+          else hud.showTip = false;
+          return 'ui';
+        }
+        this.tipSwipe = { id, x0: x };
+        return 'ui';
+      }
+    }
     // ③ HUD：提示按钮 / 物品栏选格（与桌面同一命中几何；hud 可空，showTip 跳过）
     if (handleSceneClick(scene, hud, this.canvas, x, y)) {
       this.uiTouches.add(id);
@@ -427,6 +445,18 @@ export class TouchUI {
   move(id, x, y) {
     const act = this.getActive();
     if (!act || !act.scene) return;
+    // 提示面板右滑：面板跟随手指；超阈值立即关闭
+    if (this.tipSwipe && this.tipSwipe.id === id) {
+      const hud = act.hud ?? null;
+      const dx = x - this.tipSwipe.x0;
+      if (hud && typeof hud.tipSwipe === 'function') hud.tipSwipe(dx);
+      if (dx > 60) {
+        if (hud && typeof hud.closeTip === 'function') hud.closeTip();
+        if (hud && typeof hud.tipSwipeEnd === 'function') hud.tipSwipeEnd(); // 滑距复位
+        this.tipSwipe = null;
+      }
+      return;
+    }
     // 竖屏（旋转中翻面）：不处理移动；已按住的触点由 up/releaseAll 正常清理
     if (this.isPortrait()) return;
     const scene = act.scene;
@@ -449,6 +479,14 @@ export class TouchUI {
   up(id) {
     if (this.ovTouches.has(id)) {
       this.ovTouches.delete(id);
+      return;
+    }
+    if (this.tipSwipe && this.tipSwipe.id === id) {
+      // 右滑结束：未触发关闭 → 面板回位（tipSwipeEnd）
+      const act = this.getActive();
+      const hud = act && act.hud ? act.hud : null;
+      if (hud && typeof hud.tipSwipeEnd === 'function') hud.tipSwipeEnd();
+      this.tipSwipe = null;
       return;
     }
     const act = this.getActive();
@@ -479,7 +517,10 @@ export class TouchUI {
   releaseAll() {
     const act = this.getActive();
     const scene = act && act.scene ? act.scene : null;
+    const hud = act && act.hud ? act.hud : null;
     this.ovTouches.clear();
+    if (hud && typeof hud.tipSwipeEnd === 'function') hud.tipSwipeEnd();
+    this.tipSwipe = null;
     this._releaseJoyControl(this._ctlScene ?? scene);
     this._ctlScene = null;
     this.joy = null;

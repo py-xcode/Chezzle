@@ -124,6 +124,12 @@ function portraitScene(scene) {
   return !!(t && typeof t.isPortrait === 'function' && t.isPortrait());
 }
 
+/** 提示面板区域（HUD 渲染与触控滑闭/点击共用的命中几何，与 tipButton 同源） */
+export function tipPanelRect(W, top = 10, right = 0) {
+  const pw = Math.min(W - 20, 440);
+  return { x: W - right - 10 - pw, y: top + 42, w: pw, h: 120 };
+}
+
 /**
  * 处理一次"点击"（提示按钮 / 物品栏选格 / 鸟瞰与全屏按钮）。
  * hud 可为空。返回 true = 已消费。onInfo（可选）诊断回调。
@@ -162,6 +168,21 @@ export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
     if (hud && typeof hud.onTipClick === 'function') hud.onTipClick(scene);
     onInfo?.({ type: 'tip' });
     return true;
+  }
+  // 3.5) 提示面板（展开中）：面板上点击 = 消费（不穿透到场景）；右上 ✕ = 关闭
+  if (hud && hud.showTip) {
+    const pr = tipPanelRect(canvas.width, top, right);
+    if (sx >= pr.x && sx <= pr.x + pr.w && sy >= pr.y && sy <= pr.y + pr.h) {
+      const r = hud._tipRect ?? pr;
+      if (sx >= r.x + r.w - 32 && sy <= r.y + 32) {
+        if (typeof hud.closeTip === 'function') hud.closeTip();
+        else hud.showTip = false;
+        onInfo?.({ type: 'tip-close' });
+      } else {
+        onInfo?.({ type: 'tip-panel' });
+      }
+      return true;
+    }
   }
   // 4) 物品栏选格（右下；几何与 HUD 渲染共用 inventorySlotRects）
   const p = scene.player;

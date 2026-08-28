@@ -297,6 +297,8 @@ export class CollisionSystem {
       let blocked = false;
       for (const s of this._near(b)) {
         if (s === b || !s.solid || !this._stSet.has(s)) continue;
+        // 头戴携带（装置壁 noCollidePlayer）：杯/瓶坐在玩家头上时壁体不挡该玩家
+        if (s.noCollidePlayer && b.isPlayerObj) continue;
         if (!overlaps(b, s)) continue;
         // 自动上台阶：低台阶直接抬升并通过（不夹紧 X，让玩家走上台阶）
         if (b.autoStep && this.tryAutoStep(b, s, dir)) continue;
@@ -441,6 +443,8 @@ export class CollisionSystem {
     const dir = Math.sign(b.vel.y);
     for (const s of this._near(b)) {
       if (!s.solid || !this._stSet.has(s) || !overlaps(b, s)) continue;
+      // 头戴携带（noCollidePlayer）：杯/瓶坐在该玩家头上时壁体不顶住玩家的跳
+      if (s.noCollidePlayer && b.isPlayerObj) continue;
       b.collisions.push(s);
       // 按"本子步移动前"的相对位置判定接触面：前一子步脚在 s 顶上方才落地，
       // 头在 s 底下方才撞顶；其余（斜向嵌入等）留给 tick 末尾的 MTV 残余解算。
@@ -549,6 +553,8 @@ export class CollisionSystem {
         if (b.static) continue;
         for (const s of this._near(b)) {
           if (!s.solid || !this._stSet.has(s) || !overlaps(b, s)) continue;
+          // 头戴携带（noCollidePlayer）：杯/瓶坐在该玩家头上时壁体不与该玩家解算
+          if (s.noCollidePlayer && b.isPlayerObj) continue;
           if (resolveEmbed(b, s)) moved = true;
         }
         for (const o of this._near(b)) {

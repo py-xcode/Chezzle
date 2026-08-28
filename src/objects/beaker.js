@@ -153,22 +153,43 @@ export class Beaker extends Container {
   /** 无支撑时受重力下落，落到**最浅**支撑面停住（statics + 玩家等实心动态体；
    *  跨在池沿/台阶上不沉入更深的盆底——见 physics/support.js 的语义说明） */
   applyGravity(dt, scene) {
-    settleBodyOnSupport(this, dt, shallowestSupportY(this, scene));
+    const sup = shallowestSupportY(this, scene);
+    this._supportBody = sup.body ?? null; // 最近支撑的动态体（头戴携带判定用）
+    settleBodyOnSupport(this, dt, sup.y);
   }
 
   update(dt, scene) {
     super.update(dt, scene); // 颗粒沉降等容器逻辑
     this.applyGravity(dt, scene);
+    // 头戴携带：烧杯坐在玩家头顶（支撑=玩家）→ 壁体与该玩家不再碰撞——
+    // 否则玩家一跳就被头顶杯底墙顶住、烧杯又跟着头走 → 两者互相较劲=抖动（用户反馈）
+    const onHead = this._supportBody === scene.player;
+    for (const w of this.subBodies) w.noCollidePlayer = !!onHead;
     this.updatePour(dt, scene);
     // 玩家贴壁推动已挪到 Player.update（pushContainers——时序要求：玩家重设 vel 之后、
     // 物理步之前：吸附+清 vel，否则推-弹交替"一卡一卡"——用户反馈）
   }
 
-  /** 物理结算后：杯内玩家与烧杯互相带动——烧杯跟随玩家的水平位移；玩家跟随烧杯的竖直位移。
-   *  **下行带动护栏**：玩家跟随下移时不得被压进任何实心静态体（嵌池穿模根因——
-   *  原实现是裸 p.y += dy 瞬移）；脚部将越过原本位于其下方的实心顶面时裁剪到表面。 */
+  /** 物理结算后：
+   *  ① 头戴携带（烧杯坐在玩家头顶，_supportBody=玩家）→ **帽子式跟随**：烧杯整体
+   *     跟随玩家的位移，但绝不反过来带动玩家——否则"跳→烧杯跟随→再推玩家"
+   *     正反馈 = 火箭跳/抖动（用户反馈）。壁体已对该玩家豁免碰撞（update 里）。
+   *  ② 杯内携带：杯内玩家与烧杯互相带动——烧杯跟随玩家的水平位移；玩家跟随
+   *     烧杯的竖直位移。**下行带动护栏**：玩家跟随下移时不得被压进任何实心静态体
+   *     （嵌池穿模根因——原实现是裸 p.y += dy 瞬移）；脚部将越过原本位于其下方的
+   *     实心顶面时裁剪到表面。 */
   lateUpdate(dt, scene) {
     const p = scene.player;
+    if (p && this._supportBody === p) {
+      const dx = p.x - (this._headPX ?? p.x);
+      const dy = p.y - (this._headPY ?? p.y);
+      if (Math.abs(dx) > 0.01) this.x += dx;
+      if (Math.abs(dy) > 0.01) this.y += dy;
+      this._headPX = p.x;
+      this._headPY = p.y;
+      this.syncWalls();
+      return;
+    }
     if (p && this.containsObj(p)) {
       // 烧杯跟随玩家的水平位移（杯壁挡住时玩家不移动 → 烧杯也不动，不甩出）
       const dx = p.x - (this._prevPx ?? p.x);

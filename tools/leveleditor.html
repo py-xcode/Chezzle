@@ -68,6 +68,8 @@
   .tip-cond { display: flex; align-items: center; gap: 4px; margin: 3px 0; flex-wrap: wrap; }
   .tip-cond .fl { color: #9fb2c8; font-size: 10px; }
   .tip-cond .cc-del { background: #5a2a2a; color: #ffd9d9; border: 1px solid #7a3a3a; border-radius: 3px; cursor: pointer; padding: 0 5px; font-size: 10px; }
+  .tip-cond .cc-pick { background: #2a3060; color: #ffd76a; border: 1px solid #3a4178; border-radius: 3px; cursor: pointer; font-size: 10px; padding: 2px 6px; }
+  .tip-cond .cc-pick:hover { background: #3a4380; }
   .tip-cond .cc-body { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
   /* 插件面板 */
   #pluginPanel { padding: 10px; border-bottom: 1px solid var(--edge); max-height: 38%; overflow-y: auto; flex-shrink: 0; }
@@ -1089,6 +1091,18 @@ function renderEdit() {
     ctx.strokeRect(r.x, r.y, r.w, r.h);
     ctx.setLineDash([]);
   }
+  // 提示位置范围框选（编辑模式：在画布上拖出玩家触发范围）
+  if (tipRectDrag) {
+    const r = tipRectDrag;
+    ctx.fillStyle = 'rgba(232,184,75,0.15)';
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeStyle = '#ffd76a'; ctx.lineWidth = 1.8; ctx.setLineDash([8, 4]);
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#ffd76a';
+    ctx.font = `bold ${12 / view.scale}px "Segoe UI","Microsoft YaHei",sans-serif`;
+    ctx.fillText(`玩家位置范围（拖拽中） ${Math.round(r.w)}×${Math.round(r.h)}px`, r.x + 6, r.y - 6 / view.scale);
+  }
   // 缩放手柄（单选且可缩放类型：四角 + 四边中点，恒定屏幕尺寸）
   if (state.sel.size === 1 && state.selected != null && state.placed[state.selected]) {
     const p = state.placed[state.selected];
@@ -1153,6 +1167,13 @@ canvas.addEventListener('mousedown', (e) => {
   }
   const sp = canvasPos(e);
   const w = screenToWorld(sp.x, sp.y);
+  // 提示"玩家位置范围"框选模式：先于一切编辑交互（提示条件编辑里的 🎯 框选）
+  if (tipRectPick) {
+    drag = { mode: 'tiprect', sx: sp.x, sy: sp.y, wx: w.x, wy: w.y };
+    tipRectDrag = { x: w.x, y: w.y, w: 0, h: 0 };
+    renderEdit();
+    return;
+  }
   if (e.button === 1) { drag = { mode: 'pan', sx: sp.x, sy: sp.y }; e.preventDefault(); return; }
   const ctrl = e.ctrlKey || e.metaKey;
   if (ctrl) {
@@ -1247,6 +1268,11 @@ window.addEventListener('mousemove', (e) => {
     o.x = Math.round(x);
     o.y = Math.round(y);
     applySize(o, item.type, Math.round(w2), Math.round(h2));
+  } else if (drag.mode === 'tiprect') {
+    // 实时更新提示范围矩形（世界坐标）
+    const w2 = screenToWorld(sp.x, sp.y);
+    const x = Math.min(drag.wx, w2.x), y = Math.min(drag.wy, w2.y);
+    tipRectDrag = { x, y, w: Math.max(10, Math.abs(w2.x - drag.wx)), h: Math.max(10, Math.abs(w2.y - drag.wy)) };
   } else if (drag.mode === 'rect' && drag.type) {
     // 实时更新矩形：只在按下时开始、松开时确定
   }
@@ -1291,6 +1317,23 @@ window.addEventListener('mouseup', (e) => {
       state.selected = sel.size ? [...sel][0] : null;
     }
     state.selBox = null;
+  } else if (drag.mode === 'tiprect') {
+    // 框选结算：写入条件（x/y/w/h，取整）
+    const r = tipRectDrag;
+    if (r && r.w > 5 && r.h > 5) {
+      const t = state.tips[tipRectPick.ti];
+      const c = t && t.items[tipRectPick.ci];
+      if (c && c.type === 'pos') {
+        c.x = Math.round(r.x); c.y = Math.round(r.y);
+        c.w = Math.round(r.w); c.h = Math.round(r.h);
+        $('status').textContent = `已框选提示范围：(${c.x},${c.y}) ${c.w}×${c.h}px`;
+        saveState(); renderTipPanel(); refreshExport();
+      }
+    } else {
+      $('status').textContent = '范围太小，未写入';
+    }
+    tipRectPick = null;
+    tipRectDrag = null;
   } else if (drag.mode === 'move') {
     pushUndo();
     saveState();
@@ -2228,6 +2271,8 @@ $('rxAdd').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preve
 
 // ---- 条件提示管理面板（列表 + 展开编辑 + 条件组 且/或） ------------------------
 let openTip = -1;
+let tipRectPick = null; // { ti, ci }：正在"画布框选玩家位置范围"的目标条件
+let tipRectDrag = null; // 框选中的矩形（世界坐标，renderEdit 绘制）
 const TIP_OPS = [['==', '等于'], ['>', '大于'], ['<', '小于'], ['>=', '大于等于'], ['<=', '小于等于']];
 const TIP_TYPES = [['pos', '玩家位置范围'], ['inv', '物品栏 有/没有某物'], ['seq', '提示序号比较']];
 
@@ -2245,7 +2290,7 @@ function tipsToScene(tips) {
           }
           return o;
         });
-      return { text: t.text, when: { mode: t.mode === 'any' ? 'any' : 'and', items }, shown: false };
+      return { text: t.text, when: { mode: t.mode === 'any' ? 'any' : 'and', items } };
     })
     .filter(Boolean);
 }
@@ -2275,7 +2320,7 @@ function tipCondHTML(c, i) {
   const selType = `<select class="cct"><option value="pos">玩家位置范围</option><option value="inv">物品栏 有/没有</option><option value="seq">提示序号比较</option></select>`;
   let body = '';
   if (c.type === 'pos') {
-    body = `<span class="fl">范围</span>x<input type="number" class="ccx" value="${c.x ?? 0}"> y<input type="number" class="ccy" value="${c.y ?? 0}"> 宽<input type="number" class="ccw" value="${c.w ?? 200}"> 高<input type="number" class="cch" value="${c.h ?? 120}">`;
+    body = `<span class="fl">范围</span>x<input type="number" class="ccx" value="${c.x ?? 0}"> y<input type="number" class="ccy" value="${c.y ?? 0}"> 宽<input type="number" class="ccw" value="${c.w ?? 200}"> 高<input type="number" class="cch" value="${c.h ?? 120}"><button class="cc-pick" title="在画布上拖出玩家位置范围">🎯 框选</button>`;
   } else if (c.type === 'inv') {
     body = `<select class="cch1"><option value="true"${c.has !== false ? ' selected' : ''}>有</option><option value="false"${c.has === false ? ' selected' : ''}>没有</option></select><input class="cci" list="substances" placeholder="物质名 / 物品名" value="${(c.item ?? '').replace(/"/g, '&quot;')}" style="width:110px">`;
   } else {
@@ -2381,6 +2426,10 @@ function renderTipPanel() {
       row.querySelector('.ccy').oninput = (e) => { c.y = +e.target.value || 0; save(); };
       row.querySelector('.ccw').oninput = (e) => { c.w = +e.target.value || 0; save(); };
       row.querySelector('.cch').oninput = (e) => { c.h = +e.target.value || 0; save(); };
+      row.querySelector('.cc-pick').onclick = () => {
+        tipRectPick = { ti: +row.closest('.tip-item').dataset.i, ci: +row.dataset.i };
+        $('status').textContent = '🎯 在画布上按住拖出"玩家位置范围"（松开确定）';
+      };
     } else if (c.type === 'inv') {
       row.querySelector('.cch1').onchange = (e) => { c.has = e.target.value === 'true'; save(); };
       row.querySelector('.cci').oninput = (e) => { c.item = e.target.value; save(); };

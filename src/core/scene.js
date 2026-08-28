@@ -60,10 +60,10 @@ export class Scene {
     this.time = 0;
     this.dt = 1 / CFG.tickRate;
     this.tip = ''; // 当前提示文本（HUD 展示；由条件提示系统或关卡脚本 setTip 写入）
-    this.tips = []; // 条件提示列表：[{ text, when:{mode:'and'|'any', items:[...]}, shown }]
-    this.tipSeq = 0; // 已展示的提示条数（下一条展示时序号 = tipSeq+1，从 1 起）
-    this.tipReady = null; // 当前"可点击展示"的提示（条件满足且未展示；不自动出现）
-    this.tipActive = null; // 当前展示的提示对象（最近点击展示的）
+    this.tips = []; // 条件提示列表：[{ text, when:{mode:'and'|'any', items:[...]} }]（触发可重复）
+    this.tipSeq = 0; // 已展示的次数（序号条件按 tipSeq+1 比较，从 1 起）
+    this.tipReady = null; // 当前"可点击展示"的提示（条件满足；**靠后的优先**，不自动出现）
+    this.tipActive = null; // 最近一次展示的提示对象
     this.debugMode = false; // 调试模式（URL 参数 ?debug=1 开启；.debugmode() 已废弃）
     this.debugPaused = false; // 暂停 tick 推进
     this.debugStepOnce = false; // 手动步进一 tick
@@ -242,16 +242,16 @@ export class Scene {
 
   // ---------------------------------------------------------------------------
   // 条件提示系统：**不自动出现**——每 tick 只求值"可点击展示的提示"（tipReady =
-  // 按列表顺序第一条 未展示且 序号/位置/物品栏条件（且/或）满足 的提示），
-  // 玩家点击 HUD 提示按钮时 showNextTip() 才真正展示（推进 tipSeq，触发不重复）。
+  // **最后一条**满足条件（且/或）的提示：靠后的提示被满足时，靠前的就不显示）。
+  // 触发可重复（无 shown 标记）：同一提示满足条件即一直可点。玩家点击 HUD 提示
+  // 按钮时 showNextTip() 才真正展示（推进 tipSeq，供序号条件比较）。
   // ---------------------------------------------------------------------------
 
-  /** 每 tick 求值可用提示（纯读，无副作用）：tipReady = 可按列表顺序展示的下一条 */
+  /** 每 tick 求值可用提示（纯读，无副作用）：tipReady = 满足条件的**最后**一条 */
   _updateTipReady() {
     let ready = null;
     for (const t of this.tips) {
-      if (t.shown) continue;
-      if (tipHolds(this, t)) { ready = t; break; }
+      if (tipHolds(this, t)) ready = t; // 遍历取最后一个满足者（靠后优先）
     }
     if (this.tipReady !== ready) {
       this.tipReady = ready;
@@ -259,16 +259,14 @@ export class Scene {
     }
   }
 
-  /** 点击提示按钮：展示下一条可用提示（返回文本）；无可用 → null（HUD 显示俏皮话） */
+  /** 点击提示按钮：展示可用的提示（返回文本）；无可用 → null（HUD 显示俏皮话） */
   showNextTip() {
     const t = this.tipReady;
     if (!t) return null;
-    t.shown = true;
     this.tipSeq++;
     this.tipActive = t;
     this.tip = t.text;
     this.fire('tip', { tip: t, seq: this.tipSeq, source: 'button' });
-    this._updateTipReady(); // 本帧刚展示：立刻刷新可用性（同一帧连点能连出提示）
     return t.text;
   }
 
