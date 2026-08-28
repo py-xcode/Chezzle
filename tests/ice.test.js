@@ -108,8 +108,8 @@ test('冰面：玩家贴地才滑（_groundIce 逐帧重标，不残留）', () 
   assert.ok(!p._groundIce, '离地后冰面标记不残留');
 });
 
-// ---- 6. 冰上推东西：推不实（速度受玩家实际速度限制）；石地满速推 ----------
-test('冰面推烧杯：推动很慢（抓不住），石地满速推', () => {
+// ---- 6. 冰上推烧杯：满速推 + 松手惯性滑行；石地急停 ------------------------
+test('冰面推烧杯：满速推动（同石地）；松手后继续滑（冰面惯性），石地急停', () => {
   const res = {};
   for (const ice of [true, false]) {
     const scene = mk(ice);
@@ -119,10 +119,15 @@ test('冰面推烧杯：推动很慢（抓不住），石地满速推', () => {
     scene.addObject(bk);
     run(scene, 40); // 落地
     const x0 = bk.x;
-    for (let i = 0; i < 60; i++) { scene.control.add('right'); scene.step(1 / 30); } // 推 2s
-    res[ice ? 'ice' : 'stone'] = { moved: bk.x - x0, px: p.x };
+    for (let i = 0; i < 30; i++) { scene.control.add('right'); scene.step(1 / 30); } // 推 1s
+    scene.control.delete('right');
+    const pushed = bk.x - x0;
+    const x1 = bk.x;
+    run(scene, 60); // 松手 2s
+    res[ice ? 'ice' : 'stone'] = { pushed, coast: bk.x - x1 };
   }
-  assert.ok(res.stone.moved > 380, `石地满速推：${res.stone.moved.toFixed(1)}px`);
-  assert.ok(res.ice.moved > 100, `冰上能推（保底半速）：${res.ice.moved.toFixed(1)}px`);
-  assert.ok(res.ice.moved < res.stone.moved * 0.75, `冰上明显吃力（~半速）：${res.ice.moved.toFixed(1)}px vs 石地 ${res.stone.moved.toFixed(1)}px`);
+  assert.ok(res.stone.pushed > 200, `石地满速推：${res.stone.pushed.toFixed(1)}px`);
+  assert.ok(res.ice.pushed > 200, `冰上同样满速推：${res.ice.pushed.toFixed(1)}px`);
+  assert.ok(res.stone.coast < 40, `石地松手急停：滑行 ${res.stone.coast.toFixed(1)}px`);
+  assert.ok(res.ice.coast > 150, `冰上松手继续滑（惯性）：${res.ice.coast.toFixed(1)}px`);
 });

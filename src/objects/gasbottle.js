@@ -138,15 +138,13 @@ export class GasBottle extends Obj {
    *  不沉入池盆/高台侧面——见 physics/support.js） */
   applyGravity(dt, scene) {
     const sup = shallowestSupportY(this, scene);
-    this._supportBody = sup.body ?? null; // 最近支撑的动态体（头戴携带判定用）
+    this._onIce = sup.ice; // 是否立在冰面上（冰面惯性滑行用）
     settleBodyOnSupport(this, dt, sup.y);
   }
 
   update(dt, scene) {
     this.applyGravity(dt, scene);
-    // 头戴携带：瓶坐在玩家头顶 → 壁体与该玩家不再碰撞（防一跳被顶住→抖动）
-    const onHead = this._supportBody === scene.player;
-    for (const w of this.subBodies) w.noCollidePlayer = !!onHead;
+    // 冰面惯性滑行在 pushContainers（Player.update）里驱动
     // 玩家贴壁推动已挪到 Player.update（pushContainers——时序要求：玩家重设 vel 之后、
     // 物理步之前：吸附+清 vel，否则推-弹交替"一卡一卡"——用户反馈）
     // 动画计时衰减（盖板回落、辉光消退）
@@ -154,18 +152,9 @@ export class GasBottle extends Obj {
     if (this._fillPulse > 0) this._fillPulse = Math.max(0, this._fillPulse - dt * 1.8);
   }
 
-  /** 物理结算后：壁体贴回瓶身当前位置（爆炸推散等下一帧即复位）；
-   *  头戴携带（瓶坐在玩家头顶）→ 帽子式跟随玩家的位移（不倒推玩家：防火箭跳/抖动） */
-  lateUpdate(dt, scene) {
-    const p = scene.player;
-    if (p && this._supportBody === p) {
-      const dx = p.x - (this._headPX ?? p.x);
-      const dy = p.y - (this._headPY ?? p.y);
-      if (Math.abs(dx) > 0.01) this.x += dx;
-      if (Math.abs(dy) > 0.01) this.y += dy;
-      this._headPX = p.x;
-      this._headPY = p.y;
-    }
+  /** 物理结算后：壁体贴回瓶身当前位置（爆炸推散等下一帧即复位）。
+   *  注：瓶坐头顶时不做帽子式跟随（用户明确不要胶合感）。 */
+  lateUpdate() {
     this.syncWalls();
   }
 

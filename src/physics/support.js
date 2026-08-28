@@ -10,18 +10,14 @@
 //      连带着杯内玩家一起嵌入池体"（用户关卡 level (15) 复现）。
 // ============================================================================
 
+import { CFG } from '../core/config.js';
+
 const EPS = 2; // 已贴合的容差（沿用旧 applyGravity 的判定宽度）
-// 前一动态支撑的"跟随窗口"：支撑面（如玩家头顶）上移后仍算有效——
-// 否则玩家一跳，头顶的烧杯立刻"失去支撑"→ 壁体豁免关闭 → 头撞回杯底墙 →
-// 烧杯又落回 → 互相较劲（用户反馈的"头顶烧杯一跳就抖动"）。跟随逐帧贴合，
-// 每帧偏差 ≤ 一个 tick 的位移，200px 上限只作保险。
-const TRACK = 200;
 
 /**
  * 返回给定位体正下方最近的实心支撑面顶边 y；找不到返回 Infinity。
- * 返回 { y, body }：y = 顶边世界坐标（∞=无支撑）；body = 支撑面所属的动态体
- * （静态体/装置壁返回 null）——用于"头戴携带"判定（烧杯/集气瓶坐在玩家头顶时
- * 壁体要与玩家互不碰撞，否则玩家一跳就被自己的头戴装置卡住 → 抖动）。
+ * 返回 { y, ice }：y = 顶边世界坐标（∞=无支撑）；ice = 支撑面是否为冰面
+ * （容器冰面惯性滑行判定用——被推过的烧杯/集气瓶在冰上继续飘）。
  * span = 探测深度（px）：只在底部下方 span 内找（默认 40，与旧行为一致，
  * 保证下落逐帧检测不瞬移）；贴合恢复（轻微陷入弹回表面）也靠这个窗口。
  */
@@ -30,35 +26,30 @@ export function shallowestSupportY(body, scene, span = 40) {
   const r = body.x + body.w;
   const b0 = body.y + body.h;
   let bestY = Infinity;
-  let bestBody = null;
+  let bestIce = false;
   const sub = body.subBodies;
-  const prev = body._supportBody; // 上一帧的动态支撑（爬头跟随规则用）
   // statics/dynamics 都要排除**自身子体**（烧杯/集气瓶的壁体在 static 化后
   // 进了 statics——不排除的话"自己撑住自己/自己挡自己"）
   const skipSelf = (s) => (sub && sub.includes(s));
-  const scan = (list, skip, dynBody) => {
+  const scan = (list, skip) => {
     for (const s of list) {
       if (!s || !s.solid || (skip && skip(s))) continue;
       if (!(s.x < r && s.x + s.w > l)) continue; // 水平重叠才算
-      const dy = s.y - b0;
-      const inWindow = (dy >= -EPS && dy <= span);
-      const prevFollow = (dynBody && s === prev && dy >= -TRACK && dy <= span);
-      if (inWindow || prevFollow) {
-        if (s.y < bestY) { bestY = s.y; bestBody = dynBody ? s : null; }
+      if (s.y >= b0 - EPS && s.y <= b0 + span) {
+        if (s.y < bestY) { bestY = s.y; bestIce = !!s.ice; }
       }
     }
   };
-  if (scene.statics) scan(scene.statics, skipSelf, false);
+  if (scene.statics) scan(scene.statics, skipSelf);
   if (scene.dynamics) {
-    scan(scene.dynamics, (d) => d === body || skipSelf(d) || typeof d.amount === 'number', true);
+    scan(scene.dynamics, (d) => d === body || skipSelf(d) || typeof d.amount === 'number');
   }
-  return { y: bestY, body: bestBody };
+  return { y: bestY, ice: bestIce };
 }
 
 /** 与作用力无关的通用"落到支撑面停住"推进（重力累加 ≤400，钳位贴合）。
  *  贴合容差 0.25px：已在表面（含微小间隙）→ 静止——否则"恰好贴住"时每帧
- *  微落 0.6px 再被顶回 → 烧杯/集气瓶站着也在微微震动（用户反馈推动时的抖动源之一） */
-export function settleBodyOnSupport(body, dt, support, accel = 600, maxV = 400) {
+ *  微落 0.6px 再被顶回 → 烧杯/集气瓶站着也在微微震动（用户反馈推动时的抖动源之一） */export function settleBodyOnSupport(body, dt, support, accel = 600, maxV = 400) {
   if (!Number.isFinite(support)) {
     body.vy = Math.min(maxV, body.vy + accel * dt);
     body.y += body.vy * dt;
@@ -87,18 +78,20 @@ export function settleBodyOnSupport(body, dt, support, accel = 600, maxV = 400) 
  */
 export function pushContainers(p, scene, dt) {
   const dir = (scene.control && scene.control.has('right') ? 1 : 0) - (scene.control && scene.control.has('left') ? 1 : 0);
-  if (dir === 0) return;
-  // 冰面（_groundIce）：推动速度受玩家**实际速度**影响，但保底 ~半速——
-  // 纯用 vel 会慢到"推不动"（用户反馈：冰上推集气瓶非常费劲）；半速+打滑感
-  // 既有"冰上使不上劲"的手感，又不至于寸步难行。石地维持旧行为：指令即满推速。
-  const ice = !!p._groundIce;
-  const spd = ice ? Math.max(Math.abs(p.vel.x), p.moveSpeed * 0.5) : p.moveSpeed;
-  const push = dir * spd * dt;
+  // 冰面惯性滑行：玩家不推动时，被推过的容器继续飘（冰摩擦缓慢衰减，离开冰面即停）
+  if (dir === 0) {
+    for (const c of scene.objects) {
+      if ((c.isCarryItem === 'beaker' || c.isCarryItem === 'bottle') && c._slideVx) iceSlide(c, dt);
+    }
+    return;
+  }
+  // 推动全程满速（冰上也不例外——"冰上推得动，松手继续滑"才是冰感；
+  // 之前半速/低速设计被用户否了：冰上推不动很别扭）
+  const push = dir * p.moveSpeed * dt;
   // 注意遍历 scene.objects（集气瓶不是 Container 子类，不在 scene.containers）
   for (const c of scene.objects) {
     if (c.isCarryItem !== 'beaker' && c.isCarryItem !== 'bottle') continue;
     if (typeof c.containsObj === 'function' && c.containsObj(p)) continue; // 杯内携带：走 lateUpdate 带动
-    if (c._supportBody === p) continue; // 头戴携带：帽子式跟随（lateUpdate 处理，防双推）
     if (p.bottom <= c.y || p.top >= c.y + c.h) continue; // 高度不重叠（贴不到壁）
     const wall = c.wall ?? 4;
     if (push > 0 && p.right >= c.x - 2 && p.right <= c.x + wall + 2) {
@@ -108,6 +101,7 @@ export function pushContainers(p, scene, dt) {
         if (typeof c.syncWalls === 'function') c.syncWalls(); // 壁体**立即**跟上（否则物理步用旧壁位置 → 玩家被弹开）
         p.x = c.x - p.w; // 吸附到左壁
         p.vel.x = 0;
+        c._slideVx = c._onIce ? dir * p.moveSpeed : 0; // 冰面：获得滑动余量（松手继续滑）
       }
     } else if (push < 0 && p.left <= c.x + c.w + 2 && p.left >= c.x + c.w - wall - 2) {
       const nx = c.x + push;
@@ -116,9 +110,22 @@ export function pushContainers(p, scene, dt) {
         if (typeof c.syncWalls === 'function') c.syncWalls();
         p.x = c.x + c.w; // 吸附到右壁
         p.vel.x = 0;
+        c._slideVx = c._onIce ? dir * p.moveSpeed : 0;
       }
     }
   }
+}
+
+/**
+ * 冰面惯性滑行：被推过的容器在冰上松手后继续飘（冰摩擦缓慢衰减），
+ * 离开冰面立即停。在容器自身 update 里每帧调用（不依赖玩家在场）。
+ */
+export function iceSlide(c, dt) {
+  if (!c._slideVx) return;
+  if (!c._onIce) { c._slideVx = 0; return; }
+  c.x += c._slideVx * dt;
+  c._slideVx *= Math.max(0, 1 - CFG.iceFriction * dt);
+  if (Math.abs(c._slideVx) < 5) c._slideVx = 0;
 }
 
 /**
