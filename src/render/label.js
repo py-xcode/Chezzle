@@ -1,8 +1,11 @@
 // ============================================================================
 // 化学式/标签：暗底圆角 + 金色发光文字。
-// 标签画在世界变换里，字号按屏幕实际像素保底（低分手机不再糊）；
-// 同时会自动避让 HUD 面板（左上信息卡/右下物品栏+按钮/摇杆/顶栏按钮）——
-// 压住时在附近挑一个不被挡的位置，不挪远处的物体、不改字号。
+//  - 居中锚定：标签盒以传入点为水平中心（不再从锚点向右歪）；
+//  - 二次绘制：renderFormula 只把绘制命令入队，Renderer 在世界物件全部画完
+//    之后调用 flushLabels 统一画出——标签浮在地板/物块之上，不会被盖住；
+//  - 字号按屏幕实际像素保底（低分手机不再糊）；
+//  - 避让：只上下翻转（保持居中）+ 画面内钳制（不再跑出屏幕），HUD 面板
+//    压住时翻到面板外；有粘性记忆，走路时不横跳。
 // ============================================================================
 
 import { THEME, rr } from './theme.js';
@@ -10,7 +13,7 @@ import { hudTopOffset, inventorySlotRects, uiMargins, touchInsetsOf } from '../l
 import { joyGeom, touchButtonRects } from '../core/touch.js';
 
 /** HUD 常驻面板在画布坐标上的占位矩形（标签/悬浮物的避让依据，保守取整）。
- *  w = 遮挡权重：实心面板 2；摇杆是 7% 透明度的幽灵圈，压到一点无伤（1）。 */
+ *  weight = 遮挡权重：实心面板 2；摇杆是 7% 透明度的幽灵圈（0.3，压住大半也可读）。 */
 export function hudOccluders(scene, W, H) {
   const rects = [];
   if (!scene || scene.overview) return rects; // 鸟瞰：HUD 只剩顶栏小按钮
@@ -44,7 +47,7 @@ export function hudOccluders(scene, W, H) {
       // 摇杆（左下半圆带容差；透明幽灵圈，权重轻）
       if (t && typeof t.enabled === 'function' && t.enabled()) {
         const g = joyGeom(W, H, t.insets || {});
-        rects.push({ x: g.cx - g.R - 14, y: g.cy - g.R - 14, w: 2 * (g.R + 14), h: g.R + 14, weight: 1 });
+        rects.push({ x: g.cx - g.R - 14, y: g.cy - g.R - 14, w: 2 * (g.R + 14), h: g.R + 14, weight: 0.3 });
       }
     }
   }
@@ -57,16 +60,17 @@ function overlapArea(a, b) {
   return w > 0 && h > 0 ? w * h : 0;
 }
 
-/**
- * 为标签挑一个不被 HUD 挡住的落点。
- * @param rect 标签盒（画布坐标，原位）
- * @returns { dx, dy } 屏幕像素偏移（应转回世界偏移后应用）
- */
 // 落点粘性记忆（key → 上次偏移）：走路时相机移动，标签在面板边缘会一帧挪一帧
 // 回——记住上次的落点并给粘性加分，只有明显更优才换位。tick 老化防泄漏。
 const _lastPlace = new Map();
 let _placeTick = 0;
 
+/**
+ * 为标签挑一个落点（只上下翻转，保持水平居中；最后画面内钳制）。
+ * @param rect 标签盒（画布坐标，原位）
+ * @param key  粘性记忆键（同标签跨帧不横跳）
+ * @returns { dx, dy } 屏幕像素偏移
+ */
 export function labelPlacement(ctx, scene, rect, key = null) {
   _placeTick++;
   const W = ctx.canvas.width;
@@ -75,41 +79,34 @@ export function labelPlacement(ctx, scene, rect, key = null) {
   const prev = key ? _lastPlace.get(key) : null;
   if (!occ.length) {
     if (prev && (prev.dx || prev.dy)) _lastPlace.delete(key);
-    return { dx: 0, dy: 0 };
+    // 空地也做画面内钳制（长标签贴边时收进来）
+    const cx = Math.max(4 - rect.x, Math.min(0, W - 4 - rect.w - rect.x));
+    const cy = Math.max(4 - rect.y, Math.min(0, H - 4 - rect.h - rect.y));
+    return { dx: cx, dy: cy };
   }
   const area = rect.w * rect.h;
-  const cx0 = rect.x + rect.w / 2;
-  const cy0 = rect.y + rect.h / 2;
 
   const score = (r, dx, dy) => {
     let ov = 0;
     for (const o of occ) ov += overlapArea(r, o) * (o.weight ?? 2);
-    // 越界重罚（×8）：挪出画布外 = 彻底看不见，比压在半透明面板上更糟
+    // 越界重罚（×20）：挪出画布外 = 彻底看不见，比压在半透明面板上更糟
     let oob = 0;
     if (r.x < 4) oob += 4 - r.x;
     if (r.y < 4) oob += 4 - r.y;
     if (r.x + r.w > W - 4) oob += r.x + r.w - (W - 4);
     if (r.y + r.h > H - 4) oob += r.y + r.h - (H - 4);
-    // 挪得越远越不优先（贴着锚点的原位永远最优先）；与上次落点一致 → 粘性加分
+    // 挪得越远越不优先（居中原位永远最优先）；与上次落点一致 → 粘性加分
     let sc = ov + oob * 20 + Math.hypot(dx, dy) * 0.35;
     if (prev && Math.abs(dx - prev.dx) <= 2 && Math.abs(dy - prev.dy) <= 2) sc -= 80;
     return sc;
   };
 
-  // 候选：原位 → 竖直翻/远移 → 左右半宽/全宽 → 斜向组合
+  // 候选：居中原位 → 竖直翻/远移（保持水平居中）
   const cands = [[0, 0]];
   for (const k of [1, 2.1]) {
     for (const sg of [-1, 1]) cands.push([0, sg * (rect.h + 8) * k]);
   }
-  for (const sg of [-1, 1]) {
-    cands.push([sg * rect.w * 0.62, 0]);
-    cands.push([sg * rect.w * 1.45, 0]);
-  }
-  cands.push([-rect.w * 0.62, -(rect.h + 8)]);
-  cands.push([rect.w * 0.62, -(rect.h + 8)]);
-
-  // 原位被压住过 1/3 → 追加"推出面板边缘"的候选（左/右/上/下，钳在画布内），
-  // 与其它候选同一打分竞争——离屏候选有 ×8 越界重罚，赢不过它们
+  // 原位被压住过 1/3 → 追加"推出面板边缘"的竖直候选（水平仍居中）
   const baseOv = occ.reduce((sum, o) => sum + overlapArea(rect, o) * (o.weight ?? 2), 0);
   if (baseOv > area * 0.35) {
     let worst = null;
@@ -122,15 +119,8 @@ export function labelPlacement(ctx, scene, rect, key = null) {
       }
     }
     if (worst) {
-      const escapes = [
-        [worst.x - rect.w - 6, rect.y],
-        [worst.x + worst.w + 6, rect.y],
-        [rect.x, worst.y - rect.h - 6],
-        [rect.x, worst.y + worst.h + 6],
-      ];
-      for (const [ex, ey] of escapes) {
-        cands.push([Math.max(4, Math.min(W - 4 - rect.w, ex)) - rect.x, Math.max(4, Math.min(H - 4 - rect.h, ey)) - rect.y]);
-      }
+      cands.push([0, worst.y - rect.h - 6 - rect.y]); // 推到面板上缘之上
+      cands.push([0, worst.y + worst.h + 6 - rect.y]); // 推到面板下缘之下
     }
   }
 
@@ -138,8 +128,14 @@ export function labelPlacement(ctx, scene, rect, key = null) {
   for (const [dx, dy] of cands) {
     const r = { x: rect.x + dx, y: rect.y + dy, w: rect.w, h: rect.h };
     const sc = score(r, dx, dy);
-    if (!best || sc < best.sc) best = { sc, dx, dy, r };
+    if (!best || sc < best.sc) best = { sc, dx, dy };
   }
+  // 水平/竖直钳制：越出画布就拉回边缘内（区间钳制——旧写法 min(0,…) 只会往
+  // 左上拉，向右/下越界时直接把偏移清零，标签冲出屏幕没人管）
+  if (best.dx + rect.x < 4) best.dx = 4 - rect.x;
+  else if (best.dx + rect.x + rect.w > W - 4) best.dx = W - 4 - rect.w - rect.x;
+  if (best.dy + rect.y < 4) best.dy = 4 - rect.y;
+  else if (best.dy + rect.y + rect.h > H - 4) best.dy = H - 4 - rect.h - rect.y;
   if (key) {
     _lastPlace.set(key, { dx: best.dx, dy: best.dy, tick: _placeTick });
     if (_lastPlace.size > 96) {
@@ -147,6 +143,39 @@ export function labelPlacement(ctx, scene, rect, key = null) {
     }
   }
   return { dx: best.dx, dy: best.dy };
+}
+
+// ---- 二次绘制队列：世界物件画完 → flushLabels 统一画出（浮在物件之上） ----
+
+const labelQueue = [];
+
+/** 世界渲染完成后调用：统一画出本帧入队的全部标签（屏幕坐标，居中盒） */
+export function flushLabels(ctx) {
+  for (const c of labelQueue) {
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0); // 命令存的是屏幕坐标
+    ctx.font = `bold ${c.fs}px monospace`;
+    ctx.fillStyle = 'rgba(12,9,34,0.72)';
+    rr(ctx, c.bx, c.by, c.bw, c.bh, 5);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(232,184,75,0.4)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // 清晰小字：细暗描边保证可读，不发光
+    ctx.fillStyle = c.color;
+    ctx.lineWidth = 3;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.strokeText(c.text, c.bx + c.bw / 2, c.by + c.bh / 2);
+    ctx.fillText(c.text, c.bx + c.bw / 2, c.by + c.bh / 2);
+    ctx.restore();
+  }
+  labelQueue.length = 0;
+}
+
+/** 测试/工具用：清空未渲染的标签队列 */
+export function clearLabelQueue() {
+  labelQueue.length = 0;
 }
 
 export function renderFormula(ctx, x, y, text, opts = {}) {
@@ -160,35 +189,31 @@ export function renderFormula(ctx, x, y, text, opts = {}) {
   } catch (e) { /* 老浏览器 */ }
   const s = m ? Math.hypot(m.a, m.b) : 1;
   if (s > 0.01 && !opts.size) size = Math.max(size, Math.min(22, Math.round(12 / s)));
+  const fs = size * s; // 屏幕字号
   const color = opts.color ?? THEME.gold.text;
-  ctx.save();
-  ctx.font = `bold ${size}px monospace`;
-  ctx.textAlign = 'left';
-  const w = ctx.measureText(text).width + 12;
-  // HUD 避让：算出标签盒的屏幕位置，被面板压住就在附近挪一个不被挡的落点
-  if (opts.scene && s > 0.01) {
-    const wx = x - 4;
-    const wy = y - size - 2;
-    const sx = m.a * wx + m.c * wy + m.e;
-    const sy = m.b * wx + m.d * wy + m.f;
-    const rect = { x: sx, y: sy, w: w * s, h: (size + 7) * s };
-    const { dx, dy } = labelPlacement(ctx, opts.scene, rect, opts.id);
-    if (dx || dy) {
-      x += dx / s;
-      y += dy / s;
-    }
+  // 居中锚定：盒以 (x, y) 的屏幕投影为水平中心、文字基线为竖直基准
+  const sx = m ? m.a * x + m.c * y + m.e : x;
+  const sy = m ? m.b * x + m.d * y + m.f : y;
+  let textW = 0;
+  try {
+    ctx.font = `bold ${size}px monospace`;
+    textW = ctx.measureText(text).width * s;
+  } catch (e) {
+    textW = text.length * fs * 0.62;
   }
-  ctx.fillStyle = 'rgba(12,9,34,0.72)';
-  rr(ctx, x - 4, y - size - 2, w, size + 7, 5);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(232,184,75,0.4)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
-  // 清晰小字：细暗描边保证可读，不发光
-  ctx.fillStyle = color;
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = 'rgba(8,6,24,0.9)';
-  ctx.strokeText(text, x + 2, y);
-  ctx.fillText(text, x + 2, y);
-  ctx.restore();
+  const bw = textW + 12 * s;
+  const bh = fs + 7 * s;
+  const rect = { x: sx - bw / 2, y: sy - fs - 2 * s, w: bw, h: bh };
+  // 避让：只上下翻转（保持水平居中）+ 画面内钳制
+  let dx = 0;
+  let dy = 0;
+  if (opts.scene && s > 0.01) {
+    ({ dx, dy } = labelPlacement(ctx, opts.scene, rect, opts.id));
+  }
+  const W = ctx.canvas ? ctx.canvas.width : 9999;
+  const H = ctx.canvas ? ctx.canvas.height : 9999;
+  const bx = Math.max(4, Math.min(W - 4 - bw, rect.x + dx));
+  const by = Math.max(4, Math.min(H - 4 - bh, rect.y + dy));
+  if (labelQueue.length > 256) labelQueue.length = 0; // 兜底：异常帧不无限堆积
+  labelQueue.push({ bx, by, bw, bh, text, fs: Math.round(fs * 10) / 10, color });
 }

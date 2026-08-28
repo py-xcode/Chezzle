@@ -72,8 +72,8 @@ test('labelPlacement：空白原位不动；压在摇杆上挪开且不再重叠
     assert.ok(!(w > 0 && h > 0), `触屏挪后仍重叠：${JSON.stringify(o)}`);
   }
 
-  // ② 压在摇杆上（左下）→ 挪开后压住面积 ≤35%（左下角已被卡片/摇杆/右下带
-  //    挤满，120 宽标签无全空位置——算法取边缘擦过最少的近点）
+  // ② 压在摇杆上（左下）→ 挪开后不压实心面板（摇杆是 7% 透明幽灵圈，权重
+  //    0.3——与它剩些交叠完全可读；左下角也没有实心面板全空的位置）
   const occ = hudOccluders(scene, W, H);
   const joy = occ[3];
   const lx = joy.x + joy.w / 2 - 60;
@@ -81,13 +81,13 @@ test('labelPlacement：空白原位不动；压在摇杆上挪开且不再重叠
   const moved = labelPlacement(ctx, scene, { x: lx, y: ly, w: 120, h: 20 });
   assert.ok(moved.dx !== 0 || moved.dy !== 0, '被压必挪');
   const movedRect = { x: lx + moved.dx, y: ly + moved.dy, w: 120, h: 20 };
-  let movedOv = 0;
   for (const o of occ) {
+    if ((o.weight ?? 2) < 2) continue; // 幽灵圈可容忍
     const w = Math.min(movedRect.x + movedRect.w, o.x + o.w) - Math.max(movedRect.x, o.x);
     const h = Math.min(movedRect.y + movedRect.h, o.y + o.h) - Math.max(movedRect.y, o.y);
-    if (w > 0 && h > 0) movedOv += w * h;
+    assert.ok(!(w > 0 && h > 0), `挪后仍压实心面板：${JSON.stringify(o)}`);
   }
-  assert.ok(movedOv <= 120 * 20 * 0.35, `压住面积可控：${(movedOv / 2400 * 100).toFixed(0)}%`);
+  assert.ok(movedRect.y >= 4 && movedRect.y + 20 <= H - 4, '留在画面内');
   // 挪得不远（还在锚点附近，±220px 内）
   assert.ok(Math.hypot(moved.dx, moved.dy) < 220, `挪动距离可控：${Math.hypot(moved.dx, moved.dy)}`);
 

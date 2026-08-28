@@ -8,6 +8,7 @@
 import { Camera } from './camera.js';
 import { renderBackground } from './background.js';
 import { Particle } from '../objects/particle.js';
+import { flushLabels } from './label.js';
 
 function renderParticles(ctx, particles, opts) {
   for (const pt of particles) {
@@ -58,6 +59,8 @@ export class Renderer {
     }
     renderParticles(ctx, particles, opts);
     ctx.restore();
+    // 标签二次绘制：世界物件全部画完之后统一画出（浮在地板/物块之上）
+    flushLabels(ctx);
     if (opts.hud && typeof opts.hud.render === 'function') opts.hud.render(ctx, opts.time ?? 0);
   }
 }
