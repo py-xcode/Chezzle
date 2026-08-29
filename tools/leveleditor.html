@@ -1346,6 +1346,17 @@ canvas.addEventListener('pointerdown', () => {
   const ae = document.activeElement;
   if (ae && ae !== canvas && ae !== document.body && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) ae.blur();
 });
+// 非试玩状态：鼠标悬停显示世界坐标（右上状态栏，方便定位/摆放）
+canvas.addEventListener('mousemove', (e) => {
+  if (state.playing) return; // 试玩态状态栏归 onPlayMoveDiag
+  const sp = canvasPos(e);
+  const w = screenToWorld(sp.x, sp.y);
+  $('status').textContent = `悬停世界坐标 (${Math.round(w.x)}, ${Math.round(w.y)})`;
+});
+canvas.addEventListener('mouseleave', () => {
+  if (state.playing) return;
+  $('status').textContent = statusMsg;
+});
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
   const f = e.deltaY < 0 ? 1.1 : 0.9;
