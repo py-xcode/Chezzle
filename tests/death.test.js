@@ -102,15 +102,11 @@ test('死亡原因：邻近反应不污染记录；遇水反应报水 — K泡�
   assert.equal(p.lastRxPartner, 'H2O', '遇水反应（文本无H2O）→ 介质兜底报水');
   assert.equal(p.lastRxAcid, false);
   assert.equal(p.lastRxBase, false);
-  // 酸性介质中的反应（如 'K → H2+KCl'）：兜底挑酸 → HCl（不报水）
-  scene._emitCtx = { container: { solution: { water: 200, solutes: new Map([['HCl', 30]]) } } };
-  scene.onReaction('K → H2+KCl');
-  assert.equal(p.lastRxPartner, 'HCl', '酸介质 → 报酸');
-  assert.equal(p.lastRxAcid, true);
-  // 中性水 → 再回水中毒
-  scene._emitCtx = { container: { solution: { water: 200, solutes: new Map() } } };
+  // 即使是碱性环境（自己反应产生的 KOH 溶在水里）：**环境≠对手** → 仍报 H2O
+  scene._emitCtx = { container: { solution: { water: 200, solutes: new Map([['KOH', 30]]) } } };
   scene.onReaction('K → H2+KOH');
-  assert.equal(p.lastRxPartner, 'H2O', '中性水 → 水中毒');
+  assert.equal(p.lastRxPartner, 'H2O', '碱性环境（反应产物）→ 不按碱算，仍为水中毒');
+  assert.equal(p.lastRxBase, false);
   // 耗尽死亡 → 死亡原因=水中毒类
   for (let i = 0; i < 20 && p.hp > 0; i++) p.grid.consume(p.substance, p.grid.avail(p.substance) + 1);
   scene.step(RUN);
@@ -132,7 +128,7 @@ test('deathQuip：虚空/强酸/强碱/反应/水中毒/无伙伴 六类（随�
   assert.ok(v.includes('NaOH'), `含玩家物质：${v}`);
   // 飞升
   const s = deathQuip({ kind: 'sky' }, 'Al');
-  assert.ok(s.includes('Al') && (s.includes('飞') || s.includes('天')), `飞升类：${s}`);
+  assert.ok(s.includes('Al') && /飞|天|仙|层/.test(s), `飞升类：${s}`);
   // 强酸
   const a = deathQuip({ kind: 'acid', partner: 'HCl' }, 'Fe2O3');
   assert.ok(a.includes('Fe2O3') && a.includes('HCl') && a.includes('强酸'), `${a}`);

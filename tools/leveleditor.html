@@ -116,7 +116,6 @@
     <button class="btn" id="btnUndo">↩ 撤销</button>
     <button class="btn" id="btnPlugins">🧩 插件</button>
     <button class="btn" id="btnClear">🗑 清空</button>
-    <button class="btn" id="btnClearStorage">🗑 清空存档</button>
     <label style="color:#9fb2c8"><input type="checkbox" id="cbDebug" checked> 导出调试提示（?debug=1）</label>
     <label>世界宽 <input type="number" id="inW" value="3000" min="200" step="100"></label>
     <label>高 <input type="number" id="inH" value="800" min="300" step="50"></label>
@@ -2190,22 +2189,6 @@ $('pluginFile').onchange = (e) => {
 $('pluginList').addEventListener('change', onPluginPanelChange);
 $('pluginList').addEventListener('click', onPluginPanelClick);
 $('btnClear').onclick = () => { pushUndo(); state.placed = []; state.customReactions = []; state.plugins = []; state.tips = []; editorStates.clear(); openTip = -1; state.selected = null; state.sel = new Set(); syncIdSeq(); buildRenderScene(); renderEdit(); refreshProps(); renderRxPanel(); renderTipPanel(); renderPluginPanel(); refreshExport(); saveState(); for (const fns of editorStateLoadedHooks.values()) for (const fn of fns) { try { fn(); } catch (e) {} } /* 钩子可能从自身状态把数据灌回来（多场景插件）：清后补刀 + 重渲染 */ state.tips = []; state.customReactions = []; openTip = -1; renderTipPanel(); renderRxPanel(); refreshExport(); saveState(); };
-$('btnClearStorage').onclick = () => {
-  localStorage.removeItem(STORAGE_KEY); // 清掉自动存档
-  localStorage.removeItem(LEGACY_KEY);  // 旧 key 一并清掉
-  state.placed = [];
-  state.customReactions = [];
-  state.plugins = [];
-  editorStates.clear(); // 插件保存的数据一并清掉（用户要求：清空关卡后设置不保留）
-  state.selected = null;
-  state.sel = new Set();
-  undoStack.length = 0;
-  buildRenderScene();
-  saveState();
-  renderEdit(); refreshProps(); renderRxPanel(); renderPluginPanel(); refreshExport();
-  for (const fns of editorStateLoadedHooks.values()) for (const fn of fns) { try { fn(); } catch (e) {} }
-  $('status').textContent = '已清空存档，回到空画布';
-};
 $('btnPlay').onclick = togglePlay;
 $('copyBtn').onclick = () => {
   const t = $('export');

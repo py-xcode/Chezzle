@@ -841,26 +841,18 @@ class Scene {
     const point = this._emitCtx ? this._emitCtx.point : null;
     const key = this._rxKey(text);
     const now = this.time;
-    // 死亡原因记录：**涉及玩家**的反应才更新记录（伙伴物质 + 酸/碱分类）；
-    // 引擎的遇水反应文本常不列水（'K → H2+KOH'）——玩家在水介质中反应时
-    // 补兜底伙伴：溶液里的酸/碱（致死物优先）→ 否则记为水（水中毒）
+    // 死亡原因记录：**涉及玩家**的反应才更新记录（伙伴物质 + 酸/碱分类）。
+    // 酸/碱致死只认**反应文本里的伙伴**（玩家确实与该物质反应）——碱性/酸性
+    // **环境**不算对手（把池子反应烧成 KOH 的不是碱攻击，是水反应）；
+    // 文本无伙伴但反应发生在水介质（引擎遇水反应文本不带水，如 'K → H2+KOH'）
+    // → 兜底报 H2O（水中毒）。
     if (this.player) {
       const r = reactionParser(text, this.player.substance);
       if (r.involved) {
         let partner = r.partner;
         if (!partner) {
           const c = this._emitCtx && this._emitCtx.container;
-          if (c && c.solution && c.solution.water > 0.01) {
-            let ab = null;
-            for (const [id, m] of c.solution.solutes) {
-              if (!(m > 0.01)) continue;
-              const s = getSubstance(id);
-              if (s && (s.kind === 'acid' || s.kind === 'base')) {
-                if (!ab || m > ab.m) ab = { id, m };
-              }
-            }
-            partner = ab ? ab.id : 'H2O';
-          }
+          if (c && c.solution && c.solution.water > 0.01) partner = 'H2O';
         }
         this.player.lastRxPartner = partner;
         const sub = partner ? getSubstance(partner) : null;
