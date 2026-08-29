@@ -66,6 +66,7 @@ export class Scene {
     this.tipReady = null; // 当前"可点击展示"的提示（条件满足；**靠后的优先**，不自动出现）
     this.tipActive = null; // 最近一次展示的提示对象
     this.deathCause = null; // 死亡原因 { kind:'void'|'acid'|'base'|'reaction', partner }（死亡界面文案用）
+    this.banner = null; // 大横幅（MC 标题式屏幕中央大字）：{ text, t, dur }；HUD 渲染淡入淡出
     this.debugMode = false; // 调试模式（URL 参数 ?debug=1 开启；.debugmode() 已废弃）
     this.debugPaused = false; // 暂停 tick 推进
     this.debugStepOnce = false; // 手动步进一 tick
@@ -251,6 +252,14 @@ export class Scene {
 
   /** 每 tick 求值可用提示（纯读，无副作用）：tipReady = 满足条件的**最后**一条 */
   _updateTipReady() {
+    // 玩家尚未出现（延迟出现）：条件提示不就绪——人不在场谈不上"走到哪"
+    if (this.player?.hidden) {
+      if (this.tipReady !== null) {
+        this.tipReady = null;
+        this.fire('tipReady', { tip: null });
+      }
+      return;
+    }
     let ready = null;
     for (const t of this.tips) {
       if (tipHolds(this, t)) ready = t; // 遍历取最后一个满足者（靠后优先）
@@ -259,6 +268,17 @@ export class Scene {
       this.tipReady = ready;
       this.fire('tipReady', { tip: ready });
     }
+  }
+
+  /** 大横幅：屏幕中央大字（MC 标题式），淡入淡出。
+   *  text 支持 \n 多行；dur 秒为总时长（含淡入淡出）。关卡脚本/插件随时可调用，
+   *  后显示的横幅顶掉前一个（同一时刻屏幕上只有一条大横幅）。 */
+  showBanner(text, dur = 4) {
+    const t = String(text ?? '');
+    if (!t.trim()) return null;
+    this.banner = { text: t, t: this.time, dur: Math.max(0.6, Number(dur) || 4) };
+    this.fire('banner', this.banner);
+    return this.banner;
   }
 
   /** 点击提示按钮：展示可用的提示（返回文本）；无可用 → null（HUD 显示俏皮话） */
@@ -298,16 +318,21 @@ export class Scene {
     if (obj.isPlayerObj) this.player = obj;
   }
 
-  /** 显现一个隐藏物体（开关 showId 用）：恢复进 objects 与物理/逻辑索引 */
+  /** 显现一个隐藏物体（开关 showId / 延迟出现用）：恢复进 objects 与物理/逻辑索引。
+   *  子体走对象引用递归——杯壁等子体 id 是固定名（'bk_l'…），多实例时 byId 会互相
+   *  覆盖，按 id 回捞会捞错物体（两个延迟出现的烧杯必翻车——先复现再修）。 */
   reveal(id) {
-    const obj = this.byId[id];
+    return this._revealObj(this.byId[id]);
+  }
+
+  _revealObj(obj) {
     if (!obj || !obj.hidden) return obj;
     obj.hidden = false;
     const h = this.hidden.indexOf(obj);
     if (h >= 0) this.hidden.splice(h, 1);
     this.objects.push(obj);
     this._register(obj);
-    if (obj.subBodies) for (const sb of obj.subBodies) this.reveal(sb.id);
+    if (obj.subBodies) for (const sb of obj.subBodies) this._revealObj(sb);
     return obj;
   }
 
@@ -1085,7 +1110,7 @@ export class Scene {
   // ===========================================================================
   checkStatus() {
     const p = this.player;
-    if (!p) return;
+    if (!p || p.hidden) return; // 隐藏（延迟出现）中：不参与生死/通关判定
     if (p.hp <= 0) {
       // 反应致死：优先用最近一次玩家反应记录（酸/碱分类 + 伙伴物质）
       this.deathCause = {

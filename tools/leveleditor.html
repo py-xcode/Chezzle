@@ -132,6 +132,7 @@
         <h3>🧩 插件 <small style="color:#6a7a96">关卡的额外脚本（加载即用于本关）</small></h3>
         <div class="pl-btns">
           <button class="btn" id="btnAddPlugin">+ 加载插件文件</button>
+          <button class="btn" id="btnNewMod" title="不建 .js 文件，直接在编辑器里写模块（模板起步，保存即加载）">＋ 新建模块</button>
           <label style="color:#9fb2c8;font-size:10px"><input type="checkbox" id="cbEmbedPlugins" checked> 导出 HTML 时嵌入插件源码</label>
         </div>
         <div id="pluginList"></div>
@@ -488,7 +489,9 @@ function loadPluginSource(file, src, opts = {}) {
   }
   // 注册名 = 源码实际 register 的名字（与元数据 name 可能不同；注入/导出必须用它）
   const added = C.Plugin.names().filter((n) => !before.has(n));
-  const reg = added[0] ?? file.replace(/\.js$/, '');
+  // 同文件重载（模块编辑保存）：register 同名覆盖 → added 为空 → 沿用该文件原注册名
+  const prevReg = pluginLib.get(file)?.reg;
+  const reg = added[0] ?? prevReg ?? file.replace(/\.js$/, '');
   if (added.length > 1) $('status').textContent = `插件 ${file} 注册了 ${added.length} 个定义，将使用 ${reg}（建议一文件一注册）`;
   pluginLib.set(file, { src, meta, reg });
   registerPluginComponents(meta, file);
@@ -554,6 +557,7 @@ function pluginUnload(file) {
   editorHooks.delete(e.reg);
   editorStateLoadedHooks.delete(e.reg);
   editorPlayStateHooks.delete(e.reg);
+  editorPlaySceneHooks.delete(e.reg);
   for (const [m, h] of editorPlayHooks) if (h.reg === e.reg) editorPlayHooks.delete(m);
   editorStates.delete(e.reg); // 用户要求：卸载插件 → 其保存的数据不再保留（重载=全新）
   for (const el of editorDom.get(e.reg) ?? []) el.remove?.();
@@ -568,7 +572,7 @@ function pluginUnload(file) {
 function renderPluginPanel() {
   const box = $('pluginList');
   if (!pluginLib.size) {
-    box.innerHTML = '<div class="empty">还没有插件。<br>插件 = 本关卡的额外脚本：定制逻辑写死在插件里，通用参数会并进物体属性面板。<br>点「+ 加载插件文件」选择带 @@chezzle-plugin 元数据的 .js。</div>';
+    box.innerHTML = '<div class="empty">还没有插件。<br>插件 = 本关卡的额外脚本：定制逻辑写死在插件里，通用参数会并进物体属性面板。<br>点「+ 加载插件文件」选 .js，或点「＋ 新建模块」直接在编辑器里写（带模板）。</div>';
     return;
   }
   const html = [];
@@ -585,6 +589,7 @@ function renderPluginPanel() {
       <div class="pl-head"><span class="pl-name">${meta.name}</span><span class="pl-ver">v${meta.version ?? '?'}</span>
         <span style="flex:1"></span>
         <label style="font-size:10px;color:#9fb2c8;display:flex;align-items:center;gap:3px;margin-right:4px"><input type="checkbox" data-toggle="${file}" ${enabled ? 'checked' : ''}> 用于本关</label>
+        <button class="pl-del" data-edit="${file}" title="查看/编辑模块源码（保存即重载，插件状态保留）">✎</button>
         <button class="pl-del" data-remove="${file}" title="从本关移除并卸载插件">✕</button></div>`);
     if (meta.description) html.push(`<div class="pl-desc">${meta.description.replace(/</g, '&lt;')}</div>`);
     if (comps.length) html.push(`<div class="pl-comp">🧱 组件：${comps.join('、')}</div>`);
@@ -613,7 +618,281 @@ function onPluginPanelChange(e) {
 function onPluginPanelClick(e) {
   const rm = e.target.closest('[data-remove]');
   if (rm) { pluginUnload(rm.dataset.remove); return; }
+  const ed = e.target.closest('[data-edit]');
+  if (ed) openModEditor({ mode: 'edit', file: ed.dataset.edit });
 }
+
+// ---- 模块创作台：不建 .js 文件，直接在编辑器里查看/新建/编辑模块 -------------
+// 模板：三段带注释骨架（纯逻辑 / 属性增强 / 新组件），保存即走与"加载文件"同一管线。
+const MOD_TEMPLATES = {
+  logic: {
+    label: '📜 纯逻辑剧本（定时/按键/自定义反应/横幅…）',
+    file: 'myscript.js',
+    src: `// @@chezzle-plugin
+// {
+//   "name": "我的剧本",
+//   "version": "1.0",
+//   "api": 1,
+//   "description": "本关专属逻辑：游戏时间到了就做事（示例：3 秒后弹大横幅）"
+// }
+// @@end
+
+Chezzle.Plugin.register('myscript', {
+  run(scene, api) {
+    // scene.time = 游戏秒数（暂停即停）。这里全是引擎后门：想干什么写什么。
+    scene.wait(3, () => scene.showBanner('开局 3 秒后\\n你好，这是大横幅', 4));
+    // 其它常用件：
+    // scene.on('complete', () => scene.showBanner('通关！', 5));
+    // scene.onTick((dt, t) => { ... 每帧逻辑，返回 true 卸载 ... });
+    // api.addReaction('Na + Cl2 → NaCl');
+    // scene.tip = '改顶部提示';
+  },
+});
+`,
+  },
+  enhance: {
+    label: '🔧 属性增强（给已有物体加属性，参数在属性面板调）',
+    file: 'myenhance.js',
+    src: `// @@chezzle-plugin
+// {
+//   "name": "我的增强",
+//   "version": "1.0",
+//   "api": 1,
+//   "description": "给物块加「自发光颜色」属性（示例）——属性面板出现该字段，插件读值执行",
+//   "enhance": [
+//     { "types": ["block"],
+//       "fields": [ { "key": "glow", "label": "自发光颜色", "kind": "color", "def": "" } ] }
+//   ]
+// }
+// @@end
+
+Chezzle.Plugin.register('myenhance', {
+  run(scene, api) {
+    // 遍历所有物体：谁身上有 glow 字段（非默认值）就给谁加光晕
+    scene.onTick(() => {
+      for (const o of scene.objects) {
+        if (o.glow && o.renderGlow === undefined) {
+          o.renderGlow = 1;
+          const orig = o.render.bind(o);
+          o.render = (ctx) => {
+            ctx.save();
+            ctx.shadowColor = o.glow;
+            ctx.shadowBlur = 16;
+            orig(ctx);
+            ctx.restore();
+          };
+        }
+      }
+      return true; // 只在第一帧整理一遍
+    });
+  },
+});
+`,
+  },
+  component: {
+    label: '🧱 新组件（注册新物体类型，拖入画布即用）',
+    file: 'mycomp.js',
+    src: `// @@chezzle-plugin
+// {
+//   "name": "我的组件",
+//   "version": "1.0",
+//   "api": 1,
+//   "description": "示例：弹板——玩家从上方落下被弹起",
+//   "components": [{
+//     "type": "mybounce", "label": "弹板", "color": "#5aff9a", "defW": 90, "defH": 16,
+//     "fields": [ { "key": "power", "label": "弹力(像素/秒)", "kind": "number", "def": 420 } ],
+//     "construct": (opts) => new MyBounce(opts)
+//   }]
+// }
+// @@end
+
+class MyBounce extends Chezzle.Obj {
+  constructor(o = {}) {
+    super({ x: o.x, y: o.y, w: o.w, h: o.h, mass: 0, solid: true, physicsKind: 'static', id: o.id ?? '' });
+    this.power = o.power ?? 420;
+  }
+  get hoverLabel() { return '弹板'; }
+  update() { this._armed = false; }
+  onContactBegin(b) {
+    // 只有"从上方压下来"的（玩家/物块）才弹；轻微接触不弹
+    if (b.vel && b.vel.y > 40) { b.vel.y = -this.power; this._armed = true; }
+  }
+  render(ctx) {
+    ctx.fillStyle = this._armed ? '#b8ffd0' : '#5aff9a';
+    ctx.fillRect(this.x, this.y, this.w, this.h);
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    for (let i = 1; i < 4; i++) ctx.fillRect(this.x + (this.w / 4) * i - 1, this.y, 2, this.h);
+  }
+}
+Chezzle.Plugin.register('mybounce', { components: [{
+  type: 'mybounce', label: '弹板', color: '#5aff9a', defW: 90, defH: 16,
+  fields: [{ key: 'power', label: '弹力(像素/秒)', kind: 'number', def: 420 }],
+  construct: (opts) => new MyBounce(opts),
+}] });
+`,
+  },
+};
+
+/** 编辑态模块（新建/改过的）统一存进插件缓存库（与加载文件同一持久化路径） */
+function modFileFree(file) {
+  return !pluginLib.has(file) && !state.plugins.some((p) => p.file === file);
+}
+function modUniqName(base) {
+  if (modFileFree(base)) return base;
+  const stem = base.replace(/\.js$/, '');
+  for (let n = 2; n < 100; n++) if (modFileFree(`${stem}${n}.js`)) return `${stem}${n}.js`;
+  return `${stem}${Date.now()}.js`;
+}
+
+/** 原地重载插件源码：保留「用于本关」开关与插件私有状态（编辑保存专用，区别于卸载） */
+function pluginReloadKeep(file, src) {
+  const old = pluginLib.get(file);
+  if (!old) return false;
+  const keepSt = editorStates.get(old.reg); // 插件私有持久状态（横幅剧本等）
+  // —— 清旧（同 pluginUnload 的钩子/DOM/组件/增强清理，但不动 state.plugins 引用/画布对象/插件状态）——
+  const cleanup = editorCleanups.get(old.reg);
+  if (typeof cleanup === 'function') { try { cleanup(); } catch (e) { /* 忽略 */ } }
+  editorCleanups.delete(old.reg);
+  editorHooks.delete(old.reg);
+  editorStateLoadedHooks.delete(old.reg);
+  editorPlayStateHooks.delete(old.reg);
+  editorPlaySceneHooks.delete(old.reg);
+  for (const [m, h] of editorPlayHooks) if (h.reg === old.reg) editorPlayHooks.delete(m);
+  for (const el of editorDom.get(old.reg) ?? []) el.remove?.();
+  editorDom.delete(old.reg);
+  for (const comp of old.meta.components ?? []) pluginComponents.delete(comp.type);
+  for (let i = enhanceRegistry.length - 1; i >= 0; i--) if (enhanceRegistry[i].file === file) enhanceRegistry.splice(i, 1);
+  if (keepSt) editorStates.set(old.reg, keepSt);
+  const wasRef = state.plugins.find((p) => p.file === file);
+  pluginLib.delete(file);
+  // —— 载新 ——
+  const ok = loadPluginSource(file, src, { silent: true });
+  if (!ok) {
+    // 新代码注册失败 → 旧代码回滚（别把关卡弄成无插件可用）
+    editorStates.delete(old.reg);
+    if (keepSt) editorStates.set(old.reg, keepSt);
+    loadPluginSource(file, old.src, { silent: true });
+    $('status').textContent = `模块保存失败：新代码注册出错（已回滚旧版，看控制台）`;
+    return false;
+  }
+  const nowReg = pluginLib.get(file).reg;
+  if (wasRef) { wasRef.reg = nowReg; wasRef.name = pluginLib.get(file).meta.name ?? file; }
+  syncCatalog();
+  buildRenderScene();
+  renderEdit();
+  refreshProps();
+  refreshExport();
+  saveState();
+  renderPluginPanel();
+  $('status').textContent = `模块已更新并重载（插件状态保留）`;
+  return true;
+}
+
+let modModal = null;
+function openModEditor(o) {
+  if (!modModal) {
+    const css = document.createElement('style');
+    css.textContent = `
+      #modModal { position:fixed; inset:0; background:rgba(4,6,18,0.72); z-index:300; display:flex; align-items:center; justify-content:center; }
+      #modModal .mm-box { width:min(860px,92vw); max-height:90vh; display:flex; flex-direction:column; background:#0d1330; border:1px solid var(--edge); border-radius:12px; padding:12px 14px; box-shadow:0 12px 60px rgba(0,0,0,0.6); }
+      #modModal textarea { flex:1; min-height:380px; background:#0a0e24; color:#9fe8ff; border:1px solid var(--edge); border-radius:8px; padding:8px; font:12px/1.5 Consolas,"Courier New",monospace; resize:vertical; white-space:pre; tab-size:2; }
+      #modModal .mm-head { display:flex; gap:8px; align-items:center; margin-bottom:8px; color:#dfe9ff; font-weight:600; }
+      #modModal .mm-foot { display:flex; gap:8px; align-items:center; margin-top:8px; }
+      #modModal .mm-msg { color:#ffb340; font-size:11px; flex:1; }`;
+    document.head.appendChild(css);
+    modModal = document.createElement('div');
+    modModal.id = 'modModal';
+    modModal.style.display = 'none';
+    modModal.innerHTML = `<div class="mm-box">
+      <div class="mm-head"><span id="mmTitle">模块</span>
+        <select id="mmTpl" title="新建时选模板"></select>
+        <input id="mmFile" class="ipt" placeholder="文件名 mymod.js" style="width:170px">
+      </div>
+      <textarea id="mmCode" spellcheck="false"></textarea>
+      <div class="mm-foot"><button class="btn" id="mmSave">💾 保存并载入</button>
+        <button class="btn" id="mmCancel">关闭 (Esc)</button>
+        <span class="mm-msg" id="mmMsg"></span></div>
+    </div>`;
+    document.body.appendChild(modModal);
+    const $m = (id) => modModal.querySelector(id);
+    const mmClose = () => { // 未保存修改 → 先确认（别把人写的代码悄悄丢了）
+      const ta = $m('#mmCode');
+      if (ta.value !== ta.dataset.orig && !confirm('模块代码有未保存的修改，确定关闭？')) return;
+      modModal.style.display = 'none';
+    };
+    $m('#mmCancel').onclick = mmClose;
+    $m('#mmTpl').onchange = () => {
+      const t = MOD_TEMPLATES[$m('#mmTpl').value];
+      if (t) {
+        $m('#mmCode').value = t.src;
+        $m('#mmCode').dataset.orig = t.src;
+        $m('#mmFile').value = t.file;
+      }
+    };
+    $m('#mmCode').addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); $m('#mmSave').click(); }
+      if (e.key === 'Tab') { // Tab 插两空格（别跳焦点）
+        e.preventDefault();
+        const ta = e.target;
+        const s = ta.selectionStart;
+        ta.value = ta.value.slice(0, s) + '  ' + ta.value.slice(ta.selectionEnd);
+        ta.selectionStart = ta.selectionEnd = s + 2;
+      }
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && modModal.style.display !== 'none') mmClose();
+    }, true);
+    $m('#mmSave').onclick = () => {
+      const src = $m('#mmCode').value;
+      const isNew = $m('#mmSave').dataset.mode === 'new';
+      if (isNew) {
+        let file = ($m('#mmFile').value || 'mymod.js').trim();
+        if (!/\.js$/i.test(file)) file += '.js';
+        file = modUniqName(file);
+        if (!loadPluginSource(file, src)) { $m('#mmMsg').textContent = '载入失败：检查元数据块/语法（控制台有详情）'; return; }
+        $m('#mmMsg').textContent = `✅ 已创建并载入：${file}`;
+        $m('#mmSave').dataset.mode = 'edit';
+        $m('#mmSave').dataset.file = file;
+        $m('#mmFile').value = file;
+        $m('#mmCode').dataset.orig = src;
+        $('status').textContent = `新模块 ${file} 已创建（可撤销）`;
+      } else {
+        const file = $m('#mmSave').dataset.file;
+        if (!pluginReloadKeep(file, src)) { $m('#mmMsg').textContent = '保存失败：已回滚到旧版（控制台有详情）'; return; }
+        $m('#mmMsg').textContent = '✅ 已保存并重载';
+        $m('#mmCode').dataset.orig = src;
+      }
+      modModal.style.display = 'none';
+    };
+  }
+  const $m = (id) => modModal.querySelector(id);
+  $m('#mmMsg').textContent = '';
+  const tplSel = $m('#mmTpl');
+  if (o.mode === 'edit') {
+    const e = pluginLib.get(o.file);
+    if (!e) return;
+    $m('#mmTitle').textContent = `✎ 编辑模块：${e.meta.name ?? o.file}`;
+    tplSel.style.display = 'none';
+    $m('#mmFile').value = o.file;
+    $m('#mmFile').disabled = true;
+    $m('#mmCode').value = e.src;
+    $m('#mmCode').dataset.orig = e.src;
+    $m('#mmSave').dataset.mode = 'edit';
+    $m('#mmSave').dataset.file = o.file;
+  } else {
+    tplSel.innerHTML = Object.entries(MOD_TEMPLATES).map(([k, t]) => `<option value="${k}">${t.label}</option>`).join('');
+    tplSel.style.display = '';
+    $m('#mmFile').disabled = false;
+    $m('#mmTitle').textContent = '＋ 新建模块';
+    const t = MOD_TEMPLATES[tplSel.value] ?? MOD_TEMPLATES.logic;
+    $m('#mmCode').value = t.src;
+    $m('#mmCode').dataset.orig = t.src;
+    $m('#mmFile').value = t.file;
+    $m('#mmSave').dataset.mode = 'new';
+  }
+  modModal.style.display = 'flex';
+}
+$('btnNewMod').onclick = () => openModEditor({ mode: 'new' });
 
 /** 试玩构造：插件组件经 C.Plugin.create 生成真实对象（编辑器占位只存在于编辑态） */
 function buildPlayObject(p) {
@@ -662,6 +941,7 @@ const editorCleanups = new Map(); // reg -> cleanup
 const editorStateLoadedHooks = new Map(); // reg -> [fn]（存档恢复后调用——插件重渲染面板用）
 const editorPlayHooks = new Map(); // mode('current'|'all') -> {reg, fn}（试玩接管：返回 stop 函数）
 const editorPlayStateHooks = new Map(); // reg -> [fn]（试玩开始/结束通知：插件同步自己 UI，如「▶当前」变「⏹ 退出」）
+const editorPlaySceneHooks = new Map(); // reg -> [fn(scene)]（默认试玩场景构建后、插件注入前——与导出脚本"先写数据后 inject"同一时机）
 let editorPlayMode = 'all';        // 试玩方向：'all'=整关(初始场景开始) / 'current'=仅当前视图（插件可切换）
 function notifyPlayState(playing) {
   for (const fns of editorPlayStateHooks.values()) {
@@ -705,6 +985,12 @@ function makeEditorApi(reg) {
     /** 试玩状态变化回调（true=开始，false=结束）：插件同步自己的 UI（如开始按钮变退出按钮） */
     onPlayState: (fn) => {
       const arr = editorPlayStateHooks.get(reg) ?? (editorPlayStateHooks.set(reg, []), editorPlayStateHooks.get(reg));
+      arr.push(fn);
+    },
+    /** 试玩前置钩子 fn(scene)：默认试玩场景构建后、插件 inject 前调用（改 scene 数据用；
+     *  与导出"先写数据后 inject"同一时机——横幅剧本"试玩所见 = 导出所得"的关键）。 */
+    onPlayScene: (fn) => {
+      const arr = editorPlaySceneHooks.get(reg) ?? (editorPlaySceneHooks.set(reg, []), editorPlaySceneHooks.get(reg));
       arr.push(fn);
     },
     /** 试玩接管：mode 'all'（整关，如多场景）或 'current'（仅当前视图）。fn 返回 stop 函数 */
@@ -767,6 +1053,11 @@ function makeEditorApi(reg) {
       for (const o of snap.objects ?? []) {
         const p = { type: o.type, obj: byType[o.type].construct(gridOpts(o.type, o.opts)) };
         if (PREC_TYPES.includes(p.type) && !p.obj.id && Object.keys(mapToObj(p.obj.precipitates)).length) p.obj.id = `${idPrefix[p.type]}${++seq}`;
+        // 无 id 但有非默认增强值（如"延迟出现(秒)"）：补 id——增强走 M.byId 引用
+        if (!p.obj.id && p.type !== 'rope') {
+          const fs0 = enhanceFieldsOf(p.type);
+          if (fs0.some((f) => p.obj[f.key] !== undefined && p.obj[f.key] !== f.def)) p.obj.id = `${p.type}${++seq}`;
+        }
         placed.push(p);
       }
       const chain = [`M.scene(${q(name)}, { worldW: ${snap.worldW ?? state.worldW}, worldH: ${snap.worldH ?? state.worldH} })`];
@@ -1592,6 +1883,9 @@ function dslLine(item) {
 }
 /** 生成完整可运行的关卡脚本（含 build/接线占位/start；编辑器插件可通过 ed.onExport 追加/改写） */
 function buildScript() {
+  // id 稳定化（试玩同款）：objN 默认 id → 类型 id（player1/block2…）。
+  // 插件增强的构建后赋值走 scene.byId['x'] 引用，导出必须先稳定 id。
+  ensureStableIds();
   // 给带预设沉淀的灯/开关/钥匙自动分配 id（无显式 id 时），供 addPrecipitate 引用
   let seq = 0;
   const PREC_TYPES = ['lamp', 'blastlamp', 'switch', 'key', 'gasdetector'];
@@ -1600,6 +1894,14 @@ function buildScript() {
     if (PREC_TYPES.includes(p.type) && !p.obj.id && Object.keys(mapToObj(p.obj.precipitates)).length) {
       p.obj.id = `${idPrefix[p.type]}${++seq}`;
     }
+  }
+  // 带插件增强非默认值（如"延迟出现(秒)"）但没 id 的物体：自动补 id——
+  // 增强属性走构建后赋值 `scene.byId['x'].key = v`，没 id 就写不进去
+  // （玩家等物体平时不填 id；绳子走 post 整行构造、不吃这条，排除）。
+  for (const p of state.placed) {
+    if (p.obj.id || p.type === 'rope') continue;
+    const flds = enhanceFieldsOf(p.type);
+    if (flds.some((f) => p.obj[f.key] !== undefined && p.obj[f.key] !== f.def)) p.obj.id = `${p.type}${++seq}`;
   }
   const lines = [
     `const canvas = document.getElementById('game');`,
@@ -1921,6 +2223,13 @@ function togglePlay() {
   // 编辑器自带：关卡大气
   for (const [gid, mass] of Object.entries(state.atmosphere ?? {})) {
     if (Number.isFinite(mass) && mass > 0) scene.atmosphere.setGas(gid, mass);
+  }
+  // 插件试玩前置钩子（scene 构建后、注入前）：把插件的 scene 数据写进去
+  // （如新手引导模组的横幅剧本）——与导出脚本"数据行在 inject 之前"同一时机，所见即所得。
+  for (const fns of editorPlaySceneHooks.values()) {
+    for (const fn of fns) {
+      try { fn(scene); } catch (e) { if (typeof console !== 'undefined') console.error(`[editor-plugin] playScene`, e); }
+    }
   }
   // 插件注入（试玩与导出同管线：scene 构建后、start 前）
   const pls = activePlugins();

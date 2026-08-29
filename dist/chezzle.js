@@ -261,6 +261,7 @@ class Scene {
     this.tipReady = null; // 当前"可点击展示"的提示（条件满足；**靠后的优先**，不自动出现）
     this.tipActive = null; // 最近一次展示的提示对象
     this.deathCause = null; // 死亡原因 { kind:'void'|'acid'|'base'|'reaction', partner }（死亡界面文案用）
+    this.banner = null; // 大横幅（MC 标题式屏幕中央大字）：{ text, t, dur }；HUD 渲染淡入淡出
     this.debugMode = false; // 调试模式（URL 参数 ?debug=1 开启；.debugmode() 已废弃）
     this.debugPaused = false; // 暂停 tick 推进
     this.debugStepOnce = false; // 手动步进一 tick
@@ -446,6 +447,14 @@ class Scene {
 
   /** 每 tick 求值可用提示（纯读，无副作用）：tipReady = 满足条件的**最后**一条 */
   _updateTipReady() {
+    // 玩家尚未出现（延迟出现）：条件提示不就绪——人不在场谈不上"走到哪"
+    if (this.player?.hidden) {
+      if (this.tipReady !== null) {
+        this.tipReady = null;
+        this.fire('tipReady', { tip: null });
+      }
+      return;
+    }
     let ready = null;
     for (const t of this.tips) {
       if (tipHolds(this, t)) ready = t; // 遍历取最后一个满足者（靠后优先）
@@ -454,6 +463,17 @@ class Scene {
       this.tipReady = ready;
       this.fire('tipReady', { tip: ready });
     }
+  }
+
+  /** 大横幅：屏幕中央大字（MC 标题式），淡入淡出。
+   *  text 支持 \n 多行；dur 秒为总时长（含淡入淡出）。关卡脚本/插件随时可调用，
+   *  后显示的横幅顶掉前一个（同一时刻屏幕上只有一条大横幅）。 */
+  showBanner(text, dur = 4) {
+    const t = String(text ?? '');
+    if (!t.trim()) return null;
+    this.banner = { text: t, t: this.time, dur: Math.max(0.6, Number(dur) || 4) };
+    this.fire('banner', this.banner);
+    return this.banner;
   }
 
   /** 点击提示按钮：展示可用的提示（返回文本）；无可用 → null（HUD 显示俏皮话） */
@@ -493,16 +513,21 @@ class Scene {
     if (obj.isPlayerObj) this.player = obj;
   }
 
-  /** 显现一个隐藏物体（开关 showId 用）：恢复进 objects 与物理/逻辑索引 */
+  /** 显现一个隐藏物体（开关 showId / 延迟出现用）：恢复进 objects 与物理/逻辑索引。
+   *  子体走对象引用递归——杯壁等子体 id 是固定名（'bk_l'…），多实例时 byId 会互相
+   *  覆盖，按 id 回捞会捞错物体（两个延迟出现的烧杯必翻车——先复现再修）。 */
   reveal(id) {
-    const obj = this.byId[id];
+    return this._revealObj(this.byId[id]);
+  }
+
+  _revealObj(obj) {
     if (!obj || !obj.hidden) return obj;
     obj.hidden = false;
     const h = this.hidden.indexOf(obj);
     if (h >= 0) this.hidden.splice(h, 1);
     this.objects.push(obj);
     this._register(obj);
-    if (obj.subBodies) for (const sb of obj.subBodies) this.reveal(sb.id);
+    if (obj.subBodies) for (const sb of obj.subBodies) this._revealObj(sb);
     return obj;
   }
 
@@ -1280,7 +1305,7 @@ class Scene {
   // ===========================================================================
   checkStatus() {
     const p = this.player;
-    if (!p) return;
+    if (!p || p.hidden) return; // 隐藏（延迟出现）中：不参与生死/通关判定
     if (p.hp <= 0) {
       // 反应致死：优先用最近一次玩家反应记录（酸/碱分类 + 伙伴物质）
       this.deathCause = {
@@ -8630,6 +8655,15 @@ function deathQuip(cause, sub) {
   return t.replace('{sub}', fill(sub)).replace('{b}', b);
 }
 
+/** 大横幅淡入淡出包络：age=已显示秒数，dur=总时长 → alpha 0..1。
+ *  淡入/淡出各 min(0.5, dur/3) 秒，中段全亮；age 越界为 0。 */
+function bannerEnvelope(age, dur) {
+  const d = Math.max(0.6, Number(dur) || 4);
+  if (age < 0 || age > d) return 0;
+  const fade = Math.min(0.5, d / 3);
+  return Math.max(0, Math.min(1, Math.min(1, age / fade) * Math.min(1, (d - age) / fade)));
+}
+
 class Hud {
   constructor(scene) {
     this.scene = scene;
@@ -8668,7 +8702,7 @@ class Hud {
       return;
     }
 
-    if (p) {
+    if (p && !p.hidden) {
       // 左上信息卡（双端统一紧凑单卡）：物质/体质 + 身体组成 + 大气一张卡解决；
       // 移动端面板体降透明（CFG.touch.hudAlpha），桌面不透明
       this.playerPanelCompact(ctx, p, scene, time, hudTopOffset(scene));
@@ -8684,6 +8718,7 @@ class Hud {
     if (this._isTouch()) this.fsButton(ctx, W, top, right);
     this.tipButton(ctx, W, top, right, time);
     this.notice(ctx, scene, W, H, time);
+    this.bigBanner(ctx, scene, W, H, time);
     this.touchControls(ctx, scene, W, H, time);
     this.rotateHint(ctx, scene, W, H);
     this.overlay(ctx, scene, W, H);
@@ -9035,6 +9070,47 @@ class Hud {
     ctx.fillStyle = '#ffdcc8';
     ctx.textAlign = 'center';
     ctx.fillText(n.text, W / 2, by + 21);
+    ctx.restore();
+  }
+
+  /** 大横幅（MC 标题式：屏幕中央大字，淡入淡出+轻微下落定格）。
+   *  数据来自 scene.showBanner(text, dur)：{ text, t, dur }，超时自然淡出消失。 */
+  bigBanner(ctx, scene, W, H, time) {
+    const b = scene.banner;
+    if (!b) return;
+    const age = time - b.t;
+    const fade = Math.min(0.5, b.dur / 3); // 淡入/淡出各自时长（横幅很短时自动收窄）
+    const a = bannerEnvelope(age, b.dur);
+    if (a <= 0) return;
+    const lines = String(b.text).split('\n').map((s) => s.trim()).filter((s) => s);
+    if (!lines.length) return;
+    ctx.save();
+    ctx.globalAlpha = a;
+    // 入场从上方轻微落定（只跟淡入期走）
+    const rise = -(1 - Math.min(1, age / fade)) * 12;
+    let size = Math.min(46, H * 0.09);
+    const font = () => `900 ${size}px "Segoe UI", "Microsoft YaHei", sans-serif`;
+    ctx.font = font();
+    let maxW = 0;
+    for (const s of lines) maxW = Math.max(maxW, ctx.measureText(s).width);
+    if (maxW > W * 0.88) { // 超宽自动缩字号（保证不贴边）
+      size = Math.max(14, (size * W * 0.88) / maxW);
+      ctx.font = font();
+    }
+    const lh = size * 1.3;
+    ctx.textAlign = 'center';
+    ctx.lineJoin = 'round';
+    lines.forEach((s, i) => {
+      const y = H * 0.36 + rise + (i - (lines.length - 1) / 2) * lh + size * 0.35;
+      ctx.lineWidth = Math.max(3, size / 7);
+      ctx.strokeStyle = 'rgba(8,10,24,0.88)';
+      ctx.strokeText(s, W / 2, y);
+      ctx.fillStyle = '#fff6df';
+      ctx.shadowColor = 'rgba(255,214,120,0.5)';
+      ctx.shadowBlur = 18;
+      ctx.fillText(s, W / 2, y);
+      ctx.shadowBlur = 0;
+    });
     ctx.restore();
   }
 
@@ -9957,6 +10033,7 @@ class Hud {
 }
 
 exports.deathQuip = deathQuip;
+exports.bannerEnvelope = bannerEnvelope;
 exports.Hud = Hud;
 
   };

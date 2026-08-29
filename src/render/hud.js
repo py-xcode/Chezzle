@@ -114,6 +114,15 @@ export function deathQuip(cause, sub) {
   return t.replace('{sub}', fill(sub)).replace('{b}', b);
 }
 
+/** 大横幅淡入淡出包络：age=已显示秒数，dur=总时长 → alpha 0..1。
+ *  淡入/淡出各 min(0.5, dur/3) 秒，中段全亮；age 越界为 0。 */
+export function bannerEnvelope(age, dur) {
+  const d = Math.max(0.6, Number(dur) || 4);
+  if (age < 0 || age > d) return 0;
+  const fade = Math.min(0.5, d / 3);
+  return Math.max(0, Math.min(1, Math.min(1, age / fade) * Math.min(1, (d - age) / fade)));
+}
+
 export class Hud {
   constructor(scene) {
     this.scene = scene;
@@ -152,7 +161,7 @@ export class Hud {
       return;
     }
 
-    if (p) {
+    if (p && !p.hidden) {
       // 左上信息卡（双端统一紧凑单卡）：物质/体质 + 身体组成 + 大气一张卡解决；
       // 移动端面板体降透明（CFG.touch.hudAlpha），桌面不透明
       this.playerPanelCompact(ctx, p, scene, time, hudTopOffset(scene));
@@ -168,6 +177,7 @@ export class Hud {
     if (this._isTouch()) this.fsButton(ctx, W, top, right);
     this.tipButton(ctx, W, top, right, time);
     this.notice(ctx, scene, W, H, time);
+    this.bigBanner(ctx, scene, W, H, time);
     this.touchControls(ctx, scene, W, H, time);
     this.rotateHint(ctx, scene, W, H);
     this.overlay(ctx, scene, W, H);
@@ -519,6 +529,47 @@ export class Hud {
     ctx.fillStyle = '#ffdcc8';
     ctx.textAlign = 'center';
     ctx.fillText(n.text, W / 2, by + 21);
+    ctx.restore();
+  }
+
+  /** 大横幅（MC 标题式：屏幕中央大字，淡入淡出+轻微下落定格）。
+   *  数据来自 scene.showBanner(text, dur)：{ text, t, dur }，超时自然淡出消失。 */
+  bigBanner(ctx, scene, W, H, time) {
+    const b = scene.banner;
+    if (!b) return;
+    const age = time - b.t;
+    const fade = Math.min(0.5, b.dur / 3); // 淡入/淡出各自时长（横幅很短时自动收窄）
+    const a = bannerEnvelope(age, b.dur);
+    if (a <= 0) return;
+    const lines = String(b.text).split('\n').map((s) => s.trim()).filter((s) => s);
+    if (!lines.length) return;
+    ctx.save();
+    ctx.globalAlpha = a;
+    // 入场从上方轻微落定（只跟淡入期走）
+    const rise = -(1 - Math.min(1, age / fade)) * 12;
+    let size = Math.min(46, H * 0.09);
+    const font = () => `900 ${size}px "Segoe UI", "Microsoft YaHei", sans-serif`;
+    ctx.font = font();
+    let maxW = 0;
+    for (const s of lines) maxW = Math.max(maxW, ctx.measureText(s).width);
+    if (maxW > W * 0.88) { // 超宽自动缩字号（保证不贴边）
+      size = Math.max(14, (size * W * 0.88) / maxW);
+      ctx.font = font();
+    }
+    const lh = size * 1.3;
+    ctx.textAlign = 'center';
+    ctx.lineJoin = 'round';
+    lines.forEach((s, i) => {
+      const y = H * 0.36 + rise + (i - (lines.length - 1) / 2) * lh + size * 0.35;
+      ctx.lineWidth = Math.max(3, size / 7);
+      ctx.strokeStyle = 'rgba(8,10,24,0.88)';
+      ctx.strokeText(s, W / 2, y);
+      ctx.fillStyle = '#fff6df';
+      ctx.shadowColor = 'rgba(255,214,120,0.5)';
+      ctx.shadowBlur = 18;
+      ctx.fillText(s, W / 2, y);
+      ctx.shadowBlur = 0;
+    });
     ctx.restore();
   }
 

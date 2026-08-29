@@ -90,6 +90,8 @@ Chezzle.Plugin.register('lampDelay', {
 **scene 是完整后门**：`scene.hidden`/`scene.reveal`/`addObject`/`removeObject`/
 `customReactions`/`atmosphere` 与对象方法（`ignite/extinguish/open/onOpen`…）全部可用。
 推荐用 api，但不设防——自由度就在这里。
+大横幅引擎能力：`scene.showBanner('文字\n可多行', 4)`（屏幕中央大字，淡入淡出；
+`scene.banner` 为 `{text,t,dur}` 数据，HUD 渲染，后弹顶掉前弹）。
 
 ## 5. 组件插件（v2：新可放置物体）
 
@@ -160,6 +162,7 @@ Chezzle.Plugin.register('chapters', {
 | `addToolbarElement(el)` | 工具栏任意元素（select 等复杂控件）；插在状态栏之前——试玩中换行/推挤不会让它跳动 |
 | `addPanel({title, html})` | 侧栏面板（返回元素，可自由填充/重绘） |
 | `onExport(fn)` | 导出脚本生成时调用：`fn(lines, ctx)`，往 lines 追加；返回新数组则整体替换 |
+| `onPlayScene(fn)` | 默认试玩：场景构建后、插件注入前 `fn(scene)`——往 scene 写数据（如横幅剧本），与导出"数据行在 inject 之前"同一时机，**试玩所见 = 导出所得** |
 | `onPlay(fn, mode)` | 试玩接管：`fn()` 返回 stop 函数=接管（整关/当前视图）；返回 null=让位（如单场景走默认试玩） |
 | `setPlayMode(mode)` | 切换试玩方向：`'all'`（整关，默认）/ `'current'`（仅当前视图） |
 | `onPlayState(fn)` | 试玩开始/结束回调 `fn(true/false)`——插件同步自己 UI（如「▶当前」变「⏹ 退出」） |
@@ -167,6 +170,13 @@ Chezzle.Plugin.register('chapters', {
 | `getState()` / `save()` / `refresh()` / `$(id)` | 编辑器后门（读状态/存储/刷新视图/取元素） |
 | `snapshot()` / `applySnapshot(s)` | 画布快照（可序列化）与载入——多场景插件的场景存储基础 |
 | `sceneDsl(snap, name)` | 快照 → `{chain, post, placed}`：M.scene(...) 链、构建后语句、重构对象（章节插件用它生成 Multiscene 脚本） |
+
+### 模块创作台（编辑器内建，不建文件也能写模组）
+
+「🧩 插件」页顶部 **「＋ 新建模块」**：三种模板起步（📜 纯逻辑剧本 / 🔧 属性增强 / 🧱 新组件），
+弹层里直接改代码，`Ctrl+S` 保存即载入（自动"用于本关"）；已加载的每行有 **「✎」**：
+查看/编辑源码，保存=**原地热重载**（「用于本关」开关与插件私有状态都保留；新代码注册失败自动回滚旧版）。
+新建/编辑的模块与"加载插件文件"同一管线、同一缓存（刷新页面不丢），导出同样嵌入。
 
 **官方示例 `docs/plugins/chapters.js`**（章节场景，完整演示"改编编辑器"）：
 - 顶边栏控件（不再占侧栏）：场景下拉 + ＋/✕（自动保存，无"存为场景"按钮）+ ★初始场景
@@ -181,6 +191,7 @@ Chezzle.Plugin.register('chapters', {
 
 | 文件 | 形态 | 内容 |
 |---|---|---|
+| `docs/plugins/tutorial.js` | **新手引导模组** | 大横幅剧本（编辑器「📣 横幅剧本」面板排秒数，导出/试玩自动生效）+ 全类型「延迟出现(秒)」属性 + 玩家延迟出现 |
 | `docs/plugins/lampDelay.js` | 增强 | 给灯/物块等加「延迟出现(秒)」（参数在属性面板调） |
 | `docs/plugins/keys.js` | 纯逻辑 | 按键提示（定制型：写死 KeyE） |
 | `docs/plugins/trail.js` | 纯逻辑 | 玩家**身后持续喷光点**轨迹（onTick + Spark 装饰粒子） |
