@@ -387,8 +387,17 @@ export class Player extends Obj {
       lamp.addPrecipitate(res.substance, amount, null, placeOrigin);
       return;
     }
-    // 地面：生成"放置的沉淀"（实心、可垫脚、只能被重新收集）
-    scene.spawnParticles(res.substance, amount, { x: this.x + this.w / 2, y: this.bottom + 1 }, true, true, placeOrigin);
+    // 地面：生成"放置的沉淀"（实心、可垫脚、只能被重新收集）。
+    // 0.5g 拆成 2 颗 0.25g 细颗粒（4e89112：maxParticleMass 0.25 的"细沙颗粒"）——
+    // 单颗 0.5g 大球底部不稳被玩家一踩就压平；细颗粒成簇能堆柱垫高（4e89112 行为）。
+    // 落点由支撑面决定：石地 → 默认散布（resolveEmbed 垂直堆叠下能堆柱）；冰面 → spread 20
+    // （就地摊开平摊——冰上搭不了高，用户要求）。
+    const spread = this._groundIce ? 20 : undefined;
+    const n = Math.max(1, Math.ceil(amount / 0.25)); // 0.5g → 2 颗 0.25g
+    const each = amount / n;
+    for (let k = 0; k < n; k++) {
+      scene.spawnParticles(res.substance, each, { x: this.x + this.w / 2, y: this.bottom + 1 }, true, true, placeOrigin, spread);
+    }
   }
 
   tryCollect(scene) {

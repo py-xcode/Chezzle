@@ -213,26 +213,41 @@ test('沉淀堆卡在烧杯口上方：物化后粒子漏入杯内（像真沙�
 });
 
 // ----------------------------------------------------------------------------
-// 2.6 自由粒子的"沙"物理：堆叠塌成滩，不立高塔（圆形分离）；
-//     外观契约：尺寸=particleSizeOf（0.5g→5px，1.5g→7.5px）、分配=splitPile
+// 2.6 自由粒子的堆叠：**玩家分批放置（spread 2）堆成错落有致的柱（可搭高垫脚）**；
+//     大范围同时倾倒才是滩（冰面靠 iceSlip 滑走平摊——见 ice.test.js）。
 // ----------------------------------------------------------------------------
-test('自由沉淀粒子是"沙"：堆叠塌成滩（圆形分离，不立高塔）', () => {
-  let seed = 47;
-  const orig = Math.random;
-  Math.random = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+test('自由沉淀粒子堆柱：分批放置（模拟玩家，spread 2）纵向堆叠、错落有致', () => {
+  const scene = new Scene({ worldW: 1500, worldH: 800 });
+  scene.addObject(new Floor({ x: -200, y: 720, w: 3000, h: 100 }));
+  scene.status = 'running';
+  // 玩家 Shift 放置：每放一颗等落地再放下一颗（真实节奏）
+  for (let i = 0; i < 25; i++) {
+    scene.spawnParticles('BaCO3', 0.5, { x: 500, y: 630 }, true, true, null, 2);
+    for (let j = 0; j < 25; j++) scene.step(TICK);
+  }
+  for (let i = 0; i < 150; i++) scene.step(TICK);
+  const ps = scene.particles;
+  const ys = ps.map((p) => p.y + p.h / 2);
+  const xs = ps.map((p) => p.x + p.w / 2);
+  const yRange = Math.max(...ys) - Math.min(...ys);
+  const xRange = Math.max(...xs) - Math.min(...xs);
+  assert.ok(yRange > 40, `分批放置应堆成柱（高度 >40px），实际 ${yRange.toFixed(0)}px`);
+  assert.ok(xRange <= 30, `柱应窄（宽 ≤30px，错落而非笔直），实际 ${xRange.toFixed(0)}px`);
+  assert.ok(yRange > xRange, `柱状：高(${yRange.toFixed(0)}) > 宽(${xRange.toFixed(0)})`);
+});
+
+test('大范围倾倒（spread 80）是滩：铺开不瞬移、不穿墙', () => {
   const scene = new Scene({ worldW: 1000, worldH: 800 });
   scene.addObject(new Floor({ x: -200, y: 720, w: 3000, h: 100 }));
   scene.status = 'running';
   scene.spawnParticles('BaCO3', 100, { x: 500, y: 600 }, true, true, null, 80);
   for (let i = 0; i < 900; i++) scene.step(TICK);
-  Math.random = orig;
   const ps = scene.particles;
   const xs = ps.map((p) => p.x + p.w / 2);
-  const ys = ps.map((p) => p.y + p.h / 2);
-  const yRange = Math.max(...ys) - Math.min(...ys);
-  const xRange = Math.max(...xs) - Math.min(...xs);
-  assert.ok(yRange < 60, `堆应为滩（高度 ≤60px，立塔曾是 ~106px），实际 ${yRange.toFixed(0)}px`);
-  assert.ok(xRange > 200, `堆应铺开（宽 >200px），实际 ${xRange.toFixed(0)}px`);
+  for (const p of ps) {
+    assert.ok(p.y + p.h <= 800, '粒子不穿出世界底');
+    assert.ok(p.x >= -200 && p.x <= 2800, '粒子不瞬移到远处');
+  }
 });
 
 test('外观契约：particleSizeOf / splitPile（两套沉淀共用：0.5g→5px、1.5g→7.5px）', () => {

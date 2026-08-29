@@ -53,6 +53,8 @@ export function overlaps(a, b, eps = 0) {
  */
 function supportsStanding(o) {
   if (o.amount === undefined) return true;
+  // 沉淀粒子必须落地静止（onGround 且速度接近 0）才可踮脚——正在下落/刚放置的沉淀
+  // 不能提供向上的支持力（否则"跳→下落瞬间放置→左脚踩右脚上天"，4e89112 起的功能）。
   return o.onGround === true && Math.abs(o.vel.x) < 40 && Math.abs(o.vel.y) < 40;
 }
 
@@ -587,11 +589,11 @@ export class CollisionSystem {
             }
             continue;
           }
-          // 粒子-粒子：圆形分离（沙粒彼此是球）——法向推开（封顶防瞬移），
-          // 无切向锁定/无四方形堆积 → 堆叠自然塌成滩，不会像积木立起高塔
-          //（此前 AABB 垂直压叠只往上顶，200 颗堆出 ~100px 竖直塔——用户反馈）。
+          // 粒子-粒子：垂直堆叠优先（窄柱——上方颗粒只向上推、保留自己的 x，
+          // 层间自然错落，不再水平挤开变宽）——"沉淀踮脚"搭高的基础。
+          // 冰面颗粒不垂直堆（平摊）；5a4edcf 曾改"圆形分离塌成滩"把搭高废了。
           if (b.amount !== undefined && o.amount !== undefined) {
-            if (this._separateParticles(b, o)) moved = true;
+            if (this._stackParticles(b, o)) moved = true;
             continue;
           }
           if (!overlaps(b, o)) continue;
@@ -622,6 +624,53 @@ export class CollisionSystem {
     const ny = dy / d;
     this._slideParticle(a, -nx * push, -ny * push);
     this._slideParticle(b, nx * push, ny * push);
+    return true;
+  }
+
+  /** 粒子-粒子堆叠分离（窄柱）：水平错位 < 一颗粒宽 → 上下叠放（垂直上推上方颗粒、
+   *  保留自身 x → 柱窄且层间自然错落）；水平错位大 → 并列水平推开；冰面颗粒一律
+   *  水平让位（平摊）。位移过静态阻挡（不穿模），单次 ≤3.3px/帧（不瞬移）。 */
+  _stackParticles(a, b) {
+    if (!overlaps(a, b)) return false;
+    const onIce = a._groundIce || b._groundIce;
+    const dx = Math.abs((a.x + a.w / 2) - (b.x + b.w / 2));
+    const size = Math.min(a.w, b.w);
+    if (!onIce && dx < size * 0.9) {
+      // 上下叠放：垂直上推上方颗粒（保留 x，窄柱、层间错落）
+      const upper = a.y < b.y ? a : b;
+      const other = upper === a ? b : a;
+      const vert = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+      const push = Math.min(vert, 3) + 0.3;
+      if (this._tryMove(upper, 0, -push)) return true;
+      // 上推受阻（顶到上方静态/颗粒）：水平让开（不卡死）
+      const lib = (upper.x + upper.w / 2) < (other.x + other.w / 2) ? -1 : 1;
+      this._tryMove(upper, lib * 3, 0);
+      return true;
+    }
+    // 水平并列（或冰面）：水平推开
+    const dir = (a.x + a.w / 2) < (b.x + b.w / 2) ? -1 : 1;
+    const hor = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+    const push = Math.min(hor, 3) + 0.3;
+    this._tryMove(a, dir * push, 0);
+    this._tryMove(b, -dir * push, 0);
+    return true;
+  }
+
+  /** 粒子位移：目标位置嵌静态体则退回（返回 false）——堆叠/让位共用（不穿模） */
+  _tryMove(p, mx, my) {
+    if ((!mx || Math.abs(mx) < 1e-9) && (!my || Math.abs(my) < 1e-9)) return false;
+    const sx = p.x;
+    const sy = p.y;
+    p.x = sx + mx;
+    p.y = sy + my;
+    for (const s of this._near(p)) {
+      if (s === p) continue;
+      if (s.solid && this._stSet.has(s) && overlaps(p, s)) {
+        p.x = sx;
+        p.y = sy;
+        return false;
+      }
+    }
     return true;
   }
 

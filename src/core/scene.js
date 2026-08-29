@@ -187,11 +187,20 @@ export class Scene {
       } catch (err) { /* 插件回调异常不拖垮游戏循环 */ }
     }
     if (this._timers.length) {
-      this._timers = this._timers.filter((t) => {
-        if (this.time < t.at) return true;
+      // 快照长度遍历：fn 里 scene.wait() 新 push 的 timer 在快照长度之后（本 tick 不触发，
+      // 下帧再走）——filter 会缓存数组长度、把 fn 新 push 的 timer 连同旧数组一起丢掉
+      // （wait 循环断链）；收编必须从**快照长度**起（用 next.length 会把已触发的旧 timer
+      // 再次收编 → 每帧重复触发 → 定时器指数增长 → 内存爆炸，OOM 事故根因）。
+      const old = this._timers;
+      const next = [];
+      const snap = old.length;
+      for (let i = 0; i < snap; i++) {
+        const t = old[i];
+        if (this.time < t.at) { next.push(t); continue; }
         try { t.fn(); } catch (err) { /* 插件回调异常不拖垮游戏循环 */ }
-        return false;
-      });
+      }
+      for (let i = snap; i < old.length; i++) next.push(old[i]); // 只收编 fn 新 push 的
+      this._timers = next;
     }
     if (this._intervals.length) {
       for (const t of this._intervals) {

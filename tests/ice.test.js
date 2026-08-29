@@ -151,3 +151,27 @@ test('冰面推烧杯松手：玩家继续滑（与容器同步感）；石地�
   assert.ok(res.stone.glide < 2, `石地玩家瞬间停：${res.stone.glide.toFixed(1)}px`);
   assert.ok(res.ice.glide > 25, `冰上玩家跟着滑：${res.ice.glide.toFixed(1)}px`);
 });
+
+// ---- 8. 冰面不能搭高：玩家分批放沉淀，冰上摊开、石地堆柱 --------------------
+test('冰面玩家放沉淀不堆柱（平摊，搭不了高）；石地堆成柱（可搭高垫脚）', () => {
+  const res = {};
+  for (const ice of [true, false]) {
+    // 单独建场景 + 两侧墙：冰上粒子滑走时被墙拦住，不滑出世界坠落（污染高度统计）
+    const scene = new Scene({ worldW: 1500, worldH: 800 });
+    scene.addObject(new Floor({ x: 0, y: 700, w: 1400, h: 100, ice }));
+    scene.addObject(new Floor({ x: 0, y: 0, w: 12, h: 800 }));
+    scene.addObject(new Floor({ x: 1388, y: 0, w: 12, h: 800 }));
+    scene.status = 'running';
+    for (let i = 0; i < 25; i++) {
+      scene.spawnParticles('BaCO3', 0.5, { x: 400, y: 620 }, true, true, null, ice ? 20 : 2);
+      run(scene, 25);
+    }
+    run(scene, 100);
+    const xs = scene.particles.map((p) => p.x + p.w / 2);
+    const ys = scene.particles.map((p) => p.y + p.h / 2);
+    res[ice ? 'ice' : 'stone'] = { h: Math.max(...ys) - Math.min(...ys), w: Math.max(...xs) - Math.min(...xs) };
+  }
+  assert.ok(res.stone.h > 40, `石地堆成柱：高 ${res.stone.h.toFixed(0)}px`);
+  assert.ok(res.ice.h < 40, `冰面堆不高（平摊）：高 ${res.ice.h.toFixed(0)}px`);
+  assert.ok(res.ice.w > res.stone.w, `冰面摊得更开：宽 ${res.ice.w.toFixed(0)}px > 石地 ${res.stone.w.toFixed(0)}px`);
+});
