@@ -46,6 +46,8 @@
   .pc-arrow { color: #6a7a96; font-size: 11px; transition: transform .15s; flex-shrink: 0; }
   .pc.collapsed .pc-arrow { transform: rotate(-90deg); }
   .pc.collapsed .pc-body { display: none; }
+  /* 插件面板内容防爆：最多占可视区约一半高，超出内部滚动（内置面板有自己的 max-height） */
+  .edPanel .pc-body { max-height: 46vh; overflow-y: auto; }
   /* 条件提示面板 */
   #tipPanel { padding: 10px; border-bottom: 1px solid var(--edge); max-height: 36%; overflow-y: auto; flex-shrink: 0; }
   #tipPanel h3 { color: var(--gold); font-size: 13px; margin-bottom: 6px; }
@@ -92,6 +94,7 @@
   #pluginPanel .pl-toggle { font-size: 11px; }
   #pluginPanel .pl-comp { color: #c78bff; font-size: 10px; margin-top: 3px; }
   #props { flex: 1; padding: 10px; overflow-y: auto; }
+  #props.pc.collapsed { flex: 0 0 auto; } /* 折叠后不硬撑剩余空间 */
   #props h3 { color: var(--gold); font-size: 13px; margin-bottom: 8px; }
   .fld { margin-bottom: 6px; }
   .fld label { display: block; color: #9fb2c8; font-size: 11px; margin-bottom: 2px; }
@@ -153,7 +156,10 @@
           <button id="tipAdd" class="btn" style="width:100%">+ 添加提示</button>
         </div>
       </div>
-      <div id="props"><div class="empty">选中一个物体编辑属性</div></div>
+      <div id="props" class="pc">
+        <h3 class="pc-head">🎚 属性 <small style="color:#6a7a96">选中物体后编辑</small><span class="pc-arrow">▾</span></h3>
+        <div class="pc-body" id="propsBody"><div class="empty">选中一个物体编辑属性</div></div>
+      </div>
     </div>
   </div>
   <div id="exportBar">
@@ -968,8 +974,10 @@ function makeEditorApi(reg) {
     },
     addPanel: (o = {}) => {
       const d = document.createElement('div');
-      d.className = 'edPanel';
-      d.innerHTML = `<h3>${o.title ?? ''} <small style="color:#6a7a96">插件</small></h3><div class="edPanelBody">${o.html ?? ''}</div>`;
+      // 与内置面板（⚗/💬）同款折叠结构：点标题收起/展开，插件面板自动可折叠
+      d.className = 'edPanel pc';
+      d.innerHTML = `<h3 class="pc-head">${o.title ?? ''} <small style="color:#6a7a96">插件</small><span class="pc-arrow">▾</span></h3><div class="pc-body edPanelBody">${o.html ?? ''}</div>`;
+      d.querySelector('.pc-head').onclick = () => d.classList.toggle('collapsed');
       const side = $('side');
       side.insertBefore(d, side.firstChild);
       doms.push(d);
@@ -1710,7 +1718,7 @@ function undo() {
 function mapToObj(map) { const o = {}; for (const [id, m] of map) if (m > 1e-6) o[id] = m; return o; }
 function objToMap(o) { const m = new Map(); for (const [id, v] of Object.entries(o)) if (v > 0) m.set(id, v); return m; }
 function refreshProps() {
-  const box = $('props');
+  const box = $('propsBody');
   const idx = state.selected;
   if (idx == null || !state.placed[idx]) { box.innerHTML = '<div class="empty">选中一个物体编辑属性</div>'; return; }
   const item = state.placed[idx];

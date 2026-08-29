@@ -85,7 +85,7 @@ Chezzle.Plugin.register('tutorial', {
 
     const panel = ed.addPanel({
       title: '📣 横幅剧本',
-      html: `<div id="tbList"></div>
+      html: `<div id="tbList" style="max-height:200px;overflow-y:auto"></div>
         <div style="display:flex;gap:6px;margin-top:6px">
           <button class="btn" id="tbAdd">＋ 加一条横幅</button>
         </div>
