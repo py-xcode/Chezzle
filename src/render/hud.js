@@ -57,6 +57,15 @@ const DEATH_VOID = [
   '{sub}被重力放逐了',
   '{sub}下去看星星了（没回来）',
 ];
+// 飞升（冲出世界顶部：被气流托底/冲顶等）
+const DEATH_SKY = [
+  '{sub}赛博飞升了',
+  '{sub}飘飘欲仙',
+  '{sub}飞出了这个世界',
+  '{sub}想飞的更高',
+  '{sub}摸到天花了',
+  '{sub}突破大气层（成功模式）',
+];
 const DEATH_ACID = [
   '{sub}和强酸{b}亲密接触',
   '{sub}发现了"泳池"是用强酸{b}做的',
@@ -87,7 +96,7 @@ const DEATH_RX_NOP = [
   '{sub}和这个世界告别了',
 ];
 
-/** 死亡界面文案（随机抽取）：cause={ kind:'void'|'acid'|'base'|'reaction', partner }，
+/** 死亡界面文案（随机抽取）：cause={ kind:'void'|'sky'|'acid'|'base'|'reaction', partner }，
  *  sub=玩家核心物质（a），partner=反应致死物质（b）；partner=H2O → 水中毒类。 */
 export function deathQuip(cause, sub) {
   const kind = cause && cause.kind;
@@ -96,6 +105,7 @@ export function deathQuip(cause, sub) {
   const pick = (list) => list[Math.floor(Math.random() * list.length)];
   let t;
   if (kind === 'void') t = pick(DEATH_VOID);
+  else if (kind === 'sky') t = pick(DEATH_SKY);
   else if (b === 'H2O') t = pick(DEATH_WATER);
   else if (kind === 'acid') t = b ? pick(DEATH_ACID) : pick(DEATH_RX_NOP);
   else if (kind === 'base') t = b ? pick(DEATH_BASE) : pick(DEATH_RX_NOP);

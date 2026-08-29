@@ -842,13 +842,28 @@ class Scene {
     const key = this._rxKey(text);
     const now = this.time;
     // 死亡原因记录：**涉及玩家**的反应才更新记录（伙伴物质 + 酸/碱分类）；
-    // 无伙伴的反应（遇水/单质）→ 清空旧伙伴——防"先碰了 Zn 再泡水死 → 报 Zn"的
-    // 陈旧记录（用户反馈）
+    // 引擎的遇水反应文本常不列水（'K → H2+KOH'）——玩家在水介质中反应时
+    // 补兜底伙伴：溶液里的酸/碱（致死物优先）→ 否则记为水（水中毒）
     if (this.player) {
       const r = reactionParser(text, this.player.substance);
       if (r.involved) {
-        this.player.lastRxPartner = r.partner;
-        const sub = r.partner ? getSubstance(r.partner) : null;
+        let partner = r.partner;
+        if (!partner) {
+          const c = this._emitCtx && this._emitCtx.container;
+          if (c && c.solution && c.solution.water > 0.01) {
+            let ab = null;
+            for (const [id, m] of c.solution.solutes) {
+              if (!(m > 0.01)) continue;
+              const s = getSubstance(id);
+              if (s && (s.kind === 'acid' || s.kind === 'base')) {
+                if (!ab || m > ab.m) ab = { id, m };
+              }
+            }
+            partner = ab ? ab.id : 'H2O';
+          }
+        }
+        this.player.lastRxPartner = partner;
+        const sub = partner ? getSubstance(partner) : null;
         this.player.lastRxAcid = sub ? sub.kind === 'acid' : false;
         this.player.lastRxBase = sub ? sub.kind === 'base' : false;
       }
@@ -1286,7 +1301,9 @@ class Scene {
       return;
     }
     if (p.y > this.worldH + CFG.worldMargin || p.bottom < -CFG.worldMargin) {
-      this.deathCause = { kind: 'void' };
+      // 下方出界 = 掉入虚空；上方出界 = 飞升（触发冲顶/被气体托出等）
+      this.deathCause = p.bottom < -CFG.worldMargin ? { kind: 'sky' } : { kind: 'void' };
+      // 死亡文案**一次性**定案（每帧随机会闪烁——用户反馈）
       this.deathQuip = deathQuip(this.deathCause, p.substance);
       this.setStatus('died');
       return;
@@ -8564,6 +8581,15 @@ const DEATH_VOID = [
   '{sub}被重力放逐了',
   '{sub}下去看星星了（没回来）',
 ];
+// 飞升（冲出世界顶部：被气流托底/冲顶等）
+const DEATH_SKY = [
+  '{sub}赛博飞升了',
+  '{sub}飘飘欲仙',
+  '{sub}飞出了这个世界',
+  '{sub}想飞的更高',
+  '{sub}摸到天花了',
+  '{sub}突破大气层（成功模式）',
+];
 const DEATH_ACID = [
   '{sub}和强酸{b}亲密接触',
   '{sub}发现了"泳池"是用强酸{b}做的',
@@ -8594,7 +8620,7 @@ const DEATH_RX_NOP = [
   '{sub}和这个世界告别了',
 ];
 
-/** 死亡界面文案（随机抽取）：cause={ kind:'void'|'acid'|'base'|'reaction', partner }，
+/** 死亡界面文案（随机抽取）：cause={ kind:'void'|'sky'|'acid'|'base'|'reaction', partner }，
  *  sub=玩家核心物质（a），partner=反应致死物质（b）；partner=H2O → 水中毒类。 */
 function deathQuip(cause, sub) {
   const kind = cause && cause.kind;
@@ -8603,6 +8629,7 @@ function deathQuip(cause, sub) {
   const pick = (list) => list[Math.floor(Math.random() * list.length)];
   let t;
   if (kind === 'void') t = pick(DEATH_VOID);
+  else if (kind === 'sky') t = pick(DEATH_SKY);
   else if (b === 'H2O') t = pick(DEATH_WATER);
   else if (kind === 'acid') t = b ? pick(DEATH_ACID) : pick(DEATH_RX_NOP);
   else if (kind === 'base') t = b ? pick(DEATH_BASE) : pick(DEATH_RX_NOP);

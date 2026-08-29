@@ -25,6 +25,18 @@ test('死亡原因：掉出世界下方 → void', () => {
   assert.ok(typeof scene.deathQuip === 'string' && scene.deathQuip.includes('NaOH'), `死亡文案一次性定案：${scene.deathQuip}`);
 });
 
+// ---- 1b. 高度过高（飞升）--------------------------------------------------
+test('死亡原因：冲出世界顶部 → sky（飞升类文案）', () => {
+  const scene = new Scene({ worldW: 1000, worldH: 800 });
+  const p = new Player({ x: 500, y: -500, mass: 30, id: 'p1' }); // 头顶已高于世界上限
+  scene.addObject(p);
+  scene.status = 'running';
+  scene.step(RUN);
+  assert.equal(scene.status, 'died');
+  assert.deepEqual(scene.deathCause, { kind: 'sky' });
+  assert.ok(scene.deathQuip.includes('NaOH'), `飞升文案：${scene.deathQuip}`);
+});
+
 // ---- 2. 反应致死记录（伙伴 + 酸/碱分类）-----------------------------------
 test('死亡原因：玩家反应记录伙伴物质（酸/碱分类）', () => {
   const scene = new Scene({ worldW: 1000, worldH: 800 });
@@ -84,11 +96,21 @@ test('死亡原因：邻近反应不污染记录；遇水反应报水 — K泡�
   // 邻近反应（玩家没参与）：不应污染记录
   scene.onReaction('Zn + CuSO4 → Cu + ZnSO4');
   assert.equal(p.lastRxPartner, 'Zn', '邻近反应不影响记录');
-  // 玩家遇水反应（无其它伙伴）：water 兜底 → 伙伴=H2O（防 K 泡水死报 Zn）
-  scene.onReaction('2K + 2H2O → 2KOH + H2↑');
-  assert.equal(p.lastRxPartner, 'H2O', '遇水反应 → 伙伴=水（兜底规则）');
+  // 玩家遇水反应（引擎真实文本不含水：'K → H2+KOH'）→ 介质兜底 = H2O（防 K 泡水死报 Zn）
+  scene._emitCtx = { container: { solution: { water: 200, solutes: new Map() } } };
+  scene.onReaction('K → H2+KOH');
+  assert.equal(p.lastRxPartner, 'H2O', '遇水反应（文本无H2O）→ 介质兜底报水');
   assert.equal(p.lastRxAcid, false);
   assert.equal(p.lastRxBase, false);
+  // 酸性介质中的反应（如 'K → H2+KCl'）：兜底挑酸 → HCl（不报水）
+  scene._emitCtx = { container: { solution: { water: 200, solutes: new Map([['HCl', 30]]) } } };
+  scene.onReaction('K → H2+KCl');
+  assert.equal(p.lastRxPartner, 'HCl', '酸介质 → 报酸');
+  assert.equal(p.lastRxAcid, true);
+  // 中性水 → 再回水中毒
+  scene._emitCtx = { container: { solution: { water: 200, solutes: new Map() } } };
+  scene.onReaction('K → H2+KOH');
+  assert.equal(p.lastRxPartner, 'H2O', '中性水 → 水中毒');
   // 耗尽死亡 → 死亡原因=水中毒类
   for (let i = 0; i < 20 && p.hp > 0; i++) p.grid.consume(p.substance, p.grid.avail(p.substance) + 1);
   scene.step(RUN);
@@ -108,6 +130,9 @@ test('deathQuip：虚空/强酸/强碱/反应/水中毒/无伙伴 六类（随�
   // 虚空
   const v = deathQuip({ kind: 'void' }, 'NaOH');
   assert.ok(v.includes('NaOH'), `含玩家物质：${v}`);
+  // 飞升
+  const s = deathQuip({ kind: 'sky' }, 'Al');
+  assert.ok(s.includes('Al') && (s.includes('飞') || s.includes('天')), `飞升类：${s}`);
   // 强酸
   const a = deathQuip({ kind: 'acid', partner: 'HCl' }, 'Fe2O3');
   assert.ok(a.includes('Fe2O3') && a.includes('HCl') && a.includes('强酸'), `${a}`);

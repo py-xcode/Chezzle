@@ -647,13 +647,28 @@ export class Scene {
     const key = this._rxKey(text);
     const now = this.time;
     // 死亡原因记录：**涉及玩家**的反应才更新记录（伙伴物质 + 酸/碱分类）；
-    // 无伙伴的反应（遇水/单质）→ 清空旧伙伴——防"先碰了 Zn 再泡水死 → 报 Zn"的
-    // 陈旧记录（用户反馈）
+    // 引擎的遇水反应文本常不列水（'K → H2+KOH'）——玩家在水介质中反应时
+    // 补兜底伙伴：溶液里的酸/碱（致死物优先）→ 否则记为水（水中毒）
     if (this.player) {
       const r = reactionParser(text, this.player.substance);
       if (r.involved) {
-        this.player.lastRxPartner = r.partner;
-        const sub = r.partner ? getSubstance(r.partner) : null;
+        let partner = r.partner;
+        if (!partner) {
+          const c = this._emitCtx && this._emitCtx.container;
+          if (c && c.solution && c.solution.water > 0.01) {
+            let ab = null;
+            for (const [id, m] of c.solution.solutes) {
+              if (!(m > 0.01)) continue;
+              const s = getSubstance(id);
+              if (s && (s.kind === 'acid' || s.kind === 'base')) {
+                if (!ab || m > ab.m) ab = { id, m };
+              }
+            }
+            partner = ab ? ab.id : 'H2O';
+          }
+        }
+        this.player.lastRxPartner = partner;
+        const sub = partner ? getSubstance(partner) : null;
         this.player.lastRxAcid = sub ? sub.kind === 'acid' : false;
         this.player.lastRxBase = sub ? sub.kind === 'base' : false;
       }
@@ -1091,7 +1106,9 @@ export class Scene {
       return;
     }
     if (p.y > this.worldH + CFG.worldMargin || p.bottom < -CFG.worldMargin) {
-      this.deathCause = { kind: 'void' };
+      // 下方出界 = 掉入虚空；上方出界 = 飞升（触发冲顶/被气体托出等）
+      this.deathCause = p.bottom < -CFG.worldMargin ? { kind: 'sky' } : { kind: 'void' };
+      // 死亡文案**一次性**定案（每帧随机会闪烁——用户反馈）
       this.deathQuip = deathQuip(this.deathCause, p.substance);
       this.setStatus('died');
       return;

@@ -2189,7 +2189,7 @@ $('pluginFile').onchange = (e) => {
 };
 $('pluginList').addEventListener('change', onPluginPanelChange);
 $('pluginList').addEventListener('click', onPluginPanelClick);
-$('btnClear').onclick = () => { pushUndo(); state.placed = []; state.customReactions = []; state.plugins = []; state.tips = []; editorStates.clear(); state.selected = null; state.sel = new Set(); syncIdSeq(); buildRenderScene(); renderEdit(); refreshProps(); renderRxPanel(); renderTipPanel(); renderPluginPanel(); refreshExport(); saveState(); for (const fns of editorStateLoadedHooks.values()) for (const fn of fns) { try { fn(); } catch (e) {} } };
+$('btnClear').onclick = () => { pushUndo(); state.placed = []; state.customReactions = []; state.plugins = []; state.tips = []; editorStates.clear(); openTip = -1; state.selected = null; state.sel = new Set(); syncIdSeq(); buildRenderScene(); renderEdit(); refreshProps(); renderRxPanel(); renderTipPanel(); renderPluginPanel(); refreshExport(); saveState(); for (const fns of editorStateLoadedHooks.values()) for (const fn of fns) { try { fn(); } catch (e) {} } /* 钩子可能从自身状态把数据灌回来（多场景插件）：清后补刀 + 重渲染 */ state.tips = []; state.customReactions = []; openTip = -1; renderTipPanel(); renderRxPanel(); refreshExport(); saveState(); };
 $('btnClearStorage').onclick = () => {
   localStorage.removeItem(STORAGE_KEY); // 清掉自动存档
   localStorage.removeItem(LEGACY_KEY);  // 旧 key 一并清掉
