@@ -3,306 +3,365 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Chezzle · 新手引导（新手教程关）</title>
+<title>Chezzle · 新手引导（多场景大远征）</title>
 <style>
   html, body { margin: 0; height: 100%; background: #0b0e28; }
   body { display: flex; align-items: center; justify-content: center; }
-  canvas { background: #0b0e28; box-shadow: 0 0 60px rgba(120,90,220,0.25); }
+  #box { position: relative; width: 1100px; height: 700px; }
+  canvas { position: absolute; inset: 0; }
 </style>
 </head>
 <body>
-<canvas id="game"></canvas>
+<div id="box"></div>
 <script src="../dist/chezzle.js"></script>
 <script src="../docs/plugins/tutorial.js"></script>
 <script src="../docs/plugins/checkpoint.js"></script>
+<script src="../docs/plugins/showtime.js"></script>
 <script src="report.js"></script>
 <script>
 // ============================================================================
-// Chezzle 新手教程关 · 八章横向大世界（5120×800，每章一个 640 宽的房间）
+// 新手引导关 · 七世界大远征（Multiscene 多场景）
 // ----------------------------------------------------------------------------
-// 章节：
-//   ① 开场房：打招呼横幅 + 操作教学（含移动端差异）+ 鸟瞰 + 延迟出现演示
-//   ② 收集房：离子反应（NaOH+CuSO4→Cu(OH)2↓）+ 收集 Q + 沉淀搭高 + 化学开关
-//   ③ 火房：压力开关点酒精灯 + 加热分解（Cu(OH)2→CuO）+ 焰色反应（Na黄/Cu绿）
-//   ④ 气体房【小测验①】：Zn 推进盐酸池产 H2 → 气泡柱托升 → 气体探测器开门
-//   ⑤ 爆炸房【小测验②】：Na 块推进水池 → 亲手爆炸 → 产 H2 → 探测器开门
-//      （附带教学：爆炸切断绳子）
-//   ⑥ 溶液房：CuO+HCl→CuCl2 → 提取器提粉 → 钥匙开门（永久锁）+ 烧杯/滴管进阶
-//   ⑦ 泡泡房：催化制氧（H2O2+MnO2）+ 燃烧（C+O2）+ 喷灯高温还原（加餐）
-//   ⑧ 终局：压力开关开门 → 走进光里通关
-// 核心机制串（新手一个不漏）：
-//   移动/跳跃/收集/放置/搭高/开关(压力/化学/钥匙)/灯/喷灯/焰色反应/气体/集气瓶/
-//   气体探测器/爆炸/爆炸断绳/气泡柱/催化/燃烧/提取器/烧杯/滴管/传送门/延迟出现/
-//   条件提示按钮/鸟瞰/重开/检查点复活/移动端触控差异
+// 世界：①苏醒草原(氧气) → ②翡翠峡谷(化学反应/收集/搭高/冰面) →
+//       ③炼丹台地(灯列/分解/焰色) → ④深井实验室(无氧/产氢/气泡柱/探测器【测验①】)
+//       → ⑤爆炸盆地(亲手爆炸/断绳/大气爆鸣/传送门首秀【测验②】)
+//       → ⑥溶液神殿(溶解/提取器/钥匙/传送门成对) → ⑦火山口(催化/燃烧/喷灯/通关烟花)
+// 引导原则：**每个物品首次出现必解释**（这是什么/分几类/怎么用），横幅+路标双保险；
+// 文案直白。演出=showtime 模组；死亡=checkpoint 模组（多场景版）；
+// 跨场景"传送门"= Multiscene.switchTo（引擎的 portal 同色配对只在单场景内）。
 // ============================================================================
-const canvas = document.getElementById('game');
-canvas.width = 1100;
-canvas.height = 700;
-
-// 设备差异：触屏（手机/平板）与键盘的文案自动切换
 const TOUCH = (typeof navigator !== 'undefined' && (navigator.maxTouchPoints || 0) > 0) || /[?&]touch=1/.test(location.search || '');
 const TXT = (d, m) => (TOUCH ? m : d);
+const box = document.getElementById('box');
 
-const L = new Chezzle.LevelBuilder(canvas, { worldW: 5120, worldH: 800 });
-
-// 每章一个房间：640 宽。墙 = 竖地板（高到世界顶，防翻越/绕路）。
-const WALL = 26;
-const ROOM = 640;
-const GROUND = 720;
-
-L
-  // ===========================================================================
-  // ① 开场房（0..640）：打招呼 + 操作教学
-  // ===========================================================================
-  .floor(-WALL, 0, WALL, 800, { id: 'wL0' })
-  .floor(0, GROUND, ROOM, 80, { id: 'f0' })
-  .floor(ROOM - WALL, 0, WALL, 800, { id: 'wR0' })
-  .player(80, GROUND - 60, { substance: 'NaOH', mass: 30, id: 'player1', appearDelay: 1.2 })
-  .sign(120, 690, TXT(
-    'A/D 移动 · 空格跳跃 · R 重开\nQ 收集 · Shift 放置 · C 拾取 · X 倒出',
-    '左下摇杆移动（上推=跳）\n右下四键：Q 收集 · ⇧ 放置 · C 拾取 · X 倒出'),
-    { id: 's0a' })
-  .sign(120, 640, '按 V 灵魂出窍看整关（再按 V 回来）\n左上角 💡 按钮=关卡提示', { id: 's0b', size: 10 })
-  .sign(470, 690, '我是 3 秒后才出现的路标\n物体可以设置「延迟出现」', { id: 'sLate', appearDelay: 3, size: 10 })
-  .portal(ROOM - 40, 640, { color: '#7fe0ff', id: 'p0a' })
-
-  // ===========================================================================
-  // ② 收集房（640..1280）：离子反应 + 收集 + 搭高 + 化学开关
-  // ===========================================================================
-  .floor(ROOM, GROUND, 108, 80, { id: 'f1' })                    // 池子处地板断开：块/玩家才能沉进液体
-  .floor(ROOM + 372, GROUND, 268, 80, { id: 'f1b' })
-  .floor(ROOM * 2 - WALL, 0, WALL, 800, { id: 'wR1' })
-  .portal(ROOM + WALL + 0, 640, { color: '#7fe0ff', id: 'p0b' })
-  .pool(ROOM + 120, GROUND, 240, 55, { volume: 200, solutes: { CuSO4: 25 }, gasHeight: 80, id: 'poolCu' })
-  .sign(ROOM + 60, 685, '跳进蓝色池子！\nNaOH + CuSO4 → Cu(OH)2↓（蓝色沉淀）\n按 Q 把它收进物品栏', { id: 's1a' })
-  .sign(ROOM + 66, 640, '（你是 NaOH 本人——这波叫"以碱换碱"）', { id: 's1b', size: 10 })
-  .floor(ROOM + 440, 560, 160, 14, { id: 'plat1' })          // 高台：160px 高，跳不上去
-  .switch(ROOM + 460, 538, { mode: 'chemical', opening: 'Cu(OH)2', id: 'swR1' })
-  .portal(ROOM + 520, 480, { color: '#7fe0ff', switchId: 'swR1', id: 'p1a' })
-  .sign(ROOM + 420, 655, '高台够不着？往脚下放沉淀垫高自己！\n（Shift 放置）把 Cu(OH)2 放上开关→传送门亮', { id: 's1c', size: 10 })
-
-  // ===========================================================================
-  // ③ 火房（1280..1920）：灯 + 加热分解 + 焰色反应
-  // ===========================================================================
-  .floor(ROOM * 2, GROUND, ROOM, 80, { id: 'f2' })
-  .floor(ROOM * 3 - WALL, 0, WALL, 800, { id: 'wR2' })
-  .portal(ROOM * 2 + WALL + 0, 640, { color: '#7fe0ff', id: 'p1b' })
-  .switch(ROOM * 2 + 80, 696, { mode: 'pressure', id: 'swLamp' })
-  .lamp(ROOM * 2 + 150, 680, { autoOn: false, id: 'lamp1' })
-  .sign(ROOM * 2 + 66, 660, '站上金色开关 → 酒精灯点燃\n把 Cu(OH)2 放灯上烤：分解成 CuO', { id: 's2a', size: 10 })
-  .block(ROOM * 2 + 240, 660, { substance: 'Cu(OH)2', mass: 30, pushable: true, id: 'cuoh2' })
-  .lamp(ROOM * 2 + 340, 680, { autoOn: true, id: 'lampF' })   // 焰色演示灯（常燃）
-  .deposit(ROOM * 2 + 400, 694, { substance: 'CuSO4', mass: 8, id: 'depCu' })
-  .sign(ROOM * 2 + 320, 640, '焰色反应：把 CuSO4 放灯上 → 火焰变绿！\n把 Na2SO4（池里收的）放上 → 变黄！\n不消耗，移开即恢复', { id: 's2b', size: 10 })
-  .switch(ROOM * 2 + 540, 696, { mode: 'chemical', opening: 'CuO', id: 'swR2' })
-  .portal(ROOM * 3 - 40, 640, { color: '#7fe0ff', switchId: 'swR2', id: 'p2a' })
-  .sign(ROOM * 2 + 500, 660, '把烤出的 CuO 放上开关 → 下一章开门！', { id: 's2c', size: 10 })
-
-  // ===========================================================================
-  // ④ 气体房（1920..2560）【小测验①】：金属+酸 → H2 → 探测器 → 传送门
-  // ===========================================================================
-  .floor(ROOM * 3, GROUND, 108, 80, { id: 'f3' })
-  .floor(ROOM * 3 + 332, GROUND, 268, 80, { id: 'f3b' })
-  .floor(ROOM * 4 - WALL, 0, WALL, 800, { id: 'wR3' })
-  .portal(ROOM * 3 + WALL + 0, 640, { color: '#7fe0ff', id: 'p2b' })
-  .block(ROOM * 3 + 70, 660, { substance: 'Zn', w: 40, h: 40, pushable: true, id: 'zn' })
-  .pool(ROOM * 3 + 120, GROUND, 200, 55, { volume: 160, solutes: { HCl: 40 }, gasHeight: 520, id: 'poolHCl' })
-  .sign(ROOM * 3 + 60, 685, '这是盐酸池！你是 NaOH——进去会"互相伤害"\n（中和反应=掉血，别试）\n把 Zn 块推进池子！', { id: 's3a', size: 10 })
-  .floor(ROOM * 3 + 240, 400, 120, 14, { id: 'platGas' })     // 气柱托升落点
-  .sign(ROOM * 3 + 210, 445, '站上 H2 气泡柱，飞上去！\n（气体比空气轻 → 托着你）', { id: 's3b', size: 10 })
-  .gasbottle(ROOM * 3 + 330, 680, { id: 'bottle1' })
-  .sign(ROOM * 3 + 310, 645, '集气瓶（进阶）：C 拾起\n站气泡旁按住 C 集气 · 按住 X 通气', { id: 's3c', size: 10 })
-  .gasdetector(ROOM * 3 + 420, 690, { gas: 'H2', threshold: 0.25, id: 'detH2' })
-  .portal(ROOM * 4 - 40, 640, { color: '#7fe0ff', switchId: 'detH2', id: 'p3a' })
-  .sign(ROOM * 3 + 400, 660, '气体探测器：反应产出的 H2 超标 → 开传送门\n（小测验①：动手产氢！）', { id: 's3d', size: 10 })
-
-  // ===========================================================================
-  // ⑤ 爆炸房（2560..3200）【小测验②】：Na 遇水爆炸 → H2 → 探测器 → 传送门
-  // ===========================================================================
-  .floor(ROOM * 4, GROUND, 168, 80, { id: 'f4' })
-  .floor(ROOM * 4 + 412, GROUND, 228, 80, { id: 'f4b' })
-  .floor(ROOM * 5 - WALL, 0, WALL, 800, { id: 'wR4' })
-  .portal(ROOM * 4 + WALL + 0, 640, { color: '#7fe0ff', id: 'p3b' })
-  .block(ROOM * 4 + 140, 660, { substance: 'Na', w: 24, h: 24, pushable: true, id: 'na' })
-  .pool(ROOM * 4 + 180, GROUND, 220, 55, { volume: 200, gasHeight: 120, id: 'poolWater' })
-  .sign(ROOM * 4 + 96, 685, '把 Na 块推进水池——\nNa + H2O → 爆炸！（还产 H2）\n推完快跑，站远点看烟花', { id: 's4a', size: 10 })
-  .sign(ROOM * 4 + 300, 560, '看天上：爆炸会切断附近的绳子！\n（悬挂物会掉下来）', { id: 's4b', size: 10 })
-  .gasdetector(ROOM * 4 + 400, 690, { gas: 'H2', threshold: 0.25, id: 'detH2b' })
-  .portal(ROOM * 5 - 40, 640, { color: '#7fe0ff', switchId: 'detH2b', id: 'p4a' })
-  .sign(ROOM * 4 + 380, 660, '爆炸的 H2 触发探测器 → 传送门亮了！\n（小测验②：爆炸→气体→探测器→进门）', { id: 's4c', size: 10 })
-
-  // ===========================================================================
-  // ⑥ 溶液房（3200..3840）：溶解 → 提取器 → 钥匙（永久锁）
-  // ===========================================================================
-  .floor(ROOM * 5, GROUND, 108, 80, { id: 'f5' })
-  .floor(ROOM * 5 + 332, GROUND, 268, 80, { id: 'f5b' })
-  .floor(ROOM * 6 - WALL, 0, WALL, 800, { id: 'wR5' })
-  .portal(ROOM * 5 + WALL + 0, 640, { color: '#7fe0ff', id: 'p4b' })
-  .block(ROOM * 5 + 80, 660, { substance: 'CuO', w: 40, h: 40, pushable: true, id: 'cuo' })
-  .pool(ROOM * 5 + 120, GROUND, 200, 55, { volume: 160, solutes: { HCl: 40 }, id: 'poolHCl2' })
-  .sign(ROOM * 5 + 60, 685, '把 CuO 块推进酸池：\nCuO + 2HCl → CuCl2 + H2O（溶液变蓝）', { id: 's5a', size: 10 })
-  .extractor(ROOM * 5 + 280, 710, { poolId: 'poolHCl2', switchId: 'swExt', rate: 1.2, id: 'ext1' })
-  .switch(ROOM * 5 + 350, 696, { mode: 'pressure', id: 'swExt' })
-  .sign(ROOM * 5 + 240, 660, '站上开关 → 提取器把溶液里的 CuCl2\n提成粉末掉出来！Q 收起来', { id: 's5b', size: 10 })
-  .key(ROOM * 5 + 470, 696, { opening: 'CuCl2', w: 70, id: 'key1' })
-  .portal(ROOM * 6 - 40, 640, { color: '#7fe0ff', switchId: 'key1', id: 'p5a' })
-  .sign(ROOM * 5 + 430, 660, '把 CuCl2 粉放进钥匙（Shift）\n钥匙是永久锁：不消耗，一次解锁终身有效', { id: 's5c', size: 10 })
-  .beaker(ROOM * 5 + 320, 650, { w: 60, h: 70, volume: 30, id: 'bk1' })
-  .dropper(ROOM * 5 + 420, 620, { substance: 'NaOH', id: 'dp1' })
-  .sign(ROOM * 5 + 300, 575, '进阶：烧杯 C 吸液 X 倒出\n滴管吸液后点击场景滴出——\n把 NaOH 滴进 CuCl2 池：变回 Cu(OH)2！', { id: 's5d', size: 10 })
-
-  // ===========================================================================
-  // ⑦ 泡泡房（3840..4480）：催化制氧 + 燃烧 + 喷灯还原（加餐）
-  // ===========================================================================
-  .floor(ROOM * 6, GROUND, 88, 80, { id: 'f6' })
-  .floor(ROOM * 6 + 312, GROUND, 328, 80, { id: 'f6b' })
-  .floor(ROOM * 7 - WALL, 0, WALL, 800, { id: 'wR6' })
-  .portal(ROOM * 6 + WALL + 0, 640, { color: '#7fe0ff', id: 'p5b' })
-  .block(ROOM * 6 + 60, 660, { substance: 'MnO2', w: 30, h: 30, pushable: true, id: 'mno2' })
-  .pool(ROOM * 6 + 100, GROUND, 200, 55, { volume: 150, solutes: { H2O2: 80 }, gasHeight: 300, id: 'poolH2O2' })
-  .sign(ROOM * 6 + 60, 685, '把 MnO2 推入双氧水池：催化分解！\n2H2O2 → 2H2O + O2↑（看泡泡）', { id: 's6a', size: 10 })
-  .block(ROOM * 6 + 300, 660, { substance: 'C', w: 30, h: 30, pushable: true, id: 'cb' })
-  .lamp(ROOM * 6 + 340, 680, { autoOn: true, id: 'lampBurn' })
-  .sign(ROOM * 6 + 200, 645, '把 C 放上灯 → 点燃燃烧！\nC + O2 → CO2（消耗大气里的氧）', { id: 's6b', size: 10 })
-  .switch(ROOM * 6 + 380, 696, { mode: 'pressure', id: 'swHot' })
-  .blastlamp(ROOM * 6 + 460, 710, { w: 130, h: 10, autoOn: false, id: 'lampHot' })
-  .sign(ROOM * 6 + 360, 660, '加餐：喷灯是高温版酒精灯\n灯上已备好 CuO+C → 还原出 Cu\n（站开关点燃，收走铜当纪念品）', { id: 's6c', size: 10 })
-  .switch(ROOM * 6 + 590, 696, { mode: 'pressure', id: 'swR6' })
-  .portal(ROOM * 7 - 40, 640, { color: '#7fe0ff', switchId: 'swR6', id: 'p6a' })
-  .sign(ROOM * 6 + 560, 660, '站上开关开门 → 最终章！', { id: 's6d', size: 10 })
-
-  // ===========================================================================
-  // ⑧ 终局（4480..5120）：压力开关开通关口
-  // ===========================================================================
-  .floor(ROOM * 7, GROUND, ROOM, 80, { id: 'f7' })
-  .floor(ROOM * 8, 0, WALL, 800, { id: 'wR7' })
-  .portal(ROOM * 7 + WALL + 0, 640, { color: '#7fe0ff', id: 'p6b' })
-  .sign(ROOM * 7 + 90, 690, '毕业小考：站上开关，走进光里', { id: 's7a' })
-  .sign(ROOM * 7 + 90, 645, '你这一路学会了：走跳 / 收集 / 放置 / 搭高\n开关 / 灯 / 焰色 / 气体 / 爆炸 / 提取 / 钥匙…', { id: 's7b', size: 10 })
-  .switch(ROOM * 7 + 340, 696, { mode: 'pressure', id: 'swWin' })
-  .door(ROOM * 7 + 440, 640, 44, 80, { id: 'winDoor' })
-;
-
-const scene = L.build();
-
-// 延迟出现（tutorial 插件字段）：Obj 构造是字段白名单，enhance 参数要构造后赋值
-// （与编辑器导出同一姿势：scene.byId['x'].appearDelay = 秒数）
-scene.byId['player1'].appearDelay = 1.2;
-scene.byId['sLate'].appearDelay = 3;
-
-// ---------------------------------------------------------------------------
-// 开场横幅剧本（tutorial 插件排期：游戏时间秒）。玩家 appearDelay 1.2s →
-// 先打招呼、人再"啪"地出现——顺便演示"延迟出现"。
-// ---------------------------------------------------------------------------
-scene.tutorialBanners = [
-  { at: 0.5, dur: 2.4, text: '嘿！你好！' },
-  { at: 3.2, dur: 2.4, text: '欢迎来到 Chezzle！' },
-  { at: 6.0, dur: 2.6, text: '一个（物理意义上的）化学冒险' },
-  { at: 9.0, dur: 2.6, text: '你现在是一团 30 克的氢氧化钠' },
-  { at: 12.0, dur: 3.2, text: TXT(
-    'A/D 移动 · 空格跳（往右走两步试试）',
-    '左下摇杆移动 · 上推跳跃（先走两步试试）') },
+// --------------------------- 演出剧本（showtime） ---------------------------
+const SHOWTIME = [
+  // 开场世界观（纯横幅，不教按键）
+  { scene: 'plain', on: 'at', at: 0.5, act: [{ kind: 'banner', text: '嘿！你好！', dur: 2.2 }] },
+  { scene: 'plain', on: 'at', at: 3.0, act: [{ kind: 'banner', text: '欢迎来到 Chezzle！', dur: 2.2 }] },
+  { scene: 'plain', on: 'at', at: 5.6, act: [{ kind: 'banner', text: '在这里，你就是一团化学物质\n现在是一块 30 克的氢氧化钠', dur: 3.0 }] },
+  { scene: 'plain', on: 'at', at: 9.0, act: [{ kind: 'banner', text: '每个关都要：跋山涉水 · 保全自己 · 收集通关要用的物质', dur: 3.2 }] },
+  { scene: 'plain', on: 'at', at: 12.6, act: [{ kind: 'banner', text: '死了会回到本关开头——化学家都死过几百次', dur: 2.6 }] },
+  { scene: 'plain', on: 'at', at: 15.6, act: [{ kind: 'banner', text: TXT('A / D 移动 · 空格跳跃', '左下摇杆移动 · 上推跳跃'), dur: 2.8 }] },
+  // 世界横幅（切场景时）
+  { scene: 'plain', on: 'enter', act: [{ kind: 'banner', text: '第 1 世界 · 苏醒草原\n先学会走路', dur: 2.6 }] },
+  { scene: 'canyon', on: 'enter', act: [{ kind: 'banner', text: '第 2 世界 · 翡翠峡谷\n这里的池子会跟你"打招呼"', dur: 2.8 }] },
+  { scene: 'plateau', on: 'enter', act: [{ kind: 'banner', text: '第 3 世界 · 炼丹台地\n跟着灯光走', dur: 2.6 }] },
+  { scene: 'well', on: 'enter', act: [{ kind: 'banner', text: '第 4 世界 · 深井实验室\n注意：这里的空气没有氧气', dur: 2.8 }] },
+  { scene: 'basin', on: 'enter', act: [{ kind: 'banner', text: '第 5 世界 · 爆炸盆地\n测验②：炸！', dur: 2.6 }] },
+  { scene: 'temple', on: 'enter', act: [{ kind: 'banner', text: '第 6 世界 · 溶液神殿\n把铜从水里"拧"出来', dur: 2.8 }] },
+  { scene: 'crater', on: 'enter', act: [{ kind: 'banner', text: '第 7 世界 · 火山口（最后一站！）\n点灯 · 烧炭 · 开门 · 走人', dur: 3.0 }] },
+  // 世界内教学横幅（区域触发）
+  { scene: 'plain', on: 'pos', x: 700, y: 400, w: 500, h: 400, act: [
+    { kind: 'banner', text: '空气里有氧气 O₂——燃烧的秘密武器\n先记住它（左上角空气面板）', dur: 3.0 }] },
+  { scene: 'plain', on: 'pos', x: 1850, y: 480, w: 350, h: 320, act: [
+    { kind: 'banner', text: '这是「开关」：①踩上就开（站上去试试！）\n②要化学物质才开（世界 2 见）', dur: 3.6 }] },
+  { scene: 'plain', on: 'open', ref: 'p_gate_sw', act: [
+    { kind: 'shake', n: 5 }, { kind: 'banner', text: '闸门开了——走进新世界！', dur: 2.4 }] },
+  { scene: 'canyon', on: 'pos', x: 80, y: 520, w: 400, h: 380, act: [
+    { kind: 'banner', text: '「池子」= 溶液。\n跳进去看看会发生什么——盯紧飘出来的反应标签！', dur: 3.4 }] },
+  { scene: 'canyon', on: 'pos', x: 620, y: 520, w: 380, h: 380, act: [
+    { kind: 'banner', text: '「Q 收集」：把沉淀收进物品栏（屏幕下方，点格可选中）', dur: 3.2 }] },
+  { scene: 'canyon', on: 'pos', x: 960, y: 560, w: 360, h: 340, act: [
+    { kind: 'banner', text: '「Shift 放置」：往脚下放沉淀，把自己垫高！\n（这是"搭高"——爬塔！）', dur: 3.6 }] },
+  { scene: 'canyon', on: 'pos', x: 1330, y: 560, w: 400, h: 340, act: [
+    { kind: 'banner', text: '「冰面」：滑！沉淀放上去会自己溜走——\n在这别想搭高（放一把试试，看它跑）', dur: 3.6 }] },
+  { scene: 'canyon', on: 'open', ref: 'c_swCu', act: [
+    { kind: 'shake', n: 5 }, { kind: 'banner', text: '配对了！门开 → 去台地', dur: 2.4 }] },
+  { scene: 'plateau', on: 'pos', x: 40, y: 480, w: 360, h: 320, act: [
+    { kind: 'banner', text: '「灯」：站上开关点亮；离开它就灭。\n粉末也可以放灯上（灯=加热台）', dur: 3.6 }] },
+  { scene: 'plateau', on: 'pos', x: 940, y: 480, w: 340, h: 320, act: [
+    { kind: 'banner', text: '把 Cu(OH)₂ 放灯上烤：受热分解 → 黑色 CuO', dur: 3.4 }] },
+  { scene: 'plateau', on: 'pos', x: 1240, y: 440, w: 360, h: 360, act: [
+    { kind: 'banner', text: '「焰色反应」：粉末放常燃灯 → 火焰变色！（不消耗）', dur: 3.4 }] },
+  { scene: 'plateau', on: 'open', ref: 'd_swCuO', act: [
+    { kind: 'shake', n: 5 }, { kind: 'banner', text: '烤出来的 CuO 配对成功——前进！', dur: 2.4 }] },
+  { scene: 'well', on: 'pos', x: 260, y: 660, w: 460, h: 240, act: [
+    { kind: 'banner', text: '把 Zn 推进盐酸池：Zn + 2HCl → ZnCl₂ + H₂↑\n（产氢！看气泡柱）', dur: 3.6 }] },
+  { scene: 'well', on: 'open', ref: 'w_det', act: [
+    { kind: 'shake', n: 6 }, { kind: 'banner', text: '🧪 测验①通过！氢气达标，出口解锁', dur: 2.8 }] },
+  { scene: 'basin', on: 'pos', x: 80, y: 480, w: 340, h: 320, act: [
+    { kind: 'banner', text: '测验②：把 Na 块推进水池——\n推完快跑！这次真的会炸（站远点看）', dur: 3.6 }] },
+  { scene: 'basin', on: 'open', ref: 'b_det', act: [
+    { kind: 'shake', n: 14 }, { kind: 'banner', text: '轰！——氢气在富氧的空气里就是这个脾气\n（看！爆炸还会切断绳子——吊着的块砸下来了）', dur: 4.6 },
+    { kind: 'fireworks', n: 6 }] },
+  { scene: 'basin', on: 'pos', x: 1640, y: 440, w: 380, h: 360, act: [
+    { kind: 'banner', text: '「传送门」（第一次见）：紫色拱门！\n开关"承认"它才亮——亮着就走进去', dur: 3.4 }] },
+  { scene: 'temple', on: 'pos', x: 300, y: 480, w: 360, h: 320, act: [
+    { kind: 'banner', text: 'CuO 推进酸池：溶解！CuO + 2HCl → CuCl₂（变蓝）', dur: 3.4 }] },
+  { scene: 'temple', on: 'pos', x: 820, y: 460, w: 320, h: 340, act: [
+    { kind: 'banner', text: '「提取器」：站上开关，从池子里把固体盐"提"出来——Q 收', dur: 3.4 }] },
+  { scene: 'temple', on: 'open', ref: 't_key', act: [
+    { kind: 'shake', n: 5 }, { kind: 'banner', text: '钥匙永久开锁——传送门亮了！', dur: 2.6 }] },
+  { scene: 'crater', on: 'pos', x: 260, y: 880, w: 340, h: 320, act: [
+    { kind: 'banner', text: '「催化」：MnO₂ 进双氧池 → O₂ 泡泡！（催化剂不消耗）', dur: 3.4 }] },
+  { scene: 'crater', on: 'pos', x: 660, y: 880, w: 340, h: 320, act: [
+    { kind: 'banner', text: '「燃烧」：C 放灯上：C + O₂ → CO₂——氧气是草原那个', dur: 3.4 }] },
+  { scene: 'crater', on: 'win', act: [
+    { kind: 'fireworks', n: 24 },
+    { kind: 'banner', text: '🎉 恭喜通关！\n你已经是正式的化学怪人了', dur: 999 }] },
 ];
 
-// ---------------------------------------------------------------------------
-// 章节横幅：玩家走进某章房间 → 自动弹一章标题（互动感：每章有"仪式感"）
-// ---------------------------------------------------------------------------
-const chapterBanners = [
-  { id: 1, x0: ROOM, x1: ROOM * 2, title: '第二章 · 收集与搭高', sub: '蓝池出宝藏，化学怪人的梯子是沉淀' },
-  { id: 2, x0: ROOM * 2, x1: ROOM * 3, title: '第三章 · 火与颜色', sub: '炼丹房：烤一烤，火焰会变色' },
-  { id: 3, x0: ROOM * 3, x1: ROOM * 4, title: '第四章 · 气体侦探', sub: '小测验①：产 H2，让探测器开门' },
-  { id: 4, x0: ROOM * 4, x1: ROOM * 5, title: '第五章 · 爆炸课堂', sub: '小测验②：亲手炸一次！（站远点）' },
-  { id: 5, x0: ROOM * 5, x1: ROOM * 6, title: '第六章 · 溶液工坊', sub: '把铜从酸里提出来' },
-  { id: 6, x0: ROOM * 6, x1: ROOM * 7, title: '第七章 · 泡泡与火', sub: '轻松环节：看泡泡，玩火' },
-  { id: 7, x0: ROOM * 7, x1: ROOM * 8, title: '最终章 · 毕业考试', sub: '走过那扇门，你就是化学怪人' },
+// ------------------------------ 检查点（多场景） ------------------------------
+const CHECKPOINTS = [
+  { scene: 'plain', id: 'c1', x: 0, y: 0, w: 700, h: 800, sx: 140, sy: 700 },
+  { scene: 'canyon', id: 'c2', x: -60, y: 0, w: 900, h: 1000, sx: 120, sy: 900 },
+  { scene: 'plateau', id: 'c3', x: -60, y: 0, w: 800, h: 800, sx: 120, sy: 700 },
+  { scene: 'well', id: 'c4', x: 0, y: 0, w: 1200, h: 715, sx: 150, sy: 700 },
+  { scene: 'well', id: 'c4b', x: 0, y: 715, w: 1200, h: 200, sx: 460, sy: 820 },
+  { scene: 'basin', id: 'c5', x: 0, y: 0, w: 900, h: 800, sx: 120, sy: 700 },
+  { scene: 'temple', id: 'c6', x: 0, y: 0, w: 900, h: 800, sx: 120, sy: 700 },
+  { scene: 'crater', id: 'c7', x: 0, y: 0, w: 1200, h: 1200, sx: 140, sy: 1040 },
 ];
-const chShown = new Set();
-const watchChapter = () => {
-  const p = scene.player;
-  if (p && !p.hidden && p.w > 0) {
-    const cx = p.x + p.w / 2;
-    for (const c of chapterBanners) {
-      if (!chShown.has(c.id) && cx >= c.x0 && cx < c.x1) {
-        chShown.add(c.id);
-        scene.showBanner(c.title + '\n' + c.sub, 3.2);
+
+// -------------------------------- 构建世界 ----------------------------------
+// 注意：plugins 不能在构造参数里引用 M（M 还没初始化——TDZ）；
+// 先构造，再赋 plugins（buildAll 时注入每个场景）。
+const M = new Chezzle.Multiscene(box, { width: 1100, height: 700 });
+M.plugins = [
+  { name: 'showtime', cfg: { M, plays: SHOWTIME } },
+  { name: 'checkpoint', cfg: { M, spawns: CHECKPOINTS, texts: [
+    '复活！化学家从不回头看爆炸',
+    '没事，NaOH 还有很多（30 克而已）',
+    '刚才那是教学的一部分（才怪）',
+    '重来一次！这回先看路标',
+  ] } },
+];
+
+// -------- 世界 1 · 苏醒草原（2200×800，氧气 18）：移动/大气/首见开关 --------
+M.scene('plain', { worldW: 2200, worldH: 800 })
+  .floor(-260, 700, 2820, 130, { id: 'p_floor' })
+  .floor(300, 640, 220, 16, { id: 'p_hill' })
+  .floor(700, 550, 260, 16, { id: 'p_rock' })
+  .floor(1260, 620, 120, 16, { id: 'p_gap1a' })
+  .floor(1580, 620, 120, 16, { id: 'p_gap1b' })
+  .player(140, 600, { substance: 'NaOH', mass: 30, id: 'player1' })
+  .sign(260, 690, TXT(
+    'A / D 移动 · 空格跳跃 · R 重开\n先往右走走，感受一下脚步',
+    '左下摇杆移动 · 上推跳跃\n先往右走走，感受一下脚步'), { id: 'p_s0' })
+  .sign(260, 640, '按 V "灵魂出窍"看整片草原（再按 V 回来）', { id: 'p_s0b', size: 10 })
+  .sign(60, 660, '💀 死了会回到这里——这是本关的「检查点」', { id: 'p_s0c', size: 11 })
+  .sign(310, 560, '踩上石头看风景——你是要"跋山涉水"的化学物质！', { id: 'p_s1', size: 11 })
+  // 出口：压力开关（首次详解在路标）→ 删除挡路墙 → 玩家走过去切场景
+  .sign(1930, 660, '这是「开关」：\n①踩上就开——现在这个（站上去试试）\n②需要化学物质才能开（世界 2 见）', { id: 'p_sw' })
+  .switch(2000, 678, { mode: 'pressure', deleteId: 'p_wall', id: 'p_gate_sw' })
+  .floor(2124, 460, 16, 260, { id: 'p_wall' })
+  .sign(2080, 620, '开关开了 = 墙消失 = 过去', { id: 'p_gate_s', size: 10 });
+
+// ------- 世界 2 · 翡翠峡谷（1800×1000，氧气 18）：反应/收集/搭高/冰面 -------
+M.scene('canyon', { worldW: 1800, worldH: 1000 })
+  .floor(-80, 900, 228, 150, { id: 'c_l0' })
+  .floor(432, 900, 328, 150, { id: 'c_l0b' })
+  .floor(760, 900, 320, 150, { id: 'c_l1' })
+  .floor(1180, 900, 700, 150, { id: 'c_l2' })
+  .pool(160, 900, 260, 55, { volume: 220, solutes: { CuSO4: 30 }, gasHeight: 80, id: 'c_pool' })
+  .sign(110, 855, '第一个「池子」：池子 = 溶液。\n跳进去看看身体会发生什么——看飘出的反应标签！', { id: 'c_s0' })
+  .sign(120, 795, '反应成功！表面长出蓝色沉淀 Cu(OH)₂\n（碱 + 硫酸铜 → 蓝沉淀）', { id: 'c_s1', size: 10 })
+  .sign(700, 855, '「Q 收集」：走进沉淀按 Q，收进物品栏\n（屏幕下方那一格；点格子可选中）', { id: 'c_s2' })
+  .floor(1060, 740, 170, 16, { id: 'c_tower_top' })
+  .floor(1060, 900, 22, 176, { id: 'c_tower_l' })
+  .floor(1208, 900, 22, 176, { id: 'c_tower_r' })
+  .switch(1150, 718, { mode: 'chemical', opening: 'Cu(OH)2', deleteId: 'c_wall', id: 'c_swCu' })
+  .floor(1318, 560, 16, 360, { id: 'c_wall' })
+  .sign(1100, 700, '第二种「开关」：要化学物质才能开。\n它头顶写着要什么（Cu(OH)₂）。\n怎么放：点物品栏选中 → 站开关旁按 Shift', { id: 'c_sw_s', size: 10 })
+  .sign(1030, 855, '塔 160px 高跳不上去？\nShift 往脚下放沉淀把自己垫高——爬塔！', { id: 'c_tower_s' })
+  .floor(1360, 900, 340, 150, { ice: true, id: 'c_ice' })
+  .sign(1370, 855, '「冰面」：滑！沉淀放上去会自己溜走——\n在这搭不了高（放一把试试，看它跑）', { id: 'c_ice_s' });
+
+// ------- 世界 3 · 炼丹台地（1600×800，氧气 18）：灯列/分解/焰色 -------------
+M.scene('plateau', { worldW: 1600, worldH: 800 })
+  .floor(-60, 700, 1720, 130, { id: 'd_floor' })
+  .switch(120, 678, { mode: 'pressure', id: 'd_s1' })
+  .lamp(220, 660, { autoOn: false, id: 'd_l1' })
+  .sign(60, 640, '「灯」：用开关点燃（开关第①种）。\n站上开关→灯亮；离开→灯灭。\n粉末也可以放灯上（灯=加热台）', { id: 'd_s0', size: 10 })
+  .switch(560, 678, { mode: 'pressure', id: 'd_s2' })
+  .lamp(660, 660, { autoOn: false, id: 'd_l2' })
+  .switch(760, 678, { mode: 'pressure', id: 'd_s3' })
+  .lamp(860, 660, { autoOn: false, id: 'd_l3' })
+  .sign(560, 620, '灯光小道：一盏接一盏点亮——往亮处走', { id: 'd_note1', size: 10 })
+  .lamp(1080, 660, { autoOn: false, id: 'd_heat' })
+  .switch(1000, 678, { mode: 'pressure', id: 'd_heat_sw' })
+  .sign(980, 640, '把 Cu(OH)₂ 放灯上烤（Shift）：受热分解 → 黑色 CuO', { id: 'd_note2', size: 10 })
+  .lamp(1280, 660, { autoOn: true, id: 'd_flame' })
+  .deposit(1340, 690, { substance: 'CuSO4', mass: 8, id: 'd_cu' })
+  .deposit(1380, 690, { substance: 'NaCl', mass: 8, id: 'd_na' })
+  .sign(1260, 600, '「焰色反应」：粉末放上常燃灯 → 火焰变色！\nCuSO₄ 绿 · NaCl 黄——每种元素一种颜色。\n不消耗：移开就还原', { id: 'd_note3', size: 10 })
+  .switch(1470, 678, { mode: 'chemical', opening: 'CuO', deleteId: 'd_wall', id: 'd_swCuO' })
+  .floor(1524, 460, 16, 260, { id: 'd_wall' })
+  .sign(1460, 600, '又见「化学开关」——它要 CuO。\n点物品栏选中 → Shift 放下', { id: 'd_s4', size: 10 });
+
+// -------- 世界 4 · 深井实验室（1200×900，无氧）：测验① 产氢/气泡柱/探测器 ---
+// 布局：地面中间一个深坑（跳下去=实验室）；坑底产 H₂ → 气泡柱把玩家托回地面
+M.scene('well', { worldW: 1200, worldH: 900 })
+  .floor(-60, 720, 480, 130, { id: 'w_l0' })            // 左地面（入口）
+  .floor(720, 720, 540, 130, { id: 'w_l1' })            // 右地面（出口侧）
+  .floor(420, 140, 18, 580, { id: 'w_wall_l' })         // 坑左壁
+  .floor(702, 140, 18, 580, { id: 'w_wall_r' })         // 坑右壁
+  .floor(420, 820, 20, 100, { id: 'w_floor2a' })
+  .floor(680, 820, 40, 100, { id: 'w_floor2b' })        // 坑底（实验室）
+  .block(450, 760, { substance: 'Zn', w: 40, h: 40, pushable: true, id: 'w_zn' })
+  .pool(440, 820, 240, 46, { volume: 170, solutes: { HCl: 40 }, gasHeight: 140, id: 'w_hcl' })
+  .sign(150, 660, '前方是「深坑」——跳下去！\n（坑底 = 实验室）', { id: 'w_s0' })
+  .sign(440, 775, '「盐酸池」：酸！你是碱（NaOH），跳进去会掉血，别试。\n把 Zn 块推进池子！', { id: 'w_s1', size: 10 })
+  .sign(470, 750, 'Zn + 2HCl → ZnCl₂ + H₂↑（产氢！看气泡柱）', { id: 'w_s2', size: 10 })
+  .sign(560, 560, '站上「气泡柱」：氢气比你轻，它背着你飞！\n（托你回地面）', { id: 'w_s3' })
+  .gasdetector(660, 798, { gas: 'H2', threshold: 0.15, deleteId: 'w_gwall', id: 'w_det' })
+  .floor(1128, 540, 16, 180, { id: 'w_gwall' })         // 出口墙（探测器亮了才删）
+  .sign(640, 755, '「气体探测器」：检测反应产生的气体。\n它写着 H₂ > 0.25g——氢气超 0.25 克它就亮。\n亮 = 出口解锁', { id: 'w_s4', size: 10 })
+  .sign(360, 700, '🕳 注意：这里空气稀薄——没有氧气！\n坑底想点灯？先别做梦（燃烧需要氧气）', { id: 'w_s5', size: 10 })
+  .sign(880, 660, '出口在右前方（探测器亮了才能过）', { id: 'w_s6', size: 10 });
+
+// --------- 世界 5 · 爆炸盆地（2000×800，氧气 18）：测验② 爆炸/断绳/爆鸣/传送门首秀
+M.scene('basin', { worldW: 2000, worldH: 800 })
+  .floor(-60, 700, 698, 130, { id: 'b_floor' })
+  .floor(902, 700, 1158, 130, { id: 'b_floorb' })
+  .block(200, 640, { substance: 'Na', w: 24, h: 24, pushable: true, id: 'b_na' })
+  .sign(80, 655, '测验②：把 Na 块推进水池——\n推完就快跑！这次真的会炸。', { id: 'b_s0' })
+  .pool(650, 700, 240, 50, { volume: 220, gasHeight: 120, id: 'b_pool' })
+  .sign(560, 660, '把 Na 推进池子：Na + H₂O → NaOH + H₂↑\n（还会…炸！所以让你快跑）', { id: 'b_s1', size: 10 })
+  .lamp(1180, 680, { autoOn: false, id: 'b_lamp' })
+  .switch(1120, 678, { mode: 'pressure', id: 'b_swL' })
+  .sign(1080, 640, '把灯点着——这里空气富氧：\n氢气够多 + 火苗 = 轰！', { id: 'b_s2', size: 10 })
+  .gasdetector(1540, 698, { gas: 'H2', threshold: 0.05, id: 'b_det' })
+  .sign(1480, 655, '爆炸会切断附近的绳子！\n（看：吊着的块"哐"地砸下来）', { id: 'b_s3', size: 10 })
+  .portal(1780, 620, { color: '#c78bff', switchId: 'b_det', id: 'b_p1a' })
+  .sign(1700, 655, '「传送门」（第一次见）：紫色拱门！\n开关"承认"它才亮——亮了就走进去。', { id: 'b_s4', size: 10 });
+
+// -------- 世界 6 · 溶液神殿（1800×800，氧气 18）：溶解/提取器/钥匙/传送门成对
+M.scene('temple', { worldW: 1800, worldH: 800 })
+  .floor(-60, 700, 608, 130, { id: 't_floor' })
+  .floor(792, 700, 1068, 130, { id: 't_floorb' })
+  .block(420, 640, { substance: 'CuO', w: 40, h: 40, pushable: true, id: 't_cuo' })
+  .sign(300, 655, '「溶解」：CuO 块推进酸池——固体会"消失"在液体里\nCuO + 2HCl → CuCl₂（溶液变蓝）', { id: 't_s0', size: 10 })
+  .pool(560, 700, 220, 50, { volume: 180, solutes: { HCl: 40 }, id: 't_pool' })
+  .extractor(900, 686, { poolId: 't_pool', switchId: 't_ext_sw', rate: 1.2, id: 't_ext' })
+  .switch(990, 678, { mode: 'pressure', id: 't_ext_sw' })
+  .sign(850, 645, '「提取器」：站上旁边的开关，\n它会把池子里的固体盐"提"出来冒在地上——Q 收！', { id: 't_s1', size: 10 })
+  .key(1180, 678, { opening: 'CuCl2', w: 70, id: 't_key' })
+  .sign(1120, 645, '「钥匙」：永久锁！放对它要的物质就永远开着（不消耗）。\n它写着 CuCl₂——点物品栏选中 → Shift 放', { id: 't_s2', size: 10 })
+  .portal(1500, 620, { color: '#c78bff', switchId: 't_key', id: 't_go' })
+  .portal(1650, 620, { color: '#7fe0ff', id: 't_back' })
+  .sign(1470, 580, '两扇门：左边（蓝）=回盆地，右边（紫）=前进。\n看清楚哪扇通哪里再进！', { id: 't_s3', size: 10 });
+
+// ------ 世界 7 · 火山口（2200×1200，氧气 16 · CO₂ 3）：催化/燃烧/喷灯/通关 ----
+M.scene('crater', { worldW: 2200, worldH: 1200 })
+  .floor(-60, 1040, 478, 190, { id: 'v_floor' })
+  .floor(662, 1040, 1598, 190, { id: 'v_floorb' })
+  .block(380, 980, { substance: 'MnO2', w: 30, h: 30, pushable: true, id: 'v_mno2' })
+  .pool(430, 1040, 220, 50, { volume: 170, solutes: { H2O2: 90 }, gasHeight: 260, id: 'v_h2o2' })
+  .sign(300, 995, '「催化」：MnO₂ 推入双氧水池：\n2H₂O₂ → 2H₂O + O₂↑（吐泡泡！）\n催化剂自己一根毛都不掉', { id: 'v_s0' })
+  .block(760, 980, { substance: 'C', w: 30, h: 30, pushable: true, id: 'v_c' })
+  .lamp(800, 1020, { autoOn: true, id: 'v_burnlamp' })
+  .sign(700, 985, '「燃烧」：把 C 放上灯：\nC + O₂ → CO₂——氧气就是草原空气里那个（闭环）', { id: 'v_s1' })
+  .switch(1120, 1018, { mode: 'pressure', id: 'v_hot_sw' })
+  .blastlamp(1220, 1030, { w: 140, h: 10, autoOn: false, id: 'v_hot' })
+  .sign(1100, 985, '「喷灯」：高温版酒精灯。\n站在旁边开关上点火：CuO + C → Cu——敢不敢把铜收藏了', { id: 'v_s2' })
+  .floor(1500, 960, 260, 16, { id: 'v_bridge' })
+  .sign(1450, 920, '跳过熔岩裂缝——掉下去的话，检查点会把你捞回来', { id: 'v_s3' })
+  .switch(1900, 1018, { mode: 'pressure', id: 'v_win_sw' })
+  .door(1990, 960, 70, 80, { id: 'v_gate' })
+  .sign(1880, 980, '毕业考：站上开关 → 门开 → 走进光里 = 通关！', { id: 'v_s4' });
+
+// ------------------------------ 构建/大气/接线 ------------------------------
+M.buildAll();
+M.byName('plain').atmosphere.setGas('O2', 18);
+M.byName('plain').atmosphere.setGas('CO2', 1);
+M.byName('canyon').atmosphere.setGas('O2', 18);
+M.byName('plateau').atmosphere.setGas('O2', 18);
+// well：无氧（默认空）
+M.byName('basin').atmosphere.setGas('O2', 18);
+M.byName('temple').atmosphere.setGas('O2', 18);
+M.byName('crater').atmosphere.setGas('O2', 16);
+M.byName('crater').atmosphere.setGas('CO2', 3);
+
+// 深井：出口墙不需要了（探测器亮了 → 走到右地面尽头即可）——删掉补丁
+// （w_det 只负责触发检测与 showtime 横幅，出口是区域判定）
+
+// 通用切场景轮询：玩家中心进入区域 → switchTo。
+// 注意：**不做"开关当前开"判断**——出口的门就是"开关 deleteId 删的那面墙"：
+// 墙在 → 玩家被挡在区域外；墙被删 → 玩家才进得来、走到区域即切场景。
+// （若按"开关开着才算"，压力开关一离开就关，玩家走到出口时开关已关，永远切不过去。）
+function exitLink(sceneName, x, y, w, h, target, spawn) {
+  const sc = M.byName(sceneName);
+  const poll = () => {
+    const p = sc.player;
+    if (p) {
+      const cx = p.x + p.w / 2;
+      const cy = p.y + p.h / 2;
+      if (cx >= x && cx <= x + w && cy >= y && cy <= y + h) {
+        M.switchTo(target, { spawn });
+        return;
       }
     }
+    sc.wait(0.15, poll);
+  };
+  poll();
+}
+
+// 跨场景"传送门"：玩家走进被激活的门 → 切场景（含回头路）
+function portalLink(sceneName, portalId, target, spawn) {
+  const sc = M.byName(sceneName);
+  const gate = sc.byId[portalId];
+  const poll = () => {
+    const p = sc.player;
+    if (p && gate) {
+      const active = typeof gate._isActive === 'function' ? gate._isActive(sc) : true;
+      if (active && p.x < gate.x + gate.w && p.x + p.w > gate.x && p.y < gate.y + gate.h && p.y + p.h > gate.y) {
+        M.switchTo(target, { spawn });
+        return;
+      }
+    }
+    sc.wait(0.15, poll);
+  };
+  poll();
+}
+
+// 世界 → 世界（开关删墙后玩家过门区域；出口区在墙后——墙=门；区域放宽到 110 宽，
+// 玩家（~85px 宽）中心走进入口区即切）
+exitLink('plain', 2130, 400, 110, 340, 'canyon', { x: 120, y: 808 });
+exitLink('canyon', 1310, 500, 110, 420, 'plateau', { x: 120, y: 608 });
+exitLink('plateau', 1520, 400, 110, 320, 'well', { x: 120, y: 628 });
+exitLink('well', 1140, 540, 120, 200, 'basin', { x: 120, y: 608 });
+// 传送门（跨场景）
+portalLink('basin', 'b_p1a', 'temple', { x: 120, y: 608 });
+portalLink('temple', 't_go', 'crater', { x: 140, y: 948 });
+portalLink('temple', 't_back', 'basin', { x: 120, y: 608 });
+// 终局：压力开关 → 开门（door 本身负责通关判定）
+M.byId('crater', 'v_win_sw')?.onOpen(() => M.byId('crater', 'v_gate')?.open());
+
+// 灯列接线：开关 → 灯（站上亮 / 离开灭）
+const wireLamp = (sceneName, swId, lampId) => {
+  const sw = M.byId(sceneName, swId);
+  const lamp = M.byId(sceneName, lampId);
+  if (sw && lamp) {
+    sw.onOpen(() => lamp.ignite());
+    sw.onClose(() => lamp.extinguish());
   }
-  scene.wait(0.3, watchChapter);
 };
-watchChapter();
+wireLamp('plateau', 'd_s1', 'd_l1');
+wireLamp('plateau', 'd_s2', 'd_l2');
+wireLamp('plateau', 'd_s3', 'd_l3');
+wireLamp('plateau', 'd_heat_sw', 'd_heat');
+wireLamp('basin', 'b_swL', 'b_lamp');
+wireLamp('crater', 'v_hot_sw', 'v_hot');
 
-// ---------------------------------------------------------------------------
-// 条件提示（💡 按钮）：第一条无条件（教"提示按钮"本身），之后按章节区域触发
-// ---------------------------------------------------------------------------
-L.tips([
-  { text: '左上角这个 💡 就是提示按钮！点一下看看。\n（关卡作者把提示设好条件，满足时按钮就会出现——你刚学会了看提示）', when: { mode: 'and', items: [] } },
-  { text: '本章目标：跳进蓝池 → 按 Q 收集 Cu(OH)2 → 高台下 Shift 放沉淀垫高 → 爬上高台把 Cu(OH)2 放进开关 → 走进亮的传送门。', when: { mode: 'and', items: [{ type: 'pos', x: ROOM, y: 0, w: ROOM, h: 800 }] } },
-  { text: '本章目标：站上金色开关点燃酒精灯 → 把 Cu(OH)2 放灯上烤成 CuO → 顺手玩下焰色反应 → 把 CuO 放进开关。', when: { mode: 'and', items: [{ type: 'pos', x: ROOM * 2, y: 0, w: ROOM, h: 800 }] } },
-  { text: '小测验①：把 Zn 块推进盐酸池 → H2 冒出来 → 探测器检测到 → 传送门亮。站上气泡柱还能飞！', when: { mode: 'and', items: [{ type: 'pos', x: ROOM * 3, y: 0, w: ROOM, h: 800 }] } },
-  { text: '小测验②：把 Na 块推进水池 → 爆炸！→ 爆炸产生的 H2 让探测器开门 → 进传送门。（站远点）', when: { mode: 'and', items: [{ type: 'pos', x: ROOM * 4, y: 0, w: ROOM, h: 800 }] } },
-  { text: '本章目标：CuO 块推进酸池 → 站上提取器开关提 CuCl2 粉 → 收集后放进钥匙 → 传送门亮。', when: { mode: 'and', items: [{ type: 'pos', x: ROOM * 5, y: 0, w: ROOM, h: 800 }] } },
-  { text: '本章随便玩：MnO2 进双氧水池看泡泡 · C 放灯上烧 · 喷灯还原铜。玩够了站右边开关开门。', when: { mode: 'and', items: [{ type: 'pos', x: ROOM * 6, y: 0, w: ROOM, h: 800 }] } },
-  { text: '毕业考：站上开关 → 走进门。门一过，你就是正式化学怪人！', when: { mode: 'and', items: [{ type: 'pos', x: ROOM * 7, y: 0, w: ROOM, h: 800 }] } },
-]);
+// 爆炸断绳演示：悬绳吊着 Zn 块（爆炸半径 375 内 → 绳断、块砸落）
+{
+  const bSc = M.byName('basin');
+  const znB = new Chezzle.Block({ x: 1020, y: 500, w: 30, h: 30, substance: 'Zn', id: 'b_zndrop' });
+  bSc.addObject(znB);
+  bSc.addObject(new Chezzle.Rope({
+    x: 1035, y: 380, length: 200,
+    anchor: { fixed: { x: 1035, y: 380 } },
+    hanging: znB,
+    id: 'b_rope',
+  }));
+}
 
-// ---------------------------------------------------------------------------
-// 接线：开关 → 灯（传送门用 switchId 属性自动生效，无需接线）
-// ---------------------------------------------------------------------------
-scene.byId['swLamp'].onOpen(() => scene.byId['lamp1'].ignite());
-scene.byId['swLamp'].onClose(() => scene.byId['lamp1'].extinguish());
-scene.byId['swHot'].onOpen(() => scene.byId['lampHot'].ignite());
-scene.byId['swHot'].onClose(() => scene.byId['lampHot'].extinguish());
-scene.byId['swWin'].onOpen(() => scene.byId['winDoor'].open());
-
-// 喷灯上预置还原原料（加餐区）
-scene.byId['lampHot'].addPrecipitate('CuO', 6);
-scene.byId['lampHot'].addPrecipitate('C', 3);
-
-// 爆炸房：绳子吊着 Zn 块（示范"爆炸切断绳子"）
-const znDrop = new Chezzle.Block({ x: ROOM * 4 + 300, y: 300, w: 30, h: 30, substance: 'Zn', id: 'zndrop' });
-scene.addObject(znDrop);
-scene.addObject(new Chezzle.Rope({
-  x: ROOM * 4 + 315, y: 200, length: 340,
-  anchor: { fixed: { x: ROOM * 4 + 315, y: 200 } },
-  hanging: znDrop,
-  id: 'ropeDemo',
-}));
-
-// ---------------------------------------------------------------------------
-// 检查点：每章一个（区域=整房，复活点=房入口安全地）
-// ---------------------------------------------------------------------------
-const CHECKPOINTS = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({
-  id: 'ch' + i,
-  x: i * ROOM, y: 0, w: ROOM, h: 800,
-  sx: i * ROOM + 90, sy: GROUND - 6,
-}));
-
-// ---------------------------------------------------------------------------
-// 插件注入：新手引导（横幅+延迟出现）+ 检查点（死亡复活）
-// ---------------------------------------------------------------------------
-Chezzle.Plugin.inject(scene, [
-  { name: 'tutorial' },
-  {
-    name: 'checkpoint',
-    cfg: {
-      spawns: CHECKPOINTS,
-      texts: [
-        '复活！化学家从不回头看爆炸',
-        '没事，NaOH 还有很多（30 克而已）',
-        '刚才那是教学的一部分（才怪）',
-        '回来重走！这次记得看路标',
-      ],
-    },
-  },
-]);
-
-// 通关彩蛋横幅（status=win 后 time 冻结，横幅停在画面上）
-scene.on('win', () => scene.showBanner('🎉 恭喜通关！\n你已经是正式的化学怪人了', 999));
-
-L.start();
-// 通关上报（选关系统：记录 tutorial + 弹浮层）
-ChezzleReport.bind(scene, 'tutorial');
+// -------------------------------- 开演 -------------------------------------
+window.__M = M; // 调试/E2E 后门（词法 const 跨窗口不可靠）
+M.start('plain');
+ChezzleReport.bind(M.byName('plain'), 'tutorial');
 </script>
 </body>
 </html>

@@ -1,38 +1,48 @@
 // ============================================================================
 // 新手检查点（checkpoint）—— 死亡自动回到最近检查点复活（新手关防挫败神器）
 // ----------------------------------------------------------------------------
-// 原版机制：死亡 = 整关重开（R 刷新页面）。新手教程关里这是灾难——
-// 玩家好不容易走到第五章，掉进酸池就从头再来，直接弃游。
-// 本插件提供"检查点复活"：
-//   - 关卡/编辑器配置 cfg.spawns：每个检查点 = 一个"登记区域"矩形 + 复活点；
-//     玩家走进区域即登记（区域不重叠时自然按章节推进）。
-//   - 死亡后 0.9 秒原地复活：回到最近检查点、回满血（核心物质补回）、
-//     清速度/传送门冷却/残留气体，然后弹一条（随机的）幽默横幅。
+// 原版机制：死亡 = 整关重开（R 刷新页面）。对新手是灾难——全关卡重来。
+// 本插件提供"检查点复活"（支持多场景 / Multiscene）：
+//   - cfg.spawns：每个检查点 = 登记区域矩形 + 复活点（脚底 y），可带 scene 字段
+//     （多场景：只登记自己场景的检查点；单场景不需要）；
+//   - 玩家走进登记区域即"打卡"（同帧多个满足取 x 最大 = 最新）；死亡后 0.9 秒
+//     复活：回最近检查点、回满血（核心物质补回）、清速度/传送门冷却/残留反应气，
+//     弹一条随机幽默横幅。
 // 用法（关卡脚本）：
-//   Chezzle.Plugin.inject(scene, [{ name: 'checkpoint', cfg: {
-//     spawns: [
-//       { id: 'ch1', x: 0, y: 0, w: 640, h: 800, sx: 80, sy: 700, text: '复活！从第一章继续' },
-//     ],
-//     texts: ['复活！化学家从不回头看爆炸', '没事，NaOH 还有很多', '死亡是教学的一部分（才怪）'],
-//   }}]);
-//   注意：spawns 按 x 从小到大排列，重叠时取 x 更大的（走到新区域即"最新检查点"）。
-// 编辑器里：加载本插件后，在关卡脚本（试玩）里通过插件配置或直接改代码使用。
+//   const M = new Chezzle.Multiscene(container, { width:1100, height:700, plugins: [{
+//     name: 'checkpoint',
+//     cfg: { M, spawns: [
+//       { scene: 'plain',   id: 'c1', x: 0, y: 0, w: 600,  h: 800, sx: 80,  sy: 700 },
+//       { scene: 'basin',   id: 'c5', x: 0, y: 0, w: 900,  h: 800, sx: 120, sy: 700 },
+//     ], texts: ['复活！化学家从不回头看爆炸', ...] },
+//   }]});
 // ============================================================================
 
 // @@chezzle-plugin
 // {
 //   "name": "新手检查点",
-//   "version": "1.0",
+//   "version": "1.1",
 //   "api": 1,
-//   "description": "死亡自动回到最近检查点并回满血，再弹一条幽默横幅——新手关不再因死亡从头再来。cfg.spawns=[{id,x,y,w,h,sx,sy,text}] 登记区域+复活点，cfg.texts=复活横幅文案（随机取一条）"
+//   "description": "死亡自动回到最近检查点并回满血，再弹一条幽默横幅——新手关不用因死亡从头再来。cfg.spawns=[{scene?,id,x,y,w,h,sx,sy}]（scene=多场景的世界名），cfg.texts=复活横幅文案（随机取一条）。支持 Multiscene：死在哪世界回哪世界",
+//   "enhance": []
 // }
 // @@end
 
 Chezzle.Plugin.register('checkpoint', {
   run(scene, api, cfg) {
-    const spawns = Array.isArray(cfg.spawns) ? cfg.spawns.filter((s) => s && Number.isFinite(s.x)) : [];
-    if (!spawns.length) return () => {};
+    const all = Array.isArray(cfg.spawns) ? cfg.spawns.filter((s) => s && Number.isFinite(s.x)) : [];
+    if (!all.length) return () => {};
     const texts = Array.isArray(cfg.texts) && cfg.texts.length ? cfg.texts : ['复活！从检查点继续'];
+    const M = cfg.M ?? null;
+    let myName = cfg.scene ?? null;
+    if (!myName && M) {
+      for (const [name, e] of M.scenes) {
+        if (e.scene === scene) { myName = name; break; }
+      }
+    }
+    // 多场景：只登记自己场景的检查点；单场景：全部
+    const spawns = all.filter((s) => (myName ? s.scene === myName : !s.scene));
+    if (!spawns.length) return () => {};
     let cur = null;
     const cancels = [];
     let reviving = false; // 复活进行中（setTimeout 等待期）：防重复触发

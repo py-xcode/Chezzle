@@ -119,9 +119,11 @@ export class Switch extends Container {
     for (const obj of scene.objects) {
       if (obj === this || !obj.solid || obj.physicsKind !== 'dynamic') continue; // 排除自身与静态物
       if (obj.amount !== undefined) continue; // 沉淀粒子不压压力开关（只有玩家/物块能压）
-      // 重叠开关区域，且脚底贴近开关顶（站在其上/压在开关上；站在下方地面不算）
+      // 重叠开关区域，且脚底贴近开关顶（站在其上/压在开关上；站在下方地面不算）。
+      // 窗口按下界 -12 / 上界 开关全高+4 放宽：玩家被反应消耗体型会变小、跳落/自动上
+      // 台阶等常见站位 bottom 都落在窗口内——"踩上去没反应"的根因。
       if (obj.right > this.x && obj.left < this.x + this.w &&
-          obj.bottom >= this.y - 2 && obj.bottom <= this.y + 8) return true;
+          obj.bottom >= this.y - 12 && obj.bottom <= this.y + (this.h ?? 22) + 4) return true;
     }
     return false;
   }

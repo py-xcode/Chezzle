@@ -955,12 +955,12 @@ class Scene {
     return this._explosionFlameColors()[0] ?? null;
   }
 
-  explode(point, strength, cause = null) {
+  explode(point, strength, cause = null, flames = null) {
     const p = point ?? (this._emitCtx ? this._emitCtx.point : { x: this.worldW / 2, y: this.worldH / 2 });
     const R = 150; // 爆炸半径（衰减基准）
     // 视觉 + 屏幕震动；记录最近爆炸原因（HUD 调试面板显示）
     const flip = (this._explosionSeq = (this._explosionSeq ?? 0) + 1) % 2 === 0; // 连续爆炸相位交替，不雷同
-    this.addObject(new Explosion({ x: p.x, y: p.y, strength, cause, flip, flames: this._explosionFlameColors() }));
+    this.addObject(new Explosion({ x: p.x, y: p.y, strength, cause, flip, flames: flames ?? this._explosionFlameColors() }));
     this._lastExplosion = { cause: cause || '剧烈反应', t: this.time };
     if (this.camera) this.camera.shake(Math.min(22, 5 + strength * 0.2));
     // 冲击：动态体（玩家/物块/烧杯）
@@ -13896,9 +13896,11 @@ class Switch extends Container {
     for (const obj of scene.objects) {
       if (obj === this || !obj.solid || obj.physicsKind !== 'dynamic') continue; // 排除自身与静态物
       if (obj.amount !== undefined) continue; // 沉淀粒子不压压力开关（只有玩家/物块能压）
-      // 重叠开关区域，且脚底贴近开关顶（站在其上/压在开关上；站在下方地面不算）
+      // 重叠开关区域，且脚底贴近开关顶（站在其上/压在开关上；站在下方地面不算）。
+      // 窗口按下界 -12 / 上界 开关全高+4 放宽：玩家被反应消耗体型会变小、跳落/自动上
+      // 台阶等常见站位 bottom 都落在窗口内——"踩上去没反应"的根因。
       if (obj.right > this.x && obj.left < this.x + this.w &&
-          obj.bottom >= this.y - 2 && obj.bottom <= this.y + 8) return true;
+          obj.bottom >= this.y - 12 && obj.bottom <= this.y + (this.h ?? 22) + 4) return true;
     }
     return false;
   }
