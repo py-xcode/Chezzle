@@ -204,6 +204,26 @@ export class CollisionSystem {
     for (const b of dynamics) this.integrateX(b, dynamics, statics);
     // Y 积分（落地、撞顶、堆叠）
     for (const b of dynamics) this.integrateY(b, dynamics, statics);
+    // ★ 冰面标记兜底（必须在残余分离**之前**——粒子-粒子的堆叠判定（_stackParticles）
+    //   用 onIce 决定"垂直堆 or 水平铺"；_landOn 只记第一个接触体（叠层地板=石地板
+    //   先被记）→ 冰标记丢失。兜底：脚下任一接触地板是冰 → 按冰面处理。
+    for (const b of dynamics) {
+      if (b.onGround && !b._groundIce) {
+        const near = this._near(b);
+        for (let i = 0; i < near.length; i++) {
+          const s = near[i];
+          if (s === b) continue;
+          // 接触判定（1px 容差：贴地后玩家与地板零重叠，只相接）
+          if (s.ice && s.physicsKind === 'static' &&
+              b.right > s.x - 1 && b.left < s.x + s.w + 1 &&
+              b.bottom >= s.y - 1 && b.top <= s.y + s.h + 1) {
+            b._groundIce = true;
+            if (b.amount !== undefined && !b._iceDir) b._iceDir = Math.random() < 0.5 ? -1 : 1; // 沉淀记漂移方向（溜走）
+            break;
+          }
+        }
+      }
+    }
     // 残余重叠分离（斜向冲入/出生嵌入/传送落点/爆炸推挤）：4 面 MTV，小步推出
     this.resolveResidual(dynamics, statics);
     // 地面摩擦：落地的动态体水平速度快速衰减——爆炸/踢飞后的物体不会永远滑行。

@@ -73,3 +73,38 @@ test('玩家离池子远（不作弊）：不吸附，地面正常放置', () =>
   assert.ok(scene.particles.length >= 1, '地面正常生成颗粒');
   assert.equal(pool.solution.solutes.get('NaCl') ?? 0, 0, '远处的池子没被投进去');
 });
+
+// 叠层冰地板（石地板 + 冰层同顶，天然"给地板铺冰"）：_landOn 只记第一个接触体（石）——
+// 冰标记必须由"脚下任一接触地板是冰"兜底（用户'冰面摩擦和地板一样/还能搭高'的根因）
+test('叠层冰地板：玩家与沉淀都按冰面处理（摩擦/平摊/溜走）', () => {
+  const scene = new Scene({ worldW: 3000, worldH: 800 });
+  scene.addObject(new Floor({ x: 1653, y: 642, w: 700, h: 150, id: 'base' }));   // 石地板
+  scene.addObject(new Floor({ x: 1833, y: 642, w: 340, h: 150, ice: true, id: 'ice' })); // 冰层
+  const p = new Player({ x: 2000, y: 560, mass: 30, id: 'p1' });
+  scene.addObject(p);
+  scene.status = 'running';
+  run(scene, 60);
+  assert.ok(p.onGround && p._groundIce, '玩家在冰层上 = 冰面标记（叠层兜底）');
+  // 连放 8 次：不搭高（颗粒一层层铺开 + 溜走），最多 2 层自然叠
+  p.inventory.add(p.substance, 10);
+  for (let i = 0; i < 8; i++) { p.tryPlace(scene); run(scene, 30); }
+  run(scene, 120);
+  const byX = {};
+  for (const pt of scene.particles) { const k = Math.round(pt.x / 10) * 10; (byX[k] ??= []).push(pt); }
+  let chains = 0;
+  for (const k of Object.keys(byX)) {
+    const arr = byX[k];
+    if (arr.length >= 4) { const ys = arr.map((x) => x.y); if (Math.max(...ys) - Math.min(...ys) > 25) chains++; }
+  }
+  assert.equal(chains, 0, '不搭高（无 4+ 颗垂直成串）');
+  assert.ok(scene.particles.length >= 8, '颗粒都在');
+  // 对比石地段（1700：玩家右缘 1760 远离冰层 1833）：玩家冰标记 false
+  const sc2 = new Scene({ worldW: 3000, worldH: 800 });
+  sc2.addObject(new Floor({ x: 1653, y: 642, w: 700, h: 150, id: 'base' }));
+  sc2.addObject(new Floor({ x: 1833, y: 642, w: 340, h: 150, ice: true, id: 'ice' }));
+  const p2 = new Player({ x: 1700, y: 560, mass: 30, id: 'p1' });
+  sc2.addObject(p2);
+  sc2.status = 'running';
+  run(sc2, 60);
+  assert.ok(p2.onGround && !p2._groundIce, '纯石地段不是冰面');
+});
