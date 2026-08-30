@@ -1,0 +1,1364 @@
+{
+  "version": 2,
+  "levelId": "tutorial",
+  "plugins": [
+    {
+      "file": "tutorial.js",
+      "reg": "tutorial",
+      "name": "新手引导",
+      "enabled": true
+    }
+  ],
+  "rx": [],
+  "atmosphere": {},
+  "editorState": {
+    "chapters": {
+      "scenes": [
+        {
+          "id": "plain",
+          "snap": {
+            "worldW": 2200,
+            "worldH": 800,
+            "rx": [],
+            "atm": {
+              "O2": 18,
+              "CO2": 1
+            },
+            "objects": [
+              {
+                "type": "floor",
+                "opts": {
+                  "x": -260,
+                  "y": 700,
+                  "w": 2820,
+                  "h": 130,
+                  "id": "p_floor"
+                }
+              },
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 300,
+                  "y": 640,
+                  "w": 220,
+                  "h": 16,
+                  "id": "p_hill"
+                }
+              },
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 700,
+                  "y": 550,
+                  "w": 260,
+                  "h": 16,
+                  "id": "p_rock"
+                }
+              },
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 1260,
+                  "y": 620,
+                  "w": 120,
+                  "h": 16,
+                  "id": "p_gap1a"
+                }
+              },
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 1580,
+                  "y": 620,
+                  "w": 120,
+                  "h": 16,
+                  "id": "p_gap1b"
+                }
+              },
+              {
+                "type": "player",
+                "opts": {
+                  "x": 140,
+                  "y": 600,
+                  "substance": "NaOH",
+                  "mass": 30,
+                  "id": "player1"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 260,
+                  "y": 690,
+                  "text": "A / D 移动 · 空格跳跃 · R 重开\n先往右走走，感受一下脚步",
+                  "id": "p_s0"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 260,
+                  "y": 640,
+                  "text": "按 V \"灵魂出窍\"看整片草原（再按 V 回来）",
+                  "id": "p_s0b",
+                  "size": 10
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 60,
+                  "y": 660,
+                  "text": "💀 死了会回到这里——这是本关的「检查点」",
+                  "id": "p_s0c",
+                  "size": 11
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 310,
+                  "y": 560,
+                  "text": "踩上石头看风景——你是要\"跋山涉水\"的化学物质！",
+                  "id": "p_s1",
+                  "size": 11
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 1930,
+                  "y": 660,
+                  "text": "这是「开关」：\n①踩上就开——现在这个（站上去试试）\n②需要化学物质才能开（世界 2 见）",
+                  "id": "p_sw"
+                }
+              },
+              {
+                "type": "switch",
+                "opts": {
+                  "x": 2000,
+                  "y": 678,
+                  "mode": "pressure",
+                  "deleteId": "p_wall",
+                  "id": "p_gate_sw"
+                }
+              },
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 2124,
+                  "y": 460,
+                  "w": 16,
+                  "h": 260,
+                  "id": "p_wall"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 2080,
+                  "y": 620,
+                  "text": "开关开了 = 墙消失 = 过去",
+                  "id": "p_gate_s",
+                  "size": 10
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "canyon",
+          "snap": {
+            "worldW": 1800,
+            "worldH": 1000,
+            "rx": [],
+            "atm": {
+              "O2": 18
+            },
+            "objects": [
+              {
+                "type": "floor",
+                "opts": {
+                  "x": -80,
+                  "y": 900,
+                  "w": 228,
+                  "h": 150,
+                  "id": "c_l0"
+                }
+              },
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 432,
+                  "y": 900,
+                  "w": 328,
+                  "h": 150,
+                  "id": "c_l0b"
+                }
+              },
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 760,
+                  "y": 900,
+                  "w": 320,
+                  "h": 150,
+                  "id": "c_l1"
+                }
+              },
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 1180,
+                  "y": 900,
+                  "w": 700,
+                  "h": 150,
+                  "id": "c_l2"
+                }
+              },
+              {
+                "type": "pool",
+                "opts": {
+                  "x": 160,
+                  "y": 900,
+                  "w": 260,
+                  "h": 55,
+                  "volume": 220,
+                  "solutes": {
+                    "CuSO4": 30
+                  },
+                  "gasHeight": 80,
+                  "id": "c_pool"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 110,
+                  "y": 855,
+                  "text": "第一个「池子」：池子 = 溶液。\n跳进去看看身体会发生什么——看飘出的反应标签！",
+                  "id": "c_s0"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 120,
+                  "y": 795,
+                  "text": "反应成功！表面长出蓝色沉淀 Cu(OH)₂\n（碱 + 硫酸铜 → 蓝沉淀）",
+                  "id": "c_s1",
+                  "size": 10
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 700,
+                  "y": 855,
+                  "text": "「Q 收集」：走进沉淀按 Q，收进物品栏\n（屏幕下方那一格；点格子可选中）",
+                  "id": "c_s2"
+                }
+              },
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 1060,
+                  "y": 740,
+                  "w": 170,
+                  "h": 16,
+                  "id": "c_tower_top"
+                }
+              },
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 1060,
+                  "y": 900,
+                  "w": 22,
+                  "h": 176,
+                  "id": "c_tower_l"
+                }
+              },
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 1208,
+                  "y": 900,
+                  "w": 22,
+                  "h": 176,
+                  "id": "c_tower_r"
+                }
+              },
+              {
+                "type": "switch",
+                "opts": {
+                  "x": 1150,
+                  "y": 718,
+                  "mode": "chemical",
+                  "opening": "Cu(OH)2",
+                  "deleteId": "c_wall",
+                  "id": "c_swCu"
+                }
+              },
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 1318,
+                  "y": 560,
+                  "w": 16,
+                  "h": 360,
+                  "id": "c_wall"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 1100,
+                  "y": 700,
+                  "text": "第二种「开关」：要化学物质才能开。\n它头顶写着要什么（Cu(OH)₂）。\n怎么放：点物品栏选中 → 站开关旁按 Shift",
+                  "id": "c_sw_s",
+                  "size": 10
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 1030,
+                  "y": 855,
+                  "text": "塔 160px 高跳不上去？\nShift 往脚下放沉淀把自己垫高——爬塔！",
+                  "id": "c_tower_s"
+                }
+              },
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 1360,
+                  "y": 900,
+                  "w": 340,
+                  "h": 150,
+                  "ice": true,
+                  "id": "c_ice"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 1370,
+                  "y": 855,
+                  "text": "「冰面」：滑！沉淀放上去会自己溜走——\n在这搭不了高（放一把试试，看它跑）",
+                  "id": "c_ice_s"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "plateau",
+          "snap": {
+            "worldW": 1600,
+            "worldH": 800,
+            "rx": [],
+            "atm": {
+              "O2": 18
+            },
+            "objects": [
+              {
+                "type": "floor",
+                "opts": {
+                  "x": -60,
+                  "y": 700,
+                  "w": 1720,
+                  "h": 130,
+                  "id": "d_floor"
+                }
+              },
+              {
+                "type": "switch",
+                "opts": {
+                  "x": 120,
+                  "y": 678,
+                  "mode": "pressure",
+                  "id": "d_s1",
+                  "igniteId": "d_l1",
+                  "extinguishId": "d_l1"
+                }
+              },
+              {
+                "type": "lamp",
+                "opts": {
+                  "x": 220,
+                  "y": 660,
+                  "autoOn": false,
+                  "id": "d_l1"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 60,
+                  "y": 640,
+                  "text": "「灯」：用开关点燃（开关第①种）。\n站上开关→灯亮；离开→灯灭。\n粉末也可以放灯上（灯=加热台）",
+                  "id": "d_s0",
+                  "size": 10
+                }
+              },
+              {
+                "type": "switch",
+                "opts": {
+                  "x": 560,
+                  "y": 678,
+                  "mode": "pressure",
+                  "id": "d_s2",
+                  "igniteId": "d_l2",
+                  "extinguishId": "d_l2"
+                }
+              },
+              {
+                "type": "lamp",
+                "opts": {
+                  "x": 660,
+                  "y": 660,
+                  "autoOn": false,
+                  "id": "d_l2"
+                }
+              },
+              {
+                "type": "switch",
+                "opts": {
+                  "x": 760,
+                  "y": 678,
+                  "mode": "pressure",
+                  "id": "d_s3",
+                  "igniteId": "d_l3",
+                  "extinguishId": "d_l3"
+                }
+              },
+              {
+                "type": "lamp",
+                "opts": {
+                  "x": 860,
+                  "y": 660,
+                  "autoOn": false,
+                  "id": "d_l3"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 560,
+                  "y": 620,
+                  "text": "灯光小道：一盏接一盏点亮——往亮处走",
+                  "id": "d_note1",
+                  "size": 10
+                }
+              },
+              {
+                "type": "lamp",
+                "opts": {
+                  "x": 1080,
+                  "y": 660,
+                  "autoOn": false,
+                  "id": "d_heat"
+                }
+              },
+              {
+                "type": "switch",
+                "opts": {
+                  "x": 1000,
+                  "y": 678,
+                  "mode": "pressure",
+                  "id": "d_heat_sw",
+                  "igniteId": "d_heat",
+                  "extinguishId": "d_heat"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 980,
+                  "y": 640,
+                  "text": "把 Cu(OH)₂ 放灯上烤（Shift）：受热分解 → 黑色 CuO",
+                  "id": "d_note2",
+                  "size": 10
+                }
+              },
+              {
+                "type": "lamp",
+                "opts": {
+                  "x": 1280,
+                  "y": 660,
+                  "autoOn": true,
+                  "id": "d_flame"
+                }
+              },
+              {
+                "type": "deposit",
+                "opts": {
+                  "x": 1340,
+                  "y": 690,
+                  "substance": "CuSO4",
+                  "mass": 8,
+                  "id": "d_cu"
+                }
+              },
+              {
+                "type": "deposit",
+                "opts": {
+                  "x": 1380,
+                  "y": 690,
+                  "substance": "NaCl",
+                  "mass": 8,
+                  "id": "d_na"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 1260,
+                  "y": 600,
+                  "text": "「焰色反应」：粉末放上常燃灯 → 火焰变色！\nCuSO₄ 绿 · NaCl 黄——每种元素一种颜色。\n不消耗：移开就还原",
+                  "id": "d_note3",
+                  "size": 10
+                }
+              },
+              {
+                "type": "switch",
+                "opts": {
+                  "x": 1470,
+                  "y": 678,
+                  "mode": "chemical",
+                  "opening": "CuO",
+                  "deleteId": "d_wall",
+                  "id": "d_swCuO"
+                }
+              },
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 1524,
+                  "y": 460,
+                  "w": 16,
+                  "h": 260,
+                  "id": "d_wall"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 1460,
+                  "y": 600,
+                  "text": "又见「化学开关」——它要 CuO。\n点物品栏选中 → Shift 放下",
+                  "id": "d_s4",
+                  "size": 10
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "well",
+          "snap": {
+            "worldW": 1200,
+            "worldH": 900,
+            "rx": [],
+            "atm": {},
+            "objects": [
+              {
+                "type": "floor",
+                "opts": {
+                  "x": -60,
+                  "y": 720,
+                  "w": 480,
+                  "h": 130,
+                  "id": "w_l0"
+                }
+              },
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 720,
+                  "y": 720,
+                  "w": 540,
+                  "h": 130,
+                  "id": "w_l1"
+                }
+              },
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 420,
+                  "y": 140,
+                  "w": 18,
+                  "h": 580,
+                  "id": "w_wall_l"
+                }
+              },
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 702,
+                  "y": 140,
+                  "w": 18,
+                  "h": 580,
+                  "id": "w_wall_r"
+                }
+              },
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 420,
+                  "y": 820,
+                  "w": 20,
+                  "h": 100,
+                  "id": "w_floor2a"
+                }
+              },
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 680,
+                  "y": 820,
+                  "w": 40,
+                  "h": 100,
+                  "id": "w_floor2b"
+                }
+              },
+              {
+                "type": "block",
+                "opts": {
+                  "x": 450,
+                  "y": 760,
+                  "substance": "Zn",
+                  "w": 40,
+                  "h": 40,
+                  "pushable": true,
+                  "id": "w_zn"
+                }
+              },
+              {
+                "type": "pool",
+                "opts": {
+                  "x": 440,
+                  "y": 820,
+                  "w": 240,
+                  "h": 46,
+                  "volume": 170,
+                  "solutes": {
+                    "HCl": 40
+                  },
+                  "gasHeight": 140,
+                  "id": "w_hcl"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 150,
+                  "y": 660,
+                  "text": "前方是「深坑」——跳下去！\n（坑底 = 实验室）",
+                  "id": "w_s0"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 440,
+                  "y": 775,
+                  "text": "「盐酸池」：酸！你是碱（NaOH），跳进去会掉血，别试。\n把 Zn 块推进池子！",
+                  "id": "w_s1",
+                  "size": 10
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 470,
+                  "y": 750,
+                  "text": "Zn + 2HCl → ZnCl₂ + H₂↑（产氢！看气泡柱）",
+                  "id": "w_s2",
+                  "size": 10
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 560,
+                  "y": 560,
+                  "text": "站上「气泡柱」：氢气比你轻，它背着你飞！\n（托你回地面）",
+                  "id": "w_s3"
+                }
+              },
+              {
+                "type": "gasdetector",
+                "opts": {
+                  "x": 660,
+                  "y": 798,
+                  "gas": "H2",
+                  "threshold": 0.15,
+                  "deleteId": "w_gwall",
+                  "id": "w_det"
+                }
+              },
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 1128,
+                  "y": 540,
+                  "w": 16,
+                  "h": 180,
+                  "id": "w_gwall"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 640,
+                  "y": 755,
+                  "text": "「气体探测器」：检测反应产生的气体。\n它写着 H₂ > 0.25g——氢气超 0.25 克它就亮。\n亮 = 出口解锁",
+                  "id": "w_s4",
+                  "size": 10
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 360,
+                  "y": 700,
+                  "text": "🕳 注意：这里空气稀薄——没有氧气！\n坑底想点灯？先别做梦（燃烧需要氧气）",
+                  "id": "w_s5",
+                  "size": 10
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 880,
+                  "y": 660,
+                  "text": "出口在右前方（探测器亮了才能过）",
+                  "id": "w_s6",
+                  "size": 10
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "basin",
+          "snap": {
+            "worldW": 2000,
+            "worldH": 800,
+            "rx": [],
+            "atm": {
+              "O2": 18
+            },
+            "objects": [
+              {
+                "type": "floor",
+                "opts": {
+                  "x": -60,
+                  "y": 700,
+                  "w": 698,
+                  "h": 130,
+                  "id": "b_floor"
+                }
+              },
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 902,
+                  "y": 700,
+                  "w": 1158,
+                  "h": 130,
+                  "id": "b_floorb"
+                }
+              },
+              {
+                "type": "block",
+                "opts": {
+                  "x": 200,
+                  "y": 640,
+                  "substance": "Na",
+                  "w": 24,
+                  "h": 24,
+                  "pushable": true,
+                  "id": "b_na"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 80,
+                  "y": 655,
+                  "text": "测验②：把 Na 块推进水池——\n推完就快跑！这次真的会炸。",
+                  "id": "b_s0"
+                }
+              },
+              {
+                "type": "pool",
+                "opts": {
+                  "x": 650,
+                  "y": 700,
+                  "w": 240,
+                  "h": 50,
+                  "volume": 220,
+                  "gasHeight": 120,
+                  "id": "b_pool"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 560,
+                  "y": 660,
+                  "text": "把 Na 推进池子：Na + H₂O → NaOH + H₂↑\n（还会…炸！所以让你快跑）",
+                  "id": "b_s1",
+                  "size": 10
+                }
+              },
+              {
+                "type": "lamp",
+                "opts": {
+                  "x": 1180,
+                  "y": 680,
+                  "autoOn": false,
+                  "id": "b_lamp"
+                }
+              },
+              {
+                "type": "switch",
+                "opts": {
+                  "x": 1120,
+                  "y": 678,
+                  "mode": "pressure",
+                  "id": "b_swL",
+                  "igniteId": "b_lamp",
+                  "extinguishId": "b_lamp"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 1080,
+                  "y": 640,
+                  "text": "把灯点着——这里空气富氧：\n氢气够多 + 火苗 = 轰！",
+                  "id": "b_s2",
+                  "size": 10
+                }
+              },
+              {
+                "type": "gasdetector",
+                "opts": {
+                  "x": 1540,
+                  "y": 698,
+                  "gas": "H2",
+                  "threshold": 0.05,
+                  "id": "b_det"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 1480,
+                  "y": 655,
+                  "text": "爆炸会切断附近的绳子！\n（看：吊着的块\"哐\"地砸下来）",
+                  "id": "b_s3",
+                  "size": 10
+                }
+              },
+              {
+                "type": "portal",
+                "opts": {
+                  "x": 1780,
+                  "y": 620,
+                  "color": "#c78bff",
+                  "switchId": "b_det",
+                  "id": "b_p1a"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 1700,
+                  "y": 655,
+                  "text": "「传送门」（第一次见）：紫色拱门！\n开关\"承认\"它才亮——亮了就走进去。",
+                  "id": "b_s4",
+                  "size": 10
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "temple",
+          "snap": {
+            "worldW": 1800,
+            "worldH": 800,
+            "rx": [],
+            "atm": {
+              "O2": 18
+            },
+            "objects": [
+              {
+                "type": "floor",
+                "opts": {
+                  "x": -60,
+                  "y": 700,
+                  "w": 608,
+                  "h": 130,
+                  "id": "t_floor"
+                }
+              },
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 792,
+                  "y": 700,
+                  "w": 1068,
+                  "h": 130,
+                  "id": "t_floorb"
+                }
+              },
+              {
+                "type": "block",
+                "opts": {
+                  "x": 420,
+                  "y": 640,
+                  "substance": "CuO",
+                  "w": 40,
+                  "h": 40,
+                  "pushable": true,
+                  "id": "t_cuo"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 300,
+                  "y": 655,
+                  "text": "「溶解」：CuO 块推进酸池——固体会\"消失\"在液体里\nCuO + 2HCl → CuCl₂（溶液变蓝）",
+                  "id": "t_s0",
+                  "size": 10
+                }
+              },
+              {
+                "type": "pool",
+                "opts": {
+                  "x": 560,
+                  "y": 700,
+                  "w": 220,
+                  "h": 50,
+                  "volume": 180,
+                  "solutes": {
+                    "HCl": 40
+                  },
+                  "id": "t_pool"
+                }
+              },
+              {
+                "type": "extractor",
+                "opts": {
+                  "x": 900,
+                  "y": 686,
+                  "poolId": "t_pool",
+                  "switchId": "t_ext_sw",
+                  "rate": 1.2,
+                  "id": "t_ext"
+                }
+              },
+              {
+                "type": "switch",
+                "opts": {
+                  "x": 990,
+                  "y": 678,
+                  "mode": "pressure",
+                  "id": "t_ext_sw"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 850,
+                  "y": 645,
+                  "text": "「提取器」：站上旁边的开关，\n它会把池子里的固体盐\"提\"出来冒在地上——Q 收！",
+                  "id": "t_s1",
+                  "size": 10
+                }
+              },
+              {
+                "type": "key",
+                "opts": {
+                  "x": 1180,
+                  "y": 678,
+                  "opening": "CuCl2",
+                  "w": 70,
+                  "id": "t_key"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 1120,
+                  "y": 645,
+                  "text": "「钥匙」：永久锁！放对它要的物质就永远开着（不消耗）。\n它写着 CuCl₂——点物品栏选中 → Shift 放",
+                  "id": "t_s2",
+                  "size": 10
+                }
+              },
+              {
+                "type": "portal",
+                "opts": {
+                  "x": 1500,
+                  "y": 620,
+                  "color": "#c78bff",
+                  "switchId": "t_key",
+                  "id": "t_go"
+                }
+              },
+              {
+                "type": "portal",
+                "opts": {
+                  "x": 1650,
+                  "y": 620,
+                  "color": "#7fe0ff",
+                  "id": "t_back"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 1470,
+                  "y": 580,
+                  "text": "两扇门：左边（蓝）=回盆地，右边（紫）=前进。\n看清楚哪扇通哪里再进！",
+                  "id": "t_s3",
+                  "size": 10
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "crater",
+          "snap": {
+            "worldW": 2200,
+            "worldH": 1200,
+            "rx": [],
+            "atm": {
+              "O2": 16,
+              "CO2": 3
+            },
+            "objects": [
+              {
+                "type": "floor",
+                "opts": {
+                  "x": -60,
+                  "y": 1040,
+                  "w": 478,
+                  "h": 190,
+                  "id": "v_floor"
+                }
+              },
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 662,
+                  "y": 1040,
+                  "w": 1598,
+                  "h": 190,
+                  "id": "v_floorb"
+                }
+              },
+              {
+                "type": "block",
+                "opts": {
+                  "x": 380,
+                  "y": 980,
+                  "substance": "MnO2",
+                  "w": 30,
+                  "h": 30,
+                  "pushable": true,
+                  "id": "v_mno2"
+                }
+              },
+              {
+                "type": "pool",
+                "opts": {
+                  "x": 430,
+                  "y": 1040,
+                  "w": 220,
+                  "h": 50,
+                  "volume": 170,
+                  "solutes": {
+                    "H2O2": 90
+                  },
+                  "gasHeight": 260,
+                  "id": "v_h2o2"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 300,
+                  "y": 995,
+                  "text": "「催化」：MnO₂ 推入双氧水池：\n2H₂O₂ → 2H₂O + O₂↑（吐泡泡！）\n催化剂自己一根毛都不掉",
+                  "id": "v_s0"
+                }
+              },
+              {
+                "type": "block",
+                "opts": {
+                  "x": 760,
+                  "y": 980,
+                  "substance": "C",
+                  "w": 30,
+                  "h": 30,
+                  "pushable": true,
+                  "id": "v_c"
+                }
+              },
+              {
+                "type": "lamp",
+                "opts": {
+                  "x": 800,
+                  "y": 1020,
+                  "autoOn": true,
+                  "id": "v_burnlamp"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 700,
+                  "y": 985,
+                  "text": "「燃烧」：把 C 放上灯：\nC + O₂ → CO₂——氧气就是草原空气里那个（闭环）",
+                  "id": "v_s1"
+                }
+              },
+              {
+                "type": "switch",
+                "opts": {
+                  "x": 1120,
+                  "y": 1018,
+                  "mode": "pressure",
+                  "id": "v_hot_sw",
+                  "igniteId": "v_hot",
+                  "extinguishId": "v_hot"
+                }
+              },
+              {
+                "type": "blastlamp",
+                "opts": {
+                  "x": 1220,
+                  "y": 1030,
+                  "w": 140,
+                  "h": 10,
+                  "autoOn": false,
+                  "id": "v_hot"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 1100,
+                  "y": 985,
+                  "text": "「喷灯」：高温版酒精灯。\n站在旁边开关上点火：CuO + C → Cu——敢不敢把铜收藏了",
+                  "id": "v_s2"
+                }
+              },
+              {
+                "type": "floor",
+                "opts": {
+                  "x": 1500,
+                  "y": 960,
+                  "w": 260,
+                  "h": 16,
+                  "id": "v_bridge"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 1450,
+                  "y": 920,
+                  "text": "跳过熔岩裂缝——掉下去的话，检查点会把你捞回来",
+                  "id": "v_s3"
+                }
+              },
+              {
+                "type": "switch",
+                "opts": {
+                  "x": 1900,
+                  "y": 1018,
+                  "mode": "pressure",
+                  "id": "v_win_sw"
+                }
+              },
+              {
+                "type": "door",
+                "opts": {
+                  "x": 1990,
+                  "y": 960,
+                  "w": 70,
+                  "h": 80,
+                  "id": "v_gate"
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 1880,
+                  "y": 980,
+                  "text": "毕业考：站上开关 → 门开 → 走进光里 = 通关！",
+                  "id": "v_s4"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "current": "plain",
+      "start": "plain"
+    },
+    "showtime": {},
+    "checkpoint": {}
+  },
+  "objects": [
+    {
+      "type": "floor",
+      "opts": {
+        "x": -260,
+        "y": 700,
+        "w": 2820,
+        "h": 130,
+        "id": "p_floor"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 300,
+        "y": 640,
+        "w": 220,
+        "h": 16,
+        "id": "p_hill"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 700,
+        "y": 550,
+        "w": 260,
+        "h": 16,
+        "id": "p_rock"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 1260,
+        "y": 620,
+        "w": 120,
+        "h": 16,
+        "id": "p_gap1a"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 1580,
+        "y": 620,
+        "w": 120,
+        "h": 16,
+        "id": "p_gap1b"
+      }
+    },
+    {
+      "type": "player",
+      "opts": {
+        "x": 140,
+        "y": 600,
+        "substance": "NaOH",
+        "mass": 30,
+        "id": "player1"
+      }
+    },
+    {
+      "type": "sign",
+      "opts": {
+        "x": 260,
+        "y": 690,
+        "text": "A / D 移动 · 空格跳跃 · R 重开\n先往右走走，感受一下脚步",
+        "id": "p_s0"
+      }
+    },
+    {
+      "type": "sign",
+      "opts": {
+        "x": 260,
+        "y": 640,
+        "text": "按 V \"灵魂出窍\"看整片草原（再按 V 回来）",
+        "id": "p_s0b",
+        "size": 10
+      }
+    },
+    {
+      "type": "sign",
+      "opts": {
+        "x": 60,
+        "y": 660,
+        "text": "💀 死了会回到这里——这是本关的「检查点」",
+        "id": "p_s0c",
+        "size": 11
+      }
+    },
+    {
+      "type": "sign",
+      "opts": {
+        "x": 310,
+        "y": 560,
+        "text": "踩上石头看风景——你是要\"跋山涉水\"的化学物质！",
+        "id": "p_s1",
+        "size": 11
+      }
+    },
+    {
+      "type": "sign",
+      "opts": {
+        "x": 1930,
+        "y": 660,
+        "text": "这是「开关」：\n①踩上就开——现在这个（站上去试试）\n②需要化学物质才能开（世界 2 见）",
+        "id": "p_sw"
+      }
+    },
+    {
+      "type": "switch",
+      "opts": {
+        "x": 2000,
+        "y": 678,
+        "mode": "pressure",
+        "deleteId": "p_wall",
+        "id": "p_gate_sw"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 2124,
+        "y": 460,
+        "w": 16,
+        "h": 260,
+        "id": "p_wall"
+      }
+    },
+    {
+      "type": "sign",
+      "opts": {
+        "x": 2080,
+        "y": 620,
+        "text": "开关开了 = 墙消失 = 过去",
+        "id": "p_gate_s",
+        "size": 10
+      }
+    }
+  ]
+}
