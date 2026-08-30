@@ -192,13 +192,17 @@ export class Multiscene {
       const carriedObj = from?.scene?.player ?? null;
       if (carriedObj) {
         // 玩家对象整体搬移：物品栏/身上物质/血量全保留。
-        // 落点优先级：显式 spawn（剧本 goto/开关传送）→ 目标场景**摆放的玩家位置**
-        // （用户在靠后场景摆玩家 = 设传送落点，切换就落到那）→ 原坐标不动。
-        const target = e.scene.player;
+        // ★ 落点约定：目标场景**摆放的玩家 = 传送落点**（摆半空就从半空开始下落；
+        //   含延迟出现/初始隐藏的玩家——摆了位置就当落点，与静止/延迟无关），
+        //   没摆玩家才用显式 spawn（剧本 goto/开关切场景传入）。
+        const tScene = e.scene;
+        const target = tScene.player
+          ?? tScene.objects.find((o) => o.isPlayerObj)
+          ?? tScene.hidden.find((o) => o.isPlayerObj);
         let spawn = opts.spawn;
-        if (!spawn && target && target !== carriedObj) spawn = { x: target.x, y: target.y };
-        if (target && target !== carriedObj) e.scene.removeObject(target); // 替换占位玩家
-        if (e.scene.byId[carriedObj.id] && e.scene.byId[carriedObj.id] !== carriedObj) {
+        if (target && target !== carriedObj) spawn = { x: target.x, y: target.y };
+        if (target && target !== carriedObj) tScene.removeObject(target); // 替换占位玩家
+        if (tScene.byId[carriedObj.id] && tScene.byId[carriedObj.id] !== carriedObj) {
           carriedObj.id = `${carriedObj.id}_carry${this.switches}`;
         }
         from.scene.removeObject(carriedObj);
@@ -207,7 +211,7 @@ export class Multiscene {
           carriedObj.y = spawn.y;
           if (carriedObj.vel) { carriedObj.vel.x = 0; carriedObj.vel.y = 0; }
         }
-        e.scene.addObject(carriedObj);
+        tScene.addObject(carriedObj);
       }
     } else if (opts.spawn && e.scene.player) {
       e.scene.player.x = opts.spawn.x;

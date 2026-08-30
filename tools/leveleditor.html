@@ -116,10 +116,6 @@
   #side ::-webkit-scrollbar-thumb:hover { background: rgba(140,160,220,.45); }
   #side ::-webkit-scrollbar-track { background: transparent; }
   #side { scrollbar-width: thin; scrollbar-color: rgba(120,140,200,.28) transparent; }
-  /* 面板底部拖拽手柄：按住上下拖 = 调面板高度；双击 = 还原默认 */
-  .rsz-h { height: 7px; cursor: ns-resize; flex-shrink: 0; position: relative; }
-  .rsz-h::after { content: ''; position: absolute; left: 32%; right: 32%; top: 3px; height: 2px; background: rgba(120,140,200,.25); border-radius: 2px; }
-  .rsz-h:hover::after, .rsz-h:active::after { background: rgba(150,170,230,.75); height: 3px; top: 2px; }
   #props { flex: 1; padding: 10px; overflow-y: auto; }
   #props.pc.collapsed { flex: 0 0 auto; } /* 折叠后不硬撑剩余空间 */
   #props h3 { color: var(--gold); font-size: 13px; margin-bottom: 8px; }
@@ -348,37 +344,6 @@ const PLUGIN_CACHE_KEY = 'chezzle-plugins-cache-v1';
 /** HTML 转义（插件名/描述进 title/列表前消毒） */
 function escHtml(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-// ---- 面板拖拽调高度（内置/插件面板通用；#side 事件委托） ----
-function attachPanelResize(p) {
-  if (!p || p.querySelector('.rsz-h') || p.id === 'plShelf') return p; // shelf 自身不挂（子面板都在里面）
-  const h = document.createElement('div');
-  h.className = 'rsz-h';
-  h.title = '按住拖动调面板高度 · 双击还原默认';
-  p.appendChild(h);
-  h.addEventListener('dblclick', () => { p.style.height = ''; p.style.maxHeight = ''; });
-  return p;
-}
-function initPanelResize() {
-  const side = $('side');
-  side.addEventListener('mousedown', (e) => {
-    const h = e.target.closest('.rsz-h');
-    if (!h || !side.contains(h)) return;
-    e.preventDefault();
-    const panel = h.parentElement;
-    const startY = e.clientY;
-    const startH = panel.getBoundingClientRect().height;
-    const move = (ev) => {
-      const nh = Math.max(70, startH + (ev.clientY - startY));
-      panel.style.height = nh + 'px';
-      panel.style.maxHeight = nh + 'px'; // 覆盖百分比上限（拖多高给多高）
-    };
-    const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
-    document.addEventListener('mousemove', move);
-    document.addEventListener('mouseup', up);
-  });
-  for (const p of side.querySelectorAll('.pc')) attachPanelResize(p);
 }
 
 // ---- 插件设置区（插件面板统一收纳；开合状态记住） ----
@@ -1152,7 +1117,6 @@ function makeEditorApi(reg) {
         $('plShelfBody').appendChild(d);
         refreshShelfEmpty();
       }
-      attachPanelResize(d); // 面板也可拖拽调高度
       doms.push(d);
       return d;
     },
@@ -1178,6 +1142,14 @@ function makeEditorApi(reg) {
      *  横幅剧本/检查点 spawns/演出剧本等"编辑器里配、关卡里用"的数据都走这里。 */
     pluginCfg: (fn) => {
       if (typeof fn === 'function') editorPluginCfgs.set(reg, fn);
+    },
+    /** 画布框选回调：下一次在画布上拖出矩形（世界坐标）后回调 {x,y,w,h}（太小回调 null）。
+     *  演出剧本 pos 触发器的「🎯 画布框选」用它填 x/y/w/h。Esc 取消。 */
+    pickRect: (cb) => {
+      pickRectCb = typeof cb === 'function' ? cb : null;
+      pickRectDrag = null;
+      const s = $('status');
+      if (s) s.textContent = '🎯 在画布上拖出触发区域（松开确定 · Esc 取消）';
     },
     /** 试玩接管：mode 'all'（整关，如多场景）或 'current'（仅当前视图）。fn 返回 stop 函数 */
     onPlay: (fn, mode = 'all') => {
@@ -1599,6 +1571,18 @@ function renderEdit() {
     ctx.font = `bold ${12 / view.scale}px "Segoe UI","Microsoft YaHei",sans-serif`;
     ctx.fillText(`玩家位置范围（拖拽中） ${Math.round(r.w)}×${Math.round(r.h)}px`, r.x + 6, r.y - 6 / view.scale);
   }
+  // 插件框选（演出剧本 pos 触发区域等：pickRect 回调）
+  if (pickRectDrag) {
+    const r = pickRectDrag;
+    ctx.fillStyle = 'rgba(199,139,255,0.16)';
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    ctx.strokeStyle = '#c78bff'; ctx.lineWidth = 1.8; ctx.setLineDash([8, 4]);
+    ctx.strokeRect(r.x, r.y, r.w, r.h);
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#c78bff';
+    ctx.font = `bold ${12 / view.scale}px "Segoe UI","Microsoft YaHei",sans-serif`;
+    ctx.fillText(`触发区域（拖拽中） ${Math.round(r.w)}×${Math.round(r.h)}px`, r.x + 6, r.y - 6 / view.scale);
+  }
   // 缩放手柄（单选且可缩放类型：四角 + 四边中点，恒定屏幕尺寸）
   if (state.sel.size === 1 && state.selected != null && state.placed[state.selected]) {
     const p = state.placed[state.selected];
@@ -1663,6 +1647,13 @@ canvas.addEventListener('mousedown', (e) => {
   }
   const sp = canvasPos(e);
   const w = screenToWorld(sp.x, sp.y);
+  // 插件框选模式（演出剧本 pos 触发区域）：先于一切编辑交互
+  if (pickRectCb) {
+    drag = { mode: 'pickrect', sx: sp.x, sy: sp.y, wx: w.x, wy: w.y };
+    pickRectDrag = { x: w.x, y: w.y, w: 0, h: 0 };
+    renderEdit();
+    return;
+  }
   // 提示"玩家位置范围"框选模式：先于一切编辑交互（提示条件编辑里的 🎯 框选）
   if (tipRectPick) {
     drag = { mode: 'tiprect', sx: sp.x, sy: sp.y, wx: w.x, wy: w.y };
@@ -1769,6 +1760,11 @@ window.addEventListener('mousemove', (e) => {
     const w2 = screenToWorld(sp.x, sp.y);
     const x = Math.min(drag.wx, w2.x), y = Math.min(drag.wy, w2.y);
     tipRectDrag = { x, y, w: Math.max(10, Math.abs(w2.x - drag.wx)), h: Math.max(10, Math.abs(w2.y - drag.wy)) };
+  } else if (drag.mode === 'pickrect') {
+    // 实时更新插件框选矩形（演出剧本 pos 区域等；世界坐标）
+    const w2 = screenToWorld(sp.x, sp.y);
+    const x = Math.min(drag.wx, w2.x), y = Math.min(drag.wy, w2.y);
+    pickRectDrag = { x, y, w: Math.max(10, Math.abs(w2.x - drag.wx)), h: Math.max(10, Math.abs(w2.y - drag.wy)) };
   } else if (drag.mode === 'rect' && drag.type) {
     // 实时更新矩形：只在按下时开始、松开时确定
   }
@@ -1830,6 +1826,20 @@ window.addEventListener('mouseup', (e) => {
     }
     tipRectPick = null;
     tipRectDrag = null;
+  } else if (drag.mode === 'pickrect') {
+    // 插件框选结算（演出剧本 pos 区域）：回调 {x,y,w,h}；太小则回调 null（调用方恢复弹窗）
+    const cb = pickRectCb;
+    pickRectCb = null;
+    const r = pickRectDrag;
+    pickRectDrag = null;
+    renderEdit();
+    if (r && r.w > 5 && r.h > 5 && cb) {
+      $('status').textContent = `已框选触发区域：(${Math.round(r.x)},${Math.round(r.y)}) ${Math.round(r.w)}×${Math.round(r.h)}px`;
+      cb({ x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h) });
+    } else if (cb) {
+      $('status').textContent = '范围太小，未框选';
+      cb(null);
+    }
   } else if (drag.mode === 'move') {
     pushUndo();
     saveState();
@@ -1876,6 +1886,10 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.key === 'Escape' && (state.sel.size > 0 || state.selected != null)) {
     state.sel.clear(); state.selected = null; renderEdit(); refreshProps();
+  }
+  if (e.key === 'Escape' && pickRectCb) {
+    const cb = pickRectCb; pickRectCb = null; pickRectDrag = null; renderEdit();
+    if (cb) { $('status').textContent = '已取消框选'; cb(null); } // 调用方恢复弹窗
   }
   if (e.ctrlKey && (e.key === 'z' || e.key === 'Z')) { undo(); }
   if (e.ctrlKey && (e.key === 'a' || e.key === 'A')) {
@@ -2916,6 +2930,8 @@ $('rxAdd').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preve
 let openTip = -1;
 let tipRectPick = null; // { ti, ci }：正在"画布框选玩家位置范围"的目标条件
 let tipRectDrag = null; // 框选中的矩形（世界坐标，renderEdit 绘制）
+let pickRectCb = null;  // 插件框选（pickRect API）：下一次画布拖出区域后回调 {x,y,w,h}；null=取消
+let pickRectDrag = null; // 插件框选中矩形（世界坐标，renderEdit 绘制）
 const TIP_OPS = [['==', '等于'], ['>', '大于'], ['<', '小于'], ['>=', '大于等于'], ['<=', '小于等于']];
 const TIP_TYPES = [['pos', '玩家位置范围'], ['inv', '物品栏 有/没有某物'], ['seq', '提示序号比较']];
 
@@ -3108,7 +3124,6 @@ document.querySelectorAll('.pc-head').forEach((h) => {
   refreshShelfEmpty();
 }
 window.addEventListener('resize', resizeCanvas);
-initPanelResize(); // 面板拖拽调高度（手柄 + 事件委托）
 
 buildPalette();
 buildSubstanceList();

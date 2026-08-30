@@ -143,10 +143,23 @@ Chezzle.Plugin.register('chapters', {
     } else if (!st.scenes.some((s) => s.id === st.current)) {
       st.current = st.scenes[0].id;
     }
-    // ★ 初始场景缺省 = 第一个
+    // ★★ 初始场景缺省 = 第一个
     if (!st.start || !st.scenes.some((s) => s.id === st.start)) st.start = st.scenes[0].id;
     refresh();
     ed.onStateLoaded(() => refresh());
+
+    // 场景入口点（开关「切到场景」的落点兜底）：摆放玩家 → 最宽地板中心上方 → 世界中央。
+    // 旧版用世界正中央——场景中央常常无地板，玩家直接掉虚空（用户反馈"传送到虚空"）。
+    const entryPoint = (t) => {
+      const pp = (t.snap.objects ?? []).find((o) => o.type === 'player');
+      if (pp) return { x: Math.round(pp.opts.x ?? 0), y: Math.round((pp.opts.y ?? 0) + 10) };
+      const floors = (t.snap.objects ?? [])
+        .filter((o) => o.type === 'floor' && (o.opts?.w ?? 0) > 60)
+        .sort((a, b) => (b.opts?.w ?? 0) - (a.opts?.w ?? 0));
+      const f = floors[0];
+      if (f) return { x: Math.round((f.opts.x ?? 0) + (f.opts.w ?? 0) / 2), y: Math.round((f.opts.y ?? 0) - 40) };
+      return { x: Math.round((t.snap.worldW ?? 3000) / 2), y: Math.round((t.snap.worldH ?? 800) / 2) };
+    };
 
     // ---- 试玩接管（current=仅当前场景；all=整关从初始场景开始；单场景不接管） ----
     function buildAndPlay(scenesGo, startId) {
@@ -198,15 +211,15 @@ Chezzle.Plugin.register('chapters', {
           if (Number.isFinite(mass) && mass > 0) sc.atmosphere.setGas(gid, mass);
         }
       }
-      // 开关「切到场景」→ switchTo（目标场景玩家位置=入口）
+      // 开关「切到场景」→ switchTo（落点 = 目标场景入口点：摆放玩家/地板中心）
       for (const s of scenesGo) {
         for (const p of ed.objectsFrom(s.snap)) {
           if (p.type !== 'switch' || !p.obj.sceneTo || !p.obj.id) continue;
           const target = scenesGo.find((t) => t.id === p.obj.sceneTo);
           if (!target) continue;
-          let spawn = { x: Math.round((target.snap.worldW ?? 3000) / 2), y: Math.round((target.snap.worldH ?? 800) / 2) };
+          const spawn = entryPoint(target);
           const pp = (target.snap.objects ?? []).find((o) => o.type === 'player');
-          if (pp) spawn = { x: Math.round(pp.opts.x ?? 0), y: Math.round((pp.opts.y ?? 0) + 10) };
+          if (pp) spawn.y = Math.round(pp.opts.y ?? 0);
           M.byId(s.id, p.obj.id)?.onOpen(() => M.switchTo(target.id, { spawn }));
         }
       }
@@ -254,9 +267,7 @@ Chezzle.Plugin.register('chapters', {
           if (p.type !== 'switch' || !p.obj.sceneTo || !p.obj.id) continue;
           const target = scenes.find((t) => t.id === p.obj.sceneTo);
           if (!target) continue;
-          let spawn = { x: Math.round((target.snap.worldW ?? 3000) / 2), y: Math.round((target.snap.worldH ?? 800) / 2) };
-          const pp = (target.snap.objects ?? []).find((o) => o.type === 'player');
-          if (pp) spawn = { x: Math.round(pp.opts.x ?? 0), y: Math.round((pp.opts.y ?? 0) + 10) };
+          const spawn = entryPoint(target);
           lines.push(`// 🚪 ${s.id}.${p.obj.id} → ${target.id}`);
           lines.push(`M.byId(${q(s.id)}, ${q(p.obj.id)})?.onOpen(() => M.switchTo(${q(target.id)}, { spawn: { x: ${spawn.x}, y: ${spawn.y} } }));`);
         }

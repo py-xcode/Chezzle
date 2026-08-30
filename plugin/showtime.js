@@ -76,6 +76,18 @@ Chezzle.Plugin.register('showtime', {
         #shModal .sh-act .sh-act-title { color: #7fe0ff; font-size: 11px; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         #shModal .sh-foot { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
         #shModal .sh-note { color: #6a7a96; font-size: 11px; }
+        /* 双栏工作台：左=剧本列表，右=编辑表单 */
+        #shModal .sh-top { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
+        #shModal .sh-top h3 { margin: 0; }
+        #shModal .sh-top .sh-count { flex: 1; color: #6a7a96; font-size: 11px; }
+        #shModal .sh-main { display: flex; gap: 14px; min-height: 0; flex: 1; }
+        #shModal .sh-list-pane { width: 320px; flex-shrink: 0; overflow-y: auto; max-height: 74vh; border-right: 1px solid #232a55; padding-right: 8px; }
+        #shModal .sh-form-pane { flex: 1; min-width: 0; overflow-y: auto; max-height: 74vh; }
+        #shModal .sh-list-pane .sh-item { cursor: pointer; border: 1px solid transparent; border-radius: 4px; padding: 5px 6px; margin-bottom: 2px; }
+        #shModal .sh-list-pane .sh-item:hover { background: #12183c; }
+        #shModal .sh-list-pane .sh-item.on { background: #1d2a55; border-color: #3a6aa0; }
+        #shModal .sh-list-pane .sh-item .sh-main-txt { display: block; }
+        #shModal .sh-list-pane .sh-item .sh-sub { color: #6a7a96; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .sh-item { display: flex; gap: 4px; align-items: center; padding: 4px 2px; border-top: 1px solid var(--edge, #232a55); font-size: 11px; }
         .sh-item:first-child { border-top: none; }
         .sh-item .sh-i { color: #6a7a96; flex-shrink: 0; }
@@ -86,6 +98,13 @@ Chezzle.Plugin.register('showtime', {
       document.head.appendChild(css);
     }
 
+    // ---- 侧栏面板：一键打开「演出剧本书」（大弹窗双栏工作台） ----
+    const panel = ed.addPanel({
+      title: '🎬 演出剧本',
+      html: `<div style="color:#6a7a96;font-size:10px;margin-bottom:6px">一关的演出（开场横幅·开关喊话·区域传送·通关烟花）都在「剧本书」里编排</div>
+        <button class="btn" id="shOpen" style="width:100%">📖 打开演出剧本书</button>
+        <div style="color:#6a7a96;font-size:10px;margin-top:6px">当前 ${st.plays.length} 条 · 触发 × 动作（试玩/导出同款）</div>`,
+    });
     // ---- 数据来源：场景下拉（chapters 插件的场景列表）/ 物体 id（画布上的 id） ----
     const sceneIds = () => {
       const sel = document.getElementById('chSceneSel');
@@ -98,6 +117,7 @@ Chezzle.Plugin.register('showtime', {
       return [...new Set(ids)];
     };
     const KIND = { banner: '横幅', shake: '震屏', fireworks: '彩色烟花', flash: '白光闪', goto: '切场景' };
+    // 数据摘要函数（列表行/悬停提示共用）
     const trigText = (p) => {
       if (p.on === 'enter') return '进入场景';
       if (p.on === 'open') return `开关「${p.ref ?? '?'}」开启`;
@@ -114,85 +134,44 @@ Chezzle.Plugin.register('showtime', {
       if (a.kind === 'flash') return '白光';
       return a.kind ?? '?';
     }).join(' · ') || '（无动作）';
+    let curSel = -1; // 弹窗列表当前选中（高亮）
+    let renderList = () => {}; // modal 块内赋值（首建时）；重载后重建
 
-    // ---- 侧栏面板：剧本列表（行 = 一条剧本） ----
-    const panel = ed.addPanel({
-      title: '🎬 演出剧本',
-      html: `<div style="color:#6a7a96;font-size:10px;margin-bottom:6px">触发器 × 动作（试玩/导出同款）。点行编辑：可增删、调顺序、改参数。</div>
-        <div id="shList"></div>
-        <button class="btn" id="shAdd" style="width:100%;margin-top:6px">＋ 添加剧本</button>`,
-    });
-    const listBox = panel.querySelector('#shList');
-    function renderList() {
-      if (!st.plays.length) { listBox.innerHTML = '<div style="color:#6a7a96;font-size:11px">（还没有剧本——点下面「＋ 添加剧本」）</div>'; return; }
-      listBox.innerHTML = st.plays.map((p, i) => `
-        <div class="sh-item" title="场景 ${esc(p.scene ?? '（所有场景）')} · ${esc(trigText(p))}&#10;${esc(sumText(p))}">
-          <span class="sh-i">#${String(i + 1).padStart(2, '0')}</span>
-          <span class="sh-t">${esc(p.scene ?? '—')}｜${esc(trigText(p))}｜${esc(sumText(p))}</span>
-          <button data-e="${i}" title="编辑该条剧本">✎</button>
-          <button data-up="${i}" title="上移">↑</button>
-          <button data-dn="${i}" title="下移">↓</button>
-          <button data-del="${i}" class="sh-del" title="删除（再点一次确认）">✕</button>
-        </div>`).join('');
-    }
-    let armedDel = -1;
-    panel.addEventListener('click', (e) => {
-      const b = e.target.closest('button');
-      if (!b) return;
-      if (b.dataset.e !== undefined) return openEdit(+b.dataset.e);
-      if (b.dataset.up !== undefined) return movePlay(+b.dataset.up, -1);
-      if (b.dataset.dn !== undefined) return movePlay(+b.dataset.dn, 1);
-      if (b.dataset.del !== undefined) {
-        const i = +b.dataset.del;
-        if (armedDel === i) {
-          armedDel = -1;
-          st.plays.splice(i, 1);
-          ed.save(); renderList();
-          say('已删除剧本 #' + (i + 1) + '（还剩 ' + st.plays.length + ' 条）');
-        } else {
-          armedDel = i;
-          setTimeout(() => { if (armedDel === i) armedDel = -1; }, 3000);
-          say('再点一次 ✕ 确认删除剧本 #' + (i + 1));
-        }
-      }
-    });
-    function movePlay(i, d) {
-      const j = i + d;
-      if (j < 0 || j >= st.plays.length) return;
-      const [p] = st.plays.splice(i, 1);
-      st.plays.splice(j, 0, p);
-      ed.save(); renderList();
-    }
-    panel.querySelector('#shAdd').onclick = () => openEdit(-1);
-
-    // ---- 编辑弹层（新建 i=-1 / 编辑第 i 条） ----
+    // ---- 编辑弹窗（大空间双栏：左=全部剧本列表，右=编辑表单）----
     let modal = document.getElementById('shModal');
     if (!modal) {
       modal = document.createElement('div');
       modal.id = 'shModal';
       modal.innerHTML = `<div class="sh-box">
-        <h3 id="shTitle">🎬 编辑剧本</h3>
-        <div class="sh-scroll">
-          <div class="sh-row"><label>场景</label>
-            <input id="shScene" list="shSceneList" style="width:110px" placeholder="如 plain（留空=所有场景）">
-            <datalist id="shSceneList"></datalist>
-            <span class="sh-note">场景名来自章节插件顶部「场景」下拉</span></div>
-          <div class="sh-row"><label>触发</label><select id="shOn">
-            <option value="enter">进入场景(enter)</option>
-            <option value="open">开关开启(open)</option>
-            <option value="pos">走到区域(pos)</option>
-            <option value="win">通关(win)</option>
-            <option value="at">时间到点(at)</option>
-          </select><span id="shCond"></span></div>
-          <div class="sh-note">触发后播一次（相同触发不重复）；条目之间互不影响。重复触发的场景用「时间到点(at)」排秒数。</div>
-          <div id="shActs"></div>
-          <button class="btn" id="shAddAct" style="margin-top:4px">＋ 添加动作</button>
-          <div class="sh-note" style="margin-top:6px">动作：横幅=大屏幕字幕 · 震屏=抖一下相机 · 彩色烟花=特效爆炸串烧 · 白光闪=提醒 · 切场景=换世界（回头路/传送门用）</div>
-        </div>
-        <div class="sh-foot">
-          <button class="btn primary" id="shSave">💾 保存</button>
+        <div class="sh-top">
+          <h3 id="shTitle">🎬 演出剧本书</h3>
+          <span class="sh-count" id="shCount"></span>
+          <button class="btn" id="shAdd">＋ 新剧本</button>
           <button class="btn" id="shCancel">关闭 (Esc)</button>
-          <span class="sh-note" id="shMsg"></span>
+        </div>
+        <div class="sh-main">
+          <div class="sh-list-pane"><div id="shList"></div></div>
+          <div class="sh-form-pane">
+            <div class="sh-row"><label>场景</label>
+              <input id="shScene" list="shSceneList" style="width:130px" placeholder="如 plain（留空=所有场景）">
+              <datalist id="shSceneList"></datalist>
+              <span class="sh-note">场景名来自章节插件顶部「场景」下拉</span></div>
+            <div class="sh-row"><label>触发</label><select id="shOn">
+              <option value="enter">进入场景(enter)</option>
+              <option value="open">开关开启(open)</option>
+              <option value="pos">走到区域(pos)</option>
+              <option value="win">通关(win)</option>
+              <option value="at">时间到点(at)</option>
+            </select><span id="shCond"></span></div>
+            <div class="sh-note">触发后播一次（相同触发不重复）。「走到区域」配合「切场景」= 指定位置传送（需开关可选：开关有效开启才触发）。</div>
+            <div id="shActs"></div>
+            <button class="btn" id="shAddAct" style="margin-top:4px">＋ 添加动作</button>
+            <div class="sh-note" style="margin-top:6px">动作：横幅=大屏幕字幕 · 震屏=抖一下相机 · 彩色烟花=特效爆炸串烧 · 白光闪=提醒 · 切场景=换世界（回头路/传送门用）</div>
+            <div class="sh-foot">
+              <button class="btn primary" id="shSave">💾 保存</button>
+              <span class="sh-note" id="shMsg"></span>
+            </div>
+          </div>
         </div>
       </div>`;
       document.body.appendChild(modal);
@@ -224,6 +203,7 @@ Chezzle.Plugin.register('showtime', {
           <label>y</label><input type="number" class="num60" id="shPy" value="${p.y ?? ''}">
           <label>宽</label><input type="number" class="num60" id="shPw" value="${p.w ?? ''}">
           <label>高</label><input type="number" class="num60" id="shPh" value="${p.h ?? ''}">
+          <button class="sh-pick" style="background:#2a3060;color:#ffd76a;border:1px solid #3a4178;border-radius:3px;cursor:pointer;font-size:10px;padding:2px 7px" title="在画布上框出触发区域（自动填入 x/y/w/h）">🎯 画布框选</button>
           <label>需开关</label><input id="shReq" list="shObjList" style="width:100px" placeholder="留空=无需" value="${esc(p.require ?? '')}">`;
         else if (on === 'at') condBox.innerHTML = `<label>T+</label><input type="number" class="num60" id="shAt" step="0.1" value="${p.at ?? 0.5}"><label>秒</label>`;
         else condBox.innerHTML = `<span style="color:#6a7a96;font-size:10px">无需条件</span>`;
@@ -314,10 +294,81 @@ Chezzle.Plugin.register('showtime', {
       };
       // 保存/编辑数据
       let currentPlay = null; // 编辑中的 play（条件区切换时暂存用）
+      // ---- 左列表：全剧本（点选编辑 / ↑↓排序 / ✕删除）+ 顶栏入口 ----
+      const listBox = modal.querySelector('#shList');
+      const countBox = modal.querySelector('#shCount');
+      renderList = () => {
+        countBox.textContent = `（${st.plays.length} 条）`;
+        if (!st.plays.length) { listBox.innerHTML = '<div style="color:#6a7a96;font-size:11px;padding:8px 4px">（还没有剧本——点右上「＋ 新剧本」）</div>'; return; }
+        listBox.innerHTML = st.plays.map((p, i) => `
+          <div class="sh-item${i === curSel ? ' on' : ''}" data-i="${i}" title="场景 ${esc(p.scene ?? '（所有场景）')} · ${esc(trigText(p))}&#10;${esc(sumText(p))}">
+            <span class="sh-i">#${String(i + 1).padStart(2, '0')}</span>
+            <span style="flex:1;min-width:0">
+              <span class="sh-t" style="display:block">${esc(p.scene ?? '—')}｜${esc(trigText(p))}</span>
+              <span class="sh-sub">${esc(sumText(p))}</span>
+            </span>
+            <button data-up="${i}" title="上移">↑</button>
+            <button data-dn="${i}" title="下移">↓</button>
+            <button data-del="${i}" class="sh-del" title="删除（再点一次确认）">✕</button>
+          </div>`).join('');
+      };
+      let armedDel = -1;
+      listBox.addEventListener('click', (e) => {
+        const row = e.target.closest('.sh-item');
+        if (!row) return;
+        const i = +row.dataset.i;
+        const b = e.target.closest('button');
+        if (b?.dataset.up !== undefined) return movePlay(i, -1);
+        if (b?.dataset.dn !== undefined) return movePlay(i, 1);
+        if (b?.dataset.del !== undefined) {
+          if (armedDel === i) {
+            armedDel = -1;
+            st.plays.splice(i, 1);
+            curSel = -1;
+            ed.save(); renderList();
+            openEdit(-1); // 删完切到"新剧本"表单
+            say('已删除剧本 #' + (i + 1) + '（还剩 ' + st.plays.length + ' 条）');
+          } else {
+            armedDel = i;
+            setTimeout(() => { if (armedDel === i) armedDel = -1; }, 3000);
+            say('再点一次 ✕ 确认删除剧本 #' + (i + 1));
+          }
+          return;
+        }
+        openEdit(i); // 点行 = 载入右侧表单
+      });
+      const movePlay = (i, d) => {
+        const j = i + d;
+        if (j < 0 || j >= st.plays.length) return;
+        const [p] = st.plays.splice(i, 1);
+        st.plays.splice(j, 0, p);
+        curSel = j;
+        ed.save(); renderList(); openEdit(j);
+      };
+      modal.querySelector('#shAdd').onclick = () => openEdit(-1);
+      const openBtn = document.getElementById('shOpen');
+      if (openBtn) openBtn.onclick = () => openEdit(st.plays.length ? 0 : -1);
+      // pos 触发器：🎯 画布框选（收起弹窗 → 画布拖区域 → 回填 x/y/w/h）
+      condBox.addEventListener('click', (e) => {
+        if (!e.target.closest('.sh-pick')) return;
+        Object.assign(currentPlay ?? {}, readCond());
+        if (typeof ed.pickRect !== 'function') return say('当前编辑器不支持画布框选');
+        modal.style.display = 'none';
+        ed.pickRect((r) => {
+          modal.style.display = 'flex';
+          if (r) {
+            Object.assign(currentPlay ?? {}, r);
+            fillCond(currentPlay ?? {});
+            say(`已框选触发区域：(${r.x},${r.y}) ${r.w}×${r.h}px`); // 保存后写入剧本
+          }
+        });
+      });
       const openEdit = (i) => {
+        curSel = i;
         currentPlay = i >= 0 ? { ...(st.plays[i] ?? {}) } : { on: 'enter', act: [] };
-        modal.querySelector('#shTitle').textContent = i >= 0 ? `🎬 编辑剧本 #${i + 1}（${esc(currentPlay.scene ?? '所有场景')} · ${trigText(currentPlay)}）` : '🎬 新增剧本';
+        modal.querySelector('#shTitle').textContent = i >= 0 ? `🎬 演出剧本书 · 编辑 #${i + 1}` : '🎬 演出剧本书 · 新剧本';
         modal.querySelector('#shMsg').textContent = '';
+        renderList(); // 左列表高亮滚动到当前
         modal.querySelector('#shScene').value = currentPlay.scene ?? '';
         const onSel2 = modal.querySelector('#shOn');
         onSel2.value = currentPlay.on ?? 'enter';

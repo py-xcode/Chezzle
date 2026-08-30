@@ -71,7 +71,7 @@ test('携带玩家落点是目标场景摆放玩家的位置', () => {
   assert.equal(Math.round(pa.y), 500, '落到目标场景摆放玩家 y');
 });
 
-test('显式 spawn 优先于目标场景摆放玩家', () => {
+test('摆放玩家位置优先于显式 spawn（用户约定：摆玩家=传送落点）', () => {
   const M = makeM();
   const a = reg(M, 'a', { playerAt: { x: 100, y: 600 } });
   reg(M, 'b', { playerAt: { x: 1500, y: 500 } });
@@ -79,8 +79,8 @@ test('显式 spawn 优先于目标场景摆放玩家', () => {
   M.scenes.get('a').active = true;
   M.current = 'a';
   M.switchTo('b', { spawn: { x: 900, y: 620 } });
-  assert.equal(Math.round(pa.x), 900, 'spawn 优先');
-  assert.equal(Math.round(pa.y), 620);
+  assert.equal(Math.round(pa.x), 1500, '摆放玩家优先于 spawn');
+  assert.equal(Math.round(pa.y), 500);
 });
 
 test('目标场景没摆玩家：位置保持原坐标（不漂移）', () => {

@@ -347,15 +347,27 @@ export class Scene {
     return obj;
   }
 
+  /** 从全部活动索引移除对象（保留 byId——reveal 依赖按 id 回捞）。
+   *  延迟出现/开关隐藏的物体必须**物理也不计算**：半空摆的玩家隐身时不能坠地。 */
+  _deindex(obj) {
+    const arrays = [this.objects, this.dynamics, this.statics, this.particles,
+      this.containers, this.lamps, this.doors, this.portals, this.hidden];
+    for (const arr of arrays) {
+      const i = arr.indexOf(obj);
+      if (i >= 0) arr.splice(i, 1);
+    }
+    if (this.player === obj) this.player = null; // 玩家被移除：清引用（跨场景搬运）
+  }
+
   /** 延迟出现：所有带 appearDelay(秒)>0 的物体开局隐藏，到时显现（带淡入）。
    *  编辑器试玩/导出与手写关卡脚本在启动前调用（appearDelay 是通用字段，物体上）。
-   *  与「初始隐藏(靠开关)」互不干扰：已 hidden 的物体不抢（开关负责它）。 */
+   *  与「初始隐藏(靠开关)」互不干扰：已 hidden 的物体不抢（开关负责它）。
+   *  ★ 隐藏 = 物理/逻辑完全冻结（半空玩家隐身期间不下落，到时在原地开始下落）。 */
   applyAppearDelays() {
     for (const o of this.objects.filter((x) => Number(x.appearDelay) > 0)) {
       const d = Number(o.appearDelay);
       o.hidden = true;
-      const i = this.objects.indexOf(o);
-      if (i >= 0) this.objects.splice(i, 1);
+      this._deindex(o);
       this.hidden.push(o);
       this.wait(d, () => this.reveal(o.id));
     }
@@ -365,16 +377,8 @@ export class Scene {
   removeObject(obj) {
     // 从所有索引里彻底移除（含 statics/containers/lamps/doors/portals）：
     // 否则删掉的墙虽不可见仍会挡人、删掉的灯仍在加热、删掉的门仍在判定。
-    const arrays = [
-      this.objects, this.dynamics, this.statics, this.particles,
-      this.containers, this.lamps, this.doors, this.portals, this.hidden,
-    ];
-    for (const arr of arrays) {
-      const i = arr.indexOf(obj);
-      if (i >= 0) arr.splice(i, 1);
-    }
+    this._deindex(obj);
     delete this.byId[obj.id];
-    if (this.player === obj) this.player = null; // 玩家被移除/搬走：清引用（跨场景搬运）
   }
 
   /** 拾取物品：连同其子体（烧杯杯壁）一起移出场景（背包携带时不在世界上） */
