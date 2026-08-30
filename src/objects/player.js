@@ -367,17 +367,17 @@ export class Player extends Obj {
     const amount = CFG.placeAmount;
     const res = this.inventory.place(amount);
     if (!res) return;
-    // 就近放置：脚下容器优先于附近药品池（池吸附）优先于酒精灯（灯只在脚下无容器时接物）
+    // 就近放置：脚下容器优先于附近固定台（池/开关/灯，吸附）优先于酒精灯兜底
     const lamp = scene.findLampNear(this);
     let container = scene.containerUnderFeet(this);
-    if (!container) container = scene.poolNearFeet(this); // ★ 池边放置自动吸附进池子
+    if (!container) container = scene.snapNearFeet(this); // ★ 池边/开关旁/灯边放置自动吸附
     const placeOrigin = { kind: 'place' };
     if (container) {
-      // 落点=玩家脚下/池边吸附点（反应/气泡围绕玩家放下的位置，不再默认容器中心）
+      // 落点=玩家脚下/台边吸附点（反应/气泡围绕玩家放下的位置，不再默认容器中心）
       const ir = typeof container.innerRect === 'function' ? container.innerRect() : null;
       if (ir) {
-        const px = container.isPool
-          ? Math.min(Math.max(this.x + this.w / 2, ir.x + 6), ir.x + ir.w - 6) // 吸附：投入池内（夹在盆壁之间）
+        const px = container.isPool || container.isSwitch || container.isLamp
+          ? Math.min(Math.max(this.x + this.w / 2, ir.x + 6), ir.x + ir.w - 6) // 吸附：投入台内（夹在边界之间）
           : this.x + this.w / 2;
         container.depositAt = { x: px, y: Math.max(ir.y + 4, this.bottom - 6) };
       }

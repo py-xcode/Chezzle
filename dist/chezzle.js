@@ -1206,9 +1206,13 @@ class Scene {
     for (const lamp of this.lamps) {
       if (!lamp.lit) continue;
       if (isLampItself) {
-        // 灯自身：点燃即视为受热 + 发光（作用于它承载的沉淀）
-        if (lamp.highTemp) highTemp = true;
-        else heat = true;
+        // 灯自身：只有**自己**点着才烤到自己承载的沉淀（他处灯点着并不烤
+        // 这盏灯——场景里多盏灯时未点灯上的 Cu(OH)2 不该分解，用户实测复现）
+        // 光照条件维持原语义（任何点着的灯都提供光，见光分解如 HClO）
+        if (lamp === obj) {
+          if (lamp.highTemp) highTemp = true;
+          else heat = true;
+        }
         light = true;
         continue;
       }
@@ -1334,19 +1338,20 @@ class Scene {
     return null;
   }
 
-  /** 池子吸附：玩家站在池子附近（水平贴身 ≤120px）放置 → 自动投进池子里。
-   *  只吸"药品池"（isPool）——烧杯/开关等小容器不吸（可携带，吸进去会乱）。 */
-  poolNearFeet(player) {
+  /** 放置吸附：玩家站在目标附近（水平贴身 ≤120px）放置 → 自动投进去。
+   *  吸附目标：药品池（isPool）、开关（isSwitch）、酒精灯/喷灯（isLamp，含宽炉条）。
+   *  烧杯/集气瓶等**可携带**容器不吸（吸进去会乱——用户定案只吸固定台子）。 */
+  snapNearFeet(player) {
     const cx = player.x + player.w / 2;
     const cy = player.y + player.h / 2;
     let best = null;
     let bestD = Infinity;
     for (const c of this.containers) {
-      if (!c.isPool) continue;
+      if (!(c.isPool || c.isSwitch || c.isLamp)) continue;
       const r = c.innerRect();
       const dx = cx < r.x ? r.x - cx : (cx > r.x + r.w ? cx - (r.x + r.w) : 0);
-      if (dx > 120) continue; // 水平贴身判定（"池子附近"放宽到 120px）
-      if (!(cy < r.y + r.h && player.bottom > r.y - 50)) continue; // 垂直同层（站在池子旁的地面上）
+      if (dx > 120) continue; // 水平贴身判定（"附近"放宽到 120px）
+      if (!(cy < r.y + r.h && player.bottom > r.y - 50)) continue; // 垂直同层（站在旁的地面上）
       if (dx < bestD) { bestD = dx; best = c; }
     }
     return best;
@@ -13142,17 +13147,17 @@ class Player extends Obj {
     const amount = CFG.placeAmount;
     const res = this.inventory.place(amount);
     if (!res) return;
-    // 就近放置：脚下容器优先于附近药品池（池吸附）优先于酒精灯（灯只在脚下无容器时接物）
+    // 就近放置：脚下容器优先于附近固定台（池/开关/灯，吸附）优先于酒精灯兜底
     const lamp = scene.findLampNear(this);
     let container = scene.containerUnderFeet(this);
-    if (!container) container = scene.poolNearFeet(this); // ★ 池边放置自动吸附进池子
+    if (!container) container = scene.snapNearFeet(this); // ★ 池边/开关旁/灯边放置自动吸附
     const placeOrigin = { kind: 'place' };
     if (container) {
-      // 落点=玩家脚下/池边吸附点（反应/气泡围绕玩家放下的位置，不再默认容器中心）
+      // 落点=玩家脚下/台边吸附点（反应/气泡围绕玩家放下的位置，不再默认容器中心）
       const ir = typeof container.innerRect === 'function' ? container.innerRect() : null;
       if (ir) {
-        const px = container.isPool
-          ? Math.min(Math.max(this.x + this.w / 2, ir.x + 6), ir.x + ir.w - 6) // 吸附：投入池内（夹在盆壁之间）
+        const px = container.isPool || container.isSwitch || container.isLamp
+          ? Math.min(Math.max(this.x + this.w / 2, ir.x + 6), ir.x + ir.w - 6) // 吸附：投入台内（夹在边界之间）
           : this.x + this.w / 2;
         container.depositAt = { x: px, y: Math.max(ir.y + 4, this.bottom - 6) };
       }
@@ -14025,7 +14030,10 @@ class Switch extends Container {
 
   /** 标注开启物质 + 剩余量（钥匙等子类复用） */
   renderLabel(ctx) {
-    if (this.opening) {
+    if (this.mode === 'pressure') {
+      // 压力开关：写明触发方式（与化学开关同位——化学开关标开启物，压力标"压力"）
+      glowText(ctx, '压力', this.x, this.y - 4, THEME.gold.text, 'bold 10px monospace', 4);
+    } else if (this.opening) {
       glowText(ctx, this.opening, this.x, this.y - 4, THEME.gold.text, 'bold 10px monospace', 4);
     } else if (this.mode === 'chemical') {
       // 化学开关没设开启物质：提示需要设置（否则永远不会开）

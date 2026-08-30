@@ -130,7 +130,10 @@ export class Switch extends Container {
 
   /** 标注开启物质 + 剩余量（钥匙等子类复用） */
   renderLabel(ctx) {
-    if (this.opening) {
+    if (this.mode === 'pressure') {
+      // 压力开关：写明触发方式（与化学开关同位——化学开关标开启物，压力标"压力"）
+      glowText(ctx, '压力', this.x, this.y - 4, THEME.gold.text, 'bold 10px monospace', 4);
+    } else if (this.opening) {
       glowText(ctx, this.opening, this.x, this.y - 4, THEME.gold.text, 'bold 10px monospace', 4);
     } else if (this.mode === 'chemical') {
       // 化学开关没设开启物质：提示需要设置（否则永远不会开）

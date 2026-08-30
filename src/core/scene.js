@@ -1011,9 +1011,13 @@ export class Scene {
     for (const lamp of this.lamps) {
       if (!lamp.lit) continue;
       if (isLampItself) {
-        // 灯自身：点燃即视为受热 + 发光（作用于它承载的沉淀）
-        if (lamp.highTemp) highTemp = true;
-        else heat = true;
+        // 灯自身：只有**自己**点着才烤到自己承载的沉淀（他处灯点着并不烤
+        // 这盏灯——场景里多盏灯时未点灯上的 Cu(OH)2 不该分解，用户实测复现）
+        // 光照条件维持原语义（任何点着的灯都提供光，见光分解如 HClO）
+        if (lamp === obj) {
+          if (lamp.highTemp) highTemp = true;
+          else heat = true;
+        }
         light = true;
         continue;
       }
@@ -1139,19 +1143,20 @@ export class Scene {
     return null;
   }
 
-  /** 池子吸附：玩家站在池子附近（水平贴身 ≤120px）放置 → 自动投进池子里。
-   *  只吸"药品池"（isPool）——烧杯/开关等小容器不吸（可携带，吸进去会乱）。 */
-  poolNearFeet(player) {
+  /** 放置吸附：玩家站在目标附近（水平贴身 ≤120px）放置 → 自动投进去。
+   *  吸附目标：药品池（isPool）、开关（isSwitch）、酒精灯/喷灯（isLamp，含宽炉条）。
+   *  烧杯/集气瓶等**可携带**容器不吸（吸进去会乱——用户定案只吸固定台子）。 */
+  snapNearFeet(player) {
     const cx = player.x + player.w / 2;
     const cy = player.y + player.h / 2;
     let best = null;
     let bestD = Infinity;
     for (const c of this.containers) {
-      if (!c.isPool) continue;
+      if (!(c.isPool || c.isSwitch || c.isLamp)) continue;
       const r = c.innerRect();
       const dx = cx < r.x ? r.x - cx : (cx > r.x + r.w ? cx - (r.x + r.w) : 0);
-      if (dx > 120) continue; // 水平贴身判定（"池子附近"放宽到 120px）
-      if (!(cy < r.y + r.h && player.bottom > r.y - 50)) continue; // 垂直同层（站在池子旁的地面上）
+      if (dx > 120) continue; // 水平贴身判定（"附近"放宽到 120px）
+      if (!(cy < r.y + r.h && player.bottom > r.y - 50)) continue; // 垂直同层（站在旁的地面上）
       if (dx < bestD) { bestD = dx; best = c; }
     }
     return best;
