@@ -198,4 +198,56 @@ Chezzle.Plugin.register('chapters', {
 | `docs/plugins/trampoline.js` | 组件 | 蹦床（编辑界面同游戏渲染；可拖拽定尺寸；落垫弹/垫上跳更高/走路不弹） |
 | `docs/plugins/liveSign.js` | 组件 | 显示牌（新物体，多行文字 + 边框色） |
 | `docs/plugins/chapters.js` | **编辑器插件** | 章节场景 v2：顶边栏管理、★初始场景、每场景大气、试玩接管、导出钩子 |
+| `docs/plugins/showtime.js` | **演出编排** | 声明式关卡演出：`enter/open/pos/win/at` 触发器 × 横幅/震屏/彩焰烟花/白光动作；🎬面板 JSON 编辑剧本 |
+| `docs/plugins/checkpoint.js` | **新手检查点** | 死亡自动回最近检查点+回满血+幽默横幅（支持多场景）；🗺面板配置 spawns/texts |
 | `docs/examples/chapter.html` | 关卡 | 多场景章节示例（手动脚本版） |
+
+## 9. 写插件注意点（每次都踩的坑）
+
+### ① 面板防挤爆：默认折叠
+`ed.addPanel` 默认**折叠**（收起，点头部展开；`{collapsed: false}` 可要求默认展开）。
+侧栏是 220px 的窄列——多个插件面板（横幅/剧本/检查点/组件）若全部展开会挤爆。
+面板内容有上限：`.edPanel .pc-body` 最高 46vh、超出内部滚动；**不要**在面板里放
+无限增长的列表/巨型 textarea（JSON 编辑框给 8~12 行即可，配合折叠）。
+
+### ② 运行时配置必须走 `ed.pluginCfg(fn)`
+插件在编辑器里配的数据（剧本/检查点/任何参数）**必须**经 `ed.pluginCfg(() => ({...}))`
+交给运行时——`activePlugins()`（试玩/导出注入）只会带 `{name, cfg}`，
+**你不声明，cfg 就是 `{}`，试玩/导出里什么都没有**（"JSON 版没横幅"就是这个坑：
+插件配置在编辑器里改了，但配置根本流不进关卡）。
+- `cfg` 必须是**纯数据**（JSON 可序列化；函数/对象引用会被导出丢失）；
+- 多场景需要 `M` 时用**惰性函数**：`cfg.M = () => M`（构造期引用 M 是 TDZ 错误）。
+
+### ③ 数据"清空"时真的清空
+编辑器「🗑 清空」会**就地清空 editorStates**（保留插件闭包里的 st 引用——
+所以**不要**在 `onStateLoaded` 钩子里偷偷把旧数据写回；清空后 st 是 `{}`，
+插件应重建默认值）。示例：chapters 清空后场景列表归零，需要手动新建。
+
+### ④ 不要抢关卡的 `onOpen` 接线
+`Switch._handlers.open` 是**单值**——插件的 `sw.onOpen(...)` 会覆盖关卡自己的接线
+（灯列/大门/通关）。监听开关开启请用**轮询**（`scene.wait` 循环读 `effectiveOpen` 边沿），
+参考 showtime 的 `open` 触发器实现。
+
+### ⑤ 物体 id 必须全局唯一
+`scene.byId` 是 `id → 物体` 的单键——路标和开关共用 `d_s1` 时 byId 会互相覆盖，
+插件/接线拿到错的物体（`sw.onOpen is not a function` 就是路标被当成开关）。
+编辑器同一场景内 id 冲突日志会提示；多场景之间才允许重复。
+
+### ⑥ 多行文本导出要转义
+`sign` 等文本物体在导出 DSL 里是 `'...'` 字符串——**换行必须转义成 `\n`**
+（编辑器 `sceneDsl` 已处理；你自己在 `onExport` 钩子里追加含文本的行时同样留意
+`\` → `\\`、`'` → `\'`）。
+
+### ⑦ 导出钩子兼容单/多场景
+多场景（chapters 接管）时导出脚本被**整体改写**为 Multiscene（没有 `const scene = L.build();`）。
+`onExport` 里如果要往脚本里插"依赖单场景"的行，先探测：
+`if (!lines.some((l) => l.includes('const scene = L.build();'))) return;`（tutorial.js 的做法）。
+
+### ⑧ 面板 DOM 用返回值，别全局 querySelector
+`ed.addPanel(...)` 返回面板元素——在里面 `panel.querySelector('#xxx')` 安全；
+全局 `document.querySelector('#xxx')` 会被多个面板/编辑器的重复 id 误伤。
+面板卸载时随 `editorDom` 自动移除（别再手动 remove）。
+
+### ⑨ 插件状态随存档持久化
+`ed.state` 自动随 `level.json` 存档/读档（`editorState.<reg>`），`ed.save()`/`ed.getState()` 读写。
+**不要**把不可序列化的东西（DOM/函数）塞进 state；读档后 `ed.onStateLoaded(() => 重渲染面板)`。

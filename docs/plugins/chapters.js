@@ -207,7 +207,8 @@ Chezzle.Plugin.register('chapters', {
         }
       }
       M.start(startId);
-      return () => { M.stop(); holder.remove(); };
+      if (typeof window !== 'undefined') window.__playM = M; // 调试/E2E 后门（试玩管理器）
+      return () => { M.stop(); holder.remove(); if (window.__playM === M) window.__playM = null; };
     }
 
     ed.onPlay(() => {

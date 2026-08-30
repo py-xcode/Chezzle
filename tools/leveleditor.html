@@ -979,8 +979,9 @@ function makeEditorApi(reg) {
     },
     addPanel: (o = {}) => {
       const d = document.createElement('div');
-      // 与内置面板（⚗/💬）同款折叠结构：点标题收起/展开，插件面板自动可折叠
-      d.className = 'edPanel pc';
+      // 与内置面板（⚗/💬）同款折叠结构：点标题收起/展开；**默认折叠**（collapsed !== false）——
+      // 插件面板默认收起，避免多个插件面板把右侧栏挤爆（用户要求"最好直接隐藏"）。
+      d.className = 'edPanel pc' + (o.collapsed !== false ? ' collapsed' : '');
       d.innerHTML = `<h3 class="pc-head">${o.title ?? ''} <small style="color:#6a7a96">插件</small><span class="pc-arrow">▾</span></h3><div class="pc-body edPanelBody">${o.html ?? ''}</div>`;
       d.querySelector('.pc-head').onclick = () => d.classList.toggle('collapsed');
       const side = $('side');
@@ -1873,8 +1874,14 @@ function dslLine(item) {
       return `.door(${pos}, ${R(o.w)}, ${R(o.h)}${fmtOpts(opts) ? ', ' + fmtOpts(opts) : ''})`;
     }
     case 'sign': {
+      // 文本要完整转义：反斜杠 → 换行(真实 \n) → 去 \r → 单引号（否则多行文案拆断字符串=导出语法错误）
+      const t = String(o.text ?? '')
+        .replace(/\\/g, '\\\\')
+        .replace(/\n/g, '\\n')
+        .replace(/\r/g, '')
+        .replace(/'/g, "\\'");
       const extra = fmtOpts({ hidden: HID, id: o.id });
-      return `.sign(${pos}, '${(o.text ?? '').replace(/'/g, "\\'")}'${extra ? `, ${extra}` : ''})`;
+      return `.sign(${pos}, '${t}'${extra ? `, ${extra}` : ''})`;
     }
     case 'portal': return `.portal(${pos}, ${fmtOpts({ w: o.w, h: o.h, color: o.color, uses: Number.isFinite(o.uses) ? o.uses : undefined, switchId: o.switchId || undefined, hidden: HID, id: o.id })})`;
     case 'gasdetector': return `.gasdetector(${pos}, ${fmtOpts({ gas: o.gas, threshold: o.threshold, opening: o.opening, and: o.and, deleteId: o.deleteId || undefined, showId: o.showId || undefined, igniteId: o.igniteId || undefined, extinguishId: o.extinguishId || undefined, openId: o.openId || undefined, hidden: HID, id: o.id })})`;
@@ -2536,7 +2543,7 @@ $('pluginFile').onchange = (e) => {
 };
 $('pluginList').addEventListener('change', onPluginPanelChange);
 $('pluginList').addEventListener('click', onPluginPanelClick);
-$('btnClear').onclick = () => { pushUndo(); state.placed = []; state.customReactions = []; state.plugins = []; state.tips = []; editorStates.clear(); openTip = -1; state.selected = null; state.sel = new Set(); syncIdSeq(); buildRenderScene(); renderEdit(); refreshProps(); renderRxPanel(); renderTipPanel(); renderPluginPanel(); refreshExport(); saveState(); for (const fns of editorStateLoadedHooks.values()) for (const fn of fns) { try { fn(); } catch (e) {} } /* 钩子可能从自身状态把数据灌回来（多场景插件）：清后补刀 + 重渲染 */ state.tips = []; state.customReactions = []; openTip = -1; renderTipPanel(); renderRxPanel(); refreshExport(); saveState(); };
+$('btnClear').onclick = () => { pushUndo(); state.placed = []; state.customReactions = []; state.plugins = []; state.tips = []; for (const v of editorStates.values()) for (const k of Object.keys(v)) delete v[k]; /* 就地清空（保插件闭包 st 引用——clear() 只清 Map，插件里还指着旧对象） */ openTip = -1; state.selected = null; state.sel = new Set(); syncIdSeq(); buildRenderScene(); renderEdit(); refreshProps(); renderRxPanel(); renderTipPanel(); renderPluginPanel(); refreshExport(); saveState(); for (const fns of editorStateLoadedHooks.values()) for (const fn of fns) { try { fn(); } catch (e) {} } /* 钩子可能从自身状态把数据灌回来（多场景插件）：清后补刀 + 重渲染 */ state.tips = []; state.customReactions = []; for (const v of editorStates.values()) for (const k of Object.keys(v)) delete v[k]; openTip = -1; renderTipPanel(); renderRxPanel(); refreshExport(); saveState(); };
 $('btnPlay').onclick = togglePlay;
 $('copyBtn').onclick = () => {
   const t = $('export');
