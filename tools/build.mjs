@@ -98,3 +98,27 @@ lines.push("})(typeof window !== 'undefined' ? window : globalThis);");
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
 fs.writeFileSync(OUT, lines.join('\n') + '\n');
 console.log(`built ${modules.size} modules → dist/chezzle.js (${fs.statSync(OUT).size} bytes)`);
+
+// ---- 缓存版本同步：所有引用 dist/chezzle.js 的 HTML 加 ?v=<时间戳> ----
+// 引擎每次构建产物变、URL 不变 → 浏览器拿旧 dist（用户"啥也没修"最常见根因）。
+// build 时自动改写引用：页面刷新即拿到新引擎。
+const VER = 'v' + Date.now().toString(36);
+const refFiles = [];
+const walkRefs = (dir) => {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (e.name.startsWith('.')) continue;
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) walkRefs(p);
+    else if (/\.html$/.test(e.name)) refFiles.push(p);
+  }
+};
+for (const d of ['levels', 'tools', 'docs/examples', 'docs']) if (fs.existsSync(path.join(SRC, '..', d))) walkRefs(path.join(SRC, '..', d));
+if (fs.existsSync(path.join(SRC, '..', 'index.html'))) refFiles.push(path.join(SRC, '..', 'index.html'));
+let patched = 0;
+for (const f of refFiles) {
+  let t = fs.readFileSync(f, 'utf8');
+  if (!/chezzle\.js(?:\?v=[A-Za-z0-9]+)?/.test(t)) continue;
+  const nt = t.replace(/chezzle\.js(?:\?v=[A-Za-z0-9]+)?/g, `chezzle.js?${VER}`);
+  if (nt !== t) { fs.writeFileSync(f, nt, 'utf8'); patched++; }
+}
+console.log(`dist 引用版本同步 → ${VER}（${patched} 个 HTML）`);

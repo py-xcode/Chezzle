@@ -229,7 +229,7 @@ Chezzle.Plugin.register('chapters', {
     }
 
     ed.onPlay(() => {
-      saveCurrent(); // 当前编辑内容先进快照（试玩/导出永远基于最新场景）
+      saveCurrent();
       const scenes = st.scenes.filter((s) => s.snap);
       if (scenes.length <= 1) return null; // 单场景：编辑器默认试玩
       const startId = st.scenes.some((s) => s.id === st.start) ? st.start : scenes[0].id;
@@ -238,9 +238,13 @@ Chezzle.Plugin.register('chapters', {
 
     ed.onPlay(() => {
       saveCurrent();
+      const scenes = st.scenes.filter((s) => s.snap);
+      if (scenes.length <= 1) return null;
       const s = st.scenes.find((x) => x.id === st.current);
       if (!s?.snap) return null;
-      return buildAndPlay([s], s.id);
+      // ★ 构建全部场景、从当前场景开始（= 快速跳到当前场景玩，跨场景剧本 goto 仍可用）——
+      //   只构建当前场景会让传送剧本报"场景不存在或未构建"（用户 canyon 传送点排查到的问题）
+      return buildAndPlay(scenes, s.id);
     }, 'current');
 
     // ---- 导出钩子：多场景 → Multiscene + 开关接线 + 大气预设 + 初始场景 ----

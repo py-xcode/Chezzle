@@ -1139,7 +1139,7 @@ export class Scene {
     return null;
   }
 
-  /** 池子吸附：玩家站在池子附近（水平贴身 ≤70px）放置 → 自动投进池子里。
+  /** 池子吸附：玩家站在池子附近（水平贴身 ≤120px）放置 → 自动投进池子里。
    *  只吸"药品池"（isPool）——烧杯/开关等小容器不吸（可携带，吸进去会乱）。 */
   poolNearFeet(player) {
     const cx = player.x + player.w / 2;
@@ -1150,7 +1150,7 @@ export class Scene {
       if (!c.isPool) continue;
       const r = c.innerRect();
       const dx = cx < r.x ? r.x - cx : (cx > r.x + r.w ? cx - (r.x + r.w) : 0);
-      if (dx > 70) continue; // 水平贴身判定
+      if (dx > 120) continue; // 水平贴身判定（"池子附近"放宽到 120px）
       if (!(cy < r.y + r.h && player.bottom > r.y - 50)) continue; // 垂直同层（站在池子旁的地面上）
       if (dx < bestD) { bestD = dx; best = c; }
     }
