@@ -266,31 +266,40 @@ Chezzle.Plugin.register('showtime', {
         const a = readAct(row);
         row.querySelector('[data-title]').textContent = a ? Object.entries(a).map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' ') : '';
       };
-      const renderAct = (row, a) => {
-        // 整行重建（用 a 填充）
-        const div = document.createElement('div');
-        div.innerHTML = actHTML(a);
-        row.parentNode.replaceChild(div.firstChild, row);
-        bindAct(div.firstChild);
-      };
-      const bindAct = (row) => {
-        row.querySelector('.sh-act-kind').addEventListener('change', () => {
-          renderAct(row, { kind: row.querySelector('.sh-act-kind').value });
-        });
-        row.querySelector('.sh-up').onclick = () => { const pa = row.parentNode; const pv = pa.children; const i = [...pv].indexOf(row); if (i > 0) pa.insertBefore(row, pv[i - 1]); refreshActTitles(); };
-        row.querySelector('.sh-dn').onclick = () => { const pa = row.parentNode; const pv = pa.children; const i = [...pv].indexOf(row); if (i < pv.length - 1) pa.insertBefore(row, pv[i + 2]); refreshActTitles(); };
-        row.querySelector('.sh-del').onclick = () => { row.remove(); refreshActTitles(); };
-        // 实时更新行标题（横幅文字等）
-        row.addEventListener('input', () => row.querySelector('[data-title]') && walkTitle(row));
-        walkTitle(row);
-      };
       const refreshActTitles = () => { for (const r of actsBox.querySelectorAll('.sh-act')) walkTitle(r); };
+      // ★ 动作行交互全部走容器事件委托（重建行后无需重新绑定——之前 bindAct 绑定链
+      //   断在中间：切换类型后新行的 change 监听失效 → 输入框不切换）
+      actsBox.addEventListener('change', (e) => {
+        if (!e.target.classList?.contains('sh-act-kind')) return;
+        const row = e.target.closest('.sh-act');
+        if (!row) return;
+        // 整行重建（换类型=清参数）
+        const div = document.createElement('div');
+        div.innerHTML = actHTML({ kind: e.target.value });
+        row.replaceWith(div.firstChild);
+        walkTitle(div.firstChild);
+      });
+      actsBox.addEventListener('click', (e) => {
+        const row = e.target.closest('.sh-act');
+        if (!row) return;
+        const b = e.target.closest('button');
+        if (!b) return;
+        const parent = row.parentNode;
+        const idx = [...parent.children].indexOf(row);
+        if (b.classList.contains('sh-up') && idx > 0) parent.insertBefore(row, parent.children[idx - 1]);
+        else if (b.classList.contains('sh-dn') && idx < parent.children.length - 1) parent.insertBefore(row, parent.children[idx + 2]);
+        else if (b.classList.contains('sh-del')) row.remove();
+        refreshActTitles();
+      });
+      actsBox.addEventListener('input', (e) => {
+        const row = e.target.closest('.sh-act');
+        if (row) walkTitle(row);
+      });
       modal.querySelector('#shAddAct').onclick = () => {
         const div = document.createElement('div');
         div.innerHTML = actHTML({ kind: 'banner', dur: 3 });
-        const row = div.firstChild;
-        actsBox.appendChild(row);
-        bindAct(row);
+        actsBox.appendChild(div.firstChild);
+        refreshActTitles();
       };
       // 保存/编辑数据
       let currentPlay = null; // 编辑中的 play（条件区切换时暂存用）
@@ -365,6 +374,7 @@ Chezzle.Plugin.register('showtime', {
       });
       const openEdit = (i) => {
         curSel = i;
+        modal.dataset.i = String(i); // ★ 保存目标（列表点选/新剧本/打开弹窗三路统一——之前只 __openEdit 设置 → 点列表第 N 条保存却写回第 0 条）
         currentPlay = i >= 0 ? { ...(st.plays[i] ?? {}) } : { on: 'enter', act: [] };
         modal.querySelector('#shTitle').textContent = i >= 0 ? `🎬 演出剧本书 · 编辑 #${i + 1}` : '🎬 演出剧本书 · 新剧本';
         modal.querySelector('#shMsg').textContent = '';
@@ -387,7 +397,7 @@ Chezzle.Plugin.register('showtime', {
           div.innerHTML = actHTML(a);
           actsBox.appendChild(div.firstChild);
         }
-        for (const r of actsBox.querySelectorAll('.sh-act')) bindAct(r);
+        for (const r of actsBox.querySelectorAll('.sh-act')) walkTitle(r); // 行交互走容器委托，只需刷标题
         modal.style.display = 'flex';
         modal.querySelector('#shScene').focus();
       };
@@ -405,14 +415,16 @@ Chezzle.Plugin.register('showtime', {
           if (a.kind === 'goto' && !a.scene) { skipped++; continue; }
           acts.push(a);
         }
+        // ★ 空动作行自动忽略并照常保存（不硬拦——半途失败的"保存失败"体验 = 内容根本存不上）
+        delete p._fired; // 保险（数据源头消毒）
         p.act = acts;
-        if (!acts.length) { say('⚠ 剧本"无动作"：先加一个动作（或删除本剧本）'); return; }
         const editIdx = modal.dataset.i !== undefined && modal.dataset.i !== '' ? +modal.dataset.i : -1;
         if (editIdx >= 0) st.plays[editIdx] = p; else st.plays.push(p);
         ed.save();
         modal.style.display = 'none';
         renderList();
-        say(sc ? `已保存剧本（场景${sc} · ${trigText(p)}）${skipped ? '，跳过 ' + skipped + ' 个空动作' : ''}` : '已保存剧本');
+        const msg = sc ? `已保存剧本（场景${sc} · ${trigText(p)}）` : '已保存剧本';
+        say(msg + (skipped ? `，跳过 ${skipped} 个空动作` : '') + (acts.length ? '' : '（该条暂无有效动作）'));
       };
       // openEdit 需要 modal.dataset.i（编辑目标）——放进 modal 上的入口
       Object.defineProperty(modal, '__openEdit', { value: (i) => { modal.dataset.i = String(i); openEdit(i); } });
