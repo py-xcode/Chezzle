@@ -55,7 +55,24 @@ export class Renderer {
     const particles = [];
     for (const obj of objects) {
       if (obj instanceof Particle) { particles.push(obj); continue; }
-      if (obj && typeof obj.render === 'function') obj.render(ctx, opts);
+      if (obj && typeof obj.render === 'function') {
+        // 淡入（延迟出现/开关显现后）：appearTime=显现时刻，按 appearFade 秒渐入
+        const ft = obj.appearTime;
+        if (ft != null && Number.isFinite(ft)) {
+          const fade = Number(obj.appearFade) > 0 ? Number(obj.appearFade) : 0.35;
+          const a = (opts.time ?? 0) - ft;
+          if (a < 0) continue; // 未到显现时刻（容错）
+          if (a < fade) {
+            ctx.save();
+            ctx.globalAlpha = Math.max(0.05, a / fade);
+            obj.render(ctx, opts);
+            ctx.restore();
+            continue;
+          }
+          obj.appearTime = null; // 淡入完成：清标记（不再每帧判断）
+        }
+        obj.render(ctx, opts);
+      }
     }
     renderParticles(ctx, particles, opts);
     ctx.restore();

@@ -61,7 +61,8 @@ Chezzle.Plugin.register('showtime', {
       css.id = 'shModCss';
       css.textContent = `
         #shModal { position: fixed; inset: 0; background: rgba(4,6,18,.72); z-index: 310; display: none; align-items: center; justify-content: center; }
-        #shModal .sh-box { width: min(700px, 94vw); max-height: 92vh; display: flex; flex-direction: column; background: #0d1330; border: 1px solid #3a4178; border-radius: 12px; padding: 12px 14px; box-shadow: 0 12px 60px rgba(0,0,0,.6); }
+        #shModal .sh-box { width: min(1100px, 96vw); max-height: 94vh; display: flex; flex-direction: column; background: #0d1330; border: 1px solid #3a4178; border-radius: 12px; padding: 12px 16px; box-shadow: 0 12px 60px rgba(0,0,0,.6); }
+        #shModal .sh-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; }
         #shModal h3 { margin: 0 0 8px; color: #7fe0ff; font-size: 14px; }
         #shModal .sh-scroll { overflow-y: auto; flex: 1; min-height: 0; padding-right: 2px; }
         #shModal .sh-row { display: flex; align-items: center; gap: 5px; margin: 6px 0; flex-wrap: wrap; }

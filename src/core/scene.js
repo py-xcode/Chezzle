@@ -329,7 +329,8 @@ export class Scene {
 
   /** 显现一个隐藏物体（开关 showId / 延迟出现用）：恢复进 objects 与物理/逻辑索引。
    *  子体走对象引用递归——杯壁等子体 id 是固定名（'bk_l'…），多实例时 byId 会互相
-   *  覆盖，按 id 回捞会捞错物体（两个延迟出现的烧杯必翻车——先复现再修）。 */
+   *  覆盖，按 id 回捞会捞错物体（两个延迟出现的烧杯必翻车——先复现再修）。
+   *  显现即开始淡入（appearTime = 当前游戏时间，Renderer 按 appearTime/appearFade 渐入）。 */
   reveal(id) {
     return this._revealObj(this.byId[id]);
   }
@@ -337,12 +338,28 @@ export class Scene {
   _revealObj(obj) {
     if (!obj || !obj.hidden) return obj;
     obj.hidden = false;
+    obj.appearTime = Number.isFinite(obj.appearTime) ? obj.appearTime : this.time; // 淡入起点（只首次生效）
     const h = this.hidden.indexOf(obj);
     if (h >= 0) this.hidden.splice(h, 1);
     this.objects.push(obj);
     this._register(obj);
     if (obj.subBodies) for (const sb of obj.subBodies) this._revealObj(sb);
     return obj;
+  }
+
+  /** 延迟出现：所有带 appearDelay(秒)>0 的物体开局隐藏，到时显现（带淡入）。
+   *  编辑器试玩/导出与手写关卡脚本在启动前调用（appearDelay 是通用字段，物体上）。
+   *  与「初始隐藏(靠开关)」互不干扰：已 hidden 的物体不抢（开关负责它）。 */
+  applyAppearDelays() {
+    for (const o of this.objects.filter((x) => Number(x.appearDelay) > 0)) {
+      const d = Number(o.appearDelay);
+      o.hidden = true;
+      const i = this.objects.indexOf(o);
+      if (i >= 0) this.objects.splice(i, 1);
+      this.hidden.push(o);
+      this.wait(d, () => this.reveal(o.id));
+    }
+    return this;
   }
 
   removeObject(obj) {

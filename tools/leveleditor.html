@@ -116,6 +116,10 @@
   #side ::-webkit-scrollbar-thumb:hover { background: rgba(140,160,220,.45); }
   #side ::-webkit-scrollbar-track { background: transparent; }
   #side { scrollbar-width: thin; scrollbar-color: rgba(120,140,200,.28) transparent; }
+  /* 面板底部拖拽手柄：按住上下拖 = 调面板高度；双击 = 还原默认 */
+  .rsz-h { height: 7px; cursor: ns-resize; flex-shrink: 0; position: relative; }
+  .rsz-h::after { content: ''; position: absolute; left: 32%; right: 32%; top: 3px; height: 2px; background: rgba(120,140,200,.25); border-radius: 2px; }
+  .rsz-h:hover::after, .rsz-h:active::after { background: rgba(150,170,230,.75); height: 3px; top: 2px; }
   #props { flex: 1; padding: 10px; overflow-y: auto; }
   #props.pc.collapsed { flex: 0 0 auto; } /* 折叠后不硬撑剩余空间 */
   #props h3 { color: var(--gold); font-size: 13px; margin-bottom: 8px; }
@@ -346,6 +350,37 @@ function escHtml(s) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// ---- 面板拖拽调高度（内置/插件面板通用；#side 事件委托） ----
+function attachPanelResize(p) {
+  if (!p || p.querySelector('.rsz-h') || p.id === 'plShelf') return p; // shelf 自身不挂（子面板都在里面）
+  const h = document.createElement('div');
+  h.className = 'rsz-h';
+  h.title = '按住拖动调面板高度 · 双击还原默认';
+  p.appendChild(h);
+  h.addEventListener('dblclick', () => { p.style.height = ''; p.style.maxHeight = ''; });
+  return p;
+}
+function initPanelResize() {
+  const side = $('side');
+  side.addEventListener('mousedown', (e) => {
+    const h = e.target.closest('.rsz-h');
+    if (!h || !side.contains(h)) return;
+    e.preventDefault();
+    const panel = h.parentElement;
+    const startY = e.clientY;
+    const startH = panel.getBoundingClientRect().height;
+    const move = (ev) => {
+      const nh = Math.max(70, startH + (ev.clientY - startY));
+      panel.style.height = nh + 'px';
+      panel.style.maxHeight = nh + 'px'; // 覆盖百分比上限（拖多高给多高）
+    };
+    const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  });
+  for (const p of side.querySelectorAll('.pc')) attachPanelResize(p);
+}
+
 // ---- 插件设置区（插件面板统一收纳；开合状态记住） ----
 const PLSHELF_KEY = 'chezzle-plshelf-v1';
 let plShelfState = { open: false, sub: {} };
@@ -440,8 +475,10 @@ function enhanceFieldsOf(type) {
  */
 function enhanceWrap(entry) {
   const fields = enhanceFieldsOf(entry.type);
-  if (!fields.length) return entry;
-  const out = { ...entry, fields: [...entry.fields, ...fields.map((f) => ({ k: f.key, label: f.label ?? f.key, kind: f.kind ?? 'text', d: f.def, options: f.options, multiline: f.multiline }))] };
+  // 内置字段优先：插件增强与内建字段同 key（如"延迟出现"已内建）时不重复加
+  const extra = fields.filter((f) => !entry.fields.some((x) => x.k === f.key));
+  if (!extra.length) return entry;
+  const out = { ...entry, fields: [...entry.fields, ...extra.map((f) => ({ k: f.key, label: f.label ?? f.key, kind: f.kind ?? 'text', d: f.def, options: f.options, multiline: f.multiline }))] };
   const origConstruct = entry.construct;
   const origCollect = entry.collect;
   out.construct = (o) => {
@@ -485,15 +522,25 @@ function syncCatalog() {
         { k: 'h', label: '高', kind: 'number', d: defH },
         ...(comp.fields ?? []).map((f) => ({ k: f.key, label: f.label ?? f.key, kind: f.kind ?? 'text', d: f.def, options: f.options, multiline: f.multiline })),
         { k: 'hidden', label: '初始隐藏(靠开关显现)', kind: 'bool', d: false },
+        { k: 'appearDelay', label: '延迟出现(秒)', kind: 'number', d: 0 },
+        { k: 'appearFade', label: '淡入(秒)', kind: 'number', d: 0 },
       ],
       construct: (o) => {
         try {
-          return C.Plugin.create(type, o) ?? pluginPlaceholder(type, o);
+          const obj = C.Plugin.create(type, o) ?? pluginPlaceholder(type, o);
+          if (Number(o.appearDelay) > 0) obj.appearDelay = Number(o.appearDelay);
+          if (Number(o.appearFade) > 0) obj.appearFade = Number(o.appearFade);
+          return obj;
         } catch (e) {
           return pluginPlaceholder(type, o);
         }
       },
-      collect: (o) => pluginCollect(type, o),
+      collect: (o) => {
+        const out = pluginCollect(type, o);
+        if (Number(o.appearDelay) > 0) out.appearDelay = Number(o.appearDelay);
+        if (Number(o.appearFade) > 0) out.appearFade = Number(o.appearFade);
+        return out;
+      },
     });
   }
   for (const [type, entry] of built) byType[type] = enhanceWrap(entry);
@@ -1105,6 +1152,7 @@ function makeEditorApi(reg) {
         $('plShelfBody').appendChild(d);
         refreshShelfEmpty();
       }
+      attachPanelResize(d); // 面板也可拖拽调高度
       doms.push(d);
       return d;
     },
@@ -1229,6 +1277,16 @@ function makeEditorApi(reg) {
           if (v !== undefined && v !== f.def) post.push(`M.byId(${q(name)}, ${q(p.obj.id)}).${f.key} = ${safeJson(v)}; // 插件增强`);
         }
       }
+      // 延迟出现/淡入（内建通用字段）
+      for (const p of placed) {
+        if (!p.obj.id) continue;
+        const d = Number(p.obj.appearDelay);
+        if (d > 0) {
+          post.push(`M.byId(${q(name)}, ${q(p.obj.id)}).appearDelay = ${d}; // 延迟出现`);
+          const fd = Number(p.obj.appearFade);
+          if (fd > 0) post.push(`M.byId(${q(name)}, ${q(p.obj.id)}).appearFade = ${fd};`);
+        }
+      }
       // 场景大气预设（需求：每个场景可设置大气物质）
       for (const [gid, mass] of Object.entries(snap.atm ?? {})) {
         if (Number.isFinite(mass) && mass > 0) post.push(`M.byName(${q(name)}).atmosphere.setGas(${q(gid)}, ${mass});`);
@@ -1243,14 +1301,23 @@ function makeEditorApi(reg) {
 // 用包装 construct/collect 的方式统一注入，无需逐个改目录。
 for (const e of CATALOG) {
   if (!e.fields.some((f) => f.k === 'hidden')) e.fields.push(F.bool('hidden', '初始隐藏(靠开关显现)', false));
+  if (!e.fields.some((f) => f.k === 'appearDelay')) e.fields.push(F.num('appearDelay', '延迟出现(秒)', 0));
+  if (!e.fields.some((f) => f.k === 'appearFade')) e.fields.push(F.num('appearFade', '淡入(秒)', 0));
   const origC = e.construct;
   const origCol = e.collect;
   e.construct = (o) => {
     const obj = origC(o);
     if (o.hidden) obj.hidden = true;
+    if (Number(o.appearDelay) > 0) obj.appearDelay = Number(o.appearDelay);
+    if (Number(o.appearFade) > 0) obj.appearFade = Number(o.appearFade);
     return obj;
   };
-  e.collect = (o) => ({ ...origCol(o), hidden: o.hidden === true ? true : undefined });
+  e.collect = (o) => ({
+    ...origCol(o),
+    hidden: o.hidden === true ? true : undefined,
+    appearDelay: Number(o.appearDelay) > 0 ? Number(o.appearDelay) : undefined,
+    appearFade: Number(o.appearFade) > 0 ? Number(o.appearFade) : undefined,
+  });
 }
 
 // ---- 状态 ----------------------------------------------------------------
@@ -1811,6 +1878,13 @@ window.addEventListener('keydown', (e) => {
     state.sel.clear(); state.selected = null; renderEdit(); refreshProps();
   }
   if (e.ctrlKey && (e.key === 'z' || e.key === 'Z')) { undo(); }
+  if (e.ctrlKey && (e.key === 'a' || e.key === 'A')) {
+    // 全选（批量改延迟/淡入用）：再按一次取消全选
+    e.preventDefault();
+    if (state.sel.size === state.placed.length) { state.sel.clear(); state.selected = null; }
+    else { state.sel = new Set(state.placed.map((_, i) => i)); state.selected = -1; }
+    renderEdit(); refreshProps();
+  }
 });
 
 /** 删除所有选中的物体（单次撤销点） */
@@ -1851,13 +1925,16 @@ function mapToObj(map) { const o = {}; for (const [id, m] of map) if (m > 1e-6) 
 function objToMap(o) { const m = new Map(); for (const [id, v] of Object.entries(o)) if (v > 0) m.set(id, v); return m; }
 function refreshProps() {
   const box = $('propsBody');
-  const idx = state.selected;
-  if (idx == null || !state.placed[idx]) { box.innerHTML = '<div class="empty">选中一个物体编辑属性</div>'; return; }
+  // 多选批量模式：selected=-1（Ctrl+A 全选）时主选=选集中的第一个，仍渲染批量修改区
+  const idx = state.selected < 0 && state.sel.size > 1 ? [...state.sel][0] : state.selected;
+  if ((idx == null || !state.placed[idx]) && state.sel.size <= 1) { box.innerHTML = '<div class="empty">选中一个物体编辑属性</div>'; return; }
   const item = state.placed[idx];
   const e = byType[item.type];
-  // 多选提示：主选物体照常编辑属性
+  // 多选提示：主选物体照常编辑属性 + 批量修改区（全选/Ctrl+点击 选中多个 → 批量改延迟/淡入）
   const multi = state.sel.size > 1
-    ? `<div class="empty" style="margin-bottom:8px;line-height:1.6">已选中 <b style="color:#7fe0ff">${state.sel.size}</b> 个物体<br>拖动任一物体整组平移 · Ctrl+点击增减 · Delete 删除整组</div>`
+    ? `<div class="empty" style="margin-bottom:8px;line-height:1.7">已选中 <b style="color:#7fe0ff">${state.sel.size}</b> 个物体<br>拖动任一物体整组平移 · Ctrl+点击增减 · Delete 删除整组 · Ctrl+A 全选<br><div style="margin-top:5px">
+        <b style="color:#9fe8ff">批量</b>：延迟出现 <input type="number" class="batchDel" step="0.1" min="0" title="秒；≤0=不延迟" style="width:52px;background:#0e1432;color:#fff;border:1px solid #3a4178;padding:1px 4px;font-size:11px" placeholder="秒"> 淡入 <input type="number" class="batchFade" step="0.1" min="0" title="秒；留空=默认 0.35s" style="width:52px;background:#0e1432;color:#fff;border:1px solid #3a4178;padding:1px 4px;font-size:11px" placeholder="秒">
+        <button class="btn batchApply" style="font-size:10px;padding:1px 8px;margin-left:4px">应用到选中</button></div></div>`
     : '';
   // 标题显示：类型 + id（方便绳子悬挂/接线引用）
   let html = multi + `<h3>${e.label} <small style="color:#9fd8ff">#${item.obj.id ?? '?'}</small> <small style="color:#6a7a96">(${e.type})</small></h3>`;
@@ -1941,6 +2018,30 @@ function refreshProps() {
       renderEdit(); // 不重建属性面板：保留正在编辑的输入框与光标
     });
   });
+  // 批量修改（多选/Ctrl+A 后）：延迟出现(秒)/淡入(秒) 应用到全部选中物体
+  const batchBtn = box.querySelector('.batchApply');
+  if (batchBtn) {
+    batchBtn.onclick = () => {
+      const bd = box.querySelector('.batchDel').value;
+      const bf = box.querySelector('.batchFade').value;
+      const setD = bd.trim() !== '' && Number.isFinite(+bd);
+      const setF = bf.trim() !== '' && Number.isFinite(+bf);
+      if (!setD && !setF) { $('status').textContent = '批量修改：先填 延迟出现 或 淡入 的秒数（≥0）'; return; }
+      let n = 0;
+      pushUndo();
+      for (const i of state.sel) {
+        const p = state.placed[i];
+        if (!p) continue;
+        if (setD) { const v = +bd; if (v > 0) p.obj.appearDelay = v; else { delete p.obj.appearDelay; p.obj.appearTime = undefined; } }
+        if (setF) { const v = +bf; if (v > 0) p.obj.appearFade = v; else delete p.obj.appearFade; }
+        if (p.obj.syncGrid) p.obj.syncGrid();
+        n++;
+      }
+      ensureStableIds();
+      buildRenderScene(); renderEdit(); refreshProps(); refreshExport(); saveState();
+      $('status').textContent = `已批量设置 ${n} 个物体（延迟出现${setD ? ' ' + bd + 's' : ' 不变'}·淡入${setF ? ' ' + bf + 's' : ' 不变'}）`;
+    };
+  }
 }
 
 // ---- 导出 DSL ----------------------------------------------------------------
@@ -2089,6 +2190,16 @@ function buildScript() {
       if (v !== undefined && v !== f.def) post.push(`scene.byId['${p.obj.id}'].${f.key} = ${safeJson(v)}; // 插件增强: ${f.label ?? f.key}`);
     }
   }
+  // 延迟出现/淡入（编辑器内建通用字段）：构建后赋值 + 启动前登记"到时显现"
+  for (const p of state.placed) {
+    if (!p.obj.id) continue;
+    const d = Number(p.obj.appearDelay);
+    if (d > 0) {
+      post.push(`scene.byId['${p.obj.id}'].appearDelay = ${d}; // 延迟出现`);
+      const fd = Number(p.obj.appearFade);
+      if (fd > 0) post.push(`scene.byId['${p.obj.id}'].appearFade = ${fd};`);
+    }
+  }
   // 编辑器自带：关卡大气
   for (const [gid, mass] of Object.entries(state.atmosphere ?? {})) {
     if (Number.isFinite(mass) && mass > 0) post.push(`scene.atmosphere.setGas(${safeJson(gid)}, ${mass}); // 关卡大气`);
@@ -2101,6 +2212,8 @@ function buildScript() {
   lines.push(';');
   lines.push('', 'const scene = L.build();');
   lines.push(...post);
+  // 延迟出现（开局隐藏 → 到时显现+淡入）：插件注入之后、start 之前登记
+  lines.push('scene.applyAppearDelays(); // 延迟出现');
   // 接线占位（编辑器暂不支持连线，手动补 onOpen/onClose）
   lines.push('', '// ⚡ 接线（示例，按需取消注释）：');
   lines.push("// scene.byId['sw'].onOpen(() => scene.byId['lamp'].ignite());");
@@ -2361,6 +2474,7 @@ function togglePlay() {
     }
   }
   // 重建 Scene 试玩：用**新构造**的对象（编辑器里的对象不被物理移动污染）
+  ensureStableIds(); // 试玩对象 id 稳定（延迟出现/接线按 id 引用）
   enterPlayView(); // 试玩视口 = 导出实机（1100×700 等比）+ 编辑器提示隐藏
   const scene = new C.Scene({ worldW: state.worldW, worldH: state.worldH });
   for (const p of state.placed) {
@@ -2411,6 +2525,8 @@ function togglePlay() {
       try { fn(scene); } catch (e) { if (typeof console !== 'undefined') console.error(`[editor-plugin] playScene`, e); }
     }
   }
+  // 延迟出现（appearDelay>0 开局隐藏 → 到时显现+淡入）：与导出一致，注入后、start 前
+  scene.applyAppearDelays();
   // 插件注入（试玩与导出同管线：scene 构建后、start 前）
   const pls = activePlugins();
   if (pls.length) C.Plugin.inject(scene, pls);
@@ -2992,6 +3108,7 @@ document.querySelectorAll('.pc-head').forEach((h) => {
   refreshShelfEmpty();
 }
 window.addEventListener('resize', resizeCanvas);
+initPanelResize(); // 面板拖拽调高度（手柄 + 事件委托）
 
 buildPalette();
 buildSubstanceList();

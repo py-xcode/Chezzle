@@ -204,6 +204,7 @@ export class LevelBuilder {
   start() {
     const scene = this.build();
     scene.status = 'running';
+    scene.applyAppearDelays(); // 延迟出现（appearDelay>0 开局隐藏，到时显现+淡入）
     this.unbind = bindKeyboard(scene);
     this.bindClick();
     // 移动端触控（摇杆/按钮/拖动管线）；桌面端绑定但按 isTouchDevice 门槛空转
