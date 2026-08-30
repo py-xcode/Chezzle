@@ -524,7 +524,8 @@ class Scene {
 
   /** 显现一个隐藏物体（开关 showId / 延迟出现用）：恢复进 objects 与物理/逻辑索引。
    *  子体走对象引用递归——杯壁等子体 id 是固定名（'bk_l'…），多实例时 byId 会互相
-   *  覆盖，按 id 回捞会捞错物体（两个延迟出现的烧杯必翻车——先复现再修）。 */
+   *  覆盖，按 id 回捞会捞错物体（两个延迟出现的烧杯必翻车——先复现再修）。
+   *  显现即开始淡入（appearTime = 当前游戏时间，Renderer 按 appearTime/appearFade 渐入）。 */
   reveal(id) {
     return this._revealObj(this.byId[id]);
   }
@@ -532,6 +533,7 @@ class Scene {
   _revealObj(obj) {
     if (!obj || !obj.hidden) return obj;
     obj.hidden = false;
+    obj.appearTime = Number.isFinite(obj.appearTime) ? obj.appearTime : this.time; // 淡入起点（只首次生效）
     const h = this.hidden.indexOf(obj);
     if (h >= 0) this.hidden.splice(h, 1);
     this.objects.push(obj);
@@ -540,19 +542,42 @@ class Scene {
     return obj;
   }
 
-  removeObject(obj) {
-    // 从所有索引里彻底移除（含 statics/containers/lamps/doors/portals）：
-    // 否则删掉的墙虽不可见仍会挡人、删掉的灯仍在加热、删掉的门仍在判定。
-    const arrays = [
-      this.objects, this.dynamics, this.statics, this.particles,
-      this.containers, this.lamps, this.doors, this.portals, this.hidden,
-    ];
+  /** 从全部活动索引移除对象（保留 byId——reveal 依赖按 id 回捞）。
+   *  延迟出现/开关隐藏的物体必须**物理也不计算**：半空摆的玩家隐身时不能坠地。 */
+  _deindex(obj) {
+    const arrays = [this.objects, this.dynamics, this.statics, this.particles,
+      this.containers, this.lamps, this.doors, this.portals, this.hidden];
     for (const arr of arrays) {
       const i = arr.indexOf(obj);
       if (i >= 0) arr.splice(i, 1);
     }
+    if (this.player === obj) this.player = null; // 玩家被移除：清引用（跨场景搬运）
+  }
+
+  /** 延迟出现：所有带 appearDelay(秒)>0 的物体开局隐藏，到时显现（带淡入）。
+   *  编辑器试玩/导出与手写关卡脚本在启动前调用（appearDelay 是通用字段，物体上）。
+   *  与「初始隐藏(靠开关)」互不干扰：已 hidden 的物体不抢（开关负责它）。
+   *  ★ 隐藏 = 物理/逻辑完全冻结（半空玩家隐身期间不下落，到时在原地开始下落）。 */
+  applyAppearDelays() {
+    for (const o of this.objects.filter((x) => Number(x.appearDelay) > 0)) {
+      const d = Number(o.appearDelay);
+      o.hidden = true;
+      this._deindex(o);
+      this.hidden.push(o);
+      this.wait(d, () => this.reveal(o.id));
+    }
+    // 玩家延迟出现：相机先在玩家出生点待命（无条件优先——编辑器"无玩家包围盒"
+    // 会先给个全景 focus，那是玩家出现前不该看的"别的位置"）
+    const fp = this.hidden.find((o) => o.isPlayerObj && Number(o.appearDelay) > 0);
+    if (fp) this.cameraFocus = { x: fp.x - 400, y: fp.y - 300, w: 800, h: 600 };
+    return this;
+  }
+
+  removeObject(obj) {
+    // 从所有索引里彻底移除（含 statics/containers/lamps/doors/portals）：
+    // 否则删掉的墙虽不可见仍会挡人、删掉的灯仍在加热、删掉的门仍在判定。
+    this._deindex(obj);
     delete this.byId[obj.id];
-    if (this.player === obj) this.player = null; // 玩家被移除/搬走：清引用（跨场景搬运）
   }
 
   /** 拾取物品：连同其子体（烧杯杯壁）一起移出场景（背包携带时不在世界上） */
@@ -1307,6 +1332,24 @@ class Scene {
       if (feet.x >= r.x && feet.x <= r.x + r.w && feet.y >= r.y - 8 && feet.y <= r.y + r.h + 10) return c;
     }
     return null;
+  }
+
+  /** 池子吸附：玩家站在池子附近（水平贴身 ≤70px）放置 → 自动投进池子里。
+   *  只吸"药品池"（isPool）——烧杯/开关等小容器不吸（可携带，吸进去会乱）。 */
+  poolNearFeet(player) {
+    const cx = player.x + player.w / 2;
+    const cy = player.y + player.h / 2;
+    let best = null;
+    let bestD = Infinity;
+    for (const c of this.containers) {
+      if (!c.isPool) continue;
+      const r = c.innerRect();
+      const dx = cx < r.x ? r.x - cx : (cx > r.x + r.w ? cx - (r.x + r.w) : 0);
+      if (dx > 70) continue; // 水平贴身判定
+      if (!(cy < r.y + r.h && player.bottom > r.y - 50)) continue; // 垂直同层（站在池子旁的地面上）
+      if (dx < bestD) { bestD = dx; best = c; }
+    }
+    return best;
   }
 
   // ===========================================================================
@@ -4665,11 +4708,11 @@ class CollisionSystem {
             // 颗粒嵌在实体（侧面/下方）：把颗粒向穿透最小的面推出（软体退让）。
             // **玩家脚底的可站立 placed 粒子不挤**：玩家踩着它（垫脚），嵌 1-2px 是
             // 正常的"踩合"——按 MTV 推走会让粒子被踢散/玩家穿模/堆不起来。
-            // 物块等重物照旧挤开（软体让位）。
+            // 物块等重物照旧挤开（软体让位）。★ 冰面例外：平摊优先（用户要求冰上搭不了高）
             if (!solid.isPlayerObj) {
               if (this._pushParticleOut(particle, solid)) moved = true;
-            } else if (particle.placed && (particle.y + particle.h / 2) > (solid.y + solid.h * 0.5)) {
-              // 玩家下半部的 placed 粒子：保留垫脚，不挤
+            } else if (!solid._groundIce && particle.placed && (particle.y + particle.h / 2) > (solid.y + solid.h * 0.5)) {
+              // 玩家下半部的 placed 粒子：保留垫脚，不挤（冰面走 else：挤开平摊）
             } else if (resolveEmbed(particle, solid)) {
               moved = true;
             }
@@ -11919,6 +11962,7 @@ class LevelBuilder {
   start() {
     const scene = this.build();
     scene.status = 'running';
+    scene.applyAppearDelays(); // 延迟出现（appearDelay>0 开局隐藏，到时显现+淡入）
     this.unbind = bindKeyboard(scene);
     this.bindClick();
     // 移动端触控（摇杆/按钮/拖动管线）；桌面端绑定但按 isTouchDevice 门槛空转
@@ -12190,7 +12234,24 @@ class Renderer {
     const particles = [];
     for (const obj of objects) {
       if (obj instanceof Particle) { particles.push(obj); continue; }
-      if (obj && typeof obj.render === 'function') obj.render(ctx, opts);
+      if (obj && typeof obj.render === 'function') {
+        // 淡入（延迟出现/开关显现后）：appearTime=显现时刻，按 appearFade 秒渐入
+        const ft = obj.appearTime;
+        if (ft != null && Number.isFinite(ft)) {
+          const fade = Number(obj.appearFade) > 0 ? Number(obj.appearFade) : 0.35;
+          const a = (opts.time ?? 0) - ft;
+          if (a < 0) continue; // 未到显现时刻（容错）
+          if (a < fade) {
+            ctx.save();
+            ctx.globalAlpha = Math.max(0.05, a / fade);
+            obj.render(ctx, opts);
+            ctx.restore();
+            continue;
+          }
+          obj.appearTime = null; // 淡入完成：清标记（不再每帧判断）
+        }
+        obj.render(ctx, opts);
+      }
     }
     renderParticles(ctx, particles, opts);
     ctx.restore();
@@ -12518,6 +12579,7 @@ class Pool extends Container {
   constructor({ x, y, w, h, wall = WALL, gasHeight = 80, ...rest } = {}) {
     super({ x, y, w, h, ...rest });
     this.wall = wall;
+    this.isPool = true; // 池子标记（玩家"池边放置自动吸附"用；烧杯等小容器不吸）
     this.gasHeight = gasHeight; // 此池产气的气泡柱高度（px），可配置
     this.subBodies = [
       new Floor({ x, y, w: wall, h, color: '#5c4632' }), // 左壁
@@ -12969,6 +13031,9 @@ class Player extends Obj {
     for (const pt of scene.particles.slice()) {
       if (rest <= 0) break;
       if (pt.substance !== this.substance || !pt.collectible || pt.amount <= 1e-9) continue;
+      // ★ 玩家自己放置的沉淀不吸回（origin.kind==='place'——搭高/冰面平摊的沉淀必须留在原地；
+      //    掉落壳/反应沉淀照常回血，不误伤）
+      if (pt.origin?.kind === 'place') continue;
       if (pt.right < this.left || pt.left > this.right || pt.bottom < this.top || pt.top > this.bottom) continue;
       const take = Math.min(pt.amount, rest);
       pt.amount -= take;
@@ -13055,15 +13120,20 @@ class Player extends Obj {
     const amount = CFG.placeAmount;
     const res = this.inventory.place(amount);
     if (!res) return;
-    // 就近放置：脚下容器优先于附近酒精灯（灯只在脚下无容器时接物）
-    // 修复：玩家站在化学开关上时，物质应进开关而不是跑到旁边的灯上
+    // 就近放置：脚下容器优先于附近药品池（池吸附）优先于酒精灯（灯只在脚下无容器时接物）
     const lamp = scene.findLampNear(this);
-    const container = scene.containerUnderFeet(this);
+    let container = scene.containerUnderFeet(this);
+    if (!container) container = scene.poolNearFeet(this); // ★ 池边放置自动吸附进池子
     const placeOrigin = { kind: 'place' };
     if (container) {
-      // 落点=玩家脚下（反应/气泡围绕玩家放下的位置，不再默认容器中心）
+      // 落点=玩家脚下/池边吸附点（反应/气泡围绕玩家放下的位置，不再默认容器中心）
       const ir = typeof container.innerRect === 'function' ? container.innerRect() : null;
-      if (ir) container.depositAt = { x: this.x + this.w / 2, y: Math.max(ir.y + 4, this.bottom - 6) };
+      if (ir) {
+        const px = container.isPool
+          ? Math.min(Math.max(this.x + this.w / 2, ir.x + 6), ir.x + ir.w - 6) // 吸附：投入池内（夹在盆壁之间）
+          : this.x + this.w / 2;
+        container.depositAt = { x: px, y: Math.max(ir.y + 4, this.bottom - 6) };
+      }
       // 可溶物质放进液体容器（池）→ 溶解进溶液（CuSO4 不会变成永不溶解的沉淀颗粒）；
       // 不溶物（Cu(OH)2 等）才作为沉淀放置
       if (container.solution && container.solution.water > 0 && isSoluble(res.substance)) {
@@ -16032,6 +16102,7 @@ class Multiscene {
   /** 启动：从指定场景开始（共享主循环） */
   start(name) {
     this.buildAll();
+    for (const e of this.scenes.values()) if (e.scene) e.scene.applyAppearDelays(); // 延迟出现（全部场景）
     const e = this.scenes.get(name);
     if (!e) throw new Error(`场景不存在: ${name}`);
     e.canvas.style.display = 'block';
@@ -16072,19 +16143,27 @@ class Multiscene {
     if (opts.carryPlayer !== false) {
       const carriedObj = from?.scene?.player ?? null;
       if (carriedObj) {
-        // 玩家对象整体搬移：物品栏/身上物质/血量全保留
-        const target = e.scene.player;
-        if (target && target !== carriedObj) e.scene.removeObject(target); // 替换占位玩家
-        if (e.scene.byId[carriedObj.id] && e.scene.byId[carriedObj.id] !== carriedObj) {
+        // 玩家对象整体搬移：物品栏/身上物质/血量全保留。
+        // ★ 落点约定：目标场景**摆放的玩家 = 传送落点**（摆半空就从半空开始下落；
+        //   含延迟出现/初始隐藏的玩家——摆了位置就当落点，与静止/延迟无关），
+        //   没摆玩家才用显式 spawn（剧本 goto/开关切场景传入）。
+        const tScene = e.scene;
+        const target = tScene.player
+          ?? tScene.objects.find((o) => o.isPlayerObj)
+          ?? tScene.hidden.find((o) => o.isPlayerObj);
+        let spawn = opts.spawn;
+        if (target && target !== carriedObj) spawn = { x: target.x, y: target.y };
+        if (target && target !== carriedObj) tScene.removeObject(target); // 替换占位玩家
+        if (tScene.byId[carriedObj.id] && tScene.byId[carriedObj.id] !== carriedObj) {
           carriedObj.id = `${carriedObj.id}_carry${this.switches}`;
         }
         from.scene.removeObject(carriedObj);
-        if (opts.spawn) {
-          carriedObj.x = opts.spawn.x;
-          carriedObj.y = opts.spawn.y;
+        if (spawn) {
+          carriedObj.x = spawn.x;
+          carriedObj.y = spawn.y;
           if (carriedObj.vel) { carriedObj.vel.x = 0; carriedObj.vel.y = 0; }
         }
-        e.scene.addObject(carriedObj);
+        tScene.addObject(carriedObj);
       }
     } else if (opts.spawn && e.scene.player) {
       e.scene.player.x = opts.spawn.x;
