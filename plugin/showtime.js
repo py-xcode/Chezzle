@@ -38,7 +38,7 @@
 // @@chezzle-plugin
 // {
 //   "name": "演出编排",
-//   "version": "1.0",
+//   "version": "1.1",
 //   "api": 1,
 //   "description": "声明式关卡演出：enter/open/pos/win/at 触发器 × 横幅/震屏/彩焰烟花动作。cfg.plays=[{scene,on,ref?,at?,x?,y?,w?,h?,act:[{kind,...}]}]",
 //   "enhance": []

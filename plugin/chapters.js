@@ -157,8 +157,12 @@ Chezzle.Plugin.register('chapters', {
       wrap.style.position = 'relative';
       const holder = document.createElement('div');
       holder.style.cssText = 'position:absolute;inset:0;z-index:60;background:#0b0e28;display:flex;align-items:center;justify-content:center;';
+      // 试玩窗口 = 导出实机视口（1100×700）等比缩放进画布区——比例/视野与实机一致
+      // （之前 box 100%宽×100%高，画布 1100×700 被拉伸变形="试玩和实机比例对不上"）
+      const P = 1100, H = 700;
+      const sc = Math.min(wrap.clientWidth / P, (wrap.clientHeight - 8) / H);
       const box = document.createElement('div');
-      box.style.cssText = 'position:relative;width:100%;max-width:1100px;height:calc(100% - 8px);';
+      box.style.cssText = `position:relative;width:${Math.max(1, Math.round(P * sc))}px;height:${Math.max(1, Math.round(H * sc))}px;`;
       holder.appendChild(box);
       wrap.appendChild(holder);
       const hint = document.createElement('div');

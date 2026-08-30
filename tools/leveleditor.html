@@ -28,6 +28,8 @@
   #palette .pbtn.active { border-color: var(--gold); background: #2a2440; box-shadow: 0 0 6px rgba(232,184,75,.5); }
   #palette .pbtn .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
   #canvasWrap { flex: 1; position: relative; overflow: hidden; }
+  /* 试玩中：画布容器变 flex 居中——试玩画布用 1100×700 等比缩放（与导出实机同视口） */
+  #canvasWrap.playing { display: flex; align-items: center; justify-content: center; }
   canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
   #hint { position: absolute; left: 10px; bottom: 8px; color: rgba(200,220,255,.6); font-size: 12px; pointer-events: none; }
   #side { width: 220px; display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid var(--edge); min-height: 0; }
@@ -122,16 +124,12 @@
   .fld input, .fld select, .fld textarea { width: 100%; background: #0e1432; color: #fff; border: 1px solid var(--edge); padding: 3px 5px; font-size: 12px; }
   .fld input[type=checkbox] { width: auto; }
   #props .empty { color: #6a7a96; font-size: 12px; }
-  /* 底部导出 */
-  #exportBar { display: flex; gap: 8px; padding: 6px 10px; background: var(--panel); border-top: 1px solid var(--edge); align-items: center; }
-  #exportBar textarea { flex: 1; height: 96px; background: #0a0e24; color: #9fe8ff; border: 1px solid var(--edge); font: 11px Consolas,monospace; padding: 6px; resize: vertical; }
-  #copyBtn { height: 30px; }
+  /* 主题：无底部导出区（导出 HTML 按钮直接生成文件） */
 </style>
 </head>
 <body>
 <div id="app">
   <div id="toolbar">
-    <span class="btn primary" id="btnExport">📋 导出 DSL</span>
     <button class="btn" id="btnExportHTML">📄 导出 HTML</button>
     <label style="color:#9fb2c8">关卡ID <input type="text" id="inLevelId" placeholder="如 H-1（选关系统 id，留空不接上报）" style="width:110px"></label>
     <button class="btn" id="btnSave">💾 保存关卡</button>
@@ -157,6 +155,8 @@
         <div class="pl-btns">
           <button class="btn" id="btnAddPlugin">+ 加载插件文件</button>
           <button class="btn" id="btnNewMod" title="不建 .js 文件，直接在编辑器里写模块（模板起步，保存即加载）">＋ 新建模块</button>
+          <button class="btn" id="btnReloadPlugins" title="重新从磁盘 plugin/ 目录加载所有插件源码（插件状态保留）——改了插件文件后点它，不用刷新页面">🔄 从磁盘重载</button>
+          <button class="btn" id="btnClrCache" title="清除插件源码的浏览器缓存（file:// 直开编辑器时读不到磁盘，会用到它）">🧹 清缓存</button>
           <label style="color:#9fb2c8;font-size:10px"><input type="checkbox" id="cbEmbedPlugins" checked> 导出 HTML 时嵌入插件源码</label>
         </div>
         <div id="pluginList"></div>
@@ -186,10 +186,6 @@
         <div class="pc-body" id="propsBody"><div class="empty">选中一个物体编辑属性</div></div>
       </div>
     </div>
-  </div>
-  <div id="exportBar">
-    <textarea id="export" placeholder="导出的 DSL 代码会显示在这里（编辑时自动刷新）"></textarea>
-    <button class="btn primary" id="copyBtn">复制</button>
   </div>
 </div>
 <datalist id="substances"></datalist>
@@ -523,10 +519,9 @@ function pluginCacheGet(file) {
   } catch (e) { return null; }
 }
 
-/** 插件源码定位（JSON/自动存档加载时自动调用）：已加载 → 磁盘 plugin/ 目录 → 浏览器缓存。
- *  磁盘路径按编辑器位置推算：tools/leveleditor.html → ../plugin/，根目录 → plugin/。 */
-async function pluginFetchSrc(file) {
-  if (pluginLib.has(file)) return pluginLib.get(file).src;
+/** 磁盘插件源码（plugin/ 目录，按编辑器位置推算：tools/leveleditor.html → ../plugin/，根目录 → plugin/）。
+ *  文件加载由 fetch 完成——file:// 直开编辑器时读不到磁盘，会走浏览器缓存兜底。 */
+async function pluginFetchDisk(file) {
   const dirs = [...new Set([location.pathname.includes('/tools/') ? '../plugin' : 'plugin', 'plugin'])];
   for (const d of dirs) {
     try {
@@ -537,21 +532,33 @@ async function pluginFetchSrc(file) {
       }
     } catch (e) { /* file:// 等取不到磁盘时走缓存 */ }
   }
-  return pluginCacheGet(file);
+  return null;
+}
+
+/** 插件源码定位（JSON/自动存档加载时自动调用）：已加载 → 磁盘 plugin/ 目录 → 浏览器缓存。
+ *  返回 {src, from:'disk'|'cache'} 或 null。from 用于面板徽标（一眼看出用的是磁盘还是旧缓存）。 */
+async function pluginFetchSrc(file) {
+  if (pluginLib.has(file)) return { src: pluginLib.get(file).src, from: pluginLib.get(file).from ?? 'disk' };
+  const disk = await pluginFetchDisk(file);
+  if (disk) return { src: disk, from: 'disk' };
+  const cache = pluginCacheGet(file);
+  return cache ? { src: cache, from: 'cache' } : null;
 }
 
 /** 确保一批插件全部加载（引用来源：关卡 JSON/自动存档 → 已加载 → 磁盘 plugin/ → 缓存）。
- *  返回 {ok, errors:[...]}——JSON 加载语义：未就绪 = 报错，不半加载。 */
+ *  返回 {ok, errors:[...], fromCache:[...]}——JSON 加载语义：未就绪 = 报错，不半加载。 */
 async function ensurePluginsFrom(list) {
   const errors = [];
+  const fromCache = [];
   for (const p of list ?? []) {
     const file = p?.file;
     if (!file || pluginLib.has(file)) continue;
-    const src = await pluginFetchSrc(file);
-    if (src == null) { errors.push(`${file}（未找到——请把插件文件放到 plugin/ 目录后重新加载）`); continue; }
-    if (!loadPluginSource(file, src, { silent: true })) errors.push(`${file}（加载失败——检查元数据/语法，控制台有详情）`);
+    const got = await pluginFetchSrc(file);
+    if (got == null) { errors.push(`${file}（未找到——请把插件文件放到 plugin/ 目录后重新加载）`); continue; }
+    if (got.from === 'cache') fromCache.push(file);
+    if (!loadPluginSource(file, got.src, { silent: true, from: got.from })) errors.push(`${file}（加载失败——检查元数据/语法，控制台有详情）`);
   }
-  return { ok: !errors.length, errors };
+  return { ok: !errors.length, errors, fromCache };
 }
 
 /** 撤销回载：引用里缺源码的插件从浏览器缓存原地恢复（清空后 Ctrl+Z 用；磁盘是异步的）。 */
@@ -559,7 +566,7 @@ function restorePluginsSync() {
   for (const p of state.plugins) {
     if (!p?.file || pluginLib.has(p.file)) continue;
     const src = pluginCacheGet(p.file);
-    if (src) loadPluginSource(p.file, src, { silent: true });
+    if (src) loadPluginSource(p.file, src, { silent: true, from: 'cache' });
   }
 }
 
@@ -584,7 +591,7 @@ function loadPluginSource(file, src, opts = {}) {
   const prevReg = pluginLib.get(file)?.reg;
   const reg = added[0] ?? prevReg ?? file.replace(/\.js$/, '');
   if (added.length > 1) $('status').textContent = `插件 ${file} 注册了 ${added.length} 个定义，将使用 ${reg}（建议一文件一注册）`;
-  pluginLib.set(file, { src, meta, reg });
+  pluginLib.set(file, { src, meta, reg, from: opts.from ?? 'disk' });
   registerPluginComponents(meta, file);
   // 增强登记（meta.enhance: 数组或单个 {types, fields|field}）
   const eh = Array.isArray(meta.enhance) ? meta.enhance : (meta.enhance ? [meta.enhance] : []);
@@ -691,9 +698,13 @@ function renderPluginPanel() {
     if (enhDesc) badges.push('🔧增强');
     const def = C.Plugin.get(e.reg);
     if (def && typeof def.editor === 'function') badges.push('🖊编辑器');
+    // 来源徽标：来自浏览器缓存 = 黄字（磁盘是最新源码；file:// 直开编辑器才走缓存）
+    const fromBadge = e.from === 'cache'
+      ? `<span class="pl-badge" title="源码来自浏览器缓存（磁盘 plugin/ 读不到时兜底）——想用磁盘新版：点「🔄 从磁盘重载」，或 Ctrl+F5 刷新页面">⚠缓存</span>`
+      : '';
     const tip = [meta.description, comps.length ? '🧱 ' + comps.join('、') : '', enhDesc ? '🔧 ' + enhDesc + '（物体属性面板调整）' : ''].filter(Boolean).join('\n');
     html.push(`<div class="pl-item" title="${escHtml(tip)}">
-      <span class="pl-name">${escHtml(meta.name)}<span class="pl-ver">v${escHtml(meta.version ?? '?')}</span>${badges.length ? `<span class="pl-badge">${badges.map(escHtml).join(' ')}</span>` : ''}</span>
+      <span class="pl-name">${escHtml(meta.name)}<span class="pl-ver">v${escHtml(meta.version ?? '?')}</span>${fromBadge}${badges.length ? `<span class="pl-badge">${badges.map(escHtml).join(' ')}</span>` : ''}</span>
       <label class="pl-toggle" title="用于本关（试玩/导出时注入；组件/增强不受此开关影响）"><input type="checkbox" data-toggle="${escHtml(file)}" ${enabled ? 'checked' : ''}> 用于</label>
       <button class="pl-del" data-edit="${escHtml(file)}" title="查看/编辑模块源码（保存即重载，插件状态保留）">✎</button>
       <button class="pl-del" data-remove="${escHtml(file)}" title="从本关移除并卸载插件">✕</button>
@@ -1250,6 +1261,7 @@ let renderScene = new C.Scene({ worldW: state.worldW, worldH: state.worldH });
 let drag = null; // {mode:'place'|'move'|'resize'|'select'|'rect'|'pan', ...}
 const undoStack = [];
 let levelId = ''; // 已提交的关卡ID（撤销快照的唯一来源；输入框 value 只是其视图）
+let statusMsg = ''; // 状态栏常驻文案：试玩退出/编辑后恢复（模块级——boot 在 async IIFE 里）
 
 // 可拖手柄缩放的类型（构造支持 w/h 的物体）；网格物体（block/deposit）缩放时重建
 // 网格（质量=格数×0.1g，质量↔体积挂钩），非网格物体直接改 w/h。
@@ -2232,6 +2244,7 @@ async function loadState(errors) {
     const refs = Array.isArray(data.plugins) ? data.plugins : [];
     const res = await ensurePluginsFrom(refs);
     for (const e of res.errors) errors?.push(e);
+    if (location.protocol === 'file:' && res.fromCache.length) errors?.push(`${res.fromCache.join('、')}（来自浏览器缓存——file:// 读不到磁盘 plugin/；用 http 服务打开编辑器）`);
     if (typeof data.levelId === 'string') { levelId = data.levelId; $('inLevelId').value = levelId; }
     state.plugins = refs.map((p) => ({ file: p.file, reg: p.reg ?? pluginLib.get(p.file)?.reg, name: p.name ?? p.file, enabled: p.enabled !== false }));
     // 编辑器插件持久化状态（chapters 等插件用它存自己的数据）。
@@ -2279,10 +2292,37 @@ function cleanPlaced() {
   // "拖拽后 gridOrigin 未同步"会让选中框与渲染位置错位，加载时统一修复
   for (const p of state.placed) if (p.obj.syncGrid) p.obj.syncGrid();
 }
-function refreshExport() { $('export').value = exportDSL(); }
+function refreshExport() { const t = $('export'); if (t) t.value = exportDSL(); }
 
 // ---- 试玩模式 ---------------------------------------------------------------
 let playStop = null, playUnbind = null, playMouseClean = null, playScene = null;
+let playCanvasBackup = null; // 试玩前的编辑器画布状态（缓冲/CSS）——退出恢复
+const PLAY_VIEW = { w: 1100, h: 700 }; // 试玩视口 = 导出实机视口（buildScript 的 canvas 尺寸）
+function enterPlayView() {
+  // 试玩画布切成 1100×700（与导出实机同缓冲同视口），CSS 等比 letterbox 进画布区——
+  // 相机视野/缩放/黑边与实机完全一致（之前用编辑器画布全尺寸，比例/缩放对不上）
+  const wrap = $('canvasWrap');
+  playCanvasBackup = { w: canvas.width, h: canvas.height, sw: canvas.style.width, sh: canvas.style.height };
+  canvas.width = PLAY_VIEW.w;
+  canvas.height = PLAY_VIEW.h;
+  const sc = Math.min(wrap.clientWidth / PLAY_VIEW.w, wrap.clientHeight / PLAY_VIEW.h);
+  canvas.style.width = Math.max(1, Math.round(PLAY_VIEW.w * sc)) + 'px';
+  canvas.style.height = Math.max(1, Math.round(PLAY_VIEW.h * sc)) + 'px';
+  wrap.classList.add('playing');
+  $('hint').style.display = 'none'; // 编辑器操作提示别盖在试玩画面上
+}
+function exitPlayView() {
+  if (playCanvasBackup) {
+    canvas.width = playCanvasBackup.w;
+    canvas.height = playCanvasBackup.h;
+    canvas.style.width = playCanvasBackup.sw;
+    canvas.style.height = playCanvasBackup.sh;
+    playCanvasBackup = null;
+  }
+  $('canvasWrap').classList.remove('playing');
+  $('hint').style.display = '';
+  resizeCanvas(); // 恢复编辑视图（fitView + renderEdit）
+}
 function togglePlay() {
   if (state.playing) {
     if (playStop) playStop();
@@ -2295,7 +2335,7 @@ function togglePlay() {
     $('btnPlay').textContent = '▶ 试玩';
     $('status').textContent = statusMsg; // 离开试玩：恢复状态栏（否则永远停留在「试玩中」）
     canvas.style.cursor = 'crosshair';
-    renderEdit();
+    exitPlayView();
     notifyPlayState(false);
     return;
   }
@@ -2319,6 +2359,7 @@ function togglePlay() {
     }
   }
   // 重建 Scene 试玩：用**新构造**的对象（编辑器里的对象不被物理移动污染）
+  enterPlayView(); // 试玩视口 = 导出实机（1100×700 等比）+ 编辑器提示隐藏
   const scene = new C.Scene({ worldW: state.worldW, worldH: state.worldH });
   for (const p of state.placed) {
     if (p.type === 'rope') continue; // 绳子走后置接线（需要引用重建后的物体）
@@ -2507,6 +2548,7 @@ function ensureCanvasSize() {
   }
 }
 function resizeCanvas() {
+  if (state.playing) return; // 试玩中：画布缓冲已被切到 1100×700（与导出实机一致），重叠改尺寸会打断试玩
   const wrap = $('canvasWrap');
   // 用 devicePixelRatio 保证高分屏清晰（否则 canvas 缓冲=CSS像素 → 被放大显示 → 模糊）
   const dpr = window.devicePixelRatio || 1;
@@ -2554,6 +2596,9 @@ async function applyLevel(data) {
   if (!res.ok) {
     throw new Error('JSON 引用的插件未就绪：' + res.errors.join('；') + '（把插件放到 plugin/ 目录后重新加载）');
   }
+  const cacheWarn = location.protocol === 'file:' && res.fromCache.length
+    ? `（插件来自浏览器缓存：${res.fromCache.join('、')}——file:// 直开编辑器读不到磁盘 plugin/；请用 http 服务打开编辑器或用「+ 加载插件文件」重新选）`
+    : '';
   if (typeof data.levelId === 'string') { levelId = data.levelId; $('inLevelId').value = levelId; }
   state.plugins = refs.map((p) => ({ file: p.file, reg: p.reg ?? pluginLib.get(p.file)?.reg, name: p.name ?? p.file, enabled: p.enabled !== false }));
   // 编辑器插件状态：就地填充（保引用一致，否则插件面板数据刷新后消失）
@@ -2591,7 +2636,7 @@ async function applyLevel(data) {
   renderPluginPanel();
   refreshExport();
   saveState();
-  $('status').textContent = `已加载关卡（${state.placed.length} 个物体，${state.customReactions.length} 个自定义反应，${state.plugins.length} 个插件）`;
+  $('status').textContent = `已加载关卡（${state.placed.length} 个物体，${state.customReactions.length} 个自定义反应，${state.plugins.length} 个插件）${cacheWarn ?? ''}`;
 }
 
 function loadJSON() {
@@ -2658,6 +2703,24 @@ $('pluginFile').onchange = (e) => {
 };
 $('pluginList').addEventListener('change', onPluginPanelChange);
 $('pluginList').addEventListener('click', onPluginPanelClick);
+/** 🔄 从磁盘重载全部插件源码（插件状态保留；改了 plugin/ 里的文件后点它，不用刷新页面） */
+$('btnReloadPlugins').onclick = async () => {
+  if (!pluginLib.size) { $('status').textContent = '还没有插件可重载'; return; }
+  const files = [...pluginLib.keys()];
+  let ok = 0, fail = 0;
+  for (const file of files) {
+    const src = await pluginFetchDisk(file);
+    if (src != null && pluginReloadKeep(file, src)) ok++;
+    else { fail++; $('status').textContent = `插件 ${file} 从磁盘重载失败（file:// 直开编辑器读不到磁盘——请用 http 服务打开编辑器，或用「+ 加载插件文件」重新选它）`; }
+  }
+  if (ok && !fail) $('status').textContent = `已从磁盘重载 ${ok} 个插件（插件状态保留）`;
+  else if (ok) $('status').textContent = `已重载 ${ok} 个，${fail} 个失败（见上一条提示）`;
+};
+/** 🧹 清除插件源码本地缓存（下次加载 JSON 时全部从磁盘拉取；撤销回载也失效） */
+$('btnClrCache').onclick = () => {
+  try { localStorage.removeItem(PLUGIN_CACHE_KEY); } catch (e) { /* 忽略 */ }
+  $('status').textContent = '已清除插件缓存（重新加载 JSON 或点「🔄 从磁盘重载」拉磁盘源码）';
+};
 $('btnClear').onclick = () => {
   pushUndo();
   state.placed = []; state.customReactions = []; state.plugins = []; state.tips = [];
@@ -2676,13 +2739,6 @@ $('btnClear').onclick = () => {
   $('status').textContent = '已清空关卡（插件已全部卸载）';
 };
 $('btnPlay').onclick = togglePlay;
-$('copyBtn').onclick = () => {
-  const t = $('export');
-  t.select();
-  if (navigator.clipboard) navigator.clipboard.writeText(t.value).catch(() => {});
-  $('status').textContent = '已复制到剪贴板';
-};
-$('btnExport').onclick = () => { refreshExport(); $('status').textContent = '已导出 ' + state.placed.length + ' 个物体'; };
 $('btnExportHTML').onclick = () => {
   downloadFile('level.html', exportHTML(), 'text/html');
   $('status').textContent = '已导出 level.html（用浏览器打开即可玩）';
@@ -2941,7 +2997,6 @@ buildSubstanceList();
 // 插件不是"恢复全部缓存"，而是按引用自动加载（磁盘 plugin/ → 浏览器缓存）——
 // 引用缺源时记入 bootErrors（软提示），JSON 加载（applyLevel）则是硬报错。
 (async () => {
-  let statusMsg;
   const bootErrors = [];
   const migrated = migrateLegacy();           // 迁移旧 v1（自动清掉）
   let loadedFromStorage = await loadState(bootErrors); // 读 v2（自动加载引用的插件）
