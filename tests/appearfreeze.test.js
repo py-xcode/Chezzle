@@ -24,6 +24,15 @@ test('applyAppearDelays 后玩家完全出活动索引（objects/dynamics/player
   assert.equal(sc.player, null, 'player 引用清空');
 });
 
+test('玩家延迟出现：相机待命点 = 玩家出生点（不跑世界中央）', () => {
+  const sc = make();
+  sc.applyAppearDelays();
+  const cf = sc.cameraFocus;
+  assert.ok(cf, '有相机待命点');
+  assert.equal(Math.round(cf.x + cf.w / 2), 100, '视窗中心 x = 玩家出生 x');
+  assert.equal(Math.round(cf.y + cf.h / 2), 300, '视窗中心 y = 玩家出生 y');
+});
+
 test('隐藏期间玩家位置冻结（半空不坠地）', () => {
   const sc = make();
   sc.applyAppearDelays();

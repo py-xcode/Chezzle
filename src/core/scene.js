@@ -371,6 +371,10 @@ export class Scene {
       this.hidden.push(o);
       this.wait(d, () => this.reveal(o.id));
     }
+    // 玩家延迟出现：相机先在玩家出生点待命（无条件优先——编辑器"无玩家包围盒"
+    // 会先给个全景 focus，那是玩家出现前不该看的"别的位置"）
+    const fp = this.hidden.find((o) => o.isPlayerObj && Number(o.appearDelay) > 0);
+    if (fp) this.cameraFocus = { x: fp.x - 400, y: fp.y - 300, w: 800, h: 600 };
     return this;
   }
 
