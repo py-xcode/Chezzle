@@ -278,6 +278,9 @@ export class Player extends Obj {
     for (const pt of scene.particles.slice()) {
       if (rest <= 0) break;
       if (pt.substance !== this.substance || !pt.collectible || pt.amount <= 1e-9) continue;
+      // ★ 玩家自己放置的沉淀不吸回（origin.kind==='place'——搭高/冰面平摊的沉淀必须留在原地；
+      //    掉落壳/反应沉淀照常回血，不误伤）
+      if (pt.origin?.kind === 'place') continue;
       if (pt.right < this.left || pt.left > this.right || pt.bottom < this.top || pt.top > this.bottom) continue;
       const take = Math.min(pt.amount, rest);
       pt.amount -= take;
@@ -364,15 +367,20 @@ export class Player extends Obj {
     const amount = CFG.placeAmount;
     const res = this.inventory.place(amount);
     if (!res) return;
-    // 就近放置：脚下容器优先于附近酒精灯（灯只在脚下无容器时接物）
-    // 修复：玩家站在化学开关上时，物质应进开关而不是跑到旁边的灯上
+    // 就近放置：脚下容器优先于附近药品池（池吸附）优先于酒精灯（灯只在脚下无容器时接物）
     const lamp = scene.findLampNear(this);
-    const container = scene.containerUnderFeet(this);
+    let container = scene.containerUnderFeet(this);
+    if (!container) container = scene.poolNearFeet(this); // ★ 池边放置自动吸附进池子
     const placeOrigin = { kind: 'place' };
     if (container) {
-      // 落点=玩家脚下（反应/气泡围绕玩家放下的位置，不再默认容器中心）
+      // 落点=玩家脚下/池边吸附点（反应/气泡围绕玩家放下的位置，不再默认容器中心）
       const ir = typeof container.innerRect === 'function' ? container.innerRect() : null;
-      if (ir) container.depositAt = { x: this.x + this.w / 2, y: Math.max(ir.y + 4, this.bottom - 6) };
+      if (ir) {
+        const px = container.isPool
+          ? Math.min(Math.max(this.x + this.w / 2, ir.x + 6), ir.x + ir.w - 6) // 吸附：投入池内（夹在盆壁之间）
+          : this.x + this.w / 2;
+        container.depositAt = { x: px, y: Math.max(ir.y + 4, this.bottom - 6) };
+      }
       // 可溶物质放进液体容器（池）→ 溶解进溶液（CuSO4 不会变成永不溶解的沉淀颗粒）；
       // 不溶物（Cu(OH)2 等）才作为沉淀放置
       if (container.solution && container.solution.water > 0 && isSoluble(res.substance)) {

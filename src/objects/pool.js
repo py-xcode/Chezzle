@@ -16,6 +16,7 @@ export class Pool extends Container {
   constructor({ x, y, w, h, wall = WALL, gasHeight = 80, ...rest } = {}) {
     super({ x, y, w, h, ...rest });
     this.wall = wall;
+    this.isPool = true; // 池子标记（玩家"池边放置自动吸附"用；烧杯等小容器不吸）
     this.gasHeight = gasHeight; // 此池产气的气泡柱高度（px），可配置
     this.subBodies = [
       new Floor({ x, y, w: wall, h, color: '#5c4632' }), // 左壁

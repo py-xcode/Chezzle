@@ -596,11 +596,11 @@ export class CollisionSystem {
             // 颗粒嵌在实体（侧面/下方）：把颗粒向穿透最小的面推出（软体退让）。
             // **玩家脚底的可站立 placed 粒子不挤**：玩家踩着它（垫脚），嵌 1-2px 是
             // 正常的"踩合"——按 MTV 推走会让粒子被踢散/玩家穿模/堆不起来。
-            // 物块等重物照旧挤开（软体让位）。
+            // 物块等重物照旧挤开（软体让位）。★ 冰面例外：平摊优先（用户要求冰上搭不了高）
             if (!solid.isPlayerObj) {
               if (this._pushParticleOut(particle, solid)) moved = true;
-            } else if (particle.placed && (particle.y + particle.h / 2) > (solid.y + solid.h * 0.5)) {
-              // 玩家下半部的 placed 粒子：保留垫脚，不挤
+            } else if (!solid._groundIce && particle.placed && (particle.y + particle.h / 2) > (solid.y + solid.h * 0.5)) {
+              // 玩家下半部的 placed 粒子：保留垫脚，不挤（冰面走 else：挤开平摊）
             } else if (resolveEmbed(particle, solid)) {
               moved = true;
             }

@@ -548,7 +548,13 @@ Chezzle.Plugin.register('showtime', {
           // 场景切换：pos 触发用它（"出口到达"——墙删后玩家走进门后区域即传送；
           // 传送门/回头路同理）。单场景关卡无 M：忽略。
           if (M && a.scene && typeof M.switchTo === 'function') {
-            M.switchTo(a.scene, a.spawn ? { spawn: a.spawn } : undefined);
+            try {
+              M.switchTo(a.scene, a.spawn ? { spawn: a.spawn } : undefined);
+            } catch (e) {
+              // 不静默：传送目标异常（场景名写错/未构建）时控制台/提示明确可见
+              if (typeof console !== 'undefined') console.error(`[showtime] goto→${a.scene} 失败：`, e);
+              try { scene.tip = `⚠ 传送失败：目标场景「${a.scene}」不存在或未构建`; } catch (e2) { /* 忽略 */ }
+            }
           }
         });
       }
