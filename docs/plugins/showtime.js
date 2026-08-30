@@ -101,6 +101,13 @@ Chezzle.Plugin.register('showtime', {
         else if (a.kind === 'shake') act(() => { if (scene.camera) scene.camera.shake(a.n ?? 6); });
         else if (a.kind === 'flash') act(() => scene.explode({ x: scene.worldW / 2, y: scene.worldH * 0.4 }, 6, '白光', ['#ffffff']));
         else if (a.kind === 'fireworks') act(() => fireworks(a.n ?? 12, a.colors, a.area));
+        else if (a.kind === 'goto') act(() => {
+          // 场景切换：pos 触发用它（"出口到达"——墙删后玩家走进门后区域即传送；
+          // 传送门/回头路同理）。单场景关卡无 M：忽略。
+          if (M && a.scene && typeof M.switchTo === 'function') {
+            M.switchTo(a.scene, a.spawn ? { spawn: a.spawn } : undefined);
+          }
+        });
       }
     };
 
@@ -149,16 +156,25 @@ Chezzle.Plugin.register('showtime', {
       cancels.push(scene.wait(0.2, openWatch));
     };
     if (openRefs.length) openWatch();
-    // ④ pos：玩家中心进入矩形（一次；触发后停轮询）
+    // ④ pos：玩家中心进入矩形（一次；触发后停轮询）。require=开关 id：开关有效开启才触发
+    //   （传送门"被开关承认才亮"——没过门的门不能传）。
     for (const p of plays) {
       if (p.on !== 'pos' || !(Number.isFinite(p.x) && Number.isFinite(p.w))) continue;
       const check = () => {
         if (p._fired) return;
-        const pl = scene.player;
-        if (pl && !pl.hidden) {
-          const cx = pl.x + pl.w / 2;
-          const cy = pl.y + pl.h / 2;
-          if (cx >= p.x && cx <= p.x + p.w && cy >= p.y && cy <= p.y + p.h) fireOnce(p);
+        let ok = true;
+        if (p.require) {
+          const sw = scene.byId[p.require];
+          const open = sw ? (typeof sw.effectiveOpen === 'function' ? sw.effectiveOpen(scene) : !!sw.open) : true;
+          ok = !!open;
+        }
+        if (ok) {
+          const pl = scene.player;
+          if (pl && !pl.hidden) {
+            const cx = pl.x + pl.w / 2;
+            const cy = pl.y + pl.h / 2;
+            if (cx >= p.x && cx <= p.x + p.w && cy >= p.y && cy <= p.y + p.h) fireOnce(p);
+          }
         }
         cancels.push(scene.wait(0.2, check));
       };

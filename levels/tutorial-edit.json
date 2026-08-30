@@ -1735,6 +1735,135 @@
               "dur": 999
             }
           ]
+        },
+        {
+          "scene": "plain",
+          "on": "pos",
+          "x": 2130,
+          "y": 400,
+          "w": 110,
+          "h": 340,
+          "act": [
+            {
+              "kind": "goto",
+              "scene": "canyon",
+              "spawn": {
+                "x": 120,
+                "y": 808
+              }
+            }
+          ]
+        },
+        {
+          "scene": "canyon",
+          "on": "pos",
+          "x": 1310,
+          "y": 500,
+          "w": 110,
+          "h": 420,
+          "act": [
+            {
+              "kind": "goto",
+              "scene": "plateau",
+              "spawn": {
+                "x": 120,
+                "y": 608
+              }
+            }
+          ]
+        },
+        {
+          "scene": "plateau",
+          "on": "pos",
+          "x": 1520,
+          "y": 400,
+          "w": 110,
+          "h": 320,
+          "act": [
+            {
+              "kind": "goto",
+              "scene": "well",
+              "spawn": {
+                "x": 120,
+                "y": 628
+              }
+            }
+          ]
+        },
+        {
+          "scene": "well",
+          "on": "pos",
+          "x": 1140,
+          "y": 540,
+          "w": 120,
+          "h": 200,
+          "require": "w_det",
+          "act": [
+            {
+              "kind": "goto",
+              "scene": "basin",
+              "spawn": {
+                "x": 120,
+                "y": 608
+              }
+            }
+          ]
+        },
+        {
+          "scene": "basin",
+          "on": "pos",
+          "x": 1754,
+          "y": 590,
+          "w": 70,
+          "h": 110,
+          "require": "b_det",
+          "act": [
+            {
+              "kind": "goto",
+              "scene": "temple",
+              "spawn": {
+                "x": 120,
+                "y": 608
+              }
+            }
+          ]
+        },
+        {
+          "scene": "temple",
+          "on": "pos",
+          "x": 1474,
+          "y": 590,
+          "w": 70,
+          "h": 110,
+          "require": "t_key",
+          "act": [
+            {
+              "kind": "goto",
+              "scene": "crater",
+              "spawn": {
+                "x": 140,
+                "y": 948
+              }
+            }
+          ]
+        },
+        {
+          "scene": "temple",
+          "on": "pos",
+          "x": 1624,
+          "y": 590,
+          "w": 70,
+          "h": 110,
+          "act": [
+            {
+              "kind": "goto",
+              "scene": "basin",
+              "spawn": {
+                "x": 120,
+                "y": 608
+              }
+            }
+          ]
         }
       ]
     },
