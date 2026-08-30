@@ -203,7 +203,7 @@ class FakeSpark {
 }
 const testChezzle = { Plugin: Plugins, Obj, CFG, Spark: FakeSpark };
 function loadFilePlugin(name) {
-  const src = readFileSync(`docs/plugins/${name}`, 'utf8');
+  const src = readFileSync(`plugin/${name}`, 'utf8');
   new Function('Chezzle', src)(testChezzle);
 }
 function sparkCount(s) {

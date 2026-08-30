@@ -93,6 +93,20 @@
   #pluginPanel .pl-del { background: #5a2a2a; color: #ffd9d9; border: 1px solid #7a3a3a; font-size: 10px; padding: 0 6px; border-radius: 3px; }
   #pluginPanel .pl-toggle { font-size: 11px; }
   #pluginPanel .pl-comp { color: #c78bff; font-size: 10px; margin-top: 3px; }
+  /* 插件列表（精简行）：名字 + 「用于」开关 + 编辑/卸载，详情收进 title */
+  #pluginPanel .pl-item { display: flex; align-items: center; gap: 5px; padding: 4px 0; border-top: 1px solid var(--edge); }
+  #pluginPanel .pl-item:first-child { border-top: none; }
+  #pluginPanel .pl-item .pl-name { color: #dfe9ff; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  #pluginPanel .pl-item .pl-ver { color: #6a7a96; font-size: 10px; margin: 0 3px 0 2px; }
+  #pluginPanel .pl-item .pl-badge { color: #7fe0ff; font-size: 10px; flex-shrink: 0; white-space: nowrap; }
+  #pluginPanel .pl-item .pl-toggle { font-size: 11px; color: #9fb2c8; display: flex; align-items: center; gap: 3px; flex-shrink: 0; white-space: nowrap; margin-left: auto; }
+  /* 插件设置区（插件面板统一收纳） */
+  #plShelf { max-height: 44%; overflow-y: auto; flex-shrink: 0; border-bottom: 1px solid var(--edge); }
+  #plShelf .pc-body { padding: 8px 10px; }
+  #plShelf .edPanel { border-bottom: 1px solid var(--edge); }
+  #plShelf .edPanel:last-child { border-bottom: none; }
+  #plShelf .edPanel .pc-head { padding: 5px 4px; }
+  #plShelf .edPanel .pc-body { max-height: 40vh; }
   #props { flex: 1; padding: 10px; overflow-y: auto; }
   #props.pc.collapsed { flex: 0 0 auto; } /* 折叠后不硬撑剩余空间 */
   #props h3 { color: var(--gold); font-size: 13px; margin-bottom: 8px; }
@@ -140,6 +154,10 @@
         </div>
         <div id="pluginList"></div>
         <input type="file" id="pluginFile" accept=".js" multiple style="display:none">
+      </div>
+      <div id="plShelf" class="pc collapsed">
+        <h3 class="pc-head" data-plshelf>🧩 插件设置 <small style="color:#6a7a96">插件加的面板统一收纳（点开）</small><span class="pc-arrow">▾</span></h3>
+        <div class="pc-body"><div id="plShelfBody"></div><div class="empty" id="plShelfEmpty" style="margin:4px 2px">（还没有插件面板）</div></div>
       </div>
       <div id="rxPanel" class="pc">
         <h3 class="pc-head">⚗ 自定义反应 <small style="color:#6a7a96">最高优先级</small><span class="pc-arrow">▾</span></h3>
@@ -306,17 +324,34 @@ const CATALOG = [
 let byType = Object.fromEntries(CATALOG.map((e) => [e.type, e]));
 
 // ---- 插件系统 ---------------------------------------------------------------
-// 插件 = 本关卡的额外 JS 脚本，三种承载（按需取用，互不强制）：
+// 插件 = 本关卡的额外 JS 脚本（仓库统一放 **plugin/** 目录），三种承载（按需取用，互不强制）：
 //   1. 纯逻辑：run(scene, api) 里写死本关卡的玩法（定时/键盘/新反应……）——零配置；
 //   2. enhance：给"已有物体类型"增加属性字段（如酒精灯多了"延迟出现(秒)"）——
 //      参数直接在物体属性面板调整（大众化参数的唯一入口），插件 run 读物体字段执行；
 //   3. components：注册新的可放置物体类型（字段同样进属性面板）。
-// 编辑器里：加载插件即"用于本关"（自动启用），可停用/卸载，无实例/无配置表单。
+// 编辑器里：手动"加载插件文件"= 立即用于本关；关卡 JSON/自动存档 = 按引用自动加载
+// （磁盘 plugin/ → 浏览器缓存），找不到=JSON 加载直接报错。清空关卡 = 全部卸载。
 // ----------------------------------------------------------------------------
 const pluginLib = new Map();        // file -> {src, meta, reg}
 const pluginComponents = new Map(); // type -> 组件声明（meta.components 条目，含 plugin 归属）
 const enhanceRegistry = [];         // [{file, reg, types:[], fields:[...]}]：物体属性增强
 const PLUGIN_CACHE_KEY = 'chezzle-plugins-cache-v1';
+
+/** HTML 转义（插件名/描述进 title/列表前消毒） */
+function escHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ---- 插件设置区（插件面板统一收纳；开合状态记住） ----
+const PLSHELF_KEY = 'chezzle-plshelf-v1';
+let plShelfState = { open: false, sub: {} };
+try { plShelfState = { open: false, sub: {}, ...JSON.parse(localStorage.getItem(PLSHELF_KEY) || '{}') }; } catch (e) { /* 忽略 */ }
+function plShelfSave() { try { localStorage.setItem(PLSHELF_KEY, JSON.stringify(plShelfState)); } catch (e) { /* 忽略 */ } }
+function refreshShelfEmpty() {
+  const n = $('plShelfBody')?.children.length ?? 0;
+  const e = $('plShelfEmpty');
+  if (e) e.style.display = n ? 'none' : '';
+}
 
 function pluginDefaultsOf(fields) {
   const d = {};
@@ -464,18 +499,61 @@ function syncCatalog() {
 
 function pluginCacheSave() {
   try {
-    const o = {};
-    for (const [f, e] of pluginLib) o[f] = e.src;
-    localStorage.setItem(PLUGIN_CACHE_KEY, JSON.stringify(o));
+    // 合并式保存：缓存 = 源码副本库（卸载/清空不删源码——撤销与"按引用加载"兜底）；
+    // 只有引用回来了，它才重新出现，没有"复活"问题。
+    let cur = {};
+    try { cur = JSON.parse(localStorage.getItem(PLUGIN_CACHE_KEY) || '{}'); } catch (e) { /* 忽略 */ }
+    for (const [f, e] of pluginLib) cur[f] = e.src;
+    localStorage.setItem(PLUGIN_CACHE_KEY, JSON.stringify(cur));
   } catch (e) { /* 忽略 */ }
 }
 
-/** 恢复插件库缓存：把缓存的源码重新加载（刷新后插件不丢；引用由存档恢复） */
-function pluginCacheLoad() {
+/** 单文件缓存读取（缓存 = 源码副本：磁盘 plugin/ 拉不到的兜底 + 撤销回载用） */
+function pluginCacheGet(file) {
   try {
     const o = JSON.parse(localStorage.getItem(PLUGIN_CACHE_KEY) || '{}');
-    for (const [f, src] of Object.entries(o)) loadPluginSource(f, src, { silent: true });
-  } catch (e) { /* 忽略 */ }
+    return o[file] || null;
+  } catch (e) { return null; }
+}
+
+/** 插件源码定位（JSON/自动存档加载时自动调用）：已加载 → 磁盘 plugin/ 目录 → 浏览器缓存。
+ *  磁盘路径按编辑器位置推算：tools/leveleditor.html → ../plugin/，根目录 → plugin/。 */
+async function pluginFetchSrc(file) {
+  if (pluginLib.has(file)) return pluginLib.get(file).src;
+  const dirs = [...new Set([location.pathname.includes('/tools/') ? '../plugin' : 'plugin', 'plugin'])];
+  for (const d of dirs) {
+    try {
+      const r = await fetch(`${d}/${encodeURIComponent(file)}`, { cache: 'no-cache' });
+      if (r.ok) {
+        const t = await r.text();
+        if (t && t.includes('@@chezzle-plugin')) return t; // 404/HTML 兜底拒绝
+      }
+    } catch (e) { /* file:// 等取不到磁盘时走缓存 */ }
+  }
+  return pluginCacheGet(file);
+}
+
+/** 确保一批插件全部加载（引用来源：关卡 JSON/自动存档 → 已加载 → 磁盘 plugin/ → 缓存）。
+ *  返回 {ok, errors:[...]}——JSON 加载语义：未就绪 = 报错，不半加载。 */
+async function ensurePluginsFrom(list) {
+  const errors = [];
+  for (const p of list ?? []) {
+    const file = p?.file;
+    if (!file || pluginLib.has(file)) continue;
+    const src = await pluginFetchSrc(file);
+    if (src == null) { errors.push(`${file}（未找到——请把插件文件放到 plugin/ 目录后重新加载）`); continue; }
+    if (!loadPluginSource(file, src, { silent: true })) errors.push(`${file}（加载失败——检查元数据/语法，控制台有详情）`);
+  }
+  return { ok: !errors.length, errors };
+}
+
+/** 撤销回载：引用里缺源码的插件从浏览器缓存原地恢复（清空后 Ctrl+Z 用；磁盘是异步的）。 */
+function restorePluginsSync() {
+  for (const p of state.plugins) {
+    if (!p?.file || pluginLib.has(p.file)) continue;
+    const src = pluginCacheGet(p.file);
+    if (src) loadPluginSource(p.file, src, { silent: true });
+  }
 }
 
 /** 加载一个插件源：解析元数据 + 执行注册 + 组件/增强登记。手动加载自动"用于本关"。 */
@@ -528,16 +606,17 @@ function loadPluginSource(file, src, opts = {}) {
   }
   if (!opts.silent) $('status').textContent = `已加载插件 ${meta.name}${meta.version ? ' v' + meta.version : ''}${opts.silent ? '' : '（已用于本关）'}`;
   renderPluginPanel();
+  refreshShelfEmpty();
   return true;
 }
 
 /** 卸载插件：撤引用 + 组件/增强注销 + 画布上该插件组件对象移除。
- *  工具性操作（源码随之移除，无法从撤销栈恢复）→ 不进撤销；双击确认防误触。 */
+ *  工具性操作（不可撤销）→ 双击确认防误触；opts.confirm=false（清空关卡用）跳过确认。 */
 let unloadConfirmFile = null;
-function pluginUnload(file) {
+function pluginUnload(file, opts = {}) {
   const e = pluginLib.get(file);
   if (!e) return;
-  if (unloadConfirmFile !== file) {
+  if (opts.confirm !== false && unloadConfirmFile !== file) {
     unloadConfirmFile = file;
     $('status').textContent = `再点一次「✕」确认卸载 ${e.meta.name}（画布上的组件对象将一并移除，不可撤销）`;
     setTimeout(() => { if (unloadConfirmFile === file) unloadConfirmFile = null; }, 4000);
@@ -554,8 +633,10 @@ function pluginUnload(file) {
   for (let i = enhanceRegistry.length - 1; i >= 0; i--) {
     if (enhanceRegistry[i].file === file) enhanceRegistry.splice(i, 1);
   }
-  pluginLib.delete(file);
+  // ★ 卸载前把源码存进缓存（存完再删库）——清空/卸载后 Ctrl+Z 撤销才能回载；
+  //    缓存只是"源码副本"，不引用就不出现，没有复活问题。
   pluginCacheSave();
+  pluginLib.delete(file);
   // 编辑器插件清理：onExport 钩子 + UI 元素 + cleanup（插件状态保留，重载可恢复）
   const cleanup = editorCleanups.get(e.reg);
   if (typeof cleanup === 'function') { try { cleanup(); } catch (err) { /* 忽略 */ } }
@@ -568,6 +649,7 @@ function pluginUnload(file) {
   editorStates.delete(e.reg); // 用户要求：卸载插件 → 其保存的数据不再保留（重载=全新）
   for (const el of editorDom.get(e.reg) ?? []) el.remove?.();
   editorDom.delete(e.reg);
+  refreshShelfEmpty();
   syncIdSeq();
   buildRenderScene(); renderEdit(); refreshProps(); refreshExport(); saveState();
   syncCatalog();
@@ -575,10 +657,15 @@ function pluginUnload(file) {
   $('status').textContent = `已卸载插件 ${e.meta.name}`;
 }
 
+/** 清空关卡用：卸载全部插件（源码留缓存——撤销 Ctrl+Z 能恢复；面板/组件/数据全清） */
+function pluginUnloadAll() {
+  for (const file of [...pluginLib.keys()]) pluginUnload(file, { confirm: false });
+}
+
 function renderPluginPanel() {
   const box = $('pluginList');
   if (!pluginLib.size) {
-    box.innerHTML = '<div class="empty">还没有插件。<br>插件 = 本关卡的额外脚本：定制逻辑写死在插件里，通用参数会并进物体属性面板。<br>点「+ 加载插件文件」选 .js，或点「＋ 新建模块」直接在编辑器里写（带模板）。</div>';
+    box.innerHTML = '<div class="empty">还没有插件。<br>插件 = 本关卡的额外脚本（放 <b>plugin/</b> 目录）。<br>点「+ 加载插件文件」选 .js，或点「＋ 新建模块」直接在编辑器里写（带模板）。</div>';
     return;
   }
   const html = [];
@@ -586,26 +673,28 @@ function renderPluginPanel() {
     const meta = e.meta;
     const ref = state.plugins.find((p) => p.file === file);
     const enabled = ref?.enabled !== false;
+    // 徽标：🧱 组件 / 🔧 增强 / 🖊 编辑器面板；详情收进 title（悬停可见）
     const comps = (meta.components ?? []).map((c) => `${c.label ?? c.type}（拖入画布即用）`);
     const enh = enhanceRegistry.filter((x) => x.file === file);
     const enhDesc = enh.map((x) => x.types
       .map((t) => `${byType[t]?.label ?? t} 增加属性：${x.fields.map((f) => f.label ?? f.key).join('、')}`)
       .join('；')).join('；');
-    html.push(`<div style="border-top:1px solid var(--edge);padding:6px 0">
-      <div class="pl-head"><span class="pl-name">${meta.name}</span><span class="pl-ver">v${meta.version ?? '?'}</span>
-        <span style="flex:1"></span>
-        <label style="font-size:10px;color:#9fb2c8;display:flex;align-items:center;gap:3px;margin-right:4px"><input type="checkbox" data-toggle="${file}" ${enabled ? 'checked' : ''}> 用于本关</label>
-        <button class="pl-del" data-edit="${file}" title="查看/编辑模块源码（保存即重载，插件状态保留）">✎</button>
-        <button class="pl-del" data-remove="${file}" title="从本关移除并卸载插件">✕</button></div>`);
-    if (meta.description) html.push(`<div class="pl-desc">${meta.description.replace(/</g, '&lt;')}</div>`);
-    if (comps.length) html.push(`<div class="pl-comp">🧱 组件：${comps.join('、')}</div>`);
-    if (enhDesc) html.push(`<div class="pl-comp">🔧 增强：${enhDesc}（在物体属性面板调整）</div>`);
-    if (!ref) html.push('<div class="pl-miss">已加载但未用于本关（勾选「用于本关」启用）</div>');
-    html.push('</div>');
+    const badges = [];
+    if (comps.length) badges.push('🧱组件');
+    if (enhDesc) badges.push('🔧增强');
+    const def = C.Plugin.get(e.reg);
+    if (def && typeof def.editor === 'function') badges.push('🖊编辑器');
+    const tip = [meta.description, comps.length ? '🧱 ' + comps.join('、') : '', enhDesc ? '🔧 ' + enhDesc + '（物体属性面板调整）' : ''].filter(Boolean).join('\n');
+    html.push(`<div class="pl-item" title="${escHtml(tip)}">
+      <span class="pl-name">${escHtml(meta.name)}<span class="pl-ver">v${escHtml(meta.version ?? '?')}</span>${badges.length ? `<span class="pl-badge">${badges.map(escHtml).join(' ')}</span>` : ''}</span>
+      <label class="pl-toggle" title="用于本关（试玩/导出时注入；组件/增强不受此开关影响）"><input type="checkbox" data-toggle="${escHtml(file)}" ${enabled ? 'checked' : ''}> 用于</label>
+      <button class="pl-del" data-edit="${escHtml(file)}" title="查看/编辑模块源码（保存即重载，插件状态保留）">✎</button>
+      <button class="pl-del" data-remove="${escHtml(file)}" title="从本关移除并卸载插件">✕</button>
+    </div>`);
   }
   const orphan = state.plugins.filter((p) => !pluginLib.has(p.file));
   if (orphan.length) {
-    html.push('<div style="margin-top:6px;color:#ffb340;font-size:10px">引用但未加载的插件（重新加载文件后恢复）：' + orphan.map((p) => p.name ?? p.file).join('、') + '</div>');
+    html.push('<div style="margin-top:6px;color:#ffb340;font-size:10px">引用但未加载的插件（重新加载文件后恢复）：' + escHtml(orphan.map((p) => p.name ?? p.file).join('、')) + '</div>');
   }
   box.innerHTML = html.join('');
 }
@@ -979,13 +1068,24 @@ function makeEditorApi(reg) {
     },
     addPanel: (o = {}) => {
       const d = document.createElement('div');
-      // 与内置面板（⚗/💬）同款折叠结构：点标题收起/展开；**默认折叠**（collapsed !== false）——
-      // 插件面板默认收起，避免多个插件面板把右侧栏挤爆（用户要求"最好直接隐藏"）。
-      d.className = 'edPanel pc' + (o.collapsed !== false ? ' collapsed' : '');
+      // 与内置面板（⚗/💬）同款折叠结构：点标题收起/展开。
+      // 默认收进「🧩 插件设置」总折叠区（shelf: false 可要求留在侧栏顶层）——
+      // 插件面板再多也只占顶部一行，不挤爆右栏；开合状态按标题记住。
+      const open = o.collapsed === false ? true : (plShelfState.sub[o.title ?? ''] ?? false);
+      d.className = 'edPanel pc' + (open ? '' : ' collapsed');
       d.innerHTML = `<h3 class="pc-head">${o.title ?? ''} <small style="color:#6a7a96">插件</small><span class="pc-arrow">▾</span></h3><div class="pc-body edPanelBody">${o.html ?? ''}</div>`;
-      d.querySelector('.pc-head').onclick = () => d.classList.toggle('collapsed');
-      const side = $('side');
-      side.insertBefore(d, side.firstChild);
+      d.querySelector('.pc-head').onclick = () => {
+        d.classList.toggle('collapsed');
+        plShelfState.sub[o.title ?? ''] = !d.classList.contains('collapsed');
+        plShelfSave();
+      };
+      if (o.shelf === false) {
+        const side = $('side');
+        side.insertBefore(d, side.firstChild);
+      } else {
+        $('plShelfBody').appendChild(d);
+        refreshShelfEmpty();
+      }
       doms.push(d);
       return d;
     },
@@ -1136,7 +1236,7 @@ for (const e of CATALOG) {
 
 // ---- 状态 ----------------------------------------------------------------
 // 单场景编辑器：场景/章节这类"不常用玩法"由**编辑器插件**实现（ed API 可加 UI/按钮/
-// 导出钩子/持久化；官方示例 docs/plugins/chapters.js 演示）。
+// 导出钩子/持久化；官方示例 plugin/chapters.js 演示）。
 const state = { worldW: 3000, worldH: 800, palette: 'floor', placed: [], selected: null, sel: new Set(), selBox: null, playing: false, customReactions: [], plugins: [], atmosphere: {}, tips: [] };
 const view = { scale: 1, ox: 0, oy: 0 }; // 屏幕→世界：world=(screen-offset)/scale
 let renderScene = new C.Scene({ worldW: state.worldW, worldH: state.worldH });
@@ -1708,9 +1808,10 @@ function removeSelected() {
 function undo() {
   const s = undoStack.pop();
   if (!s) return;
-  state.placed = s.placed.map((x) => ({ type: x.type, obj: byType[x.type].construct(gridOpts(x.type, x.opts)) }));
-  state.customReactions = Array.isArray(s.rx) ? s.rx : [];
   state.plugins = (s.plugins ?? []).map((p) => ({ file: p.file, reg: p.reg, name: p.name ?? p.file, enabled: p.enabled !== false }));
+  restorePluginsSync(); // 清空会卸载插件：撤销前先从缓存回载插件源码（组件类型才能构造）
+  state.placed = s.placed.map((x) => (byType[x.type] ? { type: x.type, obj: byType[x.type].construct(gridOpts(x.type, x.opts)) } : null)).filter(Boolean);
+  state.customReactions = Array.isArray(s.rx) ? s.rx : [];
   state.atmosphere = { ...(s.atmosphere ?? {}) };
   refreshAtmInput();
   state.worldW = s.worldW ?? state.worldW;
@@ -2020,7 +2121,7 @@ function exportDSL() {
 function safeJson(v) {
   try { return JSON.stringify(v) ?? 'null'; } catch (e) { return 'null'; }
 }
-/** 导出 HTML 的插件 <script> 标签：嵌入源码（默认）或外链 plugins/<file>。
+/** 导出 HTML 的插件 <script> 标签：嵌入源码（默认）或外链 plugin/<file>。
  *  覆盖：被引用的插件 + 画布上组件所属的插件（停用只关 run，组件仍需注册）。 */
 function pluginTags() {
   const embed = $('cbEmbedPlugins')?.checked !== false;
@@ -2035,8 +2136,8 @@ function pluginTags() {
       tags.push(`<!-- 插件: ${e.meta.name}${e.meta.version ? ' v' + e.meta.version : ''}（${file}） -->`);
       tags.push('<script>\n' + e.src + '\n<\/script>');
     } else {
-      tags.push(`<!-- 插件: ${e.meta.name}（外链模式，请把 ${file} 放到 level.html 同目录的 plugins/ 下） -->`);
-      tags.push(`<script src="plugins/${file}"><\/script>`);
+      tags.push(`<!-- 插件: ${e.meta.name}（外链模式，请把 ${file} 放到 level.html 同目录的 plugin/ 下） -->`);
+      tags.push(`<script src="plugin/${file}"><\/script>`);
     }
   }
   return tags.join('\n');
@@ -2115,15 +2216,19 @@ function migrateLegacy() {
     return state.placed.length;
   } catch (e) { return null; }
 }
-function loadState() {
+async function loadState(errors) {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return false;
     const data = JSON.parse(raw);
+    // 插件自动加载（JSON 同源）：磁盘 plugin/ → 浏览器缓存；拉不到记入 errors（软提示，不阻断）
+    const refs = Array.isArray(data.plugins) ? data.plugins : [];
+    const res = await ensurePluginsFrom(refs);
+    for (const e of res.errors) errors?.push(e);
     if (typeof data.levelId === 'string') { levelId = data.levelId; $('inLevelId').value = levelId; }
-    state.plugins = (Array.isArray(data.plugins) ? data.plugins : []).map((p) => ({ file: p.file, reg: p.reg, name: p.name ?? p.file, enabled: p.enabled !== false }));
+    state.plugins = refs.map((p) => ({ file: p.file, reg: p.reg ?? pluginLib.get(p.file)?.reg, name: p.name ?? p.file, enabled: p.enabled !== false }));
     // 编辑器插件持久化状态（chapters 等插件用它存自己的数据）。
-    // ★ 就地填充：pluginCacheLoad 在前，def.editor() 已把 state 引用放进 Map——
+    // ★ 就地填充：插件自动加载在前，def.editor() 已把 state 引用放进 Map——
     //   直接 set 新对象会让插件的 ed.state 脱引用（刷新后场景数据"消失"的根因）。
     for (const [k, v] of Object.entries(data.editorState ?? {})) {
       const cur = editorStates.get(k);
@@ -2419,7 +2524,7 @@ function saveJSON() {
   const data = {
     version: 2,
     levelId, // 关卡ID随 JSON 保存/加载
-    plugins: state.plugins, // 插件引用清单（插件文件本身不复制，与源码一起分发）
+    plugins: state.plugins, // 插件引用清单（加载 JSON 时自动从 plugin/ 目录或缓存加载；找不到=报错）
     rx: state.customReactions,
     atmosphere: state.atmosphere, // 编辑器自带：关卡大气
     editorState: Object.fromEntries([...editorStates].map(([k, v]) => [k, v])),
@@ -2433,16 +2538,17 @@ function saveJSON() {
   URL.revokeObjectURL(a.href);
   $('status').textContent = '已保存 level.json';
 }
-function applyLevel(data) {
-  if (typeof data.levelId === 'string') { levelId = data.levelId; $('inLevelId').value = levelId; }
-  state.plugins = (Array.isArray(data.plugins) ? data.plugins : []).map((p) => ({ file: p.file, reg: p.reg, name: p.name ?? p.file, enabled: p.enabled !== false }));
-  // 补充：已加载的插件文件自动"用于本关"（JSON 没写也认——演出剧本/检查点等都靠它们）
-  for (const [file, e] of pluginLib) {
-    const reg = e.reg ?? file.replace(/\.js$/, '');
-    if (!state.plugins.some((p) => p.reg === reg)) {
-      state.plugins.push({ file, reg, name: e.meta?.name ?? file, enabled: true });
-    }
+async function applyLevel(data) {
+  // 0. 自动加载 JSON 里引用的插件：已加载 → 磁盘 plugin/ 目录 → 浏览器缓存。
+  //    JSON 是插件清单的唯一真相（不再附带"已加载的插件自动用于本关"）；
+  //    找不到/加载失败 = 直接报错，不半加载（物体/面板都得等插件先就绪）。
+  const refs = Array.isArray(data.plugins) ? data.plugins : [];
+  const res = await ensurePluginsFrom(refs);
+  if (!res.ok) {
+    throw new Error('JSON 引用的插件未就绪：' + res.errors.join('；') + '（把插件放到 plugin/ 目录后重新加载）');
   }
+  if (typeof data.levelId === 'string') { levelId = data.levelId; $('inLevelId').value = levelId; }
+  state.plugins = refs.map((p) => ({ file: p.file, reg: p.reg ?? pluginLib.get(p.file)?.reg, name: p.name ?? p.file, enabled: p.enabled !== false }));
   // 编辑器插件状态：就地填充（保引用一致，否则插件面板数据刷新后消失）
   for (const [k, v] of Object.entries(data.editorState ?? {})) {
     const cur = editorStates.get(k);
@@ -2478,7 +2584,7 @@ function applyLevel(data) {
   renderPluginPanel();
   refreshExport();
   saveState();
-  $('status').textContent = `已加载关卡（${state.placed.length} 个物体，${state.customReactions.length} 个自定义反应）`;
+  $('status').textContent = `已加载关卡（${state.placed.length} 个物体，${state.customReactions.length} 个自定义反应，${state.plugins.length} 个插件）`;
 }
 
 function loadJSON() {
@@ -2489,10 +2595,12 @@ function loadJSON() {
     const file = input.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
-        applyLevel(JSON.parse(reader.result));
+        await applyLevel(JSON.parse(reader.result));
       } catch (e) {
+        // 插件未就绪等：直接报错（alert + 状态栏），当前关卡保持不变
+        alert('JSON 加载失败：' + e.message);
         $('status').textContent = 'JSON 加载失败: ' + e.message;
       }
     };
@@ -2543,7 +2651,23 @@ $('pluginFile').onchange = (e) => {
 };
 $('pluginList').addEventListener('change', onPluginPanelChange);
 $('pluginList').addEventListener('click', onPluginPanelClick);
-$('btnClear').onclick = () => { pushUndo(); state.placed = []; state.customReactions = []; state.plugins = []; state.tips = []; for (const v of editorStates.values()) for (const k of Object.keys(v)) delete v[k]; /* 就地清空（保插件闭包 st 引用——clear() 只清 Map，插件里还指着旧对象） */ openTip = -1; state.selected = null; state.sel = new Set(); syncIdSeq(); buildRenderScene(); renderEdit(); refreshProps(); renderRxPanel(); renderTipPanel(); renderPluginPanel(); refreshExport(); saveState(); for (const fns of editorStateLoadedHooks.values()) for (const fn of fns) { try { fn(); } catch (e) {} } /* 钩子可能从自身状态把数据灌回来（多场景插件）：清后补刀 + 重渲染 */ state.tips = []; state.customReactions = []; for (const v of editorStates.values()) for (const k of Object.keys(v)) delete v[k]; openTip = -1; renderTipPanel(); renderRxPanel(); refreshExport(); saveState(); };
+$('btnClear').onclick = () => {
+  pushUndo();
+  state.placed = []; state.customReactions = []; state.plugins = []; state.tips = [];
+  for (const v of editorStates.values()) for (const k of Object.keys(v)) delete v[k]; /* 就地清空（保插件闭包 st 引用——clear() 只清 Map，插件里还指着旧对象） */
+  openTip = -1; state.selected = null; state.sel = new Set(); syncIdSeq();
+  buildRenderScene(); renderEdit(); refreshProps(); renderRxPanel(); renderTipPanel(); renderPluginPanel(); refreshExport(); saveState();
+  for (const fns of editorStateLoadedHooks.values()) for (const fn of fns) { try { fn(); } catch (e) {} } /* 钩子可能从自身状态把数据灌回来（多场景插件）：清后补刀 + 重渲染 */
+  state.tips = []; state.customReactions = [];
+  for (const v of editorStates.values()) for (const k of Object.keys(v)) delete v[k];
+  openTip = -1; renderTipPanel(); renderRxPanel(); refreshExport(); saveState();
+  pluginUnloadAll(); // ★ 清空 = 插件全部卸载（面板/组件/增强/状态全清；源码留缓存，Ctrl+Z 可恢复）
+  // 清空后仍可能残留的"撤销后自愈"的东西已经过插件清理；确保面板彻底空
+  renderPluginPanel();
+  renderTipPanel(); renderRxPanel();
+  refreshShelfEmpty();
+  $('status').textContent = '已清空关卡（插件已全部卸载）';
+};
 $('btnPlay').onclick = togglePlay;
 $('copyBtn').onclick = () => {
   const t = $('export');
@@ -2783,50 +2907,68 @@ $('tipAdd').onclick = () => {
   openTip = state.tips.length - 1;
   saveState(); renderTipPanel(); refreshExport();
 };
-// 可收缩面板：点头部折叠/展开（自定义反应/条件提示）
+// 可收缩面板：点头部折叠/展开（自定义反应/条件提示；🧩 插件设置的头部自己处理——要记住开合状态）
 document.querySelectorAll('.pc-head').forEach((h) => {
+  if (h.dataset.plshelf || h.closest('#plShelf')) return;
   h.onclick = () => h.closest('.pc').classList.toggle('collapsed');
 });
+// 插件设置区：记住开合（本地存储）
+{
+  const shelf = $('plShelf');
+  const shelfHead = shelf?.querySelector('.pc-head');
+  if (shelf && shelfHead) {
+    if (plShelfState.open) shelf.classList.remove('collapsed');
+    shelfHead.onclick = () => {
+      shelf.classList.toggle('collapsed');
+      plShelfState.open = !shelf.classList.contains('collapsed');
+      plShelfSave();
+    };
+  }
+  refreshShelfEmpty();
+}
 window.addEventListener('resize', resizeCanvas);
 
 buildPalette();
 buildSubstanceList();
-// 恢复插件库必须在 loadState 之前：存档里可能引用了插件组件类型，
-// 组件类型要先注册进 byType，加载过滤器才不会把它丢弃。
-pluginCacheLoad();
 // 没有默认关卡。加载顺序：v2 存档 → 旧 v1 存档（迁移+去重+剥种子）→ 都没有就空画布。
-// 用 v2 全新 key：任何旧版本的脏数据都不可能再冒出来。
-let statusMsg;
-const migrated = migrateLegacy();           // 迁移旧 v1（自动清掉）
-let loadedFromStorage = loadState();        // 读 v2
-if (!loadedFromStorage) {
-  if (migrated != null) {
-    loadedFromStorage = true;               // v1 迁过来的关卡视为已恢复
-    saveState();
-    statusMsg = `已迁移旧存档并清理重复（${state.placed.length} 个物体）`;
+// 插件不是"恢复全部缓存"，而是按引用自动加载（磁盘 plugin/ → 浏览器缓存）——
+// 引用缺源时记入 bootErrors（软提示），JSON 加载（applyLevel）则是硬报错。
+(async () => {
+  let statusMsg;
+  const bootErrors = [];
+  const migrated = migrateLegacy();           // 迁移旧 v1（自动清掉）
+  let loadedFromStorage = await loadState(bootErrors); // 读 v2（自动加载引用的插件）
+  if (!loadedFromStorage) {
+    if (migrated != null) {
+      loadedFromStorage = true;               // v1 迁过来的关卡视为已恢复
+      saveState();
+      statusMsg = `已迁移旧存档并清理重复（${state.placed.length} 个物体）`;
+    } else {
+      state.placed = [];                      // 全新打开：空画布，不摆默认关卡
+      state.selected = null;
+      statusMsg = '就绪（空画布）';
+    }
   } else {
-    state.placed = [];                      // 全新打开：空画布，不摆默认关卡
-    state.selected = null;
-    statusMsg = '就绪（空画布）';
+    saveState();                              // 重新规范化存档（已去重/剥种子）
+    statusMsg = `已恢复自动存档（${state.placed.length} 个物体）`;
   }
-} else {
-  saveState();                              // 重新规范化存档（已去重/剥种子）
-  statusMsg = `已恢复自动存档（${state.placed.length} 个物体）`;
-}
-refreshExport();
-renderRxPanel();                          // 渲染自定义反应列表
-renderTipPanel();                          // 渲染条件提示列表
-renderPluginPanel();                      // 渲染插件面板（含已恢复的插件引用）
-$('status').textContent = statusMsg;
-// 容器尺寸一变化就重设画布：ResizeObserver 在 observe 时立即回调一次，之后每次布局
-// 变化都拿到**真实尺寸**，根治"刷新后模糊、要手动缩放才正常"；老浏览器退化用多次兜底。
-if (typeof ResizeObserver !== 'undefined') {
-  new ResizeObserver(() => resizeCanvas()).observe($('canvasWrap'));
-} else {
-  requestAnimationFrame(resizeCanvas);
-  setTimeout(resizeCanvas, 300);
-  window.addEventListener('load', resizeCanvas);
-}
+  if (bootErrors.length) statusMsg += ` ⚠ 插件未恢复：${bootErrors.join('；')}`;
+  refreshExport();
+  renderRxPanel();                          // 渲染自定义反应列表
+  renderTipPanel();                          // 渲染条件提示列表
+  renderPluginPanel();                      // 渲染插件面板（含已恢复的插件引用）
+  refreshShelfEmpty();
+  $('status').textContent = statusMsg;
+  // 容器尺寸一变化就重设画布：ResizeObserver 在 observe 时立即回调一次，之后每次布局
+  // 变化都拿到**真实尺寸**，根治"刷新后模糊、要手动缩放才正常"；老浏览器退化用多次兜底。
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(() => resizeCanvas()).observe($('canvasWrap'));
+  } else {
+    requestAnimationFrame(resizeCanvas);
+    setTimeout(resizeCanvas, 300);
+    window.addEventListener('load', resizeCanvas);
+  }
+})();
 </script>
 </body>
 </html>

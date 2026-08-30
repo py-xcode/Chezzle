@@ -5,7 +5,7 @@
 
 ```text
 level.html        ← 导出的关卡（编辑器生成）
-plugins/….js      ← 插件文件（你写，编辑器只引用）
+plugin/….js       ← 插件文件（仓库 plugin/ 目录；编辑器加载 JSON 时自动从这里找）
 dist/chezzle.js   ← 引擎
 ```
 
@@ -128,12 +128,17 @@ Chezzle.Plugin.register('trampoline', { components: [/* 如上 */] });
 
 ## 6. 编辑器工作流
 
-1. 「🧩 插件」→「+ 加载插件文件」（可多选）。**加载即用于本关**（自动启用，可撤销）。
-2. 看插件行说明：`🧱 组件`（拖入画布即用）/ `🔧 增强`（哪些物体多了什么属性）。
+1. 插件统一放仓库 **`plugin/`** 目录。手动加载：「🧩 插件」→「+ 加载插件文件」（可多选）。
+   **加载即用于本关**（自动启用，可撤销）；「＋ 新建模块」不建文件直接写（存浏览器缓存）。
+2. 插件面板**每行精简**：名字 版本 徽标（`🧱组件`/`🔧增强`/`🖊编辑器`）+「用于」开关 + ✎/✕；
+   组件/增强/描述详情收进悬停 title，不占行。
 3. 调参数：选中物体 → 属性面板（增强字段/组件字段都在那里）；定制逻辑：直接改插件源码。
-4. 试玩与导出共用同一注入管线（所见即所得）。
-5. 导出 HTML：默认**嵌入插件源码**（单文件分发）；取消「嵌入」则外链 `plugins/<file>.js`。
+4. **关卡 JSON 里保存插件清单**（`plugins:[{file,reg,name,enabled}]`）。加载 JSON 时**自动加载**：
+   已加载 → 磁盘 `plugin/` 目录 → 浏览器缓存；**找不到 = 直接报错**（alert，不半加载）。
+5. 试玩与导出共用同一注入管线（所见即所得）。导出 HTML 默认**嵌入插件源码**（单文件分发）。
 6. 停用：取消「用于本关」；删除：点 `✕`（撤引用+组件+增强，一次撤销可全恢复）。
+7. 「🗑 清空」= **卸载全部插件**：插件面板/组件/增强/私有状态全清（源码留缓存，
+   Ctrl+Z 撤销可连同关卡车恢复）。
 
 ## 7. 编辑器插件：插件可以"改编编辑器"（章节/场景示例）
 
@@ -145,7 +150,7 @@ Chezzle.Plugin.register('chapters', {
   editor(ed) {
     // —— UI ——
     ed.addToolbarButton({ label: '📚 章节', title: '章节场景面板', onClick: () => panel.toggle() });
-    const panel = ed.addPanel({ title: '📚 章节场景', html: '…' }); // 侧栏顶部
+    const panel = ed.addPanel({ title: '📚 章节场景', html: '…' }); // 默认进「🧩 插件设置」区
     // —— 导出钩子：脚本生成时可追加/改写（fn(lines, ctx)，返回数组可整体替换）——
     ed.onExport((lines, ctx) => { lines.push('// 插件追加的一行'); });
     // —— 持久化状态（随存档/level.json 保存）——
@@ -160,7 +165,7 @@ Chezzle.Plugin.register('chapters', {
 |---|---|
 | `addToolbarButton({label, title, onClick})` | 工具栏按钮 |
 | `addToolbarElement(el)` | 工具栏任意元素（select 等复杂控件）；插在状态栏之前——试玩中换行/推挤不会让它跳动 |
-| `addPanel({title, html})` | 侧栏面板（返回元素，可自由填充/重绘） |
+| `addPanel({title, html, shelf?})` | 侧栏面板（返回元素，可自由填充/重绘）。**默认收进「🧩 插件设置」总折叠区**（侧栏只占一行；开合状态记住）。传 `shelf: false` 可留在侧栏顶层 |
 | `onExport(fn)` | 导出脚本生成时调用：`fn(lines, ctx)`，往 lines 追加；返回新数组则整体替换 |
 | `onPlayScene(fn)` | 默认试玩：场景构建后、插件注入前 `fn(scene)`——往 scene 写数据（如横幅剧本），与导出"数据行在 inject 之前"同一时机，**试玩所见 = 导出所得** |
 | `onPlay(fn, mode)` | 试玩接管：`fn()` 返回 stop 函数=接管（整关/当前视图）；返回 null=让位（如单场景走默认试玩） |
@@ -178,7 +183,7 @@ Chezzle.Plugin.register('chapters', {
 查看/编辑源码，保存=**原地热重载**（「用于本关」开关与插件私有状态都保留；新代码注册失败自动回滚旧版）。
 新建/编辑的模块与"加载插件文件"同一管线、同一缓存（刷新页面不丢），导出同样嵌入。
 
-**官方示例 `docs/plugins/chapters.js`**（章节场景，完整演示"改编编辑器"）：
+**官方示例 `plugin/chapters.js`**（章节场景，完整演示"改编编辑器"）：
 - 顶边栏控件（不再占侧栏）：场景下拉 + ＋/✕（自动保存，无"存为场景"按钮）+ ★初始场景
   + 「大气」框（设置当前场景大气，如 `CO2:8`）+ 「▶当前」按钮（只看当前场景）；
 - 给开关**增强**了「切到场景(id)」属性（属性面板填写即传送门）；
@@ -191,23 +196,24 @@ Chezzle.Plugin.register('chapters', {
 
 | 文件 | 形态 | 内容 |
 |---|---|---|
-| `docs/plugins/tutorial.js` | **新手引导模组** | 大横幅剧本（编辑器「📣 横幅剧本」面板排秒数，导出/试玩自动生效）+ 全类型「延迟出现(秒)」属性 + 玩家延迟出现 |
-| `docs/plugins/lampDelay.js` | 增强 | 给灯/物块等加「延迟出现(秒)」（参数在属性面板调） |
-| `docs/plugins/keys.js` | 纯逻辑 | 按键提示（定制型：写死 KeyE） |
-| `docs/plugins/trail.js` | 纯逻辑 | 玩家**身后持续喷光点**轨迹（onTick + Spark 装饰粒子） |
-| `docs/plugins/trampoline.js` | 组件 | 蹦床（编辑界面同游戏渲染；可拖拽定尺寸；落垫弹/垫上跳更高/走路不弹） |
-| `docs/plugins/liveSign.js` | 组件 | 显示牌（新物体，多行文字 + 边框色） |
-| `docs/plugins/chapters.js` | **编辑器插件** | 章节场景 v2：顶边栏管理、★初始场景、每场景大气、试玩接管、导出钩子 |
-| `docs/plugins/showtime.js` | **演出编排** | 声明式关卡演出：`enter/open/pos/win/at` 触发器 × 横幅/震屏/彩焰烟花/白光动作；🎬面板 JSON 编辑剧本 |
-| `docs/plugins/checkpoint.js` | **新手检查点** | 死亡自动回最近检查点+回满血+幽默横幅（支持多场景）；🗺面板配置 spawns/texts |
+| `plugin/tutorial.js` | **新手引导模组** | 大横幅剧本（编辑器「📣 横幅剧本」面板排秒数，导出/试玩自动生效）+ 全类型「延迟出现(秒)」属性 + 玩家延迟出现 |
+| `plugin/lampDelay.js` | 增强 | 给灯/物块等加「延迟出现(秒)」（参数在属性面板调） |
+| `plugin/keys.js` | 纯逻辑 | 按键提示（定制型：写死 KeyE） |
+| `plugin/trail.js` | 纯逻辑 | 玩家**身后持续喷光点**轨迹（onTick + Spark 装饰粒子） |
+| `plugin/trampoline.js` | 组件 | 蹦床（编辑界面同游戏渲染；可拖拽定尺寸；落垫弹/垫上跳更高/走路不弹） |
+| `plugin/liveSign.js` | 组件 | 显示牌（新物体，多行文字 + 边框色） |
+| `plugin/chapters.js` | **编辑器插件** | 章节场景 v2：顶边栏管理、★初始场景、每场景大气、试玩接管、导出钩子 |
+| `plugin/showtime.js` | **演出编排** | 声明式关卡演出：`enter/open/pos/win/at` 触发器 × 横幅/震屏/彩焰烟花/白光动作；🎬面板 JSON 编辑剧本 |
+| `plugin/checkpoint.js` | **新手检查点** | 死亡自动回最近检查点+回满血+幽默横幅（支持多场景）；🗺面板配置 spawns/texts |
 | `docs/examples/chapter.html` | 关卡 | 多场景章节示例（手动脚本版） |
 
 ## 9. 写插件注意点（每次都踩的坑）
 
-### ① 面板防挤爆：默认折叠
-`ed.addPanel` 默认**折叠**（收起，点头部展开；`{collapsed: false}` 可要求默认展开）。
-侧栏是 220px 的窄列——多个插件面板（横幅/剧本/检查点/组件）若全部展开会挤爆。
-面板内容有上限：`.edPanel .pc-body` 最高 46vh、超出内部滚动；**不要**在面板里放
+### ① 面板防挤爆：默认收进「🧩 插件设置」区
+`ed.addPanel` 默认收进侧栏顶部的「🧩 插件设置」总折叠区（整个插件区只占一行；
+区/面板各自默认折叠，开合状态按标题记住）。`shelf: false` 可要求留在侧栏顶层。
+侧栏是 220px 的窄列——插件面板再多也只占一行。
+面板内容有上限：`.edPanel .pc-body` 最高 40vh、超出内部滚动；**不要**在面板里放
 无限增长的列表/巨型 textarea（JSON 编辑框给 8~12 行即可，配合折叠）。
 
 ### ② 运行时配置必须走 `ed.pluginCfg(fn)`
@@ -218,36 +224,47 @@ Chezzle.Plugin.register('chapters', {
 - `cfg` 必须是**纯数据**（JSON 可序列化；函数/对象引用会被导出丢失）；
 - 多场景需要 `M` 时用**惰性函数**：`cfg.M = () => M`（构造期引用 M 是 TDZ 错误）。
 
-### ③ 数据"清空"时真的清空
-编辑器「🗑 清空」会**就地清空 editorStates**（保留插件闭包里的 st 引用——
-所以**不要**在 `onStateLoaded` 钩子里偷偷把旧数据写回；清空后 st 是 `{}`，
-插件应重建默认值）。示例：chapters 清空后场景列表归零，需要手动新建。
+### ③ 清空 = 卸载全部插件，数据真的清空
+编辑器「🗑 清空」会**卸载全部插件**（面板/组件/增强/私有状态全清）+ **就地清空
+editorStates**（保留插件闭包里的 st 引用——所以**不要**在 `onStateLoaded` 钩子里
+偷偷把旧数据写回；清空后 st 是 `{}`，插件应重建默认值）。
+示例：chapters 清空后场景列表归零，需要手动新建。
+（Ctrl+Z 撤销：关卡车物体与插件引用恢复，源码从缓存回载；但插件私有数据已清，
+需要重新配。）
 
-### ④ 不要抢关卡的 `onOpen` 接线
+### ④ 插件放 `plugin/` 目录，JSON 按引用自动加载
+仓库根目录 `plugin/` 是插件唯一家。关卡 JSON 保存插件清单
+（`plugins:[{file,reg,name,enabled}]`）——加载 JSON 时编辑器**自动加载**：
+已加载 → `plugin/` 磁盘 → 浏览器缓存；**找不到直接报错**（alert，当前关卡不动）。
+所以"编辑器里新建的模块"（只存浏览器缓存）随手保存成 `.js` 放回 `plugin/` 目录，
+否则换台机器加载 JSON 会报"未找到"。
+浏览器缓存只是源码副本 + 撤销兜底：被卸载的插件不引用就不会出现，没有"复活"问题。
+
+### ⑤ 不要抢关卡的 `onOpen` 接线
 `Switch._handlers.open` 是**单值**——插件的 `sw.onOpen(...)` 会覆盖关卡自己的接线
 （灯列/大门/通关）。监听开关开启请用**轮询**（`scene.wait` 循环读 `effectiveOpen` 边沿），
 参考 showtime 的 `open` 触发器实现。
 
-### ⑤ 物体 id 必须全局唯一
+### ⑥ 物体 id 必须全局唯一
 `scene.byId` 是 `id → 物体` 的单键——路标和开关共用 `d_s1` 时 byId 会互相覆盖，
 插件/接线拿到错的物体（`sw.onOpen is not a function` 就是路标被当成开关）。
 编辑器同一场景内 id 冲突日志会提示；多场景之间才允许重复。
 
-### ⑥ 多行文本导出要转义
+### ⑦ 多行文本导出要转义
 `sign` 等文本物体在导出 DSL 里是 `'...'` 字符串——**换行必须转义成 `\n`**
 （编辑器 `sceneDsl` 已处理；你自己在 `onExport` 钩子里追加含文本的行时同样留意
 `\` → `\\`、`'` → `\'`）。
 
-### ⑦ 导出钩子兼容单/多场景
+### ⑧ 导出钩子兼容单/多场景
 多场景（chapters 接管）时导出脚本被**整体改写**为 Multiscene（没有 `const scene = L.build();`）。
 `onExport` 里如果要往脚本里插"依赖单场景"的行，先探测：
 `if (!lines.some((l) => l.includes('const scene = L.build();'))) return;`（tutorial.js 的做法）。
 
-### ⑧ 面板 DOM 用返回值，别全局 querySelector
+### ⑨ 面板 DOM 用返回值，别全局 querySelector
 `ed.addPanel(...)` 返回面板元素——在里面 `panel.querySelector('#xxx')` 安全；
 全局 `document.querySelector('#xxx')` 会被多个面板/编辑器的重复 id 误伤。
 面板卸载时随 `editorDom` 自动移除（别再手动 remove）。
 
-### ⑨ 插件状态随存档持久化
+### ⑩ 插件状态随存档持久化
 `ed.state` 自动随 `level.json` 存档/读档（`editorState.<reg>`），`ed.save()`/`ed.getState()` 读写。
 **不要**把不可序列化的东西（DOM/函数）塞进 state；读档后 `ed.onStateLoaded(() => 重渲染面板)`。

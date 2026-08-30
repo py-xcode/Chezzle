@@ -19,7 +19,7 @@ function makeScene(opts = {}) {
 function stepN(s, n) { for (let i = 0; i < n; i++) s.step(TICK); }
 
 // 真实模组文件：模拟浏览器 <script> 加载（顶层只 register，无副作用）
-const tutSrc = readFileSync('docs/plugins/tutorial.js', 'utf8');
+const tutSrc = readFileSync('plugin/tutorial.js', 'utf8');
 new Function('Chezzle', tutSrc)({ Plugin: Plugins });
 
 // ---- ① 大横幅：引擎能力 ----
