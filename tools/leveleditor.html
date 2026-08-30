@@ -911,7 +911,11 @@ function buildPlayObject(p) {
 /** 导出/注入用：启用的插件清单（注册名；参数在物体上，无需 cfg）。
  *  注：组件/增强插件的源码仍须随导出注册（见 requiredPluginFiles），此处只注入 run 逻辑。 */
 function activePlugins() {
-  return state.plugins.filter((p) => p.enabled).map((p) => ({ name: p.reg ?? p.name }));
+  return state.plugins.filter((p) => p.enabled).map((p) => {
+    const reg = p.reg ?? p.name;
+    const cfgFn = editorPluginCfgs.get(reg);
+    return { name: reg, ...(cfgFn ? { cfg: cfgFn() ?? {} } : {}) };
+  });
 }
 
 /** 导出 HTML 必须注册的插件文件：被引用的插件 + 画布上组件所属的插件 + 有编辑器扩展的插件 */
@@ -944,6 +948,7 @@ const editorHooks = new Map();    // reg -> [fn]（onExport）
 const editorDom = new Map();      // reg -> [elements]（卸载时移除）
 const editorStates = new Map();   // reg -> 插件私有持久化状态
 const editorCleanups = new Map(); // reg -> cleanup
+const editorPluginCfgs = new Map(); // reg -> fn()（返回运行时配置 cfg——试玩/导出注入插件用）
 const editorStateLoadedHooks = new Map(); // reg -> [fn]（存档恢复后调用——插件重渲染面板用）
 const editorPlayHooks = new Map(); // mode('current'|'all') -> {reg, fn}（试玩接管：返回 stop 函数）
 const editorPlayStateHooks = new Map(); // reg -> [fn]（试玩开始/结束通知：插件同步自己 UI，如「▶当前」变「⏹ 退出」）
@@ -1000,6 +1005,11 @@ function makeEditorApi(reg) {
     onPlayScene: (fn) => {
       const arr = editorPlaySceneHooks.get(reg) ?? (editorPlaySceneHooks.set(reg, []), editorPlaySceneHooks.get(reg));
       arr.push(fn);
+    },
+    /** 运行时配置来源：fn() 返回插件运行时 cfg 对象——试玩/导出时注入 {name, cfg}，
+     *  横幅剧本/检查点 spawns/演出剧本等"编辑器里配、关卡里用"的数据都走这里。 */
+    pluginCfg: (fn) => {
+      if (typeof fn === 'function') editorPluginCfgs.set(reg, fn);
     },
     /** 试玩接管：mode 'all'（整关，如多场景）或 'current'（仅当前视图）。fn 返回 stop 函数 */
     onPlay: (fn, mode = 'all') => {
@@ -2416,6 +2426,54 @@ function saveJSON() {
   URL.revokeObjectURL(a.href);
   $('status').textContent = '已保存 level.json';
 }
+function applyLevel(data) {
+  if (typeof data.levelId === 'string') { levelId = data.levelId; $('inLevelId').value = levelId; }
+  state.plugins = (Array.isArray(data.plugins) ? data.plugins : []).map((p) => ({ file: p.file, reg: p.reg, name: p.name ?? p.file, enabled: p.enabled !== false }));
+  // 补充：已加载的插件文件自动"用于本关"（JSON 没写也认——演出剧本/检查点等都靠它们）
+  for (const [file, e] of pluginLib) {
+    const reg = e.reg ?? file.replace(/\.js$/, '');
+    if (!state.plugins.some((p) => p.reg === reg)) {
+      state.plugins.push({ file, reg, name: e.meta?.name ?? file, enabled: true });
+    }
+  }
+  // 编辑器插件状态：就地填充（保引用一致，否则插件面板数据刷新后消失）
+  for (const [k, v] of Object.entries(data.editorState ?? {})) {
+    const cur = editorStates.get(k);
+    if (cur && typeof cur === 'object') Object.assign(cur, v);
+    else editorStates.set(k, v);
+  }
+  for (const [k, fns] of editorStateLoadedHooks) {
+    for (const fn of fns) { try { fn(); } catch (e) { /* 忽略 */ } }
+  }
+  // v3（多场景实验版）兼容：取当前场景作为单场景
+  let src = data;
+  if (Array.isArray(data.scenes)) {
+    src = data.scenes.find((s) => s.id === data.current) ?? data.scenes[0];
+  }
+  state.worldW = src.worldW || 3000;
+  state.worldH = src.worldH || 800;
+  $('inW').value = state.worldW;
+  $('inH').value = state.worldH;
+  state.customReactions = Array.isArray(src.rx) ? src.rx : (src.rx ? [src.rx] : []);
+  state.atmosphere = { ...(src.atmosphere ?? {}) };
+  refreshAtmInput();
+  state.placed = (src.objects || [])
+    .filter((o) => byType[o.type])
+    .map((o) => ({ type: o.type, obj: byType[o.type].construct(gridOpts(o.type, o.opts)) }));
+  state.selected = null;
+  state.sel = new Set();
+  undoStack.length = 0;
+  syncIdSeq();
+  buildRenderScene();
+  resizeCanvas();
+  refreshProps();
+  renderRxPanel();
+  renderPluginPanel();
+  refreshExport();
+  saveState();
+  $('status').textContent = `已加载关卡（${state.placed.length} 个物体，${state.customReactions.length} 个自定义反应）`;
+}
+
 function loadJSON() {
   const input = document.createElement('input');
   input.type = 'file';
@@ -2426,45 +2484,7 @@ function loadJSON() {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const data = JSON.parse(reader.result);
-        if (typeof data.levelId === 'string') { levelId = data.levelId; $('inLevelId').value = levelId; }
-        state.plugins = (Array.isArray(data.plugins) ? data.plugins : []).map((p) => ({ file: p.file, reg: p.reg, name: p.name ?? p.file, enabled: p.enabled !== false }));
-        // 编辑器插件状态：就地填充（保引用一致，否则插件面板数据刷新后消失）
-        for (const [k, v] of Object.entries(data.editorState ?? {})) {
-          const cur = editorStates.get(k);
-          if (cur && typeof cur === 'object') Object.assign(cur, v);
-          else editorStates.set(k, v);
-        }
-        for (const [k, fns] of editorStateLoadedHooks) {
-          for (const fn of fns) { try { fn(); } catch (e) { /* 忽略 */ } }
-        }
-        // v3（多场景实验版）兼容：取当前场景作为单场景
-        let src = data;
-        if (Array.isArray(data.scenes)) {
-          src = data.scenes.find((s) => s.id === data.current) ?? data.scenes[0];
-        }
-        state.worldW = src.worldW || 3000;
-        state.worldH = src.worldH || 800;
-        $('inW').value = state.worldW;
-        $('inH').value = state.worldH;
-        state.customReactions = Array.isArray(src.rx) ? src.rx : (src.rx ? [src.rx] : []);
-        state.atmosphere = { ...(src.atmosphere ?? {}) };
-        refreshAtmInput();
-        state.placed = (src.objects || [])
-          .filter((o) => byType[o.type])
-          .map((o) => ({ type: o.type, obj: byType[o.type].construct(gridOpts(o.type, o.opts)) }));
-        state.selected = null;
-        state.sel = new Set();
-        undoStack.length = 0;
-        syncIdSeq();
-        buildRenderScene();
-        resizeCanvas();
-        refreshProps();
-        renderRxPanel();
-        renderPluginPanel();
-        refreshExport();
-        saveState();
-        $('status').textContent = `已加载关卡（${state.placed.length} 个物体，${state.customReactions.length} 个自定义反应）`;
+        applyLevel(JSON.parse(reader.result));
       } catch (e) {
         $('status').textContent = 'JSON 加载失败: ' + e.message;
       }

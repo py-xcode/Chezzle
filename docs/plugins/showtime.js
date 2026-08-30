@@ -46,8 +46,40 @@
 // @@end
 
 Chezzle.Plugin.register('showtime', {
+  // 编辑器侧：剧本存 editorState.showtime.plays，经 pluginCfg 注入试玩/导出（HTML/JSON 通用）
+  editor(ed) {
+    const st = ed.state;
+    st.plays = st.plays ?? [];
+    const panel = ed.addPanel({
+      title: '🎬 演出剧本',
+      html: `<div class="tip-note">JSON 数组。每条：{scene, on:'enter|open|pos|win|at', ref?, at?, x?, y?, w?, h?, act:[{kind:'banner'|'shake'|'fireworks'|'flash',...}]}
+      例：{"scene":"plain","on":"at","at":0.5,"act":[{"kind":"banner","text":"嘿！你好！","dur":2.2}]}</div>
+      <textarea id="shPlays" rows="14" style="width:100%;box-sizing:border-box;font:11px monospace"></textarea>
+      <button class="btn" id="shSave" style="margin-top:4px">保存剧本</button>`,
+    });
+    const ta = panel.querySelector('#shPlays');
+    const say = (s) => { const st2 = ed.$ && ed.$('#status'); if (st2) st2.textContent = s; };
+    const render = () => { ta.value = JSON.stringify(st.plays, null, 1); };
+    panel.querySelector('#shSave').onclick = () => {
+      try {
+        const v = JSON.parse(ta.value || '[]');
+        if (!Array.isArray(v)) return say('剧本必须是 JSON 数组');
+        st.plays = v;
+        ed.save();
+        render();
+        say('剧本已保存 ' + v.length + ' 条');
+      } catch (e) {
+        say('剧本 JSON 解析失败：' + e.message);
+      }
+    };
+    render();
+    ed.onStateLoaded(() => render());
+    ed.pluginCfg(() => ({ plays: st.plays }));
+  },
+
   run(scene, api, cfg) {
-    const M = cfg.M ?? null;
+    const rawM = cfg.M;
+    const M = typeof rawM === 'function' ? rawM() : rawM; // 编辑器流程传 () => M（构造期引用兼容）
     const all = Array.isArray(cfg.plays) ? cfg.plays : [];
     const cancels = [];
     // 本场景名：在 Multiscene 里找自己（inject 后 M.scenes 已就绪）

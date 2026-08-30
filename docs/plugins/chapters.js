@@ -165,7 +165,12 @@ Chezzle.Plugin.register('chapters', {
       hint.textContent = 'A/D 移动 · 空格跳 · Q 收集 · Shift 放置 · 顶部「⏹ 退出试玩」返回编辑器';
       hint.style.cssText = 'position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:70;color:#6a7a96;font-size:11px;font-family:system-ui,sans-serif;';
       holder.appendChild(hint);
-      const M = new Chezzle.Multiscene(box, { width: 1100, height: 700, plugins: ed.getActivePlugins() });
+      const M = new Chezzle.Multiscene(box, {
+        width: 1100,
+        height: 700,
+        // 插件 cfg 注入 M（惰性函数——showtime/checkpoint 做场景匹配用）
+        plugins: ed.getActivePlugins().map((p) => ({ ...p, cfg: { ...(p.cfg ?? {}), M: () => M } })),
+      });
       for (const s of scenesGo) {
         const b = M.scene(s.id, { worldW: s.snap.worldW, worldH: s.snap.worldH });
         for (const p of ed.objectsFrom(s.snap)) {
@@ -231,7 +236,10 @@ Chezzle.Plugin.register('chapters', {
       lines.push("const canvas = document.getElementById('game');");
       lines.push('canvas.width = 1100;');
       lines.push('canvas.height = 700;');
-      lines.push('const M = new Chezzle.Multiscene(canvas, { width: 1100, height: 700 });');
+      // 插件（含编辑器配置的 cfg：演出剧本/检查点等）；构造后再补 M 惰性引用
+      lines.push(`const PLUGINS = ${ctx.safeJson(ed.getActivePlugins())};`);
+      lines.push('const M = new Chezzle.Multiscene(canvas, { width: 1100, height: 700, plugins: PLUGINS });');
+      lines.push('for (const p of PLUGINS) if (p.cfg && typeof p.cfg === "object") p.cfg.M = () => M;');
       const post = [];
       for (const s of scenes) {
         const d = ed.sceneDsl(s.snap, s.id);

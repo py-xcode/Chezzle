@@ -93,6 +93,22 @@ for (const m of html.matchAll(/wireLamp\('(\w+)',\s*'(\w+)',\s*'(\w+)'\)/g)) {
   if (sw) { sw.opts.igniteId = m[3]; sw.opts.extinguishId = m[3]; }
 }
 
+// ---- 演出剧本 SHOWTIME + 检查点 CHECKPOINTS（JS 字面量 → JSON 数组；TXT(a,b) 取 a）----
+function extractArray(name) {
+  const m = html.match(new RegExp('const ' + name + '\\s*=\\s*(\\[[\\s\\S]*?\\]);'));
+  if (!m) return [];
+  try {
+    // 直接按 JS 语义求值（数据来自我们自己的关卡文件；TXT 取桌面文案第一参）
+    const val = new Function('TXT', 'return (' + m[1] + ');')((a, b) => a);
+    return JSON.parse(JSON.stringify(val ?? []));
+  } catch (e) {
+    console.log('解析 ' + name + ' 失败: ' + e.message);
+    return [];
+  }
+}
+const plays = extractArray('SHOWTIME');
+const ck = extractArray('CHECKPOINTS');
+
 // ---- 输出 ----
 const list = [...scenes.entries()].map(([id, sc]) => ({
   id,
@@ -101,7 +117,11 @@ const list = [...scenes.entries()].map(([id, sc]) => ({
 const out = {
   version: 2,
   levelId: 'tutorial',
-  plugins: [{ file: 'tutorial.js', reg: 'tutorial', name: '新手引导', enabled: true }],
+  plugins: [
+    { file: 'showtime.js', reg: 'showtime', name: '演出编排', enabled: true },
+    { file: 'checkpoint.js', reg: 'checkpoint', name: '新手检查点', enabled: true },
+    { file: 'chapters.js', reg: 'chapters', name: '章节场景', enabled: true },
+  ],
   rx: [],
   atmosphere: {},
   editorState: {
@@ -110,8 +130,11 @@ const out = {
       current: list[0]?.id ?? 'a',
       start: list[0]?.id ?? 'a',
     },
-    showtime: {},
-    checkpoint: {},
+    showtime: { plays },
+    checkpoint: {
+      spawns: ck,
+      texts: ['复活！化学家从不回头看爆炸', '没事，NaOH 还有很多（30 克而已）', '刚才那是教学的一部分（才怪）', '重来一次！这回先看路标'],
+    },
   },
   objects: list[0]?.snap.objects ?? [],
 };

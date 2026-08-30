@@ -3,9 +3,21 @@
   "levelId": "tutorial",
   "plugins": [
     {
-      "file": "tutorial.js",
-      "reg": "tutorial",
-      "name": "新手引导",
+      "file": "showtime.js",
+      "reg": "showtime",
+      "name": "演出编排",
+      "enabled": true
+    },
+    {
+      "file": "checkpoint.js",
+      "reg": "checkpoint",
+      "name": "新手检查点",
+      "enabled": true
+    },
+    {
+      "file": "chapters.js",
+      "reg": "chapters",
+      "name": "章节场景",
       "enabled": true
     }
   ],
@@ -1218,8 +1230,604 @@
       "current": "plain",
       "start": "plain"
     },
-    "showtime": {},
-    "checkpoint": {}
+    "showtime": {
+      "plays": [
+        {
+          "scene": "plain",
+          "on": "at",
+          "at": 0.5,
+          "act": [
+            {
+              "kind": "banner",
+              "text": "嘿！你好！",
+              "dur": 2.2
+            }
+          ]
+        },
+        {
+          "scene": "plain",
+          "on": "at",
+          "at": 3,
+          "act": [
+            {
+              "kind": "banner",
+              "text": "欢迎来到 Chezzle！",
+              "dur": 2.2
+            }
+          ]
+        },
+        {
+          "scene": "plain",
+          "on": "at",
+          "at": 5.6,
+          "act": [
+            {
+              "kind": "banner",
+              "text": "在这里，你就是一团化学物质\n现在是一块 30 克的氢氧化钠",
+              "dur": 3
+            }
+          ]
+        },
+        {
+          "scene": "plain",
+          "on": "at",
+          "at": 9,
+          "act": [
+            {
+              "kind": "banner",
+              "text": "每个关都要：跋山涉水 · 保全自己 · 收集通关要用的物质",
+              "dur": 3.2
+            }
+          ]
+        },
+        {
+          "scene": "plain",
+          "on": "at",
+          "at": 12.6,
+          "act": [
+            {
+              "kind": "banner",
+              "text": "死了会回到本关开头——化学家都死过几百次",
+              "dur": 2.6
+            }
+          ]
+        },
+        {
+          "scene": "plain",
+          "on": "at",
+          "at": 15.6,
+          "act": [
+            {
+              "kind": "banner",
+              "text": "A / D 移动 · 空格跳跃",
+              "dur": 2.8
+            }
+          ]
+        },
+        {
+          "scene": "plain",
+          "on": "enter",
+          "act": [
+            {
+              "kind": "banner",
+              "text": "第 1 世界 · 苏醒草原\n先学会走路",
+              "dur": 2.6
+            }
+          ]
+        },
+        {
+          "scene": "canyon",
+          "on": "enter",
+          "act": [
+            {
+              "kind": "banner",
+              "text": "第 2 世界 · 翡翠峡谷\n这里的池子会跟你\"打招呼\"",
+              "dur": 2.8
+            }
+          ]
+        },
+        {
+          "scene": "plateau",
+          "on": "enter",
+          "act": [
+            {
+              "kind": "banner",
+              "text": "第 3 世界 · 炼丹台地\n跟着灯光走",
+              "dur": 2.6
+            }
+          ]
+        },
+        {
+          "scene": "well",
+          "on": "enter",
+          "act": [
+            {
+              "kind": "banner",
+              "text": "第 4 世界 · 深井实验室\n注意：这里的空气没有氧气",
+              "dur": 2.8
+            }
+          ]
+        },
+        {
+          "scene": "basin",
+          "on": "enter",
+          "act": [
+            {
+              "kind": "banner",
+              "text": "第 5 世界 · 爆炸盆地\n测验②：炸！",
+              "dur": 2.6
+            }
+          ]
+        },
+        {
+          "scene": "temple",
+          "on": "enter",
+          "act": [
+            {
+              "kind": "banner",
+              "text": "第 6 世界 · 溶液神殿\n把铜从水里\"拧\"出来",
+              "dur": 2.8
+            }
+          ]
+        },
+        {
+          "scene": "crater",
+          "on": "enter",
+          "act": [
+            {
+              "kind": "banner",
+              "text": "第 7 世界 · 火山口（最后一站！）\n点灯 · 烧炭 · 开门 · 走人",
+              "dur": 3
+            }
+          ]
+        },
+        {
+          "scene": "plain",
+          "on": "pos",
+          "x": 700,
+          "y": 400,
+          "w": 500,
+          "h": 400,
+          "act": [
+            {
+              "kind": "banner",
+              "text": "空气里有氧气 O₂——燃烧的秘密武器\n先记住它（左上角空气面板）",
+              "dur": 3
+            }
+          ]
+        },
+        {
+          "scene": "plain",
+          "on": "pos",
+          "x": 1850,
+          "y": 480,
+          "w": 350,
+          "h": 320,
+          "act": [
+            {
+              "kind": "banner",
+              "text": "这是「开关」：①踩上就开（站上去试试！）\n②要化学物质才开（世界 2 见）",
+              "dur": 3.6
+            }
+          ]
+        },
+        {
+          "scene": "plain",
+          "on": "open",
+          "ref": "p_gate_sw",
+          "act": [
+            {
+              "kind": "shake",
+              "n": 5
+            },
+            {
+              "kind": "banner",
+              "text": "闸门开了——走进新世界！",
+              "dur": 2.4
+            }
+          ]
+        },
+        {
+          "scene": "canyon",
+          "on": "pos",
+          "x": 80,
+          "y": 520,
+          "w": 400,
+          "h": 380,
+          "act": [
+            {
+              "kind": "banner",
+              "text": "「池子」= 溶液。\n跳进去看看会发生什么——盯紧飘出来的反应标签！",
+              "dur": 3.4
+            }
+          ]
+        },
+        {
+          "scene": "canyon",
+          "on": "pos",
+          "x": 620,
+          "y": 520,
+          "w": 380,
+          "h": 380,
+          "act": [
+            {
+              "kind": "banner",
+              "text": "「Q 收集」：把沉淀收进物品栏（屏幕下方，点格可选中）",
+              "dur": 3.2
+            }
+          ]
+        },
+        {
+          "scene": "canyon",
+          "on": "pos",
+          "x": 960,
+          "y": 560,
+          "w": 360,
+          "h": 340,
+          "act": [
+            {
+              "kind": "banner",
+              "text": "「Shift 放置」：往脚下放沉淀，把自己垫高！\n（这是\"搭高\"——爬塔！）",
+              "dur": 3.6
+            }
+          ]
+        },
+        {
+          "scene": "canyon",
+          "on": "pos",
+          "x": 1330,
+          "y": 560,
+          "w": 400,
+          "h": 340,
+          "act": [
+            {
+              "kind": "banner",
+              "text": "「冰面」：滑！沉淀放上去会自己溜走——\n在这别想搭高（放一把试试，看它跑）",
+              "dur": 3.6
+            }
+          ]
+        },
+        {
+          "scene": "canyon",
+          "on": "open",
+          "ref": "c_swCu",
+          "act": [
+            {
+              "kind": "shake",
+              "n": 5
+            },
+            {
+              "kind": "banner",
+              "text": "配对了！门开 → 去台地",
+              "dur": 2.4
+            }
+          ]
+        },
+        {
+          "scene": "plateau",
+          "on": "pos",
+          "x": 40,
+          "y": 480,
+          "w": 360,
+          "h": 320,
+          "act": [
+            {
+              "kind": "banner",
+              "text": "「灯」：站上开关点亮；离开它就灭。\n粉末也可以放灯上（灯=加热台）",
+              "dur": 3.6
+            }
+          ]
+        },
+        {
+          "scene": "plateau",
+          "on": "pos",
+          "x": 940,
+          "y": 480,
+          "w": 340,
+          "h": 320,
+          "act": [
+            {
+              "kind": "banner",
+              "text": "把 Cu(OH)₂ 放灯上烤：受热分解 → 黑色 CuO",
+              "dur": 3.4
+            }
+          ]
+        },
+        {
+          "scene": "plateau",
+          "on": "pos",
+          "x": 1240,
+          "y": 440,
+          "w": 360,
+          "h": 360,
+          "act": [
+            {
+              "kind": "banner",
+              "text": "「焰色反应」：粉末放常燃灯 → 火焰变色！（不消耗）",
+              "dur": 3.4
+            }
+          ]
+        },
+        {
+          "scene": "plateau",
+          "on": "open",
+          "ref": "d_swCuO",
+          "act": [
+            {
+              "kind": "shake",
+              "n": 5
+            },
+            {
+              "kind": "banner",
+              "text": "烤出来的 CuO 配对成功——前进！",
+              "dur": 2.4
+            }
+          ]
+        },
+        {
+          "scene": "well",
+          "on": "pos",
+          "x": 260,
+          "y": 660,
+          "w": 460,
+          "h": 240,
+          "act": [
+            {
+              "kind": "banner",
+              "text": "把 Zn 推进盐酸池：Zn + 2HCl → ZnCl₂ + H₂↑\n（产氢！看气泡柱）",
+              "dur": 3.6
+            }
+          ]
+        },
+        {
+          "scene": "well",
+          "on": "open",
+          "ref": "w_det",
+          "act": [
+            {
+              "kind": "shake",
+              "n": 6
+            },
+            {
+              "kind": "banner",
+              "text": "🧪 测验①通过！氢气达标，出口解锁",
+              "dur": 2.8
+            }
+          ]
+        },
+        {
+          "scene": "basin",
+          "on": "pos",
+          "x": 80,
+          "y": 480,
+          "w": 340,
+          "h": 320,
+          "act": [
+            {
+              "kind": "banner",
+              "text": "测验②：把 Na 块推进水池——\n推完快跑！这次真的会炸（站远点看）",
+              "dur": 3.6
+            }
+          ]
+        },
+        {
+          "scene": "basin",
+          "on": "open",
+          "ref": "b_det",
+          "act": [
+            {
+              "kind": "shake",
+              "n": 14
+            },
+            {
+              "kind": "banner",
+              "text": "轰！——氢气在富氧的空气里就是这个脾气\n（看！爆炸还会切断绳子——吊着的块砸下来了）",
+              "dur": 4.6
+            },
+            {
+              "kind": "fireworks",
+              "n": 6
+            }
+          ]
+        },
+        {
+          "scene": "basin",
+          "on": "pos",
+          "x": 1640,
+          "y": 440,
+          "w": 380,
+          "h": 360,
+          "act": [
+            {
+              "kind": "banner",
+              "text": "「传送门」（第一次见）：紫色拱门！\n开关\"承认\"它才亮——亮着就走进去",
+              "dur": 3.4
+            }
+          ]
+        },
+        {
+          "scene": "temple",
+          "on": "pos",
+          "x": 300,
+          "y": 480,
+          "w": 360,
+          "h": 320,
+          "act": [
+            {
+              "kind": "banner",
+              "text": "CuO 推进酸池：溶解！CuO + 2HCl → CuCl₂（变蓝）",
+              "dur": 3.4
+            }
+          ]
+        },
+        {
+          "scene": "temple",
+          "on": "pos",
+          "x": 820,
+          "y": 460,
+          "w": 320,
+          "h": 340,
+          "act": [
+            {
+              "kind": "banner",
+              "text": "「提取器」：站上开关，从池子里把固体盐\"提\"出来——Q 收",
+              "dur": 3.4
+            }
+          ]
+        },
+        {
+          "scene": "temple",
+          "on": "open",
+          "ref": "t_key",
+          "act": [
+            {
+              "kind": "shake",
+              "n": 5
+            },
+            {
+              "kind": "banner",
+              "text": "钥匙永久开锁——传送门亮了！",
+              "dur": 2.6
+            }
+          ]
+        },
+        {
+          "scene": "crater",
+          "on": "pos",
+          "x": 260,
+          "y": 880,
+          "w": 340,
+          "h": 320,
+          "act": [
+            {
+              "kind": "banner",
+              "text": "「催化」：MnO₂ 进双氧池 → O₂ 泡泡！（催化剂不消耗）",
+              "dur": 3.4
+            }
+          ]
+        },
+        {
+          "scene": "crater",
+          "on": "pos",
+          "x": 660,
+          "y": 880,
+          "w": 340,
+          "h": 320,
+          "act": [
+            {
+              "kind": "banner",
+              "text": "「燃烧」：C 放灯上：C + O₂ → CO₂——氧气是草原那个",
+              "dur": 3.4
+            }
+          ]
+        },
+        {
+          "scene": "crater",
+          "on": "win",
+          "act": [
+            {
+              "kind": "fireworks",
+              "n": 24
+            },
+            {
+              "kind": "banner",
+              "text": "🎉 恭喜通关！\n你已经是正式的化学怪人了",
+              "dur": 999
+            }
+          ]
+        }
+      ]
+    },
+    "checkpoint": {
+      "spawns": [
+        {
+          "scene": "plain",
+          "id": "c1",
+          "x": 0,
+          "y": 0,
+          "w": 700,
+          "h": 800,
+          "sx": 140,
+          "sy": 700
+        },
+        {
+          "scene": "canyon",
+          "id": "c2",
+          "x": -60,
+          "y": 0,
+          "w": 900,
+          "h": 1000,
+          "sx": 120,
+          "sy": 900
+        },
+        {
+          "scene": "plateau",
+          "id": "c3",
+          "x": -60,
+          "y": 0,
+          "w": 800,
+          "h": 800,
+          "sx": 120,
+          "sy": 700
+        },
+        {
+          "scene": "well",
+          "id": "c4",
+          "x": 0,
+          "y": 0,
+          "w": 1200,
+          "h": 715,
+          "sx": 150,
+          "sy": 700
+        },
+        {
+          "scene": "well",
+          "id": "c4b",
+          "x": 0,
+          "y": 715,
+          "w": 1200,
+          "h": 200,
+          "sx": 460,
+          "sy": 820
+        },
+        {
+          "scene": "basin",
+          "id": "c5",
+          "x": 0,
+          "y": 0,
+          "w": 900,
+          "h": 800,
+          "sx": 120,
+          "sy": 700
+        },
+        {
+          "scene": "temple",
+          "id": "c6",
+          "x": 0,
+          "y": 0,
+          "w": 900,
+          "h": 800,
+          "sx": 120,
+          "sy": 700
+        },
+        {
+          "scene": "crater",
+          "id": "c7",
+          "x": 0,
+          "y": 0,
+          "w": 1200,
+          "h": 1200,
+          "sx": 140,
+          "sy": 1040
+        }
+      ],
+      "texts": [
+        "复活！化学家从不回头看爆炸",
+        "没事，NaOH 还有很多（30 克而已）",
+        "刚才那是教学的一部分（才怪）",
+        "重来一次！这回先看路标"
+      ]
+    }
   },
   "objects": [
     {

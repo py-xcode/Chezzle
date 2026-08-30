@@ -29,11 +29,50 @@
 // @@end
 
 Chezzle.Plugin.register('checkpoint', {
+  // 编辑器侧：spawns/texts 存 editorState.checkpoint，经 pluginCfg 注入试玩/导出
+  editor(ed) {
+    const st = ed.state;
+    st.spawns = st.spawns ?? [];
+    st.texts = st.texts ?? ['复活！从检查点继续', '没事，再来一次'];
+    const panel = ed.addPanel({
+      title: '🗺 新手检查点',
+      html: `<div class="tip-note">JSON 数组。每条：{scene?(多场景世界名), id, x, y, w, h, sx, sy}（登记区域 + 复活点脚底 y）。
+      例：{"id":"c1","x":0,"y":0,"w":700,"h":800,"sx":140,"sy":700}
+      下面第二框 = texts（复活横幅文案，随机取一条）。</div>
+      <textarea id="ckSpawns" rows="12" style="width:100%;box-sizing:border-box;font:11px monospace"></textarea>
+      <textarea id="ckTexts" rows="2" style="width:100%;box-sizing:border-box;font:11px monospace;margin-top:4px"></textarea>
+      <button class="btn" id="ckSave" style="margin-top:4px">保存检查点</button>`,
+    });
+    const say = (s) => { const st2 = ed.$ && ed.$('#status'); if (st2) st2.textContent = s; };
+    const render = () => {
+      panel.querySelector('#ckSpawns').value = JSON.stringify(st.spawns, null, 1);
+      panel.querySelector('#ckTexts').value = JSON.stringify(st.texts);
+    };
+    panel.querySelector('#ckSave').onclick = () => {
+      try {
+        const s = JSON.parse(panel.querySelector('#ckSpawns').value || '[]');
+        const t = JSON.parse(panel.querySelector('#ckTexts').value || '[]');
+        if (!Array.isArray(s)) return say('spawns 必须是 JSON 数组');
+        st.spawns = s;
+        if (Array.isArray(t) && t.length) st.texts = t;
+        ed.save();
+        render();
+        say('检查点已保存 ' + s.length + ' 个');
+      } catch (e) {
+        say('JSON 解析失败：' + e.message);
+      }
+    };
+    render();
+    ed.onStateLoaded(() => render());
+    ed.pluginCfg(() => ({ spawns: st.spawns, texts: st.texts }));
+  },
+
   run(scene, api, cfg) {
+    const rawM = cfg.M;
+    const M = typeof rawM === 'function' ? rawM() : rawM; // 编辑器流程传 () => M（构造期引用兼容）
     const all = Array.isArray(cfg.spawns) ? cfg.spawns.filter((s) => s && Number.isFinite(s.x)) : [];
     if (!all.length) return () => {};
     const texts = Array.isArray(cfg.texts) && cfg.texts.length ? cfg.texts : ['复活！从检查点继续'];
-    const M = cfg.M ?? null;
     let myName = cfg.scene ?? null;
     if (!myName && M) {
       for (const [name, e] of M.scenes) {
