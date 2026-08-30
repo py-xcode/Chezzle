@@ -4639,10 +4639,23 @@ class CollisionSystem {
                 continue;
               }
               if (!supportsStanding(particle)) continue;
-              const pp = penSides(solid, particle);
-              if (pp.top > 1e-6 && pp.top <= pp.bottom && pp.top <= 6) {
-                const lift = Math.min(pp.top, 8);
-                solid.y -= lift;
+              // 托起量 = 最深顶穿透（玩家底面被反应侵蚀/粘层后不规则：只托最浅处
+              // 会让深处一直嵌着 → 每帧托-压-托振荡 = 玩家在柱上"鬼畜颤抖"）。
+              // 用最深穿透一次对齐（≤8px/帧温柔收敛），玩家底面贴住柱顶，稳定。
+              let maxTop = 0;
+              let maxBelow = Infinity;
+              for (const a of shapesOf(solid)) {
+                for (const c of shapesOf(particle)) {
+                  if (!a.overlaps(c, 0)) continue;
+                  const t = a.bottom - c.top;
+                  if (t > maxTop) maxTop = t;
+                  // 底部穿透上限（粒子顶低于玩家底的最大量——嵌得实在太深的卡死场景不托）
+                  const b = c.bottom - a.top;
+                  if (b < maxBelow) maxBelow = b;
+                }
+              }
+              if (maxTop > 1e-6 && maxTop <= maxBelow && maxTop <= 10) {
+                solid.y -= Math.min(maxTop, 8);
                 solid.vel.y = Math.min(solid.vel.y, 0);
                 solid.onGround = true; // 托住了：站上粒子堆顶（垫脚）
                 moved = true;
@@ -4650,9 +4663,13 @@ class CollisionSystem {
               continue;
             }
             // 颗粒嵌在实体（侧面/下方）：把颗粒向穿透最小的面推出（软体退让）。
-            // 玩家脚下的颗粒不水平挤（保留垫脚/穿行，由玩家侧重处理）。
+            // **玩家脚底的可站立 placed 粒子不挤**：玩家踩着它（垫脚），嵌 1-2px 是
+            // 正常的"踩合"——按 MTV 推走会让粒子被踢散/玩家穿模/堆不起来。
+            // 物块等重物照旧挤开（软体让位）。
             if (!solid.isPlayerObj) {
               if (this._pushParticleOut(particle, solid)) moved = true;
+            } else if (particle.placed && (particle.y + particle.h / 2) > (solid.y + solid.h * 0.5)) {
+              // 玩家下半部的 placed 粒子：保留垫脚，不挤
             } else if (resolveEmbed(particle, solid)) {
               moved = true;
             }
