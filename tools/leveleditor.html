@@ -207,6 +207,7 @@ const ctx = canvas.getContext('2d');
 const F = {
   num: (k, label, d = {}) => ({ k, label: label ?? k, kind: 'number', d }),
   txt: (k, label, d = '') => ({ k, label: label ?? k, kind: 'text', d }),
+  txtM: (k, label, d = '') => ({ k, label: label ?? k, kind: 'text', d, multiline: true }), // 多行文本（属性面板=textarea，\n 换行）
   bool: (k, label, d = false) => ({ k, label: label ?? k, kind: 'bool', d }),
   sel: (k, label, opts, d = '') => ({ k, label: label ?? k, kind: 'select', options: opts, d }),
   sub: (k, label, d = '') => ({ k, label: label ?? k, kind: 'substance', d }),
@@ -274,7 +275,7 @@ const CATALOG = [
   { type: 'sign', label: '路标', dsl: 'sign', color: '#ffe9b0',
     construct: (o) => new C.Sign({ x: o.x, y: o.y, text: o.text ?? '说明文字', id: o.id }),
     collect: (o) => ({ x: o.x, y: o.y, text: o.text, id: o.id }),
-    fields: [F.num('x'), F.num('y'), F.txt('text', '文字'), F.txt('id', 'id')] },
+    fields: [F.num('x'), F.num('y'), F.txtM('text', '文字'), F.txt('id', 'id')] },
   { type: 'portal', label: '传送门', dsl: 'portal', color: '#c78bff',
     construct: (o) => new C.Portal({ x: o.x, y: o.y, w: o.w ?? 44, h: o.h ?? 64, color: o.color ?? '#c78bff', uses: o.uses > 0 ? o.uses : (o.once ? 1 : Infinity), switchId: o.switchId, id: o.id }),
     collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, color: o.color, uses: Number.isFinite(o.uses) ? o.uses : 0, switchId: o.switchId, id: o.id }),
@@ -1894,7 +1895,8 @@ function refreshProps() {
   }
   box.innerHTML = html;
   // 绑定事件
-  box.querySelectorAll('input, select').forEach((el) => {
+  // textarea = 多行字段（路标文字/显示牌文字等）：同样绑定 change（blur/失焦提交）
+  box.querySelectorAll('input, select, textarea').forEach((el) => {
     const k = el.dataset.k;
     el.addEventListener('change', () => {
       const item = state.placed[idx];
