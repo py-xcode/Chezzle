@@ -135,6 +135,7 @@ Chezzle.Plugin.register('showtime', {
       return a.kind ?? '?';
     }).join(' · ') || '（无动作）';
     let curSel = -1; // 弹窗列表当前选中（高亮）
+    let autoTimer = null; // 自动保存防抖（编辑即保存，无草稿概念）
     let renderList = () => {}; // modal 块内赋值（首建时）；重载后重建
 
     // ---- 编辑弹窗（大空间双栏：左=全部剧本列表，右=编辑表单）----
@@ -175,9 +176,9 @@ Chezzle.Plugin.register('showtime', {
         </div>
       </div>`;
       document.body.appendChild(modal);
-      modal.querySelector('#shCancel').onclick = () => { modal.style.display = 'none'; };
+      // 关闭弹窗：先把正在编辑的"新剧本"落库（编辑即保存）——closeModal 在下方定义
       document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && modal.style.display === 'flex') { modal.style.display = 'none'; }
+        if (e.key === 'Escape' && modal.style.display === 'flex') closeModal();
       }, true);
       // 触发类型切换 → 重渲染条件区（先收集当前输入，别把半填的丢了）
       const onSel = modal.querySelector('#shOn');
@@ -334,6 +335,7 @@ Chezzle.Plugin.register('showtime', {
             armedDel = -1;
             st.plays.splice(i, 1);
             curSel = -1;
+            currentPlay = null; // 已删条目：别被 settleNew 误落库
             ed.save(); renderList();
             openEdit(-1); // 删完切到"新剧本"表单
             say('已删除剧本 #' + (i + 1) + '（还剩 ' + st.plays.length + ' 条）');
@@ -373,8 +375,10 @@ Chezzle.Plugin.register('showtime', {
         });
       });
       const openEdit = (i) => {
+        settleNew(); // ★ 切走前：正在编辑的"新剧本"有内容就自动落库（编辑即保存）
+        if (curSel === i) return; // 点同一条：不动（别把正在编辑的表单重置了）
         curSel = i;
-        modal.dataset.i = String(i); // ★ 保存目标（列表点选/新剧本/打开弹窗三路统一——之前只 __openEdit 设置 → 点列表第 N 条保存却写回第 0 条）
+        modal.dataset.i = String(i); // ★ 保存目标（列表点选/新剧本/打开弹窗三路统一）
         currentPlay = i >= 0 ? { ...(st.plays[i] ?? {}) } : { on: 'enter', act: [] };
         modal.querySelector('#shTitle').textContent = i >= 0 ? `🎬 演出剧本书 · 编辑 #${i + 1}` : '🎬 演出剧本书 · 新剧本';
         modal.querySelector('#shMsg').textContent = '';
@@ -401,31 +405,78 @@ Chezzle.Plugin.register('showtime', {
         modal.style.display = 'flex';
         modal.querySelector('#shScene').focus();
       };
-      modal.querySelector('#shSave').onclick = () => {
+      /** 读表单 = 当前编辑内容（自动保存与手动保存共用） */
+      const readForm = () => {
         const p = { ...(currentPlay ?? {}) };
         p.on = onSel.value; // 触发类型以表单为准（change 时 currentPlay 可能还是旧值）
         Object.assign(p, readCond());
         const sc = modal.querySelector('#shScene').value.trim();
         if (sc) p.scene = sc; else delete p.scene;
         const acts = [];
-        let skipped = 0;
         for (const row of actsBox.querySelectorAll('.sh-act')) {
           const a = readAct(row);
-          if (a.kind === 'banner' && !a.text) { skipped++; continue; }
-          if (a.kind === 'goto' && !a.scene) { skipped++; continue; }
+          if (a.kind === 'banner' && !a.text) continue;
+          if (a.kind === 'goto' && !a.scene) continue;
           acts.push(a);
         }
-        // ★ 空动作行自动忽略并照常保存（不硬拦——半途失败的"保存失败"体验 = 内容根本存不上）
-        delete p._fired; // 保险（数据源头消毒）
         p.act = acts;
-        const editIdx = modal.dataset.i !== undefined && modal.dataset.i !== '' ? +modal.dataset.i : -1;
-        if (editIdx >= 0) st.plays[editIdx] = p; else st.plays.push(p);
-        ed.save();
-        modal.style.display = 'none';
-        renderList();
-        const msg = sc ? `已保存剧本（场景${sc} · ${trigText(p)}）` : '已保存剧本';
-        say(msg + (skipped ? `，跳过 ${skipped} 个空动作` : '') + (acts.length ? '' : '（该条暂无有效动作）'));
+        delete p._fired;
+        return p;
       };
+      // ★ 编辑态判定基于 curSel（不能用 dataset.i：__openEdit 先改目标值，切换瞬间会误判）
+      const isNew = () => curSel === -1;
+      /** 自动保存（编辑即保存）：改动落库并记下保存印记（400ms 防抖） */
+      const autoSave = () => {
+        clearTimeout(autoTimer);
+        autoTimer = setTimeout(() => {
+          if (!currentPlay || curSel === -1) return; // 新剧本由 settleNew 在切换/关闭时落库
+          const p = readForm();
+          st.plays[+modal.dataset.i] = p;
+          currentPlay = p;
+          ed.save();
+          renderList(); // 刷新左栏摘要（但不打断编辑）
+        }, 400);
+      };
+      /** 新剧本收尾：有内容则自动入库（切换到别条/关闭弹窗时调用） */
+      const settleNew = () => {
+        if (curSel !== -1 || !currentPlay) return;
+        const p = readForm();
+        const has = p.act?.length > 0 || !!p.scene || (p.on && p.on !== 'enter') || Object.keys(p).some((k) => ['x', 'y', 'w', 'h', 'at', 'ref', 'require'].includes(k));
+        if (!has) return;
+        st.plays.push(p);
+        curSel = st.plays.length - 1;
+        modal.dataset.i = String(curSel);
+        ed.save();
+        renderList();
+        say('已自动保存新剧本 #' + (curSel + 1));
+      };
+      // ★ 表单变更 = 自动保存（场景/触发/条件/动作行；动作区行重建也含在内）
+      modal.querySelector('#shScene').addEventListener('input', autoSave);
+      onSel.addEventListener('change', autoSave);
+      condBox.addEventListener('input', autoSave);
+      actsBox.addEventListener('input', autoSave);
+      actsBox.addEventListener('change', autoSave);
+      modal.querySelector('#shSave').onclick = () => {
+        clearTimeout(autoTimer);
+        const p = readForm();
+        if (curSel === -1) { // 新剧本：保存即入库（与 settleNew 同路径，但显式提示）
+          const has = p.act?.length > 0 || !!p.scene || (p.on && p.on !== 'enter');
+          if (!has) { say('新剧本还没有内容（先填场景/触发/动作）'); return; }
+          st.plays.push(p);
+          curSel = st.plays.length - 1;
+          modal.dataset.i = String(curSel);
+        } else {
+          st.plays[+modal.dataset.i] = p;
+          currentPlay = p;
+        }
+        ed.save();
+        renderList(); // ★ 保存后不关窗：继续编辑/切换
+        const sc = modal.querySelector('#shScene').value.trim();
+        say((sc ? `已保存剧本（场景${sc} · ${trigText(p)}）` : '已保存剧本') + (p.act.length ? '' : '（该条暂无有效动作）'));
+      };
+      // ★ 关闭弹窗：先把新剧本落库（编辑即保存的收尾）
+      const closeModal = () => { settleNew(); modal.style.display = 'none'; };
+      modal.querySelector('#shCancel').onclick = closeModal;
       // openEdit 需要 modal.dataset.i（编辑目标）——放进 modal 上的入口
       Object.defineProperty(modal, '__openEdit', { value: (i) => { modal.dataset.i = String(i); openEdit(i); } });
       window.__shOpen = (i) => modal.__openEdit(i); // 测试/调试后门
