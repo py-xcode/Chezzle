@@ -108,3 +108,27 @@ test('叠层冰地板：玩家与沉淀都按冰面处理（摩擦/平摊/溜走
   run(sc2, 60);
   assert.ok(p2.onGround && !p2._groundIce, '纯石地段不是冰面');
 });
+
+// 快速连放（同帧多次放置，模拟连点）：冰面也搭不起来（颗粒 spawn 即预标记冰面）
+test('冰面快速连放（同帧 6 次）：颗粒预标记 + 最终平摊不搭高', () => {
+  const scene = new Scene({ worldW: 3000, worldH: 800 });
+  scene.addObject(new Floor({ x: 1653, y: 642, w: 700, h: 150, id: 'base' }));
+  scene.addObject(new Floor({ x: 1833, y: 642, w: 340, h: 150, ice: true, id: 'ice' }));
+  const p = new Player({ x: 2000, y: 560, mass: 30, id: 'p1' });
+  scene.addObject(p);
+  scene.status = 'running';
+  run(scene, 60);
+  p.inventory.add(p.substance, 10);
+  for (let i = 0; i < 6; i++) p.tryPlace(scene); // 同帧连放（无 step）
+  assert.ok(scene.particles.every((pt) => pt._groundIce === true), 'spawn 即冰面预标记');
+  run(scene, 200);
+  const byX = {};
+  for (const pt of scene.particles) { const k = Math.round(pt.x / 10) * 10; (byX[k] ??= []).push(pt); }
+  let chains = 0;
+  for (const k of Object.keys(byX)) {
+    const arr = byX[k];
+    if (arr.length >= 4) { const ys = arr.map((x) => x.y); if (Math.max(...ys) - Math.min(...ys) > 25) chains++; }
+  }
+  assert.equal(chains, 0, '快速连放也不搭高');
+  assert.ok(scene.particles.length >= 6, '颗粒都在');
+});

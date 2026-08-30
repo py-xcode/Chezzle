@@ -213,10 +213,12 @@ export class CollisionSystem {
         for (let i = 0; i < near.length; i++) {
           const s = near[i];
           if (s === b) continue;
-          // 接触判定（1px 容差：贴地后玩家与地板零重叠，只相接）
+          // 接触判定（1px 容差：贴地后玩家与地板零重叠，只相接）；
+          // 冰面**上方 40px 内**也算（刚放下的颗粒还没落地时堆叠判定就要看到冰——
+          // 否则快速连放搭得起来）
           if (s.ice && s.physicsKind === 'static' &&
               b.right > s.x - 1 && b.left < s.x + s.w + 1 &&
-              b.bottom >= s.y - 1 && b.top <= s.y + s.h + 1) {
+              b.bottom >= s.y - 40 && b.top <= s.y + s.h + 1) {
             b._groundIce = true;
             if (b.amount !== undefined && !b._iceDir) b._iceDir = Math.random() < 0.5 ? -1 : 1; // 沉淀记漂移方向（溜走）
             break;

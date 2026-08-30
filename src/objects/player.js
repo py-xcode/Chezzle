@@ -403,8 +403,17 @@ export class Player extends Obj {
     const spread = this._groundIce ? 20 : undefined;
     const n = Math.max(1, Math.ceil(amount / 0.25)); // 0.5g → 2 颗 0.25g
     const each = amount / n;
+    const before = scene.particles.length;
     for (let k = 0; k < n; k++) {
       scene.spawnParticles(res.substance, each, { x: this.x + this.w / 2, y: this.bottom + 1 }, true, true, placeOrigin, spread);
+    }
+    // ★ 冰面快速连放防搭：新颗粒立即按冰面预标记（还没落地就让堆叠判定看到冰）——
+    //   否则 0.2s 内的连放颗粒在"未触地"窗口里走垂直堆叠（用户"点得快还能搭起来"）
+    if (this._groundIce) {
+      for (let k = before; k < scene.particles.length; k++) {
+        scene.particles[k]._groundIce = true;
+        if (!scene.particles[k]._iceDir) scene.particles[k]._iceDir = Math.random() < 0.5 ? -1 : 1;
+      }
     }
   }
 

@@ -4325,10 +4325,12 @@ class CollisionSystem {
         for (let i = 0; i < near.length; i++) {
           const s = near[i];
           if (s === b) continue;
-          // 接触判定（1px 容差：贴地后玩家与地板零重叠，只相接）
+          // 接触判定（1px 容差：贴地后玩家与地板零重叠，只相接）；
+          // 冰面**上方 40px 内**也算（刚放下的颗粒还没落地时堆叠判定就要看到冰——
+          // 否则快速连放搭得起来）
           if (s.ice && s.physicsKind === 'static' &&
               b.right > s.x - 1 && b.left < s.x + s.w + 1 &&
-              b.bottom >= s.y - 1 && b.top <= s.y + s.h + 1) {
+              b.bottom >= s.y - 40 && b.top <= s.y + s.h + 1) {
             b._groundIce = true;
             if (b.amount !== undefined && !b._iceDir) b._iceDir = Math.random() < 0.5 ? -1 : 1; // 沉淀记漂移方向（溜走）
             break;
@@ -13176,8 +13178,17 @@ class Player extends Obj {
     const spread = this._groundIce ? 20 : undefined;
     const n = Math.max(1, Math.ceil(amount / 0.25)); // 0.5g → 2 颗 0.25g
     const each = amount / n;
+    const before = scene.particles.length;
     for (let k = 0; k < n; k++) {
       scene.spawnParticles(res.substance, each, { x: this.x + this.w / 2, y: this.bottom + 1 }, true, true, placeOrigin, spread);
+    }
+    // ★ 冰面快速连放防搭：新颗粒立即按冰面预标记（还没落地就让堆叠判定看到冰）——
+    //   否则 0.2s 内的连放颗粒在"未触地"窗口里走垂直堆叠（用户"点得快还能搭起来"）
+    if (this._groundIce) {
+      for (let k = before; k < scene.particles.length; k++) {
+        scene.particles[k]._groundIce = true;
+        if (!scene.particles[k]._iceDir) scene.particles[k]._iceDir = Math.random() < 0.5 ? -1 : 1;
+      }
     }
   }
 
