@@ -372,9 +372,13 @@ Chezzle.Plugin.register('showtime', {
       modal.__openEdit(i);
     };
 
+    // 旧版本会误存 _fired（运行态污染，见 run 注释）：加载/读档后统一消毒，面板数据保持干净
+    const scrub = () => { for (const p of st.plays) if (p && typeof p === 'object') delete p._fired; };
     renderList();
-    ed.onStateLoaded(() => renderList());
-    ed.pluginCfg(() => ({ plays: st.plays }));
+    scrub();
+    ed.onStateLoaded(() => { scrub(); renderList(); });
+    // 出口再剥一次：即使数据被别处污染，运行时也绝不拿到 _fired
+    ed.pluginCfg(() => ({ plays: st.plays.map((p) => { const c = { ...p }; delete c._fired; return c; }) }));
     // 卸载/重载清理：移除弹层与样式
     return () => { document.getElementById('shModal')?.remove(); document.getElementById('shModCss')?.remove(); };
   },
@@ -434,7 +438,11 @@ Chezzle.Plugin.register('showtime', {
     }
 
     // ---- 触发器 ----
-    const fireOnce = (p) => { if (p._fired) return; p._fired = true; doActions(p.act); };
+    // ★ 一次性标记用局部 Set（fired），**绝不写回 play 对象**——cfg.plays 与编辑器面板
+    //   数据是同一引用，写 p._fired 会把运行态污染回编辑器/JSON（"改过关卡后横幅全
+    //   消失"的根因：上次试玩把 _fired:true 存进了剧本，再玩直接跳过）。
+    const fired = new Set();
+    const fireOnce = (p) => { if (fired.has(p)) return; fired.add(p); doActions(p.act); };
 
     // ① enter：Multiscene switchTo 会 fire('enter')
     for (const p of plays) {
@@ -450,7 +458,7 @@ Chezzle.Plugin.register('showtime', {
     const openWatch = () => {
       for (const p of openRefs) {
         const sw = scene.byId[p.ref];
-        if (!sw || p._fired) continue;
+        if (!sw || fired.has(p)) continue;
         const eff = typeof sw.effectiveOpen === 'function' ? sw.effectiveOpen(scene) : !!sw.open;
         if (eff && !sw._shLast) fireOnce(p);
         sw._shLast = eff;
@@ -463,7 +471,7 @@ Chezzle.Plugin.register('showtime', {
     for (const p of plays) {
       if (p.on !== 'pos' || !(Number.isFinite(p.x) && Number.isFinite(p.w))) continue;
       const check = () => {
-        if (p._fired) return;
+        if (fired.has(p)) return;
         let ok = true;
         if (p.require) {
           const sw = scene.byId[p.require];
