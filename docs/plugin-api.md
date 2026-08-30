@@ -203,7 +203,7 @@ Chezzle.Plugin.register('chapters', {
 | `plugin/trampoline.js` | 组件 | 蹦床（编辑界面同游戏渲染；可拖拽定尺寸；落垫弹/垫上跳更高/走路不弹） |
 | `plugin/liveSign.js` | 组件 | 显示牌（新物体，多行文字 + 边框色） |
 | `plugin/chapters.js` | **编辑器插件** | 章节场景 v2：顶边栏管理、★初始场景、每场景大气、试玩接管、导出钩子 |
-| `plugin/showtime.js` | **演出编排** | 声明式关卡演出：`enter/open/pos/win/at` 触发器 × 横幅/震屏/彩焰烟花/白光动作；🎬面板 JSON 编辑剧本 |
+| `plugin/showtime.js` | **演出编排** | 声明式关卡演出：`enter/open/pos/win/at` 触发器 × 横幅/震屏/彩焰烟花/白光动作；🎬面板**表单化**编辑剧本（点行编辑，可增删/调序/改参，不手拧 JSON） |
 | `plugin/checkpoint.js` | **新手检查点** | 死亡自动回最近检查点+回满血+幽默横幅（支持多场景）；🗺面板配置 spawns/texts |
 | `docs/examples/chapter.html` | 关卡 | 多场景章节示例（手动脚本版） |
 

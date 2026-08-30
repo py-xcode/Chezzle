@@ -101,12 +101,19 @@
   #pluginPanel .pl-item .pl-badge { color: #7fe0ff; font-size: 10px; flex-shrink: 0; white-space: nowrap; }
   #pluginPanel .pl-item .pl-toggle { font-size: 11px; color: #9fb2c8; display: flex; align-items: center; gap: 3px; flex-shrink: 0; white-space: nowrap; margin-left: auto; }
   /* 插件设置区（插件面板统一收纳） */
-  #plShelf { max-height: 44%; overflow-y: auto; flex-shrink: 0; border-bottom: 1px solid var(--edge); }
+  #plShelf { max-height: 44%; overflow: hidden auto; flex-shrink: 0; border-bottom: 1px solid var(--edge); }
   #plShelf .pc-body { padding: 8px 10px; }
+  #plShelf .pc-head small { min-width: 0; } /* 长文案允许换行——否则 min-width:auto 撑出水平滚动条 */
   #plShelf .edPanel { border-bottom: 1px solid var(--edge); }
   #plShelf .edPanel:last-child { border-bottom: none; }
   #plShelf .edPanel .pc-head { padding: 5px 4px; }
   #plShelf .edPanel .pc-body { max-height: 40vh; }
+  /* 侧栏滚动条细暗化：17px 大条太抢眼（面板自带滚动条统一收成 6px 半透明） */
+  #side ::-webkit-scrollbar { width: 6px; height: 6px; }
+  #side ::-webkit-scrollbar-thumb { background: rgba(120,140,200,.28); border-radius: 3px; }
+  #side ::-webkit-scrollbar-thumb:hover { background: rgba(140,160,220,.45); }
+  #side ::-webkit-scrollbar-track { background: transparent; }
+  #side { scrollbar-width: thin; scrollbar-color: rgba(120,140,200,.28) transparent; }
   #props { flex: 1; padding: 10px; overflow-y: auto; }
   #props.pc.collapsed { flex: 0 0 auto; } /* 折叠后不硬撑剩余空间 */
   #props h3 { color: var(--gold); font-size: 13px; margin-bottom: 8px; }
@@ -156,7 +163,7 @@
         <input type="file" id="pluginFile" accept=".js" multiple style="display:none">
       </div>
       <div id="plShelf" class="pc collapsed">
-        <h3 class="pc-head" data-plshelf>🧩 插件设置 <small style="color:#6a7a96">插件加的面板统一收纳（点开）</small><span class="pc-arrow">▾</span></h3>
+        <h3 class="pc-head" data-plshelf>🧩 插件设置 <small style="color:#6a7a96">插件面板统一收纳</small><span class="pc-arrow">▾</span></h3>
         <div class="pc-body"><div id="plShelfBody"></div><div class="empty" id="plShelfEmpty" style="margin:4px 2px">（还没有插件面板）</div></div>
       </div>
       <div id="rxPanel" class="pc">
