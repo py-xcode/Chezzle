@@ -82,6 +82,8 @@ Chezzle.Plugin.register('showtime', {
         #shModal .sh-top .sh-count { flex: 1; color: #6a7a96; font-size: 11px; }
         #shModal .sh-main { display: flex; gap: 14px; min-height: 0; flex: 1; }
         #shModal .sh-list-pane { width: 320px; flex-shrink: 0; overflow-y: auto; max-height: 74vh; border-right: 1px solid #232a55; padding-right: 8px; }
+        #shModal .sh-filter { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; color: #9fb2c8; font-size: 11px; padding: 2px 0 6px; border-bottom: 1px solid #232a55; }
+        #shModal .sh-filter select { background: #121a3e; color: #fff; border: 1px solid #3a4178; padding: 2px 5px; font-size: 11px; flex: 1; }
         #shModal .sh-form-pane { flex: 1; min-width: 0; overflow-y: auto; max-height: 74vh; }
         #shModal .sh-list-pane .sh-item { cursor: pointer; border: 1px solid transparent; border-radius: 4px; padding: 5px 6px; margin-bottom: 2px; }
         #shModal .sh-list-pane .sh-item:hover { background: #12183c; }
@@ -136,6 +138,7 @@ Chezzle.Plugin.register('showtime', {
     }).join(' · ') || '（无动作）';
     let curSel = -1; // 弹窗列表当前选中（高亮）
     let autoTimer = null; // 自动保存防抖（编辑即保存，无草稿概念）
+    let filterScene = ''; // 左列表场景筛选（''=全部；场景=只看该场景 + 通用剧本）
     let renderList = () => {}; // modal 块内赋值（首建时）；重载后重建
 
     // ---- 编辑弹窗（大空间双栏：左=全部剧本列表，右=编辑表单）----
@@ -151,7 +154,10 @@ Chezzle.Plugin.register('showtime', {
           <button class="btn" id="shCancel">关闭 (Esc)</button>
         </div>
         <div class="sh-main">
-          <div class="sh-list-pane"><div id="shList"></div></div>
+          <div class="sh-list-pane">
+            <div class="sh-filter"><label>场景</label><select id="shFilter"><option value="">全部场景</option></select></div>
+            <div id="shList"></div>
+          </div>
           <div class="sh-form-pane">
             <div class="sh-row"><label>场景</label>
               <input id="shScene" list="shSceneList" style="width:130px" placeholder="如 plain（留空=所有场景）">
@@ -307,21 +313,37 @@ Chezzle.Plugin.register('showtime', {
       // ---- 左列表：全剧本（点选编辑 / ↑↓排序 / ✕删除）+ 顶栏入口 ----
       const listBox = modal.querySelector('#shList');
       const countBox = modal.querySelector('#shCount');
+      const fSel = modal.querySelector('#shFilter');
       renderList = () => {
-        countBox.textContent = `（${st.plays.length} 条）`;
-        if (!st.plays.length) { listBox.innerHTML = '<div style="color:#6a7a96;font-size:11px;padding:8px 4px">（还没有剧本——点右上「＋ 新剧本」）</div>'; return; }
-        listBox.innerHTML = st.plays.map((p, i) => `
+        // 场景筛选下拉同步：来源=剧本里出现的场景 + 章节插件场景列表；保留当前选择
+        {
+          const cur = fSel.value || filterScene || '';
+          const uniq = [...new Set(sceneIds().concat(st.plays.map((p) => p.scene).filter(Boolean)))];
+          const optsHtml = `<option value="">全部场景（${st.plays.length}）</option>` + uniq.map((s) =>
+            `<option value="${esc(s)}">${esc(s)}（${st.plays.filter((p) => p.scene === s || !p.scene).length}）</option>`).join('');
+          if (fSel.innerHTML !== optsHtml) { fSel.innerHTML = optsHtml; fSel.value = uniq.includes(cur) ? cur : ''; }
+        }
+        const items = st.plays.map((p, i) => ({ p, i })).filter(({ p }) => !filterScene || p.scene === filterScene || !p.scene);
+        countBox.textContent = `（${filterScene ? items.length + '/' : ''}${st.plays.length} 条）`;
+        if (!items.length) {
+          listBox.innerHTML = filterScene
+            ? '<div style="color:#6a7a96;font-size:11px;padding:8px 4px">该场景还没有剧本（通用剧本不设场景会自动归入）</div>'
+            : '<div style="color:#6a7a96;font-size:11px;padding:8px 4px">（还没有剧本——点右上「＋ 新剧本」）</div>';
+          return;
+        }
+        listBox.innerHTML = items.map(({ p, i }) => `
           <div class="sh-item${i === curSel ? ' on' : ''}" data-i="${i}" title="场景 ${esc(p.scene ?? '（所有场景）')} · ${esc(trigText(p))}&#10;${esc(sumText(p))}">
             <span class="sh-i">#${String(i + 1).padStart(2, '0')}</span>
             <span style="flex:1;min-width:0">
               <span class="sh-t" style="display:block">${esc(p.scene ?? '—')}｜${esc(trigText(p))}</span>
               <span class="sh-sub">${esc(sumText(p))}</span>
             </span>
-            <button data-up="${i}" title="上移">↑</button>
-            <button data-dn="${i}" title="下移">↓</button>
+            <button data-up="${i}" title="上移" style="${filterScene ? 'display:none' : ''}">↑</button>
+            <button data-dn="${i}" title="下移" style="${filterScene ? 'display:none' : ''}">↓</button>
             <button data-del="${i}" class="sh-del" title="删除（再点一次确认）">✕</button>
           </div>`).join('');
       };
+      fSel.addEventListener('change', () => { filterScene = fSel.value; renderList(); });
       let armedDel = -1;
       listBox.addEventListener('click', (e) => {
         const row = e.target.closest('.sh-item');
