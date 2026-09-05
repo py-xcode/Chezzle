@@ -7918,9 +7918,10 @@ function searchSpot(obj, pair, scene, strict) {
 }
 
 class Portal extends Obj {
-  constructor({ x, y, w = 40, h = 64, color = '#c78bff', once = false, uses = Infinity, switchId = null, ...rest } = {}) {
+  constructor({ x, y, w = 40, h = 64, color = '#c78bff', once = false, uses = Infinity, switchId = null, group = null, ...rest } = {}) {
     super({ x, y, w, h, solid: false, physicsKind: 'none', ...rest });
-    this.color = color; // 组标识：同色两个为一组
+    this.color = color; // 外观色（不再承担配对职责——配对由 group 承担）
+    this.group = group; // 组号（字符串）：同组 = 配对/共享预算/属性同步；null = 旧数据，按颜色兜底配对
     // n次门：可设可用次数（整组共享，任一扇配置的有限次数为整组预算），用尽整组消失；
     // once:true（旧数据）= 1 次
     this.uses = once ? 1 : uses;
@@ -7930,9 +7931,18 @@ class Portal extends Obj {
   }
 
   get hoverLabel() {
-    if (this.switchId) return Number.isFinite(this.usesLeft) ? `传送门（需开关·可用${this.usesLeft}次）` : '传送门（需开关）';
-    if (Number.isFinite(this.usesLeft)) return `传送门（可用${this.usesLeft}次）`;
-    return '传送门';
+    const grp = this.group ? `【组${this.group}】` : '';
+    if (this.switchId) return grp + `传送门（需开关·可用${this.usesLeft}次）`;
+    if (Number.isFinite(this.usesLeft)) return grp + `传送门（可用${this.usesLeft}次）`;
+    return grp + '传送门';
+  }
+
+  /** 是否同组：有组号的按组号配对；旧数据（双方都无组号）按颜色兜底 */
+  _sameGroup(o) {
+    if (this.group != null || o.group != null) {
+      return this.group != null && this.group === o.group;
+    }
+    return o.color === this.color; // 旧版本数据：无组号 → 按颜色配对（迁移前的兼容）
   }
 
   /** 是否可传送：绑定开关时要求开关有效开启（支持"&"联锁）；开关不存在视为关闭 */
@@ -7944,10 +7954,10 @@ class Portal extends Obj {
   }
 
   /**
-   * 解析对侧门：本场景同色且非自身的另一扇（对侧被移除时重新解析）；
-   * Multiscene 关卡（scene.multiscene）下配对**跨场景**：全局扫描所有场景的同色门——
-   * 同色门在哪个场景都配对（用户约定：跨场景同色传送）。跨场景对侧记录
-   * pairScene/pairSceneName 供 update 传送时切场景。同场景配对优先（同色多组时就近）。
+   * 解析对侧门：本场景同组且非自身的另一扇（对侧被移除时重新解析）；
+   * Multiscene 关卡（scene.multiscene）下配对**跨场景**：全局扫描所有场景的同组门——
+   * 同组门在哪个场景都配对（跨场景传送；组号 = 配对单位，颜色只是外观）。
+   * 旧数据无组号 → 按颜色兜底（同色配对）。同场景配对优先。
    */
   _resolvePair(scene) {
     const valid = this.pair && (
@@ -7959,7 +7969,7 @@ class Portal extends Obj {
     this.pairScene = null;
     this.pairSceneName = null;
     for (const o of scene.portals) {
-      if (o !== this && o.color === this.color) {
+      if (o !== this && this._sameGroup(o)) {
         this.pair = o;
         break;
       }
@@ -7971,7 +7981,7 @@ class Portal extends Obj {
         const sc = e && e.scene;
         if (!sc || sc === scene || !sc.portals) continue;
         for (const o of sc.portals) {
-          if (o !== this && o.color === this.color) {
+          if (o !== this && this._sameGroup(o)) {
             this.pair = o;
             this.pairScene = sc;
             this.pairSceneName = name;
@@ -8084,13 +8094,25 @@ class Portal extends Obj {
       ctx.fill();
     }
     ctx.restore();
-    // 顶部小标记（组色圆点）；一次性门再画个 ×（用后消失）
+    // 顶部小标记（组色圆点）；组号标签（同组 = 配对/共享预算，玩家一眼看到归属）
     ctx.fillStyle = col;
     ctx.shadowColor = active ? this.color : 'transparent';
     ctx.shadowBlur = active ? 8 : 0;
     ctx.beginPath();
     ctx.arc(cx, this.y - 5, 3, 0, Math.PI * 2);
     ctx.fill();
+    ctx.shadowBlur = 0;
+    if (this.group) {
+      ctx.font = 'bold 10px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = active ? '#e8e0ff' : '#9fb2c8';
+      ctx.strokeStyle = 'rgba(10,14,30,0.9)';
+      ctx.lineWidth = 3;
+      const t2 = `组${this.group}`;
+      ctx.strokeText(t2, cx, this.y - 12);
+      ctx.fillText(t2, cx, this.y - 12);
+      ctx.textAlign = 'left';
+    }
     // n次门：顶部显示剩余次数（无限次数不显示）——大号数字 + 深色底板（任何背景下可读）
     if (Number.isFinite(this.usesLeft)) {
       ctx.shadowBlur = 0;
