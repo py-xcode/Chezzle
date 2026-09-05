@@ -117,8 +117,10 @@ if (fs.existsSync(path.join(SRC, '..', 'index.html'))) refFiles.push(path.join(S
 let patched = 0;
 for (const f of refFiles) {
   let t = fs.readFileSync(f, 'utf8');
-  if (!/chezzle\.js(?:\?v=[A-Za-z0-9]+)?/.test(t)) continue;
-  const nt = t.replace(/chezzle\.js(?:\?v=[A-Za-z0-9]+)?/g, `chezzle.js?${VER}`);
+  // ★ 清除所有已存在的 ?v= 级联段（旧 bug：正则只匹配一段，每次 build 追加一段 →
+  //   ?vmto1haka?vmto13ecy?… 无限级联，且浏览器按整串 URL 缓存旧内容不可控）
+  if (!/chezzle\.js\?[A-Za-z0-9?]+/.test(t)) continue;
+  const nt = t.replace(/chezzle\.js(?:\?[A-Za-z0-9]+)*/g, `chezzle.js?${VER}`);
   if (nt !== t) { fs.writeFileSync(f, nt, 'utf8'); patched++; }
 }
 console.log(`dist 引用版本同步 → ${VER}（${patched} 个 HTML）`);

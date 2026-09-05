@@ -62,6 +62,7 @@ export class Extractor extends Obj {
   /** 压力判定（与压力开关同一逻辑）：玩家/物块站在提取器上即触发。
    *  只认动态实心（玩家/物块）；沉淀粒子不压；下方站地面不算。 */
   _onTop(scene) {
+    if (!scene) return false;
     for (const obj of scene.objects) {
       if (obj === this || !obj.solid || obj.physicsKind !== 'dynamic') continue; // 排除自身与静态物
       if (obj.amount !== undefined) continue; // 沉淀粒子不压（只有玩家/物块）
@@ -71,7 +72,12 @@ export class Extractor extends Obj {
     return false;
   }
 
-  render(ctx, scene) {
+  render(ctx, opts) {
+    // ★ 与其它对象一致：渲染器传的是 opts（{ scene, time, ... }），必须先解出 scene。
+    //   直接写 render(ctx, scene) 会让 scene 收到 opts 对象：压力提取器 _onTop(scene)
+    //   迭代 scene.objects → undefined 抛异常 → 游戏主循环整帧死亡（用户"传送后
+    //   画面里没有玩家"的根因：portal 传送到 temple 首帧渲染 pressure extractor 就炸）。
+    const scene = opts?.scene ?? null;
     const pool = scene?.byId?.[this.poolId];
     const sw = this.switchId ? scene?.byId?.[this.switchId] : null;
     const active = this.switchId ? (sw ? (sw._lastEff ?? sw.open) : false) : this._onTop(scene);

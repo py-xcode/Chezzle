@@ -11348,34 +11348,46 @@ function startLoop(scene, renderer, opts = {}) {
   let raf = 0;
 
   const getActive = typeof scene === 'function' ? scene : () => ({ scene, renderer, hud: opts.hud });
+  const logged = new Set(); // 帧异常去重（同一消息只报一次，防刷屏）
 
   function frame(now) {
-    const dt = Math.min((now - last) / 1000, 0.25);
-    last = now;
-    acc += dt;
-    const active = getActive();
-    if (active && active.scene) {
-      const S = active.scene;
-      let guard = 0;
-      if (S.overview) {
-        // 鸟瞰（灵魂出窍）：暂停推进（保持画面），自由缩放/平移由输入管线驱动
-        acc = 0;
-      } else if (S.debugMode && S.debugPaused) {
-        // 调试暂停：不推进 tick（保持画面），F6 手动步进一 tick
-        if (S.debugStepOnce) {
-          S.debugStepOnce = false;
-          S.step(TICK);
+    try {
+      const dt = Math.min((now - last) / 1000, 0.25);
+      last = now;
+      acc += dt;
+      const active = getActive();
+      if (active && active.scene) {
+        const S = active.scene;
+        let guard = 0;
+        if (S.overview) {
+          // 鸟瞰（灵魂出窍）：暂停推进（保持画面），自由缩放/平移由输入管线驱动
+          acc = 0;
+        } else if (S.debugMode && S.debugPaused) {
+          // 调试暂停：不推进 tick（保持画面），F6 手动步进一 tick
+          if (S.debugStepOnce) {
+            S.debugStepOnce = false;
+            S.step(TICK);
+          }
+        } else {
+          while (acc >= TICK && guard < 10) {
+            S.step(TICK);
+            acc -= TICK;
+            guard++;
+          }
+          if (acc >= TICK) acc = 0; // 追不上就丢帧
         }
-      } else {
-        while (acc >= TICK && guard < 10) {
-          S.step(TICK);
-          acc -= TICK;
-          guard++;
-        }
-        if (acc >= TICK) acc = 0; // 追不上就丢帧
+        const R = active.renderer ?? renderer;
+        R.frame(S.objects, { hud: active.hud ?? opts.hud, time: S.time, scene: S, focus: S.player ?? S.cameraFocus ?? null });
       }
-      const R = active.renderer ?? renderer;
-      R.frame(S.objects, { hud: active.hud ?? opts.hud, time: S.time, scene: S, focus: S.player ?? S.cameraFocus ?? null });
+    } catch (e) {
+      // ★ 单帧异常不杀循环：任意一个对象的 step/render 抛异常只会让这一帧残缺，
+      //   绝不能因此整局冻结（用户"传送后画面里没有玩家"= 压力提取器渲染异常
+      //   杀死 rAF 链，游戏从此一帧都不再跑——画面停在半空，玩家永远不可见）。
+      //   记录（同消息一次）并继续下一帧，画面在下一帧恢复。
+      if (typeof console !== 'undefined' && e && !logged.has(e.message)) {
+        logged.add(e.message);
+        console.error('[loop] 帧异常已拦截（游戏继续）:', e);
+      }
     }
     raf = requestAnimationFrame(frame);
   }
@@ -15506,6 +15518,7 @@ class Extractor extends Obj {
   /** 压力判定（与压力开关同一逻辑）：玩家/物块站在提取器上即触发。
    *  只认动态实心（玩家/物块）；沉淀粒子不压；下方站地面不算。 */
   _onTop(scene) {
+    if (!scene) return false;
     for (const obj of scene.objects) {
       if (obj === this || !obj.solid || obj.physicsKind !== 'dynamic') continue; // 排除自身与静态物
       if (obj.amount !== undefined) continue; // 沉淀粒子不压（只有玩家/物块）
@@ -15515,7 +15528,12 @@ class Extractor extends Obj {
     return false;
   }
 
-  render(ctx, scene) {
+  render(ctx, opts) {
+    // ★ 与其它对象一致：渲染器传的是 opts（{ scene, time, ... }），必须先解出 scene。
+    //   直接写 render(ctx, scene) 会让 scene 收到 opts 对象：压力提取器 _onTop(scene)
+    //   迭代 scene.objects → undefined 抛异常 → 游戏主循环整帧死亡（用户"传送后
+    //   画面里没有玩家"的根因：portal 传送到 temple 首帧渲染 pressure extractor 就炸）。
+    const scene = opts?.scene ?? null;
     const pool = scene?.byId?.[this.poolId];
     const sw = this.switchId ? scene?.byId?.[this.switchId] : null;
     const active = this.switchId ? (sw ? (sw._lastEff ?? sw.open) : false) : this._onTop(scene);
