@@ -221,9 +221,12 @@ const { stepPressTap } = __require('src/level/click.js');;
 const { deathQuip } = __require('src/render/hud.js');;
 
 class Scene {
-  constructor({ worldW = CFG.worldW, worldH = CFG.worldH, physics = {} } = {}) {
+  constructor({ worldW = CFG.worldW, worldH = CFG.worldH, physics = {}, hideTouchGrab = false } = {}) {
     this.worldW = worldW;
     this.worldH = worldH;
+    // 移动端"拾取/吸液"按钮（=电脑端 C 键：拾烧杯/吸液/集气）开关：
+    // 很多关卡用不到它，默认收起防误导（true=隐藏）；桌面端无影响
+    this.hideTouchGrab = !!hideTouchGrab;
     this.objects = [];
     this.dynamics = [];
     this.statics = [];
@@ -7873,6 +7876,7 @@ exports.renderFormula = renderFormula;
 
 const { Obj } = __require('src/objects/obj.js');;
 const { overlaps } = __require('src/physics/collision.js');;
+const { applyInventorySetup } = __require('src/level/items.js');;
 
 const EMBED_TOL = 8; // 落点嵌入实心体多少 px 以内仍可落（物理一帧即可温柔推开）
 function overlapsBox(box, o, m = EMBED_TOL) {
@@ -7936,7 +7940,7 @@ function searchSpot(obj, pair, scene, strict) {
 }
 
 class Portal extends Obj {
-  constructor({ x, y, w = 40, h = 64, color = '#c78bff', once = false, uses = Infinity, switchId = null, group = null, ...rest } = {}) {
+  constructor({ x, y, w = 40, h = 64, color = '#c78bff', once = false, uses = Infinity, switchId = null, group = null, inventory = null, clearInventory = false, ...rest } = {}) {
     super({ x, y, w, h, solid: false, physicsKind: 'none', ...rest });
     this.color = color; // 外观色（不再承担配对职责——配对由 group 承担）
     this.group = group; // 组号（字符串）：同组 = 配对/共享预算/属性同步；null = 旧数据，按颜色兜底配对
@@ -7945,6 +7949,10 @@ class Portal extends Obj {
     this.uses = once ? 1 : uses;
     this.usesLeft = Number.isFinite(this.uses) ? this.uses : Infinity;
     this.switchId = switchId; // 绑定开关 id：开关有效开启时才可传送（null = 常开）
+    // 传送后物品栏重置：inventory = 多行文本配置（解析见 items.parseInventorySetup），
+    // clearInventory = 只清空不配送（勾选"清空物品栏"；两层语义：清空+装配 / 只清空）
+    this.inventory = inventory ?? null;
+    this.clearInventory = !!clearInventory;
     this.pair = null; // 对侧门（惰性解析）
   }
 
@@ -8036,6 +8044,7 @@ class Portal extends Obj {
               portalLanding: true,
               spawn: { x: spot.x, y: spot.y },
             });
+            this._applyInventory(obj);
             this._consumeUse(scene, pair);
           }
           continue;
@@ -8045,12 +8054,21 @@ class Portal extends Obj {
         obj.x = spot.x;
         obj.y = spot.y;
         obj._portalLast = pair; // 站在对侧门内：本门不重复触发；离开本门后才能再进本门
+        this._applyInventory(obj);
         this._consumeUse(scene, pair);
       } else if (!inside && obj._portalLast === this) {
         // 已走出本门：允许下次再进本门
         obj._portalLast = null;
       }
     }
+  }
+
+  /** 传送门"物品栏重置"：只有玩家（有 inventory）生效；没配置不动（null/空文本）。
+   *  配置 = this.inventory（多行文本或数组）+ this.clearInventory（只清空）。 */
+  _applyInventory(obj) {
+    if (!obj || !obj.inventory) return;
+    if (this.inventory == null && !this.clearInventory) return;
+    applyInventorySetup(obj, this.inventory, this.clearInventory);
   }
 
   /** n次门：整组共享剩余次数，用尽后整组消失（任一扇配置的有限次数 = 整组预算） */
@@ -8169,110 +8187,1525 @@ class Portal extends Obj {
 exports.Portal = Portal;
 
   };
-  __modules["src/objects/rope.js"] = function (module, exports, __require) {
+  __modules["src/level/items.js"] = function (module, exports, __require) {
 // ============================================================================
-// 绳子：细线，悬挂一个物体。锚点可为固定坐标或跟随某物体（相对坐标）。
-// 悬挂物体的位置完全由绳子决定（lateUpdate：物理结算后再定位，避免被推走）。
-// 每刻检查：锚点物体不存在，或悬挂物体目标位置被实心体卡住 → 断绳。
-// 断绳后绳子消失，悬挂物体恢复重力。
+// 可携带物品（集气瓶 / 烧杯 / 滴管）互动逻辑
+// ----------------------------------------------------------------------------
+// 按键语义（全部基于"选中的物品栏格子"）：
+//  - C（选中空格）：拾取附近最近的一个可携带物品（一物一格，不堆叠）；
+//  - C（选中烧杯/滴管）：从最近的液体容器（药品池/烧杯）吸液——烧杯 20g/次
+//    （可混合、直到满），滴管 5g/次（**同种液体可反复续吸至容量上限 50g**，
+//    装着别的液体则不能续吸）；
+//  - C（按住，选中集气瓶）：把最近气泡柱产生的气体直接截留进瓶（5g 封顶）；
+//  - X（选中烧杯）：把烧杯里的液体倒入最近的烧杯/药品池，**每次倒 10g**
+//    （滴管不行）；
+//  - X（按住，选中集气瓶）：向最近的液体容器通入气体（0.05g/s）；
+//  - Shift：把选中格里的物品放到玩家身旁（集气瓶与烧杯一样有碰撞箱可推动，
+//    滴管无碰撞箱可拖动）。
 // ============================================================================
 
-const { Obj } = __require('src/objects/obj.js');;
-const { overlaps } = __require('src/physics/collision.js');;
-const { THEME } = __require('src/render/theme.js');;
+const { CFG } = __require('src/core/config.js');;
+const { solutionColor } = __require('src/render/liquidrender.js');;
+const { puffFx, flowFx } = __require('src/objects/fx.js');;
+const { Bubble } = __require('src/objects/bubble.js');;
+const { Beaker } = __require('src/objects/beaker.js');;
+const { Dropper } = __require('src/objects/dropper.js');;
+const { GasBottle } = __require('src/objects/gasbottle.js');;
 
-class Rope extends Obj {
-  constructor({ x = 0, y = 0, length = 100, anchor, hanging, ...rest } = {}) {
-    super({ x, y, w: 2, h: length, solid: false, physicsKind: 'none', ...rest });
-    this.length = length;
-    this.anchor = anchor; // {fixed:{x,y}} | {obj, dx?, dy?}
-    this.hanging = hanging; // 悬挂物体（Obj）
-    this.broken = false;
-    // 悬挂期间物体不受重力，位置由绳子决定
-    if (hanging) {
-      hanging.gravity = 0;
-      // 初始把悬挂物放到锚点+长度处，避免构造时的初始偏移被误判为"被推动"
-      const a = this.anchorPoint();
-      hanging.x = a.x - hanging.w / 2;
-      hanging.y = a.y + length - hanging.h;
+let FX_SEQ = 0; // 特效对象 id 序号（fx.js 的计数器不跨模块共享）
+
+/** 放置落点是否被占用：与其它可携带物品、实心动态体（装置壁）、实心放置粒子重叠 */
+function spotBlocked(scene, o, x, y) {
+  const m = 3; // 收缩容差：贴边不算
+  const l = x + m, r = x + o.w - m, t = y + m, b = y + o.h - m;
+  for (const s of scene.objects) {
+    if (s === scene.player || !s || s.hidden) continue;
+    if (typeof s.amount === 'number' && !s.solid) continue; // 软体自由粒子不挡
+    const isCarry = !!s.isCarryItem;
+    if (!(isCarry || s.solid)) continue; // 只看实体类；区域容器（池等）允许浸入
+    if (r > s.x + m && l < s.x + s.w - m && b > s.y + m && t < s.y + s.h - m) return true;
+  }
+  return false;
+}
+
+/** 两矩形之间的最近距离（边缘间隙；重叠=0）——池/烧杯等高宽物体用边缘距离，
+ *  站在池边即可吸液（用中心距离会让宽池显得"遥不可及"） */
+function rectDist(a, b) {
+  const dx = Math.max(a.x - (b.x + b.w), b.x - (a.x + a.w), 0);
+  const dy = Math.max(a.y - (b.y + b.h), b.y - (a.y + a.h), 0);
+  return Math.hypot(dx, dy);
+}
+
+/** 场景内最近的可携带物品（集气瓶/烧杯/滴管），超范围返回 null；
+ *  noCarry（关卡固定装置，编辑器可勾选"锁定"）不参与拾取 */
+function nearestCarryItem(scene, player) {
+  let best = null;
+  let bd = Infinity;
+  for (const o of scene.objects) {
+    if (!o.isCarryItem || o.noCarry) continue;
+    const d = rectDist(o, player);
+    if (d < bd) {
+      bd = d;
+      best = o;
     }
   }
+  if (!best || bd > CFG.item.collectRange) return null;
+  return best;
+}
 
-  anchorPoint() {
-    if (this.anchor.fixed) return { x: this.anchor.fixed.x, y: this.anchor.fixed.y };
-    const o = this.anchor.obj;
-    return { x: o.x + (this.anchor.dx ?? 0), y: o.y + (this.anchor.dy ?? 0) };
+/**
+ * C 拾取：选中格必须**为空**，把最近的可携带物品收进该格（连同其内容物）。
+ * 物品不堆叠：一物一格，重复拾取需要依次选空格。
+ */
+function pickupItem(player, scene) {
+  const inv = player.inventory;
+  if (inv.selectedSlot() !== null) return false;
+  const o = nearestCarryItem(scene, player);
+  if (!o) return false;
+  // 吸入特效：物品位置一圈尘雾（先于移除取坐标）
+  puffFx(scene, o.x + o.w / 2, o.y + o.h * 0.4);
+  scene.removeItem(o); // 深度移除（烧杯含杯壁子体）
+  inv.slots[inv.selected] = { item: o.isCarryItem, obj: o };
+  return true;
+}
+
+/** Shift 放置：把选中格里的物品放到玩家身旁（朝移动方向一侧、脚边）。
+ *  落点被占用（已有装置/实心体）时依次向外探测空位——不再把两件物品叠在一起。 */
+function placeCarriedItem(player, scene) {
+  const inv = player.inventory;
+  const slot = inv.selectedSlot();
+  if (!slot || !slot.item) return false;
+  const o = slot.obj;
+  const front = player.vel.x >= 0 ? 1 : -1;
+  const off = CFG.item.placeOffset;
+  let x = front > 0 ? player.x + player.w + off : player.x - o.w - off;
+  let y = player.bottom + 2 - o.h; // 底边贴脚底（烧杯/集气瓶落地面，滴管停在原地）
+  x = Math.max(4, Math.min(scene.worldW - o.w - 4, x));
+  y = Math.max(4, Math.min(scene.worldH - o.h - 4, y));
+  // 空位探测：原位 → 原方向再远一格 → 反侧对称位 → 反侧更远
+  if (spotBlocked(scene, o, x, y)) {
+    const step = o.w + 10;
+    const probes = [
+      x + front * step,
+      x + front * step * 2,
+      x - front * step,
+      x - front * step * 2,
+    ];
+    let found = false;
+    for (const px of probes) {
+      const cx = Math.max(4, Math.min(scene.worldW - o.w - 4, px));
+      if (!spotBlocked(scene, o, cx, y)) {
+        x = cx;
+        found = true;
+        break;
+      }
+    }
+    if (!found && !spotBlocked(scene, o, player.x, y)) x = player.x; // 最后兜底：正下方
   }
+  o.x = x;
+  o.y = y;
+  if (Number.isFinite(o.rx)) { o.rx = o.x; o.ry = o.y; } // 滴管渲染平滑坐标同步（防放置瞬移残影）
+  scene.addItem(o);
+  puffFx(scene, x + o.w / 2, y + o.h - 3); // 落地尘雾
+  inv.slots[inv.selected] = null;
+  return true;
+}
 
-  lateUpdate(dt, scene) {
-    if (this.broken || !this.hanging) return;
-    // 锚点物体消失 → 断绳
-    if (this.anchor.obj && !scene.byId[this.anchor.obj.id]) {
-      this.break(scene);
-      return;
+/** 最近的有液体的容器（取液源/通入目标）：含水或含溶质的可装液容器 */
+function nearestLiquidSource(scene, player, range = CFG.item.liquidRange) {
+  let best = null;
+  let bd = Infinity;
+  for (const c of scene.containers) {
+    if (!c.solution || !(c.solution.volume > 0)) continue;
+    if (c.solution.totalMass() <= 1e-9) continue;
+    const d = rectDist(c, player);
+    if (d < bd) {
+      bd = d;
+      best = c;
     }
-    // 悬挂物体被删除（如开关 deleteId 移除了它）→ 断绳
-    if (!scene.byId[this.hanging.id]) {
-      this.break(scene);
-      return;
+  }
+  return best && bd <= range ? best : null;
+}
+
+/** 最近的"可注液"容器（池/烧杯，空杯也算），范围限定；
+ *  needWater：只找有水的（通气要液体介质）；
+ *  needRoom：跳过已满的**烧杯**（药品池不封顶，敞开接收） */
+function nearestLiquidTarget(scene, player, range = CFG.item.liquidRange, needWater = false, needRoom = false) {
+  let best = null;
+  let bd = Infinity;
+  for (const c of scene.containers) {
+    if (!c.solution || !(c.solution.volume > 0)) continue;
+    if (needWater && !(c.solution.water > 1e-9)) continue;
+    if (needRoom) {
+      const capped = c.isCarryItem === 'beaker'; // 只有烧杯有容量上限；池视为敞开
+      if (capped && c.solution.volume - c.solution.totalMass() <= 1e-9) continue;
     }
-    let a = this.anchorPoint();
-    // 区分"推的是锚点"还是"推的是悬挂物"：
-    //  - 锚点本 tick 移动（玩家推锚点）→ 悬挂物跟随即可，不平移锚点
-    //  - 锚点没动但悬挂物被推离期望 → 平移锚点（绳子刚性，整个系统一起动）
-    const anchorDx = a.x - (this._prevAnchorX ?? a.x);
-    const tx = a.x - this.hanging.w / 2;
-    const dx = this.hanging.x - tx;
-    if (!(Math.abs(anchorDx) > 0.5) && this.anchor.obj && Math.abs(dx) > 0.5) {
-      this.anchor.obj.x += dx;
-      a.x += dx;
+    const d = rectDist(c, player);
+    if (d < bd) {
+      bd = d;
+      best = c;
     }
-    this._prevAnchorX = a.x;
-    this.x = a.x;
-    this.y = a.y;
-    const nx = a.x - this.hanging.w / 2;
-    const ny = a.y + this.length - this.hanging.h;
-    this.hanging.x = nx;
-    this.hanging.y = ny;
-    this.hanging.vel = { x: 0, y: 0 };
-    // 目标位置被实心体卡住 → 断绳
-    for (const s of scene.statics) {
-      if (overlaps(this.hanging, s)) {
-        this.break(scene);
-        return;
+  }
+  return best && bd <= range ? best : null;
+}
+
+/** 吸液特效：从容器液面到玩家的一串上行液滴（纯视觉） */
+function _suckFx(scene, src, player) {
+  const r = src.innerRect ? src.innerRect() : { x: src.x + 4, y: src.y + 6, w: src.w - 8, h: src.h - 12 };
+  // 液面近似：按容器高度中点取上沿区域即可（视觉用途，无需精确）
+  const col = solutionColor(src.solution).color;
+  flowFx(scene, {
+    x0: Math.max(r.x + 4, Math.min(r.x + r.w - 4, player.x + player.w / 2)),
+    y0: r.y + Math.min(10, r.h * 0.3),
+    x1: player.x + player.w / 2,
+    y1: player.y + player.h * 0.35,
+    color: col,
+    life: 0.5,
+    n: 8,
+    bend: 0.3,
+  });
+}
+
+/**
+ * C 吸液：选中的烧杯/滴管从最近的液体容器取液。
+ * 烧杯：每次 20g（同比例样品，可混合），容量满（总量≥容积）后不能再加；
+ * 滴管：每次 5g，**同种液体可反复续吸直到容量上限**（管里装着别的液体则拒绝），
+ * 取池中占优的溶质（纯水→H2O）。
+ */
+function drawLiquid(player, scene) {
+  const slot = player.inventory.selectedSlot();
+  if (!slot || !slot.item) return false;
+  const o = slot.obj;
+  const src = nearestLiquidSource(scene, player);
+  if (!src) return false;
+  if (slot.item === 'beaker') {
+    const cap = o.solution.volume > 0 ? o.solution.volume : CFG.item.beakerCapacity;
+    const room = cap - o.solution.totalMass();
+    if (room <= 1e-9) return false; // 满杯不能再加
+    const sample = src.solution.takeSample(Math.min(CFG.item.beakerTransfer, room));
+    if (!sample) return false;
+    o.solution.addSample(sample);
+    for (const [id, v] of Object.entries(sample.solutes ?? {})) {
+      if (v > 1e-9) o.noteSolOrigin?.(id, { kind: 'fill', text: '吸液入杯' });
+    }
+    _suckFx(scene, src, player); // 吸液液流动画
+    return true;
+  }
+  if (slot.item === 'dropper') {
+    const take = Math.min(CFG.item.dropperTransfer, o.capacity - o.liquid);
+    if (take <= 1e-9) return false; // 满管（容量上限）
+    // 滴管只装一种液体：占优溶质（无溶质=纯水）。已装液时只有"同一液体"才能续吸
+    let id = 'H2O';
+    let m = 0;
+    for (const [sid, sm] of src.solution.solutes) {
+      if (sm > m) {
+        id = sid;
+        m = sm;
+      }
+    }
+    if (o.liquid > 1e-9 && id !== o.substance) return false; // 管里是别的液体 → 不能续吸
+    if (id === 'H2O') {
+      const got = src.solution.water > 0 ? Math.min(take, src.solution.water) : 0;
+      if (got <= 1e-9) return false;
+      src.solution.water -= got;
+      o.substance = 'H2O';
+      o.liquid += got;
+    } else {
+      const got = src.solution.remove(id, take);
+      if (got <= 1e-9) return false;
+      o.substance = id;
+      o.liquid += got;
+    }
+    _suckFx(scene, src, player); // 吸液液流动画
+    return true;
+  }
+  return false;
+}
+
+/**
+ * X 倒入：把选中烧杯里的液体倒入最近的烧杯/药品池，**每次倒 CFG.item.pourStep
+ * （默认 10g）**——连续按分次倒完。目标未满则倒；最近的是满杯且附近还有别的
+ * 容器 → 选下一个有余量的。
+ * 滴管不能倒出（只能滴在容器上方）。
+ */
+function pourBeaker(player, scene) {
+  const slot = player.inventory.selectedSlot();
+  if (!slot || slot.item !== 'beaker') return false;
+  const o = slot.obj;
+  const total = o.solution.totalMass();
+  if (total <= 1e-9) return false;
+  const target = nearestLiquidTarget(scene, player, CFG.item.liquidRange, false, true);
+  if (!target) return false;
+  // 烧杯有容量上限（倒目标剩余空间）；药品池敞开接收
+  const capped = target.isCarryItem === 'beaker';
+  const tRoom = capped ? Math.max(0, target.solution.volume - target.solution.totalMass()) : Infinity;
+  const pour = Math.min(CFG.item.pourStep, total, tRoom);
+  if (pour <= 1e-9) return false;
+  const sample = o.solution.takeSample(pour);
+  if (!sample) return false;
+  // 倒出会话：平移到目标旁→倾斜→按住保持（视觉层，物理坐标不动）
+  o.beginPour?.(scene, target);
+  target.solution.addSample(sample);
+  for (const [id, v] of Object.entries(sample.solutes ?? {})) {
+    if (v > 1e-9) target.noteSolOrigin?.(id, { kind: 'pour', text: '烧杯倒入' });
+  }
+  return true;
+}
+
+/**
+ * 按住 X 通气：把选中集气瓶中的气体按 0.05g/s 通入最近的液体容器
+ * （优先通占优气体；CO2/SO2/NO2/Cl2 在主动鼓泡时也能溶进水里）。
+ * 注入点冒气泡视觉（间歇生成，随通气持续）。
+ */
+function injectBottleGas(player, scene, dt) {
+  const slot = player.inventory.selectedSlot();
+  if (!slot || slot.item !== 'bottle') return false;
+  const o = slot.obj;
+  if (o.totalGas() <= 1e-9) return false;
+  const target = nearestLiquidTarget(scene, player, CFG.item.liquidRange, true);
+  if (!target) return false;
+  const d = o.dominantGas();
+  const amount = Math.min(CFG.item.gasRate * dt, d[1]);
+  if (amount <= 1e-9) return false;
+  o.removeGas(d[0], amount);
+  scene.bubbleGas(target, d[0], amount, dt);
+  // 通气气泡特效：注入点（bubbleGas 更新过的 depositAt）每 ~0.16s 冒一颗上升泡
+  o._injAcc = (o._injAcc ?? 0) + dt;
+  if (o._injAcc >= 0.16 && target.depositAt) {
+    o._injAcc = 0;
+    const jx = ((target.depositAt.x * 7 + scene.time * 13) % 8) - 4; // 确定性微抖
+    scene.addObject(new Bubble({
+      x: target.depositAt.x + jx - 3,
+      y: target.depositAt.y - 6,
+      dir: -1,
+      speed: 62,
+      id: `fx${++FX_SEQ}`,
+    }));
+  }
+  return true;
+}
+
+// ============================================================================
+// 传送门物品栏重置（Portal 调用）——"穿过传送门时重设玩家物品栏"
+// ----------------------------------------------------------------------------
+// 配置文本（编辑器多行字段）每行一种：
+//   Cu:50                  物质 50g（进格子；跨格收集同真实拾取）
+//   beaker                 空烧杯
+//   beaker:HCl:20,ZnCl2:5  烧杯 + 满杯水 + 溶质（逗号分隔 溶质:质量）
+//   dropper:H2O:40         滴管装 40g 液体
+//   gasbottle              空集气瓶（gasbottle:H2:3 装 3g 气体）
+//   # 注释 / 空行跳过。也接受数组形式 [{substance, amount} | {item, opts}]。
+// ============================================================================
+
+const ITEM_NAMES = ['beaker', 'dropper', 'gasbottle'];
+
+/** 解析配置文本 → [{substance, amount} | {item, opts}]（数组直接规范化返回） */
+function parseInventorySetup(text) {
+  if (Array.isArray(text)) {
+    return text.filter((e) => e && (e.substance || e.item)); // 已是结构：直接收
+  }
+  if (typeof text !== 'string') return [];
+  const out = [];
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const n = normalizeSetupLine(line);
+    if (n) out.push(n);
+  }
+  return out;
+}
+
+function normalizeSetupLine(line) {
+  if (typeof line !== 'string') return null;
+  const [head, ...rest] = line.split(':');
+  const name = head.trim();
+  if (!name) return null;
+  if (ITEM_NAMES.includes(name)) {
+    // 物品行剩余段：溶质/液体/气体清单（id:g, id:g）
+    const solutes = {};
+    for (const seg of rest.join(':').split(',')) {
+      const t = seg.trim();
+      if (!t) continue;
+      const [id, m] = t.split(':').map((s) => s.trim());
+      if (id && Number.isFinite(Number(m)) && Number(m) > 0) solutes[id] = Number(m);
+    }
+    const opts = {};
+    if (Object.keys(solutes).length) opts.solutes = solutes;
+    return { item: name, opts };
+  }
+  // 物质行：物质:质量
+  const [id, m] = line.split(':');
+  const mass = Number(m);
+  if (id && Number.isFinite(mass) && mass > 0) return { substance: id.trim(), amount: mass };
+  return null;
+}
+
+/**
+ * 把玩家物品栏替换为配置（清空 + 装配）。仅玩家（有 inventory）生效。
+ * clearOnly=true → 只清空（clearInventory 字段用）。
+ * 返回装配数量（物品/物质各计），供调试/测试断言。
+ */
+function applyInventorySetup(player, setupText, clearOnly = false) {
+  const inv = player && player.inventory;
+  if (!inv) return 0;
+  inv.slots = new Array(inv.slots.length).fill(null);
+  inv.selected = 0;
+  if (clearOnly) return 0;
+  const entries = parseInventorySetup(setupText);
+  let n = 0;
+  for (const e of entries) {
+    if (e.substance) {
+      inv.add(e.substance, e.amount); // 跨格收集：同物质格优先、再空格
+      n++;
+    } else if (e.item) {
+      const slot = inv.slots.findIndex((s) => s === null);
+      if (slot < 0) continue; // 格子满：跳过
+      const o = createSetupItem(e.item, e.opts, player);
+      if (o) {
+        inv.slots[slot] = { item: e.item, obj: o };
+        n++;
       }
     }
   }
+  return n;
+}
 
-  break(scene) {
-    this.broken = true;
-    if (this.hanging) this.hanging.gravity = 1;
-    scene.removeObject(this);
+/** 配置物品 → 真实物品对象（x/y 挂玩家附近：拿在手里的坐标不影响使用） */
+function createSetupItem(name, opts = {}, player = null) {
+  const x = player ? player.x : 0;
+  const y = player ? player.y : 0;
+  const solutes = opts.solutes ?? {};
+  if (name === 'beaker') {
+    // 默认 200mL（编辑器常见值）；带溶质 → 满杯水作溶剂（液面=总质量/体积）
+    const volume = opts.volume ?? 200;
+    const water = opts.water !== undefined ? opts.water : (Object.keys(solutes).length ? volume : 0);
+    return new Beaker({ x, y, volume, water, solutes });
+  }
+  if (name === 'dropper') {
+    const liquid = Object.entries(solutes)[0] ?? null;
+    return new Dropper({ x, y, substance: liquid ? liquid[0] : (opts.substance ?? 'H2O'), liquid: liquid ? liquid[1] : (opts.liquid ?? 0), capacity: opts.capacity ?? 50 });
+  }
+  if (name === 'gasbottle') {
+    return new GasBottle({ x, y, capacity: opts.capacity ?? 5, gases: Object.keys(solutes).length ? solutes : null });
+  }
+  return null;
+}
+
+exports.nearestCarryItem = nearestCarryItem;
+exports.pickupItem = pickupItem;
+exports.placeCarriedItem = placeCarriedItem;
+exports.nearestLiquidSource = nearestLiquidSource;
+exports.nearestLiquidTarget = nearestLiquidTarget;
+exports.drawLiquid = drawLiquid;
+exports.pourBeaker = pourBeaker;
+exports.injectBottleGas = injectBottleGas;
+exports.ITEM_NAMES = ITEM_NAMES;
+exports.parseInventorySetup = parseInventorySetup;
+exports.applyInventorySetup = applyInventorySetup;
+
+  };
+  __modules["src/render/liquidrender.js"] = function (module, exports, __require) {
+// ============================================================================
+// 液体渲染
+// ----------------------------------------------------------------------------
+// 溶液色 = 各有色离子按其浓度/饱和比加权平均；无色 → 淡灰透明。
+// 主体填充 + 少量确定性伪随机浮动小球（颜色深浅微差，纯视觉）。
+// ============================================================================
+
+const { getSubstance } = __require('src/chem/substances.js');;
+const { hexToRgb, rgbToHex, mix } = __require('src/render/color.js');;
+
+/**
+ * 计算溶液颜色与透明度（无色→饱和色平滑过渡）。
+ * 指示剂（石蕊/酚酞）：按溶液 pH 显色，与离子色叠加。
+ * 微溶物质（solubilityLimit）：按"浓度/饱和线"产生**浑浊度**——接近饱和时溶液
+ * 开始泛乳白（先浑浊），过饱和带（1.25×）时最浑（随后才开始析出沉淀）。
+ * frame：渲染帧号。传入时指示剂色按帧**渐变**（pH 骤变颜色渐变，不瞬间跳变）；
+ * 不传（测试/单次取色）→ 直出目标色。
+ */
+function solutionColor(solution, frame = undefined) {
+  let idx = 0;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let w = 0;
+  for (const [id, mass] of solution.solutes) {
+    const sub = getSubstance(id);
+    if (!sub.ionColor) continue;
+    const gPerL = (mass / solution.volume) * 1000; // volume 单位 mL → g/L
+    const f = gPerL / sub.ionColor.sat; // 相对饱和浓度
+    if (f <= 0) continue;
+    const c = hexToRgb(sub.ionColor.color);
+    idx += f;
+    r += c.r * f;
+    g += c.g * f;
+    b += c.b * f;
+    w += f;
+  }
+  let base = { color: '#aaaaaa', alpha: 0.12 }; // 无色
+  if (idx > 1e-9) {
+    // t=0 无色，t≥1 全饱和：颜色从 #aaa 线性混合到加权离子色，透明度平滑上升
+    const t = Math.min(1, idx);
+    const ion = rgbToHex({ r: r / w, g: g / w, b: b / w });
+    base = { color: mix('#aaaaaa', ion, t), alpha: 0.12 + 0.73 * t };
+  }
+  // 微溶浑浊：浓度越高越乳白（0=清澈；≥饱和线=明显浑浊；过饱和带最浑——沉淀即将出现）
+  let turb = 0;
+  for (const [id, mass] of solution.solutes) {
+    const sub = getSubstance(id);
+    if (!(sub.solubilityLimit > 0)) continue;
+    const concFrac = (mass * 1000) / (solution.volume * sub.solubilityLimit); // 浓度 / 饱和线
+    turb = Math.max(turb, Math.min(1, concFrac / 1.25));
+  }
+  if (turb > 0.02) {
+    const te = turb * turb * 0.62; // 曲线：浓度爬升时先明显变浑、越浓越白
+    base = {
+      color: mix(base.color, '#e9eef2', te),
+      alpha: base.alpha * (1 - te * 0.35) + 0.5 * te,
+    };
+  }
+  // 指示剂显色（石蕊红/紫/蓝，酚酞无色/浅红/深红，甲基橙红/橙/黄）
+  const pH = solution.pH ? solution.pH() : 7;
+  let ir = 0;
+  let ig = 0;
+  let ib = 0;
+  let iw = 0;
+  for (const [id, mass] of solution.solutes) {
+    const sub = getSubstance(id);
+    if (!sub.indicator || mass <= 0) continue;
+    let color = sub.indicator.stops[0][1];
+    for (const [cut, c] of sub.indicator.stops) {
+      if (pH >= cut) color = c;
+    }
+    if (sub.indicator.transparent && color === sub.indicator.stops[0][1]) continue; // 无色段
+    const gPerL = (mass / solution.volume) * 1000;
+    const f = Math.min(1, gPerL / 10); // ≥10g/L 视为指示剂饱和显色
+    const c = hexToRgb(color);
+    ir += c.r * f;
+    ig += c.g * f;
+    ib += c.b * f;
+    iw += f;
+  }
+  if (iw <= 1e-9) {
+    // 无指示剂显色：淡出（悬停/移除后颜色缓慢回落到基础色，不瞬间跳变）
+    if (solution._indCur) {
+      if (frame == null) {
+        solution._indCur = null;
+        return base;
+      }
+      solution._indCur = mixToward(solution._indCur, { r: 0, g: 0, b: 0, w: 0 }, frameK(frame));
+      const f = Math.min(0.5, solution._indCur.w);
+      if (f > 0.005) {
+        const rc = hexToRgb(base.color);
+        return {
+          color: rgbToHex({ r: rc.r + (solution._indCur.r - rc.r) * f, g: rc.g + (solution._indCur.g - rc.g) * f, b: rc.b + (solution._indCur.b - rc.b) * f }),
+          alpha: Math.max(base.alpha, 0.25 + 0.5 * f),
+        };
+      }
+      solution._indCur = null;
+    }
+    return base;
+  }
+  const ind = { r: ir / iw, g: ig / iw, b: ib / iw, w: Math.min(1, iw) };
+  // ★ 指示剂色动态过渡：往目标色收敛（帧率无关缓动），pH 骤变时颜色渐变成
+  //   （酚酞无色→浅红→深红是渐变过程，不再瞬间跳红——用户反馈）。
+  //   frame 未传入（测试/单次取色）→ 直出目标色。
+  //   传入 time：首次从无色（w=0）起步，之后每帧收敛——首帧即渐变起点。
+  if (frame == null) {
+    solution._indCur = ind;
+  } else if (solution._indCur && solution._indCur.w > 0.005) {
+    solution._indCur = mixToward(solution._indCur, ind, frameK(frame));
+  } else {
+    solution._indCur = solution._indCur ? mixToward(solution._indCur, ind, frameK(frame)) : { r: 0, g: 0, b: 0, w: 0 };
+  }
+  const cur = solution._indCur;
+  const bc = hexToRgb(base.color);
+  const f = Math.min(0.5, cur.w);
+  // 指示剂色与基础色叠加（各半）：石蕊加入酸性溶液 → 红
+  const mixed = rgbToHex({
+    r: (bc.r + cur.r) / 2,
+    g: (bc.g + cur.g) / 2,
+    b: (bc.b + cur.b) / 2,
+  });
+  return { color: mixed, alpha: Math.max(base.alpha, 0.25 + 0.5 * f) };
+}
+
+/** 渲染时间(秒) → 缓动比例（帧率无关：指数时间常数 0.9^（Δt×18），收敛 ~1s 达 86%） */
+function frameK(sec) {
+  if (sec == null) return 1;
+  if (solution_frameT == null) solution_frameT = sec;
+  const dt = Math.max(0, Math.min(0.5, sec - solution_frameT));
+  solution_frameT = sec;
+  return 1 - Math.pow(0.9, dt * 18);
+}
+
+/** 把 cur 向 target 缓动收敛（k 比例；w 同步淡入/淡出） */
+function mixToward(cur, target, k) {
+  return {
+    r: cur.r + (target.r - cur.r) * k,
+    g: cur.g + (target.g - cur.g) * k,
+    b: cur.b + (target.b - cur.b) * k,
+    w: cur.w + ((target.w ?? 1) - cur.w) * k,
+  };
+}
+
+// 模块级：最近渲染时间（frameK 计算帧间流逝用）
+let solution_frameT = null;
+
+/** 渲染一个矩形液面（灵动：起伏波浪 + 持续上升的气泡 + 辉光） */
+function renderLiquid(ctx, x, y, w, h, solution, time = 0) {
+  if (w <= 0 || h <= 0) return;
+  const { color, alpha } = solutionColor(solution, time);
+  ctx.save();
+  // 主体：纵向渐变（底部更深）
+  const g = ctx.createLinearGradient(x, y, x, y + h);
+  g.addColorStop(0, color);
+  g.addColorStop(1, mix(color, '#000000', 0.35));
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = g;
+  ctx.fillRect(x, y, w, h);
+  ctx.globalAlpha = 1;
+  // 起伏波浪表面（随时间推进，不是死线）
+  const waveAmp = 2.4;
+  ctx.globalAlpha = Math.min(1, alpha + 0.35);
+  ctx.fillStyle = mix(color, '#ffffff', 0.5);
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 10;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  const SEG = 14;
+  for (let i = 0; i <= SEG; i++) {
+    const px = x + (i / SEG) * w;
+    const py = y + Math.sin(time * 2.4 + (i / SEG) * Math.PI * 2 + x * 0.01) * waveAmp;
+    ctx.lineTo(px, py);
+  }
+  ctx.lineTo(x + w, y + 3.5);
+  ctx.lineTo(x, y + 3.5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  // 上升的气泡（从底部持续冒出，速度不一，随时间循环）
+  const n = Math.min(22, Math.max(1, Math.round((w * h) / 900)));
+  for (let i = 0; i < n; i++) {
+    const bx = x + ((i * 7919) % 997) / 997 * w;
+    const speed = 22 + (i % 4) * 9;
+    const cycle = h + 16;
+    const off = (time * speed + i * 37) % cycle;
+    const by = y + h - off;
+    const r = 1.6 + (i % 3) * 1.1;
+    ctx.globalAlpha = 0.35 + 0.3 * Math.sin(i * 2.1 + time * 2);
+    ctx.fillStyle = mix(color, '#ffffff', 0.72);
+    ctx.beginPath();
+    ctx.arc(bx, by, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+exports.solutionColor = solutionColor;
+exports.renderLiquid = renderLiquid;
+
+  };
+  __modules["src/objects/fx.js"] = function (module, exports, __require) {
+// ============================================================================
+// 特效小件（fx）：可携带物品交互的动画点缀——全部纯视觉、无碰撞、自销毁。
+//   PuffDust  尘雾/水花圈（拾取物品、放置落地、吸液液面）
+//   FlowArc   液流弧线（吸液从容器飞向玩家 / 倒出从杯口落入目标，沿贝塞尔流动）
+// 配套快捷函数 puffFx / flowFx 负责生成唯一 id 并 addObject 进场景。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+
+let FX_SEQ = 0;
+
+/** 尘雾圈：n 团渐扩渐隐的小圆（确定性散布，不用随机数保可回放） */
+class PuffDust extends Obj {
+  constructor({ x, y, r = 5, spread = 14, color = '190,215,255', life = 0.4, n = 5, ...rest }) {
+    super({ x, y, w: 2, h: 2, solid: false, physicsKind: 'none', noLift: true, ...rest });
+    this.r = r;
+    this.spread = spread;
+    this.color = color;
+    this.life = life;
+    this.maxLife = life;
+    this.n = n;
+  }
+
+  update(dt, scene) {
+    this.life -= dt;
+    if (this.life <= 0) scene.removeObject(this);
   }
 
   render(ctx) {
+    const t = 1 - this.life / this.maxLife; // 0→1 扩散进度
     ctx.save();
-    ctx.strokeStyle = THEME.gold.base;
-    ctx.lineWidth = 2;
-    ctx.shadowColor = THEME.gold.light;
-    ctx.shadowBlur = 5;
-    ctx.setLineDash([5, 4]);
-    ctx.beginPath();
-    ctx.moveTo(this.x, this.y);
-    ctx.lineTo(this.x, this.y + this.length);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    // 顶端小锚环
-    ctx.strokeStyle = THEME.gold.light;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(this.x, this.y, 3, 0, Math.PI * 2);
-    ctx.stroke();
+    for (let i = 0; i < this.n; i++) {
+      const ang = (i / this.n) * Math.PI * 2 + i * 1.7;
+      const d = this.spread * t * (0.55 + 0.45 * ((i % 3) / 2));
+      const px = this.x + Math.cos(ang) * d;
+      const py = this.y + Math.sin(ang) * d - 2.5 * t; // 微微上飘
+      const rr = Math.max(0.6, this.r * (0.5 + t));
+      ctx.globalAlpha = Math.max(0, (1 - t)) * 0.55;
+      ctx.fillStyle = `rgb(${this.color})`;
+      ctx.beginPath();
+      ctx.arc(px, py, rr, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.restore();
   }
 }
 
-exports.Rope = Rope;
+/**
+ * 液流弧：p0→p1 的贝塞尔小液滴串。中途小滴接连飞行（按相位错开），
+ * 到达即淡出；整体随 life 结束收尾。弯拱 bend>0 时控制点在中点上抬。
+ */
+class FlowArc extends Obj {
+  constructor({ x0, y0, x1, y1, color = '#9fd8ff', life = 0.5, n = 7, bend = 0.35, ...rest }) {
+    super({ x: 0, y: 0, w: 2, h: 2, solid: false, physicsKind: 'none', noLift: true, ...rest });
+    this.x0 = x0; this.y0 = y0; this.x1 = x1; this.y1 = y1;
+    this.color = color;
+    this.life = life;
+    this.maxLife = life;
+    this.n = n;
+    // 控制点：中点上抬 bend*距离（吸液向上拱、倒出也用小拱更自然）
+    this.cx = (x0 + x1) / 2;
+    this.cy = (y0 + y1) / 2 - bend * Math.hypot(x1 - x0, y1 - y0);
+  }
+
+  update(dt, scene) {
+    this.life -= dt;
+    if (this.life <= 0) scene.removeObject(this);
+  }
+
+  _at(u) { // 二次贝塞尔取点
+    const a = (1 - u) * (1 - u), b = 2 * (1 - u) * u, c = u * u;
+    return {
+      x: a * this.x0 + b * this.cx + c * this.x1,
+      y: a * this.y0 + b * this.cy + c * this.y1,
+    };
+  }
+
+  render(ctx) {
+    const T = 1 - this.life / this.maxLife; // 全局进度
+    ctx.save();
+    for (let i = 0; i < this.n; i++) {
+      const off = i / this.n;
+      const u = (T * 1.4 + off) % 1; // 循环流动
+      const p = this._at(u);
+      const fadeEnd = Math.sin(Math.min(1, Math.max(0, T)) * Math.PI); // 起止整体淡入淡出
+      const size = 2.6 - 1.4 * u; // 飞行中微缩
+      ctx.globalAlpha = 0.85 * fadeEnd * (0.35 + 0.65 * (1 - u * 0.5));
+      ctx.fillStyle = this.color;
+      ctx.shadowColor = this.color;
+      ctx.shadowBlur = 5;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, Math.max(0.8, size), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
+/** 快捷生成：尘雾 */
+function puffFx(scene, x, y, opts = {}) {
+  if (!scene || typeof scene.addObject !== 'function') return null;
+  return scene.addObject(new PuffDust({ x, y, id: `fx${++FX_SEQ}`, ...opts }));
+}
+
+/** 快捷生成：液流弧 */
+function flowFx(scene, opts = {}) {
+  if (!scene || typeof scene.addObject !== 'function') return null;
+  return scene.addObject(new FlowArc({ id: `fx${++FX_SEQ}`, ...opts }));
+}
+
+exports.PuffDust = PuffDust;
+exports.FlowArc = FlowArc;
+exports.puffFx = puffFx;
+exports.flowFx = flowFx;
+
+  };
+  __modules["src/objects/beaker.js"] = function (module, exports, __require) {
+// ============================================================================
+// 烧杯：可承载任何物质（含玩家）的容器。杯壁（左/右/底）为实心碰撞体：
+//   - 不能从侧面走进，只能跳过杯口进入；玩家太宽会卡在杯口下不去
+//   - 受重力：无支撑时下落
+//   - 玩家在杯内 → 跟随移动；玩家在杯外贴杯壁 → 推动
+// ============================================================================
+
+const { Container } = __require('src/objects/container.js');;
+const { getSubstance } = __require('src/chem/substances.js');;
+const { Obj } = __require('src/objects/obj.js');;
+const { renderLiquid, solutionColor } = __require('src/render/liquidrender.js');;
+const { rr } = __require('src/render/theme.js');;
+const { Drip } = __require('src/objects/drip.js');;
+const { shallowestSupportY, settleBodyOnSupport } = __require('src/physics/support.js');;
+
+// ---- 倒出动画节奏（纯视觉会话，见 beginPour）----
+const POUR_TRAVEL = 0.16; // 平移到目标旁的时长
+const POUR_TILT_IN = 0.14; // 起倾时长
+const POUR_BACK = 0.22; // 松手后回位时长
+const POUR_HOLD_MAX = 0.45; // 按 X 续期的停留余量（连按/按住都保持不停留超时）
+const POUR_MAX_ANG = 0.52; // 最大倾角（≈30°，弧度）
+const POUR_LIFT = 5; // 倾倒时轻微抬升（手腕感）
+
+let DRIP_SEQ = 0;
+
+class Beaker extends Container {
+  get hoverLabel() {
+    return '烧杯';
+  }
+  get isCarryItem() {
+    return 'beaker';
+  }
+  constructor({ x, y, w = 60, h = 70, wall = 5, ...rest } = {}) {
+    super({ x, y, w, h, ...rest });
+    this.wall = wall;
+    this.vy = 0;
+    // 实心杯壁（左/右/底），跟随烧杯移动；顶口敞开（可跳入）
+    // static：壁是"与杯身联动的死墙"——不参与动量交换（玩家推杯时靠 update 驱动杯身，
+    // 壁只跟随；动态壁会被玩家撞飞再被 syncWalls 拉回 → 推动强烈震动——用户反馈）。
+    // noLift：杯壁不被气泡柱气流托起（通入气体时气泡柱紧贴杯壁，不能把杯子顶飞）
+    this.subBodies = [
+      new Obj({ id: 'bk_l', x, y, w: wall, h, solid: true, static: true, physicsKind: 'static', noLift: true }),
+      new Obj({ id: 'bk_r', x: x + w - wall, y, w: wall, h, solid: true, static: true, physicsKind: 'static', noLift: true }),
+      new Obj({ id: 'bk_b', x, y: y + h - wall, w, h: wall, solid: true, static: true, physicsKind: 'static', noLift: true }),
+    ];
+  }
+
+  innerRect() {
+    return {
+      x: this.x + this.wall,
+      y: this.y + this.wall,
+      w: this.w - 2 * this.wall,
+      h: this.h - 2 * this.wall,
+    };
+  }
+
+  /** 杯壁跟随烧杯位置 */
+  syncWalls() {
+    const [l, r, b] = this.subBodies;
+    l.x = this.x;
+    l.y = this.y;
+    r.x = this.x + this.w - this.wall;
+    r.y = this.y;
+    b.x = this.x;
+    b.y = this.y + this.h - this.wall;
+  }
+
+  /**
+   * 倒出会话（X 倒出时由 items.pourBeaker 调用；纯视觉，物理坐标不动）：
+   * ① 杯身平移到目标容器旁（修正"目标在右动画仍朝左/落点不准"）；
+   * ② 起倾 ~30°，杯口沿连续滴出液滴落入目标液面；
+   * ③ 玩家按住/连按 X → 保持倾倒姿势不回位，松手 0.45s 后回弹归位。
+   * 同一目标续倒不重跑位移（不顿挫）。
+   */
+  beginPour(scene, target) {
+    if (!scene || typeof scene.addObject !== 'function') return;
+    const dir = (target.x + (target.w ?? 0) / 2) >= (this.x + this.w / 2) ? 1 : -1;
+    const gap = 6;
+    if (this._pour && this._pour.target === target && this._pour.dir === dir) {
+      this._pour.holdT = POUR_HOLD_MAX; // 续倒：只续停留
+      return;
+    }
+    let standX = dir > 0 ? target.x - this.w - gap : target.x + target.w + gap;
+    standX = Math.max(2, Math.min((scene.worldW ?? 2000) - this.w - 2, standX));
+    this._pour = { target, dir, t: 0, fromX: this.x, standX, holdT: POUR_HOLD_MAX, lipEmit: 0, relAt: null };
+  }
+
+  /** 倒出会话推进：计算渲染偏移/倾角 + 杯口沿液滴发射 */
+  updatePour(dt, scene) {
+    const sess = this._pour;
+    if (!sess) {
+      this._visPour = null;
+      return;
+    }
+    // X 按住且选中的正是本杯 → 续期停留；否则停留计时递减
+    const sel = scene.player?.inventory?.selectedItem?.();
+    if (scene.control && scene.control.has('use') && sel === this) sess.holdT = POUR_HOLD_MAX;
+    else sess.holdT -= dt;
+
+    sess.t += dt;
+    if (sess.relAt == null && sess.holdT <= 0) sess.relAt = sess.t; // 开始回位
+    const standOff = sess.standX - sess.fromX;
+
+    let offK = 0;
+    let angK = 0;
+    if (sess.relAt != null) {
+      const tr = sess.t - sess.relAt;
+      if (tr >= POUR_BACK) {
+        this._pour = null;
+        this._visPour = null;
+        return;
+      }
+      const k0 = 1 - tr / POUR_BACK;
+      const k = k0 * k0 * (3 - 2 * k0); // smoothstep 回位
+      offK = k;
+      angK = k;
+    } else {
+      const pt = Math.min(1, sess.t / POUR_TRAVEL);
+      offK = 1 - Math.pow(1 - pt, 3); // easeOutCubic 平移
+      const at = Math.min(1, Math.max(0, (sess.t - POUR_TRAVEL) / POUR_TILT_IN));
+      angK = at * at * (3 - 2 * at); // smoothstep 起倾
+    }
+
+    const ang = POUR_MAX_ANG * angK;
+    const offX = standOff * offK;
+    const liftY = -POUR_LIFT * angK;
+    this._visPour = { offX, liftY, aSign: sess.dir, ang };
+
+    // 杯口沿液滴：倾斜到位后从旋转后的口沿位置滴落，落向目标液面
+    if (ang > 0.16 && offK > 0.9 && scene.addObject) {
+      sess.lipEmit -= dt;
+      if (sess.lipEmit <= 0) {
+        sess.lipEmit = 0.065;
+        const a = sess.dir * ang;
+        const pvx = this.x + offX + this.w / 2;
+        const pvy = this.y + this.h + liftY;
+        const lx0 = sess.dir > 0 ? this.w / 2 - 4 : -(this.w / 2 - 4);
+        const ly0 = 8 - this.h;
+        const wx = pvx + lx0 * Math.cos(a) - ly0 * Math.sin(a);
+        const wy = pvy + lx0 * Math.sin(a) + ly0 * Math.cos(a);
+        const tgt = sess.target.innerRect ? sess.target.innerRect() : { x: sess.target.x + 4, y: sess.target.y + 4, w: sess.target.w - 8, h: sess.target.h - 8 };
+        scene.addObject(new Drip({
+          x: wx - 2,
+          y: wy + 2,
+          targetY: tgt.y + 4,
+          color: solutionColor(this.solution).color,
+          id: `drip${++DRIP_SEQ}`,
+        }));
+      }
+    }
+  }
+
+  /** 无支撑时受重力下落，落到**最浅**支撑面停住（statics + 玩家等实心动态体；
+   *  跨在池沿/台阶上不沉入更深的盆底——见 physics/support.js 的语义说明） */
+  applyGravity(dt, scene) {
+    const sup = shallowestSupportY(this, scene);
+    this._onIce = sup.ice; // 是否立在冰面上（冰面惯性滑行用）
+    settleBodyOnSupport(this, dt, sup.y);
+  }
+
+  update(dt, scene) {
+    super.update(dt, scene); // 颗粒沉降等容器逻辑
+    this.applyGravity(dt, scene);
+    // 冰面惯性滑行在 pushContainers（Player.update）里驱动（推动/滑行不双算）
+    this.updatePour(dt, scene);
+    // 玩家贴壁推动已挪到 Player.update（pushContainers——时序要求：玩家重设 vel 之后、
+    // 物理步之前：吸附+清 vel，否则推-弹交替"一卡一卡"——用户反馈）
+  }
+
+  /** 物理结算后：杯内玩家与烧杯互相带动——烧杯跟随玩家的水平位移；玩家跟随
+   *  烧杯的竖直位移。**下行带动护栏**：玩家跟随下移时不得被压进任何实心静态体
+   *  （嵌池穿模根因——原实现是裸 p.y += dy 瞬移）；脚部将越过原本位于其下方的
+   *  实心顶面时裁剪到表面。
+   *  注：烧杯坐头顶时**不做帽子式跟随**（用户明确不要胶合感）——跳跃会撞到杯底、
+   *  走动离开支撑后正常掉落。 */
+  lateUpdate(dt, scene) {
+    const p = scene.player;
+    if (p && this.containsObj(p)) {
+      // 烧杯跟随玩家的水平位移（杯壁挡住时玩家不移动 → 烧杯也不动，不甩出）
+      const dx = p.x - (this._prevPx ?? p.x);
+      if (Math.abs(dx) > 0.01) this.x += dx;
+      // 玩家跟随烧杯的竖直位移（烧杯下落/被抬起时玩家一起移动，不脱离）
+      const dy = this.y - (this._prevBy ?? this.y);
+      if (Math.abs(dy) > 0.01) {
+        let ny = p.y + dy;
+        if (dy > 0) {
+          for (const s of scene.statics) {
+            if (!s.solid) continue;
+            if (!(s.x < p.x + p.w && s.x + s.w > p.x)) continue; // 水平重叠
+            const feet = p.y + p.h;
+            if (feet <= s.y + 0.5 && ny + p.h > s.y) ny = Math.min(ny, s.y - p.h); // 脚下实心顶面：裁到表面
+          }
+        }
+        p.y = ny;
+      }
+    }
+    this._prevPx = p ? p.x : this._prevPx;
+    this._prevBy = this.y;
+    this.syncWalls();
+  }
+
+  render(ctx, scene) {
+    // 倒出会话变换：平移到目标旁 + 轻微抬升 + 倾斜（液体/颗粒/杯体整体）
+    ctx.save();
+    const vp = this._visPour;
+    if (vp && (Math.abs(vp.offX) > 0.01 || vp.ang > 0.001)) {
+      const cx = this.x + vp.offX + this.w / 2;
+      const cy = this.y + this.h;
+      ctx.translate(cx, cy);
+      ctx.rotate(vp.aSign * vp.ang);
+      ctx.translate(-cx, -cy - vp.liftY);
+    }
+    // 液体（元素发光液面；液面高度 = 实际液体量/容量——吸液/倒出后可见升降）
+    const inner = this.innerRect();
+    if (inner.w > 0 && inner.h > 0) {
+      const vol = this.solution.volume > 0 ? this.solution.volume : Infinity;
+      const lh = inner.h * Math.max(0, Math.min(1, this.solution.totalMass() / vol));
+      if (lh > 2) renderLiquid(ctx, inner.x, inner.y + inner.h - lh, inner.w, lh, this.solution, scene.time ?? 0);
+    }
+    // 沉淀：从反应位置生成的视觉颗粒，物理堆叠成堆
+    this.renderGrains(ctx);
+    // 玻璃杯（U 形，半透明 + 亮边 + 高光）
+    ctx.save();
+    ctx.fillStyle = 'rgba(210,240,255,0.12)';
+    rr(ctx, this.x, this.y, this.w, this.h, 7);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(225,245,255,0.8)';
+    ctx.lineWidth = 2;
+    ctx.shadowColor = 'rgba(180,230,255,0.6)';
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    ctx.moveTo(this.x, this.y);
+    ctx.lineTo(this.x, this.y + this.h - 7);
+    ctx.arcTo(this.x, this.y + this.h, this.x + 7, this.y + this.h, 7);
+    ctx.lineTo(this.x + this.w - 7, this.y + this.h);
+    ctx.arcTo(this.x + this.w, this.y + this.h, this.x + this.w, this.y + this.h - 7, 7);
+    ctx.lineTo(this.x + this.w, this.y);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // 左侧高光
+    ctx.fillStyle = 'rgba(255,255,255,0.16)';
+    ctx.fillRect(this.x + 1, this.y + 2, 2, this.h - 4);
+    ctx.restore();
+    ctx.restore(); // 倾旋包裹结束
+    this.renderContentsLabel(ctx, scene);
+  }
+}
+
+exports.Beaker = Beaker;
+
+  };
+  __modules["src/objects/drip.js"] = function (module, exports, __require) {
+// ============================================================================
+// 液滴（Drip）：滴管滴液的下坠视觉（带滴管液体颜色；到达液面即消失）。
+// 只有视觉反馈——化学由溶液模型处理（落点记录在容器 depositAt）。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+
+class Drip extends Obj {
+  constructor({ x, y, targetY, color = '#9fd8ff', ...rest }) {
+    super({ x, y, w: 4, h: 6, solid: false, physicsKind: 'none', noLift: true, ...rest });
+    this.targetY = targetY;
+    this.color = color;
+    this.vy = 0;
+    this.life = 2;
+  }
+
+  update(dt, scene) {
+    this.vy += 900 * dt; // 重力加速下坠
+    this.y += this.vy * dt;
+    if (this.y >= this.targetY) scene.removeObject(this);
+  }
+
+  render(ctx) {
+    // 泪滴形（上尖下圆）：上端尖锥收拢、下端圆胖——下坠中的液滴
+    const cx = this.x + this.w / 2;
+    const top = this.y;
+    const bottom = this.y + this.h;
+    const r = Math.max(3, this.h * 0.62); // 下部圆球半径
+    ctx.save();
+    ctx.shadowColor = this.color;
+    ctx.shadowBlur = 7;
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.moveTo(cx, top); // 尖端
+    ctx.bezierCurveTo(cx + r * 0.5, top + r * 0.8, cx + r, bottom - r * 0.7, cx, bottom);
+    ctx.bezierCurveTo(cx - r, bottom - r * 0.7, cx - r * 0.5, top + r * 0.8, cx, top);
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    // 下部高光（左上方）
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.beginPath();
+    ctx.ellipse(cx - r * 0.28, bottom - r * 0.62, r * 0.2, r * 0.32, -0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+exports.Drip = Drip;
+
+  };
+  __modules["src/physics/support.js"] = function (module, exports, __require) {
+// ============================================================================
+// 支撑面查询：容器类物体（烧杯/集气瓶）自带的重力是"手动下落"（主本体不参与
+// 物理积分），需要自己找支撑。这里统一实现"**最浅支撑面**"语义：
+//   - 与其水平重叠、且位于本体底部±容差~span 之下的所有实心静态体 +
+//     实心动态体（玩家头、其他装置壁——但排除自身子体与软体沉淀粒子）；
+//   - 取其中**最高（y 最小）**的顶面作为落点。
+// 关键修复点：
+//   ① 动态体也算竖直落点 —— 修"烧杯从玩家正上方落下穿透玩家"；
+//   ② 取 min 而不是 max —— 修"烧杯跨在池沿上时借更深的盆底沉进池里，
+//      连带着杯内玩家一起嵌入池体"（用户关卡 level (15) 复现）。
+// ============================================================================
+
+const EPS = 2; // 已贴合的容差（沿用旧 applyGravity 的判定宽度）
+
+/**
+ * 返回给定位体正下方最近的实心支撑面顶边 y；找不到返回 Infinity。
+ * 返回 { y, ice }：y = 顶边世界坐标（∞=无支撑）；ice = 支撑面是否为冰面
+ * （容器冰面惯性滑行判定用——被推过的烧杯/集气瓶在冰上继续飘）。
+ * span = 探测深度（px）：只在底部下方 span 内找（默认 40，与旧行为一致，
+ * 保证下落逐帧检测不瞬移）；贴合恢复（轻微陷入弹回表面）也靠这个窗口。
+ */
+function shallowestSupportY(body, scene, span = 40) {
+  const l = body.x;
+  const r = body.x + body.w;
+  const b0 = body.y + body.h;
+  let bestY = Infinity;
+  let bestIce = false;
+  const sub = body.subBodies;
+  // statics/dynamics 都要排除**自身子体**（烧杯/集气瓶的壁体在 static 化后
+  // 进了 statics——不排除的话"自己撑住自己/自己挡自己"）
+  const skipSelf = (s) => (sub && sub.includes(s));
+  const scan = (list, skip) => {
+    for (const s of list) {
+      if (!s || !s.solid || (skip && skip(s))) continue;
+      if (!(s.x < r && s.x + s.w > l)) continue; // 水平重叠才算
+      if (s.y >= b0 - EPS && s.y <= b0 + span) {
+        if (s.y < bestY) { bestY = s.y; bestIce = !!s.ice; }
+      }
+    }
+  };
+  if (scene.statics) scan(scene.statics, skipSelf);
+  if (scene.dynamics) {
+    scan(scene.dynamics, (d) => d === body || skipSelf(d) || typeof d.amount === 'number');
+  }
+  return { y: bestY, ice: bestIce };
+}
+
+/** 与作用力无关的通用"落到支撑面停住"推进（重力累加 ≤400，钳位贴合）。
+ *  贴合容差 0.25px：已在表面（含微小间隙）→ 静止——否则"恰好贴住"时每帧
+ *  微落 0.6px 再被顶回 → 烧杯/集气瓶站着也在微微震动（用户反馈推动时的抖动源之一） */function settleBodyOnSupport(body, dt, support, accel = 600, maxV = 400) {
+  if (!Number.isFinite(support)) {
+    body.vy = Math.min(maxV, body.vy + accel * dt);
+    body.y += body.vy * dt;
+    return;
+  }
+  if (body.y + body.h >= support - 0.25) {
+    body.vy = 0;
+    if (body.y + body.h > support) body.y = support - body.h; // 已陷入支撑面：顶回表面
+  } else {
+    body.vy = Math.min(maxV, body.vy + accel * dt);
+    body.y += body.vy * dt;
+    if (body.y + body.h >= support) {
+      body.y = support - body.h;
+      body.vy = 0;
+    }
+  }
+}
+
+/**
+ * 玩家推动容器（烧杯/集气瓶）——在 **Player.update** 里调用（玩家自己重设 vel 之后）。
+ * 时序必须如此：容器 update 先于玩家——若由容器侧读取玩家速度驱动，物理步玩家
+ * 自行前进 → 撞壁被弹回 → 推-弹交替（用户反馈：tick1 玩家碰到物块、tick2 物块推动
+ * 玩家不动、tick3 物块不动玩家动一步…… 循环往复）。
+ * 推动帧：容器前进 push、玩家**精确吸附**到壁边（消除累积偏差）、玩家 vel 清零
+ * （物理步静止，无"自行前进→被壁分离"的循环）。推之前先看路，不穿模。
+ */
+function pushContainers(p, scene, dt) {
+  const dir = (scene.control && scene.control.has('right') ? 1 : 0) - (scene.control && scene.control.has('left') ? 1 : 0);
+  // 冰面滑行（停手耦合）：玩家不推动时，被推过的容器跟随**玩家当前速度**滑——
+  // 一起滑停（物体不再"窜出去、玩家瞬间停"的错配）；反向移动/玩家已停 → 物体停。
+  if (dir === 0) {
+    for (const c of scene.objects) {
+      if ((c.isCarryItem === 'beaker' || c.isCarryItem === 'bottle') && c._slideVx) {
+        const pv = p.vel.x;
+        if (Math.abs(pv) < 8 || Math.sign(pv) !== Math.sign(c._slideVx)) {
+          c._slideVx = 0; // 玩家停/反向：物体停在原地
+        } else {
+          c.x += pv * dt;
+          if (typeof c.syncWalls === 'function') c.syncWalls();
+        }
+      }
+    }
+    return;
+  }
+  // 推动全程满速（冰上也不例外——"冰上推得动，松手继续滑"才是冰感；
+  // 之前半速/低速设计被用户否了：冰上推不动很别扭）
+  const push = dir * p.moveSpeed * dt;
+  // 注意遍历 scene.objects（集气瓶不是 Container 子类，不在 scene.containers）
+  for (const c of scene.objects) {
+    if (c.isCarryItem !== 'beaker' && c.isCarryItem !== 'bottle') continue;
+    if (typeof c.containsObj === 'function' && c.containsObj(p)) continue; // 杯内携带：走 lateUpdate 带动
+    if (p.bottom <= c.y || p.top >= c.y + c.h) continue; // 高度不重叠（贴不到壁）
+    const wall = c.wall ?? 4;
+    if (push > 0 && p.right >= c.x - 2 && p.right <= c.x + wall + 2) {
+      const nx = c.x + push;
+      if (!horizontallyBlocked(c, nx, scene)) {
+        c.x = nx;
+        if (typeof c.syncWalls === 'function') c.syncWalls(); // 壁体**立即**跟上（否则物理步用旧壁位置 → 玩家被弹开）
+        p.x = c.x - p.w; // 吸附到左壁
+        if (!p._groundIce) p.vel.x = 0; // 石地：清速（指令驱动）；冰面：保留动量（松手玩家也跟着滑）
+        c._slideVx = c._onIce ? dir * p.moveSpeed : 0; // 冰面：获得滑动余量（松手继续滑）
+      }
+    } else if (push < 0 && p.left <= c.x + c.w + 2 && p.left >= c.x + c.w - wall - 2) {
+      const nx = c.x + push;
+      if (!horizontallyBlocked(c, nx, scene)) {
+        c.x = nx;
+        if (typeof c.syncWalls === 'function') c.syncWalls();
+        p.x = c.x + c.w; // 吸附到右壁
+        if (!p._groundIce) p.vel.x = 0;
+        c._slideVx = c._onIce ? dir * p.moveSpeed : 0;
+      }
+    }
+  }
+}
+
+/**
+ * 冰面滑行已并入 pushContainers（停手耦合：跟随玩家速度一起滑停）。
+ */
+
+/**
+ * 水平阻挡探测：把 body 平移到 nx 后是否与任何实心体相交 ≥3px 深度。
+ * 用于烧杯/集气瓶的"手动推挤"——它们不走通用碰撞积分，自己挪位置时需要
+ * 自己看路，否则会被直接推进池盆壁里（穿模）。忽略脚底贴合面（≤2px 的
+ * 支撑重叠不算），也不忽略动态实心体（别的装置壁照样挡路）。
+ */
+function horizontallyBlocked(body, nx, scene) {
+  const l = nx + 1;
+  const r = nx + body.w - 1;
+  const t = body.y + 2;
+  const b = body.y + body.h - 2;
+  let hit = Infinity; // 记录阻挡物 x（诊断用）
+  const sub = body.subBodies;
+  // statics 同样排除自身子体（static 化后的壁体在 statics 里——不排除会被
+  // 自己的右壁/左壁挡住 → 烧杯/集气瓶推不动——用户反馈的"推动异常"根因）
+  const skipSelf = (s) => (sub && sub.includes(s));
+  const scan = (list, skip) => {
+    for (const s of list) {
+      if (!s || !s.solid || (skip && skip(s))) continue;
+      if (!(s.x < r && s.x + s.w > l)) continue;
+      if (!(s.y < b && s.y + s.h > t)) continue;
+      hit = Math.min(hit, s.x);
+    }
+  };
+  if (scene.statics) scan(scene.statics, skipSelf);
+  if (scene.dynamics) {
+    scan(scene.dynamics, (d) => d === body || d === scene.player || skipSelf(d) || typeof d.amount === 'number');
+  }
+  return Number.isFinite(hit);
+}
+
+exports.shallowestSupportY = shallowestSupportY;
+exports.settleBodyOnSupport = settleBodyOnSupport;
+exports.pushContainers = pushContainers;
+exports.horizontallyBlocked = horizontallyBlocked;
+
+  };
+  __modules["src/objects/dropper.js"] = function (module, exports, __require) {
+// ============================================================================
+// 滴管（Dropper）：编辑器原版物体——玩家左键单击即向正下方容器滴加液体。
+// ----------------------------------------------------------------------------
+// - 可设置管内物质（液体/可溶物质 id）、容量（g）、每滴量（g）；
+// - 只滴不吸：液体用尽为止（编辑器重设/重开局 = 满管）；
+// - 外观 = 玻璃滴管 + 橡皮胶头 + 锥形滴嘴，管内液体颜色与溶液取色一致
+//   （solutionColor：离子颜色/指示剂 pH 显色），液面随剩余量下降；
+// - 拖动平滑：渲染坐标 (rx,ry) 追赶逻辑坐标——拖动时滴管"滑行"跟随指针，
+//   不生硬瞬移（纯表现层，物理/化学仍用精确 x/y）；
+// - 点击命中由共享点击管线 handleSceneClick 触发（编辑试玩/导出关卡同一套）。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+const { getSubstance } = __require('src/chem/substances.js');;
+const { Solution } = __require('src/chem/solution.js');;
+const { solutionColor } = __require('src/render/liquidrender.js');;
+const { Drip } = __require('src/objects/drip.js');;
+const { flowFx, puffFx } = __require('src/objects/fx.js');;
+const { CFG } = __require('src/core/config.js');;
+const { pushNotice } = __require('src/level/click.js');;
+
+const DROPPER_W = 11;
+const DROPPER_H = 52;
+
+class Dropper extends Obj {
+  constructor({ x, y, substance = 'H2O', capacity = 50, drop = 0.5, liquid, ...rest } = {}) {
+    super({
+      x, y, w: DROPPER_W, h: DROPPER_H,
+      solid: false, physicsKind: 'none', noLift: true,
+      ...rest,
+    });
+    this.substance = substance;
+    this.capacity = Math.max(0.1, capacity);
+    this.drop = Math.max(0.01, drop);
+    this.liquid = liquid == null ? this.capacity : Math.min(this.capacity, liquid);
+    this.rx = x; // 渲染坐标（追赶 x/y，拖动时产生平滑滑行感）
+    this.ry = y;
+  }
+
+  /** 渲染坐标每 tick 向真实坐标收敛（指数趋近，帧率无关） */
+  update(dt) {
+    const k = 1 - Math.exp(-14 * dt);
+    this.rx += (this.x - this.rx) * k;
+    this.ry += (this.y - this.ry) * k;
+  }
+
+  get hoverLabel() {
+    const sub = getSubstance(this.substance);
+    const name = sub ? (sub.name ?? this.substance) : this.substance;
+    if (this.liquid <= 1e-9) return '滴管（空）'; // 空管不标物质名——免误导（管里明明没有）
+    return `滴管·${name}（${this.liquid.toFixed(1)}g）`;
+  }
+
+  get isCarryItem() {
+    return 'dropper';
+  }
+
+  /** 玩家附近可拖动（改变位置，无碰撞箱）；锁定（noCarry）的滴管不可拖动 */
+  get isDraggable() {
+    return !this.noCarry;
+  }
+
+  /** 点击点是否落在"红色胶头"上——只有胶头区能触发滴加（单击=滴一滴、
+   *  长按=持续滴/液下吸取）；玻璃段只能拖动。world 为世界坐标。 */
+  onBulb(world) {
+    if (!world) return false;
+    return world.y <= this.y + 12; // 胶头（顶 ~11px，含边缘 1-2px 容差）
+  }
+
+  /**
+   * 尖端正浸在哪个容器的液面下？（水平对齐容器内区 + 尖端低于**真实液面**
+   * （随量升降：surface = r.bottom - r.h×min(1,total/volume)）+ 未深穿容器底）。
+   * 与烧杯/池的渲染液面同一公式——液面只有一半时，尖端在"杯沿与液面之间"不算浸入。
+   */
+  _submergedIn(scene) {
+    const cx = this.x + this.w / 2;
+    const tipY = this.bottom; // 滴管尖端（锥尖最底点）
+    let best = null;
+    let bestDepth = -Infinity;
+    for (const c of scene.containers ?? []) {
+      const r = c.innerRect();
+      if (!(cx >= r.x && cx <= r.x + r.w)) continue;
+      const sol = c.solution;
+      if (!sol || !(sol.volume > 0)) continue;
+      const total = sol.totalMass ? sol.totalMass() : 0;
+      if (total <= 1e-9) continue; // 容器里没有液体（干杯不算液下）
+      const lh = r.h * Math.max(0, Math.min(1, total / sol.volume)); // 与渲染同公式
+      const surface = r.y + r.h - lh;
+      if (tipY < surface + 2) continue; // 尖端未到达液面下（≥2px）
+      if (tipY > r.y + r.h + 8) continue; // 穿底过多（伸穿容器底按无效）
+      if (tipY - surface > bestDepth) {
+        bestDepth = tipY - surface;
+        best = c;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * 液下吸取一手（长按胶头、尖端在液面下时每 suckPeriod 执行一次）：
+   *  - 管里没有液体：直接吸一手（≤ dropperTransfer g，占优溶质/纯水→H2O）；
+   *  - 管里已有**同一液体**：可以续吸（直到容量上限——与 C 键吸液同一语义）；
+   *  - 管里是**别的液体**：拒绝（无法混吸）；
+   *  - 尖端不在液面下 / 源已无液体：拒绝并提示。
+   */
+  attemptSuckOnce(scene) {
+    if (!scene) return false;
+    const c = this._submergedIn(scene);
+    if (!c) {
+      pushNotice(scene, '把滴管尖端伸到液面下再吸');
+      return false;
+    }
+    const room = this.capacity - this.liquid;
+    if (room <= 1e-9) {
+      pushNotice(scene, '滴管已装满');
+      return false;
+    }
+    // 取占优成分（无溶质 = 纯水）
+    let id = 'H2O';
+    let m = 0;
+    for (const [sid, sm] of c.solution.solutes) {
+      if (sm > m) {
+        id = sid;
+        m = sm;
+      }
+    }
+    if (this.liquid > 1e-9 && id !== this.substance) {
+      pushNotice(scene, '管里是别的液体——不能混吸');
+      return false;
+    }
+    const take = Math.min(CFG.item.dropperTransfer, room);
+    let got = 0;
+    if (id === 'H2O') {
+      got = c.solution.water > 0 ? Math.min(take, c.solution.water) : 0;
+      if (got > 1e-9) c.solution.water -= got;
+    } else {
+      got = c.solution.remove(id, take);
+    }
+    if (got <= 1e-9) {
+      pushNotice(scene, '这里已经没有可吸的液体');
+      return false;
+    }
+    this.substance = id;
+    this.liquid += got;
+    c.noteSolOrigin?.(id, { kind: 'fill', text: '液下吸取' });
+    // 特效：表面涟漪尘雾 + 一串上行液滴飞进管口
+    const r = c.innerRect();
+    const sx = Math.max(r.x + 4, Math.min(r.x + r.w - 4, this.x + this.w / 2));
+    puffFx(scene, sx, r.y + 3, { color: '225,245,255', r: 4, spread: 10, life: 0.35 });
+    flowFx(scene, {
+      x0: sx, y0: r.y + 6,
+      x1: this.x + this.w / 2, y1: this.y + this.h * 0.45,
+      color: solutionColor(new Solution({ volume: this.capacity, water: this.liquid > 0 ? 1 : 0, solutes: this.substance === 'H2O' ? {} : { [this.substance]: this.liquid } })).color,
+      life: 0.4, n: 6, bend: 0.25,
+    });
+    return true;
+  }
+
+  /** 管内液体颜色：与烧杯/池同一套溶液取色（离子颜色/指示剂 pH 显色） */
+  liquidColor() {
+    const m = Math.max(1e-6, this.liquid);
+    const sol = new Solution({
+      volume: this.capacity,
+      solutes: this.liquid > 1e-9 ? { [this.substance]: m } : {},
+      water: this.liquid > 1e-9 ? m : 0,
+    });
+    return solutionColor(sol);
+  }
+
+  /** 玩家左键单击：向正下方容器滴一滴（下方无容器/已滴空则不滴） */
+  onTap(scene) {
+    if (!scene || this.liquid <= 1e-9) return false;
+    const c = this._containerBelow(scene);
+    if (!c) return false;
+    const take = Math.min(this.drop, this.liquid);
+    c.solutionMat.add(this.substance, take); // H2O 走"水"字段，其它走溶质
+    if (this.substance !== 'H2O') c.noteSolOrigin(this.substance, { kind: 'dropper', text: '滴管滴入' });
+    this.liquid -= take;
+    // 记录落点：化学/气泡/沉淀围绕"滴入处"发生（不再默认容器中心）
+    const r = c.innerRect();
+    const dx = Math.max(r.x + 4, Math.min(r.x + r.w - 4, this.x + this.w / 2));
+    const dy = Math.max(r.y + 4, Math.min(r.y + r.h - 6, this.bottom + 30));
+    c.depositAt = { x: dx, y: dy };
+    // 液滴下坠动画（从滴管口到液面；带滴管液体颜色）
+    if (typeof scene.addObject === 'function') {
+      const { color } = this.liquidColor();
+      scene._dripSeq = (scene._dripSeq ?? 0) + 1;
+      scene.addObject(new Drip({
+        x: dx - 2,
+        y: this.bottom + 2,
+        targetY: r.y + 6,
+        color,
+        id: `drip${scene._dripSeq}`,
+      }));
+    }
+    return true;
+  }
+
+  /** 正下方的容器：水平中心在容器口内即可（**高度不限**——用户要求"只要下面有
+   *  就可以"；滴管底可悬在口上方任意高度，伸入容器（内深 ≤ 容器深+8）也接受）。
+   *  取离口最近的一个（水平不重叠的容器不算）。 */
+  _containerBelow(scene) {
+    const cx = this.x + this.w / 2;
+    let best = null;
+    let bestDy = Infinity;
+    for (const c of scene.containers ?? []) {
+      const r = c.innerRect();
+      if (cx < r.x || cx > r.x + r.w) continue;
+      const dy = r.y - this.bottom; // 口沿到滴管底（正值=滴管底在口沿上方）
+      if (dy >= -r.h - 8 && dy < bestDy) {
+        best = c;
+        bestDy = dy;
+      }
+    }
+    return best;
+  }
+
+  render(ctx) {
+    const x = Number.isFinite(this.rx) ? this.rx : this.x;
+    const y = Number.isFinite(this.ry) ? this.ry : this.y;
+    const w = this.w;
+    const h = this.h;
+    // 橡皮胶头（红色泪滴形：大头在上，下缘收进管口）——参照真实胶头滴管
+    const hx = x + w / 2;
+    const bulbY = y + 4.5;
+    ctx.fillStyle = '#c0303a';
+    ctx.beginPath();
+    ctx.ellipse(hx, bulbY, w * 0.44, 6.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // 胶头高光（左上亮斑 + 下棱线）
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.beginPath();
+    ctx.ellipse(hx - 1.6, bulbY - 2, 1.6, 2.6, -0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(120,20,24,0.5)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(hx - 3.4, bulbY + 5.4);
+    ctx.quadraticCurveTo(hx, bulbY + 6.8, hx + 3.4, bulbY + 5.4);
+    ctx.stroke();
+    // 玻璃管（细长）：管口从胶头垂到细管口
+    const gx = hx - w * 0.14;
+    const gw = w * 0.28;
+    const gy = y + 10;
+    const gh = h - 14 - 8; // 上到锥尖
+    ctx.fillStyle = 'rgba(215,235,255,0.16)';
+    ctx.fillRect(gx, gy, gw, gh);
+    ctx.strokeStyle = 'rgba(215,235,255,0.85)';
+    ctx.lineWidth = 1.2;
+    ctx.strokeRect(gx, gy, gw, gh);
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.fillRect(gx + 0.6, gy, 0.7, gh); // 左侧玻璃高光
+    // 管内液体（颜色与溶液取色一致；液面随剩余比例下降；液体**贯穿到锥形滴嘴**——
+    // 滴嘴也是玻璃腔的一部分，装的是同一管液体，不该是空的）
+    const frac = Math.max(0, Math.min(1, this.liquid / this.capacity));
+    const innerY = gy + 1;
+    const innerH = gh - 2;
+    const lh = innerH * frac;
+    if (lh > 0.6) {
+      const { color, alpha } = this.liquidColor();
+      const bodyTop = innerY + innerH - lh; // 液面 y（管内部）
+      const tipBase = gy + gh; // 管底 → 滴嘴起
+      ctx.globalAlpha = Math.max(alpha, 0.45);
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(gx + 0.6, bodyTop);
+      ctx.lineTo(gx + gw - 0.6, bodyTop);
+      // 沿管向下 → 两侧收进锥形滴嘴（液体充满到尖端）
+      ctx.lineTo(gx + gw - 0.6, tipBase);
+      ctx.lineTo(hx, y + h - 1);
+      ctx.lineTo(gx + 0.6, tipBase);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      // 液面线（只在管内部分显示）
+      if (bodyTop >= innerY + 1) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+        ctx.lineWidth = 0.8;
+        ctx.beginPath();
+        ctx.moveTo(gx + 0.8, bodyTop);
+        ctx.lineTo(gx + gw - 0.8, bodyTop);
+        ctx.stroke();
+      }
+      // 液面下"尖嘴"与管交界的光泽（液体连贯感）
+      ctx.fillStyle = 'rgba(255,255,255,0.18)';
+      ctx.beginPath();
+      ctx.moveTo(gx + 0.6, tipBase - 1);
+      ctx.lineTo(gx + gw - 0.6, tipBase - 1);
+      ctx.lineTo(hx + 0.5, y + h - 2.5);
+      ctx.lineTo(hx - 0.5, y + h - 2.5);
+      ctx.closePath();
+      ctx.fill();
+    }
+    // 锥形滴嘴（细管下端收尖）
+    ctx.fillStyle = 'rgba(215,235,255,0.2)';
+    ctx.beginPath();
+    ctx.moveTo(gx, gy + gh);
+    ctx.lineTo(hx, y + h);
+    ctx.lineTo(gx + gw, gy + gh);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(215,235,255,0.7)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+}
+
+exports.DROPPER_W = DROPPER_W;
+exports.DROPPER_H = DROPPER_H;
+exports.Dropper = Dropper;
 
   };
   __modules["src/level/click.js"] = function (module, exports, __require) {
@@ -8796,6 +10229,378 @@ exports.enterFullscreen = enterFullscreen;
 exports.exitFullscreen = exitFullscreen;
 exports.toggleFullscreen = toggleFullscreen;
 exports.requestFullscreenOnce = requestFullscreenOnce;
+
+  };
+  __modules["src/objects/gasbottle.js"] = function (module, exports, __require) {
+// ============================================================================
+// 集气瓶（GasBottle）：可收集气体的玻璃瓶（**有实体**——与烧杯同一套容器物理）。
+// ----------------------------------------------------------------------------
+// - 碰撞箱 = 玻璃瓶身轮廓（左右瓶壁沿**瓶身段** = 瓶口以下 10px → 瓶底；
+//   瓶口/瓶颈区开放——细瓶颈两侧是空气，不该挡人；玻璃盖板贴住瓶口，
+//   与视觉对齐——修"碰撞箱看起来异常偏大（盖板悬空+瓶口假墙挡人）"）
+// - 可推动：玩家贴外壁行走会推动整只瓶子；受重力，无支撑时下落；
+// - 容量默认 5g：按住 C（背包含集气瓶）时，把最近气泡柱产生的气体直接截留进瓶
+//   （气体不再进大气）；按住 X 向最近液体容器通入气体（0.05g/s）；
+// - 收集/倒出/放置与烧杯、滴管同一套"可携带物品"流程（C 拾取 / Shift 放置），
+//   进背包时瓶壁子体一并移出场景。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+const { getSubstance } = __require('src/chem/substances.js');;
+const { CFG } = __require('src/core/config.js');;
+const { shallowestSupportY, settleBodyOnSupport } = __require('src/physics/support.js');;
+
+const BOTTLE_W = 30;
+const BOTTLE_H = 56;
+
+const WALL = 4; // 瓶壁厚（px）
+const LID_H = 4; // 盖板厚（px）
+const LID_LIFT = 2.5; // 装气时盖板被顶起的最大高度（px）
+const NECK_H = 10; // 瓶口/瓶颈区高度（px）：无侧壁，只有透明瓶颈
+
+let SEQ_N = 0; // 无 id 集气瓶的子体命名序号（防 byId 键冲突）
+
+class GasBottle extends Obj {
+  constructor({ x, y, capacity = CFG.item.bottleCapacity, gases = null, ...rest } = {}) {
+    super({
+      x, y, w: BOTTLE_W, h: BOTTLE_H,
+      solid: false, physicsKind: 'none', noLift: true,
+      ...rest,
+    });
+    this.wall = WALL;
+    this.vy = 0;
+    this._lidLift = 0; // 0→1 装气顶盖动画进度
+    this._fillPulse = 0; // 装气辉光脉冲
+    // 实体子体：左右瓶壁（**瓶身段**：口下 NECK_H → 瓶底）+ 底 + 贴口玻璃盖板。
+    // static：壁是"与瓶身联动的死墙"——不参与动量交换（动态壁会被玩家撞飞再被
+    // syncWalls 拉回 → 推动强烈震动——用户反馈）；noLift：不被气泡柱顶飞。
+    // 瓶颈区（顶部 NECK_H）无侧壁——细瓶颈两侧是空气，不该挡人。
+    const pid = rest.id ? `${rest.id}_gb` : `gb${++SEQ_N}`;
+    this.subBodies = [
+      new Obj({ id: `${pid}_l`, x, y: y + NECK_H, w: WALL, h: BOTTLE_H - NECK_H, solid: true, static: true, physicsKind: 'static', noLift: true }),
+      new Obj({ id: `${pid}_r`, x: x + BOTTLE_W - WALL, y: y + NECK_H, w: WALL, h: BOTTLE_H - NECK_H, solid: true, static: true, physicsKind: 'static', noLift: true }),
+      new Obj({ id: `${pid}_b`, x, y: y + BOTTLE_H - WALL, w: BOTTLE_W, h: WALL, solid: true, static: true, physicsKind: 'static', noLift: true }),
+      new Obj({ id: `${pid}_lid`, x: x + 4, y: y - 2, w: BOTTLE_W - 8, h: LID_H, solid: true, static: true, physicsKind: 'static', noLift: true }),
+    ];
+    this.syncWalls();
+    this.capacity = Math.max(0.1, capacity);
+    this.gases = new Map(); // gasId → g
+    if (gases) {
+      for (const [id, m] of Object.entries(gases)) {
+        if (Number.isFinite(m) && m > 0) this.gases.set(id, Math.min(m, this.capacity - this.totalGas()));
+      }
+    }
+  }
+
+  get isCarryItem() {
+    return 'bottle';
+  }
+
+  get hoverLabel() {
+    if (this.totalGas() <= 1e-9) return '集气瓶（空）';
+    return `集气瓶·${this.gasLabel()}（${this.totalGas().toFixed(1)}g）`;
+  }
+
+  /** 瓶内气体标签：单一气体显示 id，混合显示"多气体" */
+  gasLabel() {
+    const d = this.dominantGas();
+    if (!d) return '';
+    if (this.gases.size > 1) return `${d[0]}等`;
+    return d[0];
+  }
+
+  /** 当前总量最占优的气体（通入时先通它）：[id, mass] 或 null */
+  dominantGas() {
+    let best = null;
+    for (const [id, m] of this.gases) {
+      if (!best || m > best[1]) best = [id, m];
+    }
+    return best;
+  }
+
+  totalGas() {
+    let s = 0;
+    for (const m of this.gases.values()) s += m;
+    return s;
+  }
+
+  /** 装入气体（容量封顶），返回实际装入量；装气时顶一下盖板 + 辉光 */
+  addGas(id, mass) {
+    if (!(mass > 0)) return 0;
+    const room = this.capacity - this.totalGas();
+    if (room <= 1e-9) return 0;
+    const take = Math.min(room, mass);
+    this.gases.set(id, (this.gases.get(id) ?? 0) + take);
+    this._lidLift = 1;
+    this._fillPulse = 1;
+    return take;
+  }
+
+  /** 取出气体（不超过持有量），返回实际取出量 */
+  removeGas(id, mass) {
+    if (!(mass > 0)) return 0;
+    const cur = this.gases.get(id) ?? 0;
+    const r = Math.min(cur, mass);
+    const n = cur - r;
+    if (n <= 1e-9) this.gases.delete(id);
+    else this.gases.set(id, n);
+    return r;
+  }
+
+  /** 瓶内气体代表色（占优气体）；空瓶淡青 */
+  gasColor() {
+    const d = this.dominantGas();
+    if (!d) return '#78dcff';
+    const sub = getSubstance(d[0]);
+    return sub?.gasColor ?? '#78dcff';
+  }
+
+  /** 壁体跟随瓶身位置（含盖板顶起动画位移） */
+  syncWalls() {
+    const [l, r, b, lid] = this.subBodies;
+    l.x = this.x;
+    l.y = this.y + NECK_H;
+    r.x = this.x + this.w - this.wall;
+    r.y = this.y + NECK_H;
+    b.x = this.x;
+    b.y = this.y + this.h - this.wall;
+    lid.x = this.x + 4;
+    lid.y = this.y - LID_LIFT * this._lidLift - 2; // 盖板底边贴住瓶口线（装气时顶起微隙）
+  }
+
+  /** 无支撑时受重力下落，落到**最浅**支撑面停住（与烧杯同款：statics + 实心动态体，
+   *  不沉入池盆/高台侧面——见 physics/support.js） */
+  applyGravity(dt, scene) {
+    const sup = shallowestSupportY(this, scene);
+    this._onIce = sup.ice; // 是否立在冰面上（冰面惯性滑行用）
+    settleBodyOnSupport(this, dt, sup.y);
+  }
+
+  update(dt, scene) {
+    this.applyGravity(dt, scene);
+    // 冰面惯性滑行在 pushContainers（Player.update）里驱动
+    // 玩家贴壁推动已挪到 Player.update（pushContainers——时序要求：玩家重设 vel 之后、
+    // 物理步之前：吸附+清 vel，否则推-弹交替"一卡一卡"——用户反馈）
+    // 动画计时衰减（盖板回落、辉光消退）
+    if (this._lidLift > 0) this._lidLift = Math.max(0, this._lidLift - dt * 2.6);
+    if (this._fillPulse > 0) this._fillPulse = Math.max(0, this._fillPulse - dt * 1.8);
+  }
+
+  /** 物理结算后：壁体贴回瓶身当前位置（爆炸推散等下一帧即复位）。
+   *  注：瓶坐头顶时不做帽子式跟随（用户明确不要胶合感）。 */
+  lateUpdate() {
+    this.syncWalls();
+  }
+
+  render(ctx, scene) {
+    const x = this.x;
+    const y = this.y;
+    const w = this.w;
+    const h = this.h;
+    const frac = Math.max(0, Math.min(1, this.totalGas() / this.capacity));
+    const color = this.gasColor();
+    const cx = x + w / 2;
+    ctx.save();
+    // 瓶身玻璃（圆柱体：底圆角矩形 + 上口收窄）
+    const bodyW = w;
+    const bodyH = h - 12; // 上 12px 为颈/口
+    const bodyY = y + 12;
+    ctx.fillStyle = 'rgba(210,240,255,0.14)';
+    ctx.beginPath();
+    ctx.roundRect(x, bodyY, bodyW, bodyH, 6);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(225,245,255,0.75)';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.roundRect(x, bodyY, bodyW, bodyH, 6);
+    ctx.stroke();
+    // 瓶颈 + 瓶口（宽口：便于集气；口上盖着玻璃板）
+    ctx.strokeStyle = 'rgba(225,245,255,0.75)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(x + 5, bodyY);
+    ctx.lineTo(x + 7, y);
+    ctx.lineTo(x + w - 7, y);
+    ctx.lineTo(x + w - 5, bodyY);
+    ctx.stroke();
+    // 气体填充（从瓶底往上按比例；装气时带辉光脉冲）
+    if (frac > 0.01) {
+      const fh = (bodyH - 4) * frac;
+      const fy = bodyY + bodyH - 2 - fh;
+      const hexToRgb = (hex) => {
+        const g = hex.replace('#', '');
+        return { r: parseInt(g.slice(0, 2), 16), g: parseInt(g.slice(2, 4), 16), b: parseInt(g.slice(4, 6), 16) };
+      };
+      const c = hexToRgb(color);
+      ctx.globalAlpha = 0.4 + 0.25 * frac;
+      ctx.fillStyle = `rgb(${c.r},${c.g},${c.b})`;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 8 + this._fillPulse * 14;
+      ctx.beginPath();
+      ctx.roundRect(x + 2, fy, w - 4, fh, 4);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 1;
+    }
+    // 玻璃盖板（盖在瓶口上，装气时微微顶起再落下）——与 gb_*_lid 子体同位
+    const [, , , lid] = this.subBodies;
+    const lx = lid ? lid.x : x + 2;
+    const ly = lid ? lid.y : y - LID_LIFT * this._lidLift - LID_H + 2;
+    const lw = lid ? lid.w : w - 4;
+    ctx.fillStyle = 'rgba(225,245,255,0.28)';
+    ctx.beginPath();
+    ctx.roundRect(lx, ly, lw, LID_H, 1.5);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(240,250,255,0.9)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    // 盖板高光条
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.fillRect(lx + 2, ly + 0.8, lw - 4, 1);
+    // 盖板边缘把手颗粒（两端小圆点，示意"磨砂玻璃片"）
+    ctx.fillStyle = 'rgba(240,250,255,0.55)';
+    ctx.beginPath();
+    ctx.arc(lx + lw - 3, ly + LID_H / 2, 1.2, 0, Math.PI * 2);
+    ctx.fill();
+    // 装气闪环（收气成功的一圈扩散光）
+    if (this._fillPulse > 0.01) {
+      ctx.globalAlpha = this._fillPulse * 0.5;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(cx, y + h / 2, w * 0.62 + (1 - this._fillPulse) * 14, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    // 瓶口高光
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    ctx.fillRect(x + 2, bodyY + 1, 2, bodyH - 4);
+    ctx.restore();
+    // 标签（非空时瓶身下方显示气体种类与量）
+    if (frac > 0.01) {
+      const d = this.dominantGas();
+      ctx.font = 'bold 10px "Segoe UI", "Microsoft YaHei", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(8,18,32,0.72)';
+      const label = `${d[0]} ${this.totalGas().toFixed(1)}g`;
+      const tw = ctx.measureText(label).width;
+      ctx.fillRect(cx - tw / 2 - 4, this.bottom - 2, tw + 8, 14);
+      ctx.fillStyle = color;
+      ctx.fillText(label, cx, this.bottom + 8);
+      ctx.textAlign = 'left';
+    }
+  }
+}
+
+exports.BOTTLE_W = BOTTLE_W;
+exports.BOTTLE_H = BOTTLE_H;
+exports.GasBottle = GasBottle;
+
+  };
+  __modules["src/objects/rope.js"] = function (module, exports, __require) {
+// ============================================================================
+// 绳子：细线，悬挂一个物体。锚点可为固定坐标或跟随某物体（相对坐标）。
+// 悬挂物体的位置完全由绳子决定（lateUpdate：物理结算后再定位，避免被推走）。
+// 每刻检查：锚点物体不存在，或悬挂物体目标位置被实心体卡住 → 断绳。
+// 断绳后绳子消失，悬挂物体恢复重力。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+const { overlaps } = __require('src/physics/collision.js');;
+const { THEME } = __require('src/render/theme.js');;
+
+class Rope extends Obj {
+  constructor({ x = 0, y = 0, length = 100, anchor, hanging, ...rest } = {}) {
+    super({ x, y, w: 2, h: length, solid: false, physicsKind: 'none', ...rest });
+    this.length = length;
+    this.anchor = anchor; // {fixed:{x,y}} | {obj, dx?, dy?}
+    this.hanging = hanging; // 悬挂物体（Obj）
+    this.broken = false;
+    // 悬挂期间物体不受重力，位置由绳子决定
+    if (hanging) {
+      hanging.gravity = 0;
+      // 初始把悬挂物放到锚点+长度处，避免构造时的初始偏移被误判为"被推动"
+      const a = this.anchorPoint();
+      hanging.x = a.x - hanging.w / 2;
+      hanging.y = a.y + length - hanging.h;
+    }
+  }
+
+  anchorPoint() {
+    if (this.anchor.fixed) return { x: this.anchor.fixed.x, y: this.anchor.fixed.y };
+    const o = this.anchor.obj;
+    return { x: o.x + (this.anchor.dx ?? 0), y: o.y + (this.anchor.dy ?? 0) };
+  }
+
+  lateUpdate(dt, scene) {
+    if (this.broken || !this.hanging) return;
+    // 锚点物体消失 → 断绳
+    if (this.anchor.obj && !scene.byId[this.anchor.obj.id]) {
+      this.break(scene);
+      return;
+    }
+    // 悬挂物体被删除（如开关 deleteId 移除了它）→ 断绳
+    if (!scene.byId[this.hanging.id]) {
+      this.break(scene);
+      return;
+    }
+    let a = this.anchorPoint();
+    // 区分"推的是锚点"还是"推的是悬挂物"：
+    //  - 锚点本 tick 移动（玩家推锚点）→ 悬挂物跟随即可，不平移锚点
+    //  - 锚点没动但悬挂物被推离期望 → 平移锚点（绳子刚性，整个系统一起动）
+    const anchorDx = a.x - (this._prevAnchorX ?? a.x);
+    const tx = a.x - this.hanging.w / 2;
+    const dx = this.hanging.x - tx;
+    if (!(Math.abs(anchorDx) > 0.5) && this.anchor.obj && Math.abs(dx) > 0.5) {
+      this.anchor.obj.x += dx;
+      a.x += dx;
+    }
+    this._prevAnchorX = a.x;
+    this.x = a.x;
+    this.y = a.y;
+    const nx = a.x - this.hanging.w / 2;
+    const ny = a.y + this.length - this.hanging.h;
+    this.hanging.x = nx;
+    this.hanging.y = ny;
+    this.hanging.vel = { x: 0, y: 0 };
+    // 目标位置被实心体卡住 → 断绳
+    for (const s of scene.statics) {
+      if (overlaps(this.hanging, s)) {
+        this.break(scene);
+        return;
+      }
+    }
+  }
+
+  break(scene) {
+    this.broken = true;
+    if (this.hanging) this.hanging.gravity = 1;
+    scene.removeObject(this);
+  }
+
+  render(ctx) {
+    ctx.save();
+    ctx.strokeStyle = THEME.gold.base;
+    ctx.lineWidth = 2;
+    ctx.shadowColor = THEME.gold.light;
+    ctx.shadowBlur = 5;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.moveTo(this.x, this.y);
+    ctx.lineTo(this.x, this.y + this.length);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // 顶端小锚环
+    ctx.strokeStyle = THEME.gold.light;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, 3, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+exports.Rope = Rope;
 
   };
   __modules["src/render/hud.js"] = function (module, exports, __require) {
@@ -10297,209 +12102,6 @@ exports.bannerEnvelope = bannerEnvelope;
 exports.Hud = Hud;
 
   };
-  __modules["src/render/liquidrender.js"] = function (module, exports, __require) {
-// ============================================================================
-// 液体渲染
-// ----------------------------------------------------------------------------
-// 溶液色 = 各有色离子按其浓度/饱和比加权平均；无色 → 淡灰透明。
-// 主体填充 + 少量确定性伪随机浮动小球（颜色深浅微差，纯视觉）。
-// ============================================================================
-
-const { getSubstance } = __require('src/chem/substances.js');;
-const { hexToRgb, rgbToHex, mix } = __require('src/render/color.js');;
-
-/**
- * 计算溶液颜色与透明度（无色→饱和色平滑过渡）。
- * 指示剂（石蕊/酚酞）：按溶液 pH 显色，与离子色叠加。
- * 微溶物质（solubilityLimit）：按"浓度/饱和线"产生**浑浊度**——接近饱和时溶液
- * 开始泛乳白（先浑浊），过饱和带（1.25×）时最浑（随后才开始析出沉淀）。
- * frame：渲染帧号。传入时指示剂色按帧**渐变**（pH 骤变颜色渐变，不瞬间跳变）；
- * 不传（测试/单次取色）→ 直出目标色。
- */
-function solutionColor(solution, frame = undefined) {
-  let idx = 0;
-  let r = 0;
-  let g = 0;
-  let b = 0;
-  let w = 0;
-  for (const [id, mass] of solution.solutes) {
-    const sub = getSubstance(id);
-    if (!sub.ionColor) continue;
-    const gPerL = (mass / solution.volume) * 1000; // volume 单位 mL → g/L
-    const f = gPerL / sub.ionColor.sat; // 相对饱和浓度
-    if (f <= 0) continue;
-    const c = hexToRgb(sub.ionColor.color);
-    idx += f;
-    r += c.r * f;
-    g += c.g * f;
-    b += c.b * f;
-    w += f;
-  }
-  let base = { color: '#aaaaaa', alpha: 0.12 }; // 无色
-  if (idx > 1e-9) {
-    // t=0 无色，t≥1 全饱和：颜色从 #aaa 线性混合到加权离子色，透明度平滑上升
-    const t = Math.min(1, idx);
-    const ion = rgbToHex({ r: r / w, g: g / w, b: b / w });
-    base = { color: mix('#aaaaaa', ion, t), alpha: 0.12 + 0.73 * t };
-  }
-  // 微溶浑浊：浓度越高越乳白（0=清澈；≥饱和线=明显浑浊；过饱和带最浑——沉淀即将出现）
-  let turb = 0;
-  for (const [id, mass] of solution.solutes) {
-    const sub = getSubstance(id);
-    if (!(sub.solubilityLimit > 0)) continue;
-    const concFrac = (mass * 1000) / (solution.volume * sub.solubilityLimit); // 浓度 / 饱和线
-    turb = Math.max(turb, Math.min(1, concFrac / 1.25));
-  }
-  if (turb > 0.02) {
-    const te = turb * turb * 0.62; // 曲线：浓度爬升时先明显变浑、越浓越白
-    base = {
-      color: mix(base.color, '#e9eef2', te),
-      alpha: base.alpha * (1 - te * 0.35) + 0.5 * te,
-    };
-  }
-  // 指示剂显色（石蕊红/紫/蓝，酚酞无色/浅红/深红，甲基橙红/橙/黄）
-  const pH = solution.pH ? solution.pH() : 7;
-  let ir = 0;
-  let ig = 0;
-  let ib = 0;
-  let iw = 0;
-  for (const [id, mass] of solution.solutes) {
-    const sub = getSubstance(id);
-    if (!sub.indicator || mass <= 0) continue;
-    let color = sub.indicator.stops[0][1];
-    for (const [cut, c] of sub.indicator.stops) {
-      if (pH >= cut) color = c;
-    }
-    if (sub.indicator.transparent && color === sub.indicator.stops[0][1]) continue; // 无色段
-    const gPerL = (mass / solution.volume) * 1000;
-    const f = Math.min(1, gPerL / 10); // ≥10g/L 视为指示剂饱和显色
-    const c = hexToRgb(color);
-    ir += c.r * f;
-    ig += c.g * f;
-    ib += c.b * f;
-    iw += f;
-  }
-  if (iw <= 1e-9) {
-    // 无指示剂显色：淡出（悬停/移除后颜色缓慢回落到基础色，不瞬间跳变）
-    if (solution._indCur) {
-      if (frame == null) {
-        solution._indCur = null;
-        return base;
-      }
-      solution._indCur = mixToward(solution._indCur, { r: 0, g: 0, b: 0, w: 0 }, frameK(frame));
-      const f = Math.min(0.5, solution._indCur.w);
-      if (f > 0.005) {
-        const rc = hexToRgb(base.color);
-        return {
-          color: rgbToHex({ r: rc.r + (solution._indCur.r - rc.r) * f, g: rc.g + (solution._indCur.g - rc.g) * f, b: rc.b + (solution._indCur.b - rc.b) * f }),
-          alpha: Math.max(base.alpha, 0.25 + 0.5 * f),
-        };
-      }
-      solution._indCur = null;
-    }
-    return base;
-  }
-  const ind = { r: ir / iw, g: ig / iw, b: ib / iw, w: Math.min(1, iw) };
-  // ★ 指示剂色动态过渡：往目标色收敛（帧率无关缓动），pH 骤变时颜色渐变成
-  //   （酚酞无色→浅红→深红是渐变过程，不再瞬间跳红——用户反馈）。
-  //   frame 未传入（测试/单次取色）→ 直出目标色。
-  //   传入 time：首次从无色（w=0）起步，之后每帧收敛——首帧即渐变起点。
-  if (frame == null) {
-    solution._indCur = ind;
-  } else if (solution._indCur && solution._indCur.w > 0.005) {
-    solution._indCur = mixToward(solution._indCur, ind, frameK(frame));
-  } else {
-    solution._indCur = solution._indCur ? mixToward(solution._indCur, ind, frameK(frame)) : { r: 0, g: 0, b: 0, w: 0 };
-  }
-  const cur = solution._indCur;
-  const bc = hexToRgb(base.color);
-  const f = Math.min(0.5, cur.w);
-  // 指示剂色与基础色叠加（各半）：石蕊加入酸性溶液 → 红
-  const mixed = rgbToHex({
-    r: (bc.r + cur.r) / 2,
-    g: (bc.g + cur.g) / 2,
-    b: (bc.b + cur.b) / 2,
-  });
-  return { color: mixed, alpha: Math.max(base.alpha, 0.25 + 0.5 * f) };
-}
-
-/** 渲染时间(秒) → 缓动比例（帧率无关：指数时间常数 0.9^（Δt×18），收敛 ~1s 达 86%） */
-function frameK(sec) {
-  if (sec == null) return 1;
-  if (solution_frameT == null) solution_frameT = sec;
-  const dt = Math.max(0, Math.min(0.5, sec - solution_frameT));
-  solution_frameT = sec;
-  return 1 - Math.pow(0.9, dt * 18);
-}
-
-/** 把 cur 向 target 缓动收敛（k 比例；w 同步淡入/淡出） */
-function mixToward(cur, target, k) {
-  return {
-    r: cur.r + (target.r - cur.r) * k,
-    g: cur.g + (target.g - cur.g) * k,
-    b: cur.b + (target.b - cur.b) * k,
-    w: cur.w + ((target.w ?? 1) - cur.w) * k,
-  };
-}
-
-// 模块级：最近渲染时间（frameK 计算帧间流逝用）
-let solution_frameT = null;
-
-/** 渲染一个矩形液面（灵动：起伏波浪 + 持续上升的气泡 + 辉光） */
-function renderLiquid(ctx, x, y, w, h, solution, time = 0) {
-  if (w <= 0 || h <= 0) return;
-  const { color, alpha } = solutionColor(solution, time);
-  ctx.save();
-  // 主体：纵向渐变（底部更深）
-  const g = ctx.createLinearGradient(x, y, x, y + h);
-  g.addColorStop(0, color);
-  g.addColorStop(1, mix(color, '#000000', 0.35));
-  ctx.globalAlpha = alpha;
-  ctx.fillStyle = g;
-  ctx.fillRect(x, y, w, h);
-  ctx.globalAlpha = 1;
-  // 起伏波浪表面（随时间推进，不是死线）
-  const waveAmp = 2.4;
-  ctx.globalAlpha = Math.min(1, alpha + 0.35);
-  ctx.fillStyle = mix(color, '#ffffff', 0.5);
-  ctx.shadowColor = color;
-  ctx.shadowBlur = 10;
-  ctx.beginPath();
-  ctx.moveTo(x, y);
-  const SEG = 14;
-  for (let i = 0; i <= SEG; i++) {
-    const px = x + (i / SEG) * w;
-    const py = y + Math.sin(time * 2.4 + (i / SEG) * Math.PI * 2 + x * 0.01) * waveAmp;
-    ctx.lineTo(px, py);
-  }
-  ctx.lineTo(x + w, y + 3.5);
-  ctx.lineTo(x, y + 3.5);
-  ctx.closePath();
-  ctx.fill();
-  ctx.shadowBlur = 0;
-  // 上升的气泡（从底部持续冒出，速度不一，随时间循环）
-  const n = Math.min(22, Math.max(1, Math.round((w * h) / 900)));
-  for (let i = 0; i < n; i++) {
-    const bx = x + ((i * 7919) % 997) / 997 * w;
-    const speed = 22 + (i % 4) * 9;
-    const cycle = h + 16;
-    const off = (time * speed + i * 37) % cycle;
-    const by = y + h - off;
-    const r = 1.6 + (i % 3) * 1.1;
-    ctx.globalAlpha = 0.35 + 0.3 * Math.sin(i * 2.1 + time * 2);
-    ctx.fillStyle = mix(color, '#ffffff', 0.72);
-    ctx.beginPath();
-    ctx.arc(bx, by, r, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-  ctx.restore();
-}
-
-exports.solutionColor = solutionColor;
-exports.renderLiquid = renderLiquid;
-
-  };
   __modules["src/objects/block.js"] = function (module, exports, __require) {
 // ============================================================================
 // 物块：有化学性质的实心固体，可被推动，可溶解/反应。材质为 MaterialGrid。
@@ -10872,11 +12474,14 @@ class TouchUI {
     return joyGeom(this.canvas.width, this.canvas.height, this.insets);
   }
 
-  /** 按钮矩形（画布坐标） */
+  /** 按钮矩形（画布坐标）；场景设置了 hideTouchGrab → 不返回/不渲染'grab'（拾取/吸液
+   *  按钮，=电脑端 C 键）。其余按钮位置不变（2×2 留一格空白，手指不会误触）。 */
   buttonRects() {
     const act = this.getActive();
+    const scene = act && act.scene ? act.scene : null;
     const slots = act && act.scene && act.scene.player ? act.scene.player.inventory.slots : [];
-    return touchButtonRects(this.canvas.width, this.canvas.height, slots, this.insets);
+    const rs = touchButtonRects(this.canvas.width, this.canvas.height, slots, this.insets);
+    return scene && scene.hideTouchGrab ? rs.filter((r) => r.key !== 'grab') : rs;
   }
 
   /** 设备/布局刷新：安全区、画布铺满、相机移动端视野（forceTouch / resize 时调用）。
@@ -13592,595 +15197,6 @@ exports.Inventory = Inventory;
 exports.Player = Player;
 
   };
-  __modules["src/level/items.js"] = function (module, exports, __require) {
-// ============================================================================
-// 可携带物品（集气瓶 / 烧杯 / 滴管）互动逻辑
-// ----------------------------------------------------------------------------
-// 按键语义（全部基于"选中的物品栏格子"）：
-//  - C（选中空格）：拾取附近最近的一个可携带物品（一物一格，不堆叠）；
-//  - C（选中烧杯/滴管）：从最近的液体容器（药品池/烧杯）吸液——烧杯 20g/次
-//    （可混合、直到满），滴管 5g/次（**同种液体可反复续吸至容量上限 50g**，
-//    装着别的液体则不能续吸）；
-//  - C（按住，选中集气瓶）：把最近气泡柱产生的气体直接截留进瓶（5g 封顶）；
-//  - X（选中烧杯）：把烧杯里的液体倒入最近的烧杯/药品池，**每次倒 10g**
-//    （滴管不行）；
-//  - X（按住，选中集气瓶）：向最近的液体容器通入气体（0.05g/s）；
-//  - Shift：把选中格里的物品放到玩家身旁（集气瓶与烧杯一样有碰撞箱可推动，
-//    滴管无碰撞箱可拖动）。
-// ============================================================================
-
-const { CFG } = __require('src/core/config.js');;
-const { solutionColor } = __require('src/render/liquidrender.js');;
-const { puffFx, flowFx } = __require('src/objects/fx.js');;
-const { Bubble } = __require('src/objects/bubble.js');;
-
-let FX_SEQ = 0; // 特效对象 id 序号（fx.js 的计数器不跨模块共享）
-
-/** 放置落点是否被占用：与其它可携带物品、实心动态体（装置壁）、实心放置粒子重叠 */
-function spotBlocked(scene, o, x, y) {
-  const m = 3; // 收缩容差：贴边不算
-  const l = x + m, r = x + o.w - m, t = y + m, b = y + o.h - m;
-  for (const s of scene.objects) {
-    if (s === scene.player || !s || s.hidden) continue;
-    if (typeof s.amount === 'number' && !s.solid) continue; // 软体自由粒子不挡
-    const isCarry = !!s.isCarryItem;
-    if (!(isCarry || s.solid)) continue; // 只看实体类；区域容器（池等）允许浸入
-    if (r > s.x + m && l < s.x + s.w - m && b > s.y + m && t < s.y + s.h - m) return true;
-  }
-  return false;
-}
-
-/** 两矩形之间的最近距离（边缘间隙；重叠=0）——池/烧杯等高宽物体用边缘距离，
- *  站在池边即可吸液（用中心距离会让宽池显得"遥不可及"） */
-function rectDist(a, b) {
-  const dx = Math.max(a.x - (b.x + b.w), b.x - (a.x + a.w), 0);
-  const dy = Math.max(a.y - (b.y + b.h), b.y - (a.y + a.h), 0);
-  return Math.hypot(dx, dy);
-}
-
-/** 场景内最近的可携带物品（集气瓶/烧杯/滴管），超范围返回 null；
- *  noCarry（关卡固定装置，编辑器可勾选"锁定"）不参与拾取 */
-function nearestCarryItem(scene, player) {
-  let best = null;
-  let bd = Infinity;
-  for (const o of scene.objects) {
-    if (!o.isCarryItem || o.noCarry) continue;
-    const d = rectDist(o, player);
-    if (d < bd) {
-      bd = d;
-      best = o;
-    }
-  }
-  if (!best || bd > CFG.item.collectRange) return null;
-  return best;
-}
-
-/**
- * C 拾取：选中格必须**为空**，把最近的可携带物品收进该格（连同其内容物）。
- * 物品不堆叠：一物一格，重复拾取需要依次选空格。
- */
-function pickupItem(player, scene) {
-  const inv = player.inventory;
-  if (inv.selectedSlot() !== null) return false;
-  const o = nearestCarryItem(scene, player);
-  if (!o) return false;
-  // 吸入特效：物品位置一圈尘雾（先于移除取坐标）
-  puffFx(scene, o.x + o.w / 2, o.y + o.h * 0.4);
-  scene.removeItem(o); // 深度移除（烧杯含杯壁子体）
-  inv.slots[inv.selected] = { item: o.isCarryItem, obj: o };
-  return true;
-}
-
-/** Shift 放置：把选中格里的物品放到玩家身旁（朝移动方向一侧、脚边）。
- *  落点被占用（已有装置/实心体）时依次向外探测空位——不再把两件物品叠在一起。 */
-function placeCarriedItem(player, scene) {
-  const inv = player.inventory;
-  const slot = inv.selectedSlot();
-  if (!slot || !slot.item) return false;
-  const o = slot.obj;
-  const front = player.vel.x >= 0 ? 1 : -1;
-  const off = CFG.item.placeOffset;
-  let x = front > 0 ? player.x + player.w + off : player.x - o.w - off;
-  let y = player.bottom + 2 - o.h; // 底边贴脚底（烧杯/集气瓶落地面，滴管停在原地）
-  x = Math.max(4, Math.min(scene.worldW - o.w - 4, x));
-  y = Math.max(4, Math.min(scene.worldH - o.h - 4, y));
-  // 空位探测：原位 → 原方向再远一格 → 反侧对称位 → 反侧更远
-  if (spotBlocked(scene, o, x, y)) {
-    const step = o.w + 10;
-    const probes = [
-      x + front * step,
-      x + front * step * 2,
-      x - front * step,
-      x - front * step * 2,
-    ];
-    let found = false;
-    for (const px of probes) {
-      const cx = Math.max(4, Math.min(scene.worldW - o.w - 4, px));
-      if (!spotBlocked(scene, o, cx, y)) {
-        x = cx;
-        found = true;
-        break;
-      }
-    }
-    if (!found && !spotBlocked(scene, o, player.x, y)) x = player.x; // 最后兜底：正下方
-  }
-  o.x = x;
-  o.y = y;
-  if (Number.isFinite(o.rx)) { o.rx = o.x; o.ry = o.y; } // 滴管渲染平滑坐标同步（防放置瞬移残影）
-  scene.addItem(o);
-  puffFx(scene, x + o.w / 2, y + o.h - 3); // 落地尘雾
-  inv.slots[inv.selected] = null;
-  return true;
-}
-
-/** 最近的有液体的容器（取液源/通入目标）：含水或含溶质的可装液容器 */
-function nearestLiquidSource(scene, player, range = CFG.item.liquidRange) {
-  let best = null;
-  let bd = Infinity;
-  for (const c of scene.containers) {
-    if (!c.solution || !(c.solution.volume > 0)) continue;
-    if (c.solution.totalMass() <= 1e-9) continue;
-    const d = rectDist(c, player);
-    if (d < bd) {
-      bd = d;
-      best = c;
-    }
-  }
-  return best && bd <= range ? best : null;
-}
-
-/** 最近的"可注液"容器（池/烧杯，空杯也算），范围限定；
- *  needWater：只找有水的（通气要液体介质）；
- *  needRoom：跳过已满的**烧杯**（药品池不封顶，敞开接收） */
-function nearestLiquidTarget(scene, player, range = CFG.item.liquidRange, needWater = false, needRoom = false) {
-  let best = null;
-  let bd = Infinity;
-  for (const c of scene.containers) {
-    if (!c.solution || !(c.solution.volume > 0)) continue;
-    if (needWater && !(c.solution.water > 1e-9)) continue;
-    if (needRoom) {
-      const capped = c.isCarryItem === 'beaker'; // 只有烧杯有容量上限；池视为敞开
-      if (capped && c.solution.volume - c.solution.totalMass() <= 1e-9) continue;
-    }
-    const d = rectDist(c, player);
-    if (d < bd) {
-      bd = d;
-      best = c;
-    }
-  }
-  return best && bd <= range ? best : null;
-}
-
-/** 吸液特效：从容器液面到玩家的一串上行液滴（纯视觉） */
-function _suckFx(scene, src, player) {
-  const r = src.innerRect ? src.innerRect() : { x: src.x + 4, y: src.y + 6, w: src.w - 8, h: src.h - 12 };
-  // 液面近似：按容器高度中点取上沿区域即可（视觉用途，无需精确）
-  const col = solutionColor(src.solution).color;
-  flowFx(scene, {
-    x0: Math.max(r.x + 4, Math.min(r.x + r.w - 4, player.x + player.w / 2)),
-    y0: r.y + Math.min(10, r.h * 0.3),
-    x1: player.x + player.w / 2,
-    y1: player.y + player.h * 0.35,
-    color: col,
-    life: 0.5,
-    n: 8,
-    bend: 0.3,
-  });
-}
-
-/**
- * C 吸液：选中的烧杯/滴管从最近的液体容器取液。
- * 烧杯：每次 20g（同比例样品，可混合），容量满（总量≥容积）后不能再加；
- * 滴管：每次 5g，**同种液体可反复续吸直到容量上限**（管里装着别的液体则拒绝），
- * 取池中占优的溶质（纯水→H2O）。
- */
-function drawLiquid(player, scene) {
-  const slot = player.inventory.selectedSlot();
-  if (!slot || !slot.item) return false;
-  const o = slot.obj;
-  const src = nearestLiquidSource(scene, player);
-  if (!src) return false;
-  if (slot.item === 'beaker') {
-    const cap = o.solution.volume > 0 ? o.solution.volume : CFG.item.beakerCapacity;
-    const room = cap - o.solution.totalMass();
-    if (room <= 1e-9) return false; // 满杯不能再加
-    const sample = src.solution.takeSample(Math.min(CFG.item.beakerTransfer, room));
-    if (!sample) return false;
-    o.solution.addSample(sample);
-    for (const [id, v] of Object.entries(sample.solutes ?? {})) {
-      if (v > 1e-9) o.noteSolOrigin?.(id, { kind: 'fill', text: '吸液入杯' });
-    }
-    _suckFx(scene, src, player); // 吸液液流动画
-    return true;
-  }
-  if (slot.item === 'dropper') {
-    const take = Math.min(CFG.item.dropperTransfer, o.capacity - o.liquid);
-    if (take <= 1e-9) return false; // 满管（容量上限）
-    // 滴管只装一种液体：占优溶质（无溶质=纯水）。已装液时只有"同一液体"才能续吸
-    let id = 'H2O';
-    let m = 0;
-    for (const [sid, sm] of src.solution.solutes) {
-      if (sm > m) {
-        id = sid;
-        m = sm;
-      }
-    }
-    if (o.liquid > 1e-9 && id !== o.substance) return false; // 管里是别的液体 → 不能续吸
-    if (id === 'H2O') {
-      const got = src.solution.water > 0 ? Math.min(take, src.solution.water) : 0;
-      if (got <= 1e-9) return false;
-      src.solution.water -= got;
-      o.substance = 'H2O';
-      o.liquid += got;
-    } else {
-      const got = src.solution.remove(id, take);
-      if (got <= 1e-9) return false;
-      o.substance = id;
-      o.liquid += got;
-    }
-    _suckFx(scene, src, player); // 吸液液流动画
-    return true;
-  }
-  return false;
-}
-
-/**
- * X 倒入：把选中烧杯里的液体倒入最近的烧杯/药品池，**每次倒 CFG.item.pourStep
- * （默认 10g）**——连续按分次倒完。目标未满则倒；最近的是满杯且附近还有别的
- * 容器 → 选下一个有余量的。
- * 滴管不能倒出（只能滴在容器上方）。
- */
-function pourBeaker(player, scene) {
-  const slot = player.inventory.selectedSlot();
-  if (!slot || slot.item !== 'beaker') return false;
-  const o = slot.obj;
-  const total = o.solution.totalMass();
-  if (total <= 1e-9) return false;
-  const target = nearestLiquidTarget(scene, player, CFG.item.liquidRange, false, true);
-  if (!target) return false;
-  // 烧杯有容量上限（倒目标剩余空间）；药品池敞开接收
-  const capped = target.isCarryItem === 'beaker';
-  const tRoom = capped ? Math.max(0, target.solution.volume - target.solution.totalMass()) : Infinity;
-  const pour = Math.min(CFG.item.pourStep, total, tRoom);
-  if (pour <= 1e-9) return false;
-  const sample = o.solution.takeSample(pour);
-  if (!sample) return false;
-  // 倒出会话：平移到目标旁→倾斜→按住保持（视觉层，物理坐标不动）
-  o.beginPour?.(scene, target);
-  target.solution.addSample(sample);
-  for (const [id, v] of Object.entries(sample.solutes ?? {})) {
-    if (v > 1e-9) target.noteSolOrigin?.(id, { kind: 'pour', text: '烧杯倒入' });
-  }
-  return true;
-}
-
-/**
- * 按住 X 通气：把选中集气瓶中的气体按 0.05g/s 通入最近的液体容器
- * （优先通占优气体；CO2/SO2/NO2/Cl2 在主动鼓泡时也能溶进水里）。
- * 注入点冒气泡视觉（间歇生成，随通气持续）。
- */
-function injectBottleGas(player, scene, dt) {
-  const slot = player.inventory.selectedSlot();
-  if (!slot || slot.item !== 'bottle') return false;
-  const o = slot.obj;
-  if (o.totalGas() <= 1e-9) return false;
-  const target = nearestLiquidTarget(scene, player, CFG.item.liquidRange, true);
-  if (!target) return false;
-  const d = o.dominantGas();
-  const amount = Math.min(CFG.item.gasRate * dt, d[1]);
-  if (amount <= 1e-9) return false;
-  o.removeGas(d[0], amount);
-  scene.bubbleGas(target, d[0], amount, dt);
-  // 通气气泡特效：注入点（bubbleGas 更新过的 depositAt）每 ~0.16s 冒一颗上升泡
-  o._injAcc = (o._injAcc ?? 0) + dt;
-  if (o._injAcc >= 0.16 && target.depositAt) {
-    o._injAcc = 0;
-    const jx = ((target.depositAt.x * 7 + scene.time * 13) % 8) - 4; // 确定性微抖
-    scene.addObject(new Bubble({
-      x: target.depositAt.x + jx - 3,
-      y: target.depositAt.y - 6,
-      dir: -1,
-      speed: 62,
-      id: `fx${++FX_SEQ}`,
-    }));
-  }
-  return true;
-}
-
-exports.nearestCarryItem = nearestCarryItem;
-exports.pickupItem = pickupItem;
-exports.placeCarriedItem = placeCarriedItem;
-exports.nearestLiquidSource = nearestLiquidSource;
-exports.nearestLiquidTarget = nearestLiquidTarget;
-exports.drawLiquid = drawLiquid;
-exports.pourBeaker = pourBeaker;
-exports.injectBottleGas = injectBottleGas;
-
-  };
-  __modules["src/objects/fx.js"] = function (module, exports, __require) {
-// ============================================================================
-// 特效小件（fx）：可携带物品交互的动画点缀——全部纯视觉、无碰撞、自销毁。
-//   PuffDust  尘雾/水花圈（拾取物品、放置落地、吸液液面）
-//   FlowArc   液流弧线（吸液从容器飞向玩家 / 倒出从杯口落入目标，沿贝塞尔流动）
-// 配套快捷函数 puffFx / flowFx 负责生成唯一 id 并 addObject 进场景。
-// ============================================================================
-
-const { Obj } = __require('src/objects/obj.js');;
-
-let FX_SEQ = 0;
-
-/** 尘雾圈：n 团渐扩渐隐的小圆（确定性散布，不用随机数保可回放） */
-class PuffDust extends Obj {
-  constructor({ x, y, r = 5, spread = 14, color = '190,215,255', life = 0.4, n = 5, ...rest }) {
-    super({ x, y, w: 2, h: 2, solid: false, physicsKind: 'none', noLift: true, ...rest });
-    this.r = r;
-    this.spread = spread;
-    this.color = color;
-    this.life = life;
-    this.maxLife = life;
-    this.n = n;
-  }
-
-  update(dt, scene) {
-    this.life -= dt;
-    if (this.life <= 0) scene.removeObject(this);
-  }
-
-  render(ctx) {
-    const t = 1 - this.life / this.maxLife; // 0→1 扩散进度
-    ctx.save();
-    for (let i = 0; i < this.n; i++) {
-      const ang = (i / this.n) * Math.PI * 2 + i * 1.7;
-      const d = this.spread * t * (0.55 + 0.45 * ((i % 3) / 2));
-      const px = this.x + Math.cos(ang) * d;
-      const py = this.y + Math.sin(ang) * d - 2.5 * t; // 微微上飘
-      const rr = Math.max(0.6, this.r * (0.5 + t));
-      ctx.globalAlpha = Math.max(0, (1 - t)) * 0.55;
-      ctx.fillStyle = `rgb(${this.color})`;
-      ctx.beginPath();
-      ctx.arc(px, py, rr, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.restore();
-  }
-}
-
-/**
- * 液流弧：p0→p1 的贝塞尔小液滴串。中途小滴接连飞行（按相位错开），
- * 到达即淡出；整体随 life 结束收尾。弯拱 bend>0 时控制点在中点上抬。
- */
-class FlowArc extends Obj {
-  constructor({ x0, y0, x1, y1, color = '#9fd8ff', life = 0.5, n = 7, bend = 0.35, ...rest }) {
-    super({ x: 0, y: 0, w: 2, h: 2, solid: false, physicsKind: 'none', noLift: true, ...rest });
-    this.x0 = x0; this.y0 = y0; this.x1 = x1; this.y1 = y1;
-    this.color = color;
-    this.life = life;
-    this.maxLife = life;
-    this.n = n;
-    // 控制点：中点上抬 bend*距离（吸液向上拱、倒出也用小拱更自然）
-    this.cx = (x0 + x1) / 2;
-    this.cy = (y0 + y1) / 2 - bend * Math.hypot(x1 - x0, y1 - y0);
-  }
-
-  update(dt, scene) {
-    this.life -= dt;
-    if (this.life <= 0) scene.removeObject(this);
-  }
-
-  _at(u) { // 二次贝塞尔取点
-    const a = (1 - u) * (1 - u), b = 2 * (1 - u) * u, c = u * u;
-    return {
-      x: a * this.x0 + b * this.cx + c * this.x1,
-      y: a * this.y0 + b * this.cy + c * this.y1,
-    };
-  }
-
-  render(ctx) {
-    const T = 1 - this.life / this.maxLife; // 全局进度
-    ctx.save();
-    for (let i = 0; i < this.n; i++) {
-      const off = i / this.n;
-      const u = (T * 1.4 + off) % 1; // 循环流动
-      const p = this._at(u);
-      const fadeEnd = Math.sin(Math.min(1, Math.max(0, T)) * Math.PI); // 起止整体淡入淡出
-      const size = 2.6 - 1.4 * u; // 飞行中微缩
-      ctx.globalAlpha = 0.85 * fadeEnd * (0.35 + 0.65 * (1 - u * 0.5));
-      ctx.fillStyle = this.color;
-      ctx.shadowColor = this.color;
-      ctx.shadowBlur = 5;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, Math.max(0.8, size), 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.restore();
-  }
-}
-
-/** 快捷生成：尘雾 */
-function puffFx(scene, x, y, opts = {}) {
-  if (!scene || typeof scene.addObject !== 'function') return null;
-  return scene.addObject(new PuffDust({ x, y, id: `fx${++FX_SEQ}`, ...opts }));
-}
-
-/** 快捷生成：液流弧 */
-function flowFx(scene, opts = {}) {
-  if (!scene || typeof scene.addObject !== 'function') return null;
-  return scene.addObject(new FlowArc({ id: `fx${++FX_SEQ}`, ...opts }));
-}
-
-exports.PuffDust = PuffDust;
-exports.FlowArc = FlowArc;
-exports.puffFx = puffFx;
-exports.flowFx = flowFx;
-
-  };
-  __modules["src/physics/support.js"] = function (module, exports, __require) {
-// ============================================================================
-// 支撑面查询：容器类物体（烧杯/集气瓶）自带的重力是"手动下落"（主本体不参与
-// 物理积分），需要自己找支撑。这里统一实现"**最浅支撑面**"语义：
-//   - 与其水平重叠、且位于本体底部±容差~span 之下的所有实心静态体 +
-//     实心动态体（玩家头、其他装置壁——但排除自身子体与软体沉淀粒子）；
-//   - 取其中**最高（y 最小）**的顶面作为落点。
-// 关键修复点：
-//   ① 动态体也算竖直落点 —— 修"烧杯从玩家正上方落下穿透玩家"；
-//   ② 取 min 而不是 max —— 修"烧杯跨在池沿上时借更深的盆底沉进池里，
-//      连带着杯内玩家一起嵌入池体"（用户关卡 level (15) 复现）。
-// ============================================================================
-
-const EPS = 2; // 已贴合的容差（沿用旧 applyGravity 的判定宽度）
-
-/**
- * 返回给定位体正下方最近的实心支撑面顶边 y；找不到返回 Infinity。
- * 返回 { y, ice }：y = 顶边世界坐标（∞=无支撑）；ice = 支撑面是否为冰面
- * （容器冰面惯性滑行判定用——被推过的烧杯/集气瓶在冰上继续飘）。
- * span = 探测深度（px）：只在底部下方 span 内找（默认 40，与旧行为一致，
- * 保证下落逐帧检测不瞬移）；贴合恢复（轻微陷入弹回表面）也靠这个窗口。
- */
-function shallowestSupportY(body, scene, span = 40) {
-  const l = body.x;
-  const r = body.x + body.w;
-  const b0 = body.y + body.h;
-  let bestY = Infinity;
-  let bestIce = false;
-  const sub = body.subBodies;
-  // statics/dynamics 都要排除**自身子体**（烧杯/集气瓶的壁体在 static 化后
-  // 进了 statics——不排除的话"自己撑住自己/自己挡自己"）
-  const skipSelf = (s) => (sub && sub.includes(s));
-  const scan = (list, skip) => {
-    for (const s of list) {
-      if (!s || !s.solid || (skip && skip(s))) continue;
-      if (!(s.x < r && s.x + s.w > l)) continue; // 水平重叠才算
-      if (s.y >= b0 - EPS && s.y <= b0 + span) {
-        if (s.y < bestY) { bestY = s.y; bestIce = !!s.ice; }
-      }
-    }
-  };
-  if (scene.statics) scan(scene.statics, skipSelf);
-  if (scene.dynamics) {
-    scan(scene.dynamics, (d) => d === body || skipSelf(d) || typeof d.amount === 'number');
-  }
-  return { y: bestY, ice: bestIce };
-}
-
-/** 与作用力无关的通用"落到支撑面停住"推进（重力累加 ≤400，钳位贴合）。
- *  贴合容差 0.25px：已在表面（含微小间隙）→ 静止——否则"恰好贴住"时每帧
- *  微落 0.6px 再被顶回 → 烧杯/集气瓶站着也在微微震动（用户反馈推动时的抖动源之一） */function settleBodyOnSupport(body, dt, support, accel = 600, maxV = 400) {
-  if (!Number.isFinite(support)) {
-    body.vy = Math.min(maxV, body.vy + accel * dt);
-    body.y += body.vy * dt;
-    return;
-  }
-  if (body.y + body.h >= support - 0.25) {
-    body.vy = 0;
-    if (body.y + body.h > support) body.y = support - body.h; // 已陷入支撑面：顶回表面
-  } else {
-    body.vy = Math.min(maxV, body.vy + accel * dt);
-    body.y += body.vy * dt;
-    if (body.y + body.h >= support) {
-      body.y = support - body.h;
-      body.vy = 0;
-    }
-  }
-}
-
-/**
- * 玩家推动容器（烧杯/集气瓶）——在 **Player.update** 里调用（玩家自己重设 vel 之后）。
- * 时序必须如此：容器 update 先于玩家——若由容器侧读取玩家速度驱动，物理步玩家
- * 自行前进 → 撞壁被弹回 → 推-弹交替（用户反馈：tick1 玩家碰到物块、tick2 物块推动
- * 玩家不动、tick3 物块不动玩家动一步…… 循环往复）。
- * 推动帧：容器前进 push、玩家**精确吸附**到壁边（消除累积偏差）、玩家 vel 清零
- * （物理步静止，无"自行前进→被壁分离"的循环）。推之前先看路，不穿模。
- */
-function pushContainers(p, scene, dt) {
-  const dir = (scene.control && scene.control.has('right') ? 1 : 0) - (scene.control && scene.control.has('left') ? 1 : 0);
-  // 冰面滑行（停手耦合）：玩家不推动时，被推过的容器跟随**玩家当前速度**滑——
-  // 一起滑停（物体不再"窜出去、玩家瞬间停"的错配）；反向移动/玩家已停 → 物体停。
-  if (dir === 0) {
-    for (const c of scene.objects) {
-      if ((c.isCarryItem === 'beaker' || c.isCarryItem === 'bottle') && c._slideVx) {
-        const pv = p.vel.x;
-        if (Math.abs(pv) < 8 || Math.sign(pv) !== Math.sign(c._slideVx)) {
-          c._slideVx = 0; // 玩家停/反向：物体停在原地
-        } else {
-          c.x += pv * dt;
-          if (typeof c.syncWalls === 'function') c.syncWalls();
-        }
-      }
-    }
-    return;
-  }
-  // 推动全程满速（冰上也不例外——"冰上推得动，松手继续滑"才是冰感；
-  // 之前半速/低速设计被用户否了：冰上推不动很别扭）
-  const push = dir * p.moveSpeed * dt;
-  // 注意遍历 scene.objects（集气瓶不是 Container 子类，不在 scene.containers）
-  for (const c of scene.objects) {
-    if (c.isCarryItem !== 'beaker' && c.isCarryItem !== 'bottle') continue;
-    if (typeof c.containsObj === 'function' && c.containsObj(p)) continue; // 杯内携带：走 lateUpdate 带动
-    if (p.bottom <= c.y || p.top >= c.y + c.h) continue; // 高度不重叠（贴不到壁）
-    const wall = c.wall ?? 4;
-    if (push > 0 && p.right >= c.x - 2 && p.right <= c.x + wall + 2) {
-      const nx = c.x + push;
-      if (!horizontallyBlocked(c, nx, scene)) {
-        c.x = nx;
-        if (typeof c.syncWalls === 'function') c.syncWalls(); // 壁体**立即**跟上（否则物理步用旧壁位置 → 玩家被弹开）
-        p.x = c.x - p.w; // 吸附到左壁
-        if (!p._groundIce) p.vel.x = 0; // 石地：清速（指令驱动）；冰面：保留动量（松手玩家也跟着滑）
-        c._slideVx = c._onIce ? dir * p.moveSpeed : 0; // 冰面：获得滑动余量（松手继续滑）
-      }
-    } else if (push < 0 && p.left <= c.x + c.w + 2 && p.left >= c.x + c.w - wall - 2) {
-      const nx = c.x + push;
-      if (!horizontallyBlocked(c, nx, scene)) {
-        c.x = nx;
-        if (typeof c.syncWalls === 'function') c.syncWalls();
-        p.x = c.x + c.w; // 吸附到右壁
-        if (!p._groundIce) p.vel.x = 0;
-        c._slideVx = c._onIce ? dir * p.moveSpeed : 0;
-      }
-    }
-  }
-}
-
-/**
- * 冰面滑行已并入 pushContainers（停手耦合：跟随玩家速度一起滑停）。
- */
-
-/**
- * 水平阻挡探测：把 body 平移到 nx 后是否与任何实心体相交 ≥3px 深度。
- * 用于烧杯/集气瓶的"手动推挤"——它们不走通用碰撞积分，自己挪位置时需要
- * 自己看路，否则会被直接推进池盆壁里（穿模）。忽略脚底贴合面（≤2px 的
- * 支撑重叠不算），也不忽略动态实心体（别的装置壁照样挡路）。
- */
-function horizontallyBlocked(body, nx, scene) {
-  const l = nx + 1;
-  const r = nx + body.w - 1;
-  const t = body.y + 2;
-  const b = body.y + body.h - 2;
-  let hit = Infinity; // 记录阻挡物 x（诊断用）
-  const sub = body.subBodies;
-  // statics 同样排除自身子体（static 化后的壁体在 statics 里——不排除会被
-  // 自己的右壁/左壁挡住 → 烧杯/集气瓶推不动——用户反馈的"推动异常"根因）
-  const skipSelf = (s) => (sub && sub.includes(s));
-  const scan = (list, skip) => {
-    for (const s of list) {
-      if (!s || !s.solid || (skip && skip(s))) continue;
-      if (!(s.x < r && s.x + s.w > l)) continue;
-      if (!(s.y < b && s.y + s.h > t)) continue;
-      hit = Math.min(hit, s.x);
-    }
-  };
-  if (scene.statics) scan(scene.statics, skipSelf);
-  if (scene.dynamics) {
-    scan(scene.dynamics, (d) => d === body || d === scene.player || skipSelf(d) || typeof d.amount === 'number');
-  }
-  return Number.isFinite(hit);
-}
-
-exports.shallowestSupportY = shallowestSupportY;
-exports.settleBodyOnSupport = settleBodyOnSupport;
-exports.pushContainers = pushContainers;
-exports.horizontallyBlocked = horizontallyBlocked;
-
-  };
   __modules["src/objects/switch.js"] = function (module, exports, __require) {
 // ============================================================================
 // 开关：容器子类，存放"开启物质"（由玩家把沉淀放置进去）。
@@ -15082,310 +16098,6 @@ function rgb2(v) {
 exports.BlastLamp = BlastLamp;
 
   };
-  __modules["src/objects/beaker.js"] = function (module, exports, __require) {
-// ============================================================================
-// 烧杯：可承载任何物质（含玩家）的容器。杯壁（左/右/底）为实心碰撞体：
-//   - 不能从侧面走进，只能跳过杯口进入；玩家太宽会卡在杯口下不去
-//   - 受重力：无支撑时下落
-//   - 玩家在杯内 → 跟随移动；玩家在杯外贴杯壁 → 推动
-// ============================================================================
-
-const { Container } = __require('src/objects/container.js');;
-const { getSubstance } = __require('src/chem/substances.js');;
-const { Obj } = __require('src/objects/obj.js');;
-const { renderLiquid, solutionColor } = __require('src/render/liquidrender.js');;
-const { rr } = __require('src/render/theme.js');;
-const { Drip } = __require('src/objects/drip.js');;
-const { shallowestSupportY, settleBodyOnSupport } = __require('src/physics/support.js');;
-
-// ---- 倒出动画节奏（纯视觉会话，见 beginPour）----
-const POUR_TRAVEL = 0.16; // 平移到目标旁的时长
-const POUR_TILT_IN = 0.14; // 起倾时长
-const POUR_BACK = 0.22; // 松手后回位时长
-const POUR_HOLD_MAX = 0.45; // 按 X 续期的停留余量（连按/按住都保持不停留超时）
-const POUR_MAX_ANG = 0.52; // 最大倾角（≈30°，弧度）
-const POUR_LIFT = 5; // 倾倒时轻微抬升（手腕感）
-
-let DRIP_SEQ = 0;
-
-class Beaker extends Container {
-  get hoverLabel() {
-    return '烧杯';
-  }
-  get isCarryItem() {
-    return 'beaker';
-  }
-  constructor({ x, y, w = 60, h = 70, wall = 5, ...rest } = {}) {
-    super({ x, y, w, h, ...rest });
-    this.wall = wall;
-    this.vy = 0;
-    // 实心杯壁（左/右/底），跟随烧杯移动；顶口敞开（可跳入）
-    // static：壁是"与杯身联动的死墙"——不参与动量交换（玩家推杯时靠 update 驱动杯身，
-    // 壁只跟随；动态壁会被玩家撞飞再被 syncWalls 拉回 → 推动强烈震动——用户反馈）。
-    // noLift：杯壁不被气泡柱气流托起（通入气体时气泡柱紧贴杯壁，不能把杯子顶飞）
-    this.subBodies = [
-      new Obj({ id: 'bk_l', x, y, w: wall, h, solid: true, static: true, physicsKind: 'static', noLift: true }),
-      new Obj({ id: 'bk_r', x: x + w - wall, y, w: wall, h, solid: true, static: true, physicsKind: 'static', noLift: true }),
-      new Obj({ id: 'bk_b', x, y: y + h - wall, w, h: wall, solid: true, static: true, physicsKind: 'static', noLift: true }),
-    ];
-  }
-
-  innerRect() {
-    return {
-      x: this.x + this.wall,
-      y: this.y + this.wall,
-      w: this.w - 2 * this.wall,
-      h: this.h - 2 * this.wall,
-    };
-  }
-
-  /** 杯壁跟随烧杯位置 */
-  syncWalls() {
-    const [l, r, b] = this.subBodies;
-    l.x = this.x;
-    l.y = this.y;
-    r.x = this.x + this.w - this.wall;
-    r.y = this.y;
-    b.x = this.x;
-    b.y = this.y + this.h - this.wall;
-  }
-
-  /**
-   * 倒出会话（X 倒出时由 items.pourBeaker 调用；纯视觉，物理坐标不动）：
-   * ① 杯身平移到目标容器旁（修正"目标在右动画仍朝左/落点不准"）；
-   * ② 起倾 ~30°，杯口沿连续滴出液滴落入目标液面；
-   * ③ 玩家按住/连按 X → 保持倾倒姿势不回位，松手 0.45s 后回弹归位。
-   * 同一目标续倒不重跑位移（不顿挫）。
-   */
-  beginPour(scene, target) {
-    if (!scene || typeof scene.addObject !== 'function') return;
-    const dir = (target.x + (target.w ?? 0) / 2) >= (this.x + this.w / 2) ? 1 : -1;
-    const gap = 6;
-    if (this._pour && this._pour.target === target && this._pour.dir === dir) {
-      this._pour.holdT = POUR_HOLD_MAX; // 续倒：只续停留
-      return;
-    }
-    let standX = dir > 0 ? target.x - this.w - gap : target.x + target.w + gap;
-    standX = Math.max(2, Math.min((scene.worldW ?? 2000) - this.w - 2, standX));
-    this._pour = { target, dir, t: 0, fromX: this.x, standX, holdT: POUR_HOLD_MAX, lipEmit: 0, relAt: null };
-  }
-
-  /** 倒出会话推进：计算渲染偏移/倾角 + 杯口沿液滴发射 */
-  updatePour(dt, scene) {
-    const sess = this._pour;
-    if (!sess) {
-      this._visPour = null;
-      return;
-    }
-    // X 按住且选中的正是本杯 → 续期停留；否则停留计时递减
-    const sel = scene.player?.inventory?.selectedItem?.();
-    if (scene.control && scene.control.has('use') && sel === this) sess.holdT = POUR_HOLD_MAX;
-    else sess.holdT -= dt;
-
-    sess.t += dt;
-    if (sess.relAt == null && sess.holdT <= 0) sess.relAt = sess.t; // 开始回位
-    const standOff = sess.standX - sess.fromX;
-
-    let offK = 0;
-    let angK = 0;
-    if (sess.relAt != null) {
-      const tr = sess.t - sess.relAt;
-      if (tr >= POUR_BACK) {
-        this._pour = null;
-        this._visPour = null;
-        return;
-      }
-      const k0 = 1 - tr / POUR_BACK;
-      const k = k0 * k0 * (3 - 2 * k0); // smoothstep 回位
-      offK = k;
-      angK = k;
-    } else {
-      const pt = Math.min(1, sess.t / POUR_TRAVEL);
-      offK = 1 - Math.pow(1 - pt, 3); // easeOutCubic 平移
-      const at = Math.min(1, Math.max(0, (sess.t - POUR_TRAVEL) / POUR_TILT_IN));
-      angK = at * at * (3 - 2 * at); // smoothstep 起倾
-    }
-
-    const ang = POUR_MAX_ANG * angK;
-    const offX = standOff * offK;
-    const liftY = -POUR_LIFT * angK;
-    this._visPour = { offX, liftY, aSign: sess.dir, ang };
-
-    // 杯口沿液滴：倾斜到位后从旋转后的口沿位置滴落，落向目标液面
-    if (ang > 0.16 && offK > 0.9 && scene.addObject) {
-      sess.lipEmit -= dt;
-      if (sess.lipEmit <= 0) {
-        sess.lipEmit = 0.065;
-        const a = sess.dir * ang;
-        const pvx = this.x + offX + this.w / 2;
-        const pvy = this.y + this.h + liftY;
-        const lx0 = sess.dir > 0 ? this.w / 2 - 4 : -(this.w / 2 - 4);
-        const ly0 = 8 - this.h;
-        const wx = pvx + lx0 * Math.cos(a) - ly0 * Math.sin(a);
-        const wy = pvy + lx0 * Math.sin(a) + ly0 * Math.cos(a);
-        const tgt = sess.target.innerRect ? sess.target.innerRect() : { x: sess.target.x + 4, y: sess.target.y + 4, w: sess.target.w - 8, h: sess.target.h - 8 };
-        scene.addObject(new Drip({
-          x: wx - 2,
-          y: wy + 2,
-          targetY: tgt.y + 4,
-          color: solutionColor(this.solution).color,
-          id: `drip${++DRIP_SEQ}`,
-        }));
-      }
-    }
-  }
-
-  /** 无支撑时受重力下落，落到**最浅**支撑面停住（statics + 玩家等实心动态体；
-   *  跨在池沿/台阶上不沉入更深的盆底——见 physics/support.js 的语义说明） */
-  applyGravity(dt, scene) {
-    const sup = shallowestSupportY(this, scene);
-    this._onIce = sup.ice; // 是否立在冰面上（冰面惯性滑行用）
-    settleBodyOnSupport(this, dt, sup.y);
-  }
-
-  update(dt, scene) {
-    super.update(dt, scene); // 颗粒沉降等容器逻辑
-    this.applyGravity(dt, scene);
-    // 冰面惯性滑行在 pushContainers（Player.update）里驱动（推动/滑行不双算）
-    this.updatePour(dt, scene);
-    // 玩家贴壁推动已挪到 Player.update（pushContainers——时序要求：玩家重设 vel 之后、
-    // 物理步之前：吸附+清 vel，否则推-弹交替"一卡一卡"——用户反馈）
-  }
-
-  /** 物理结算后：杯内玩家与烧杯互相带动——烧杯跟随玩家的水平位移；玩家跟随
-   *  烧杯的竖直位移。**下行带动护栏**：玩家跟随下移时不得被压进任何实心静态体
-   *  （嵌池穿模根因——原实现是裸 p.y += dy 瞬移）；脚部将越过原本位于其下方的
-   *  实心顶面时裁剪到表面。
-   *  注：烧杯坐头顶时**不做帽子式跟随**（用户明确不要胶合感）——跳跃会撞到杯底、
-   *  走动离开支撑后正常掉落。 */
-  lateUpdate(dt, scene) {
-    const p = scene.player;
-    if (p && this.containsObj(p)) {
-      // 烧杯跟随玩家的水平位移（杯壁挡住时玩家不移动 → 烧杯也不动，不甩出）
-      const dx = p.x - (this._prevPx ?? p.x);
-      if (Math.abs(dx) > 0.01) this.x += dx;
-      // 玩家跟随烧杯的竖直位移（烧杯下落/被抬起时玩家一起移动，不脱离）
-      const dy = this.y - (this._prevBy ?? this.y);
-      if (Math.abs(dy) > 0.01) {
-        let ny = p.y + dy;
-        if (dy > 0) {
-          for (const s of scene.statics) {
-            if (!s.solid) continue;
-            if (!(s.x < p.x + p.w && s.x + s.w > p.x)) continue; // 水平重叠
-            const feet = p.y + p.h;
-            if (feet <= s.y + 0.5 && ny + p.h > s.y) ny = Math.min(ny, s.y - p.h); // 脚下实心顶面：裁到表面
-          }
-        }
-        p.y = ny;
-      }
-    }
-    this._prevPx = p ? p.x : this._prevPx;
-    this._prevBy = this.y;
-    this.syncWalls();
-  }
-
-  render(ctx, scene) {
-    // 倒出会话变换：平移到目标旁 + 轻微抬升 + 倾斜（液体/颗粒/杯体整体）
-    ctx.save();
-    const vp = this._visPour;
-    if (vp && (Math.abs(vp.offX) > 0.01 || vp.ang > 0.001)) {
-      const cx = this.x + vp.offX + this.w / 2;
-      const cy = this.y + this.h;
-      ctx.translate(cx, cy);
-      ctx.rotate(vp.aSign * vp.ang);
-      ctx.translate(-cx, -cy - vp.liftY);
-    }
-    // 液体（元素发光液面；液面高度 = 实际液体量/容量——吸液/倒出后可见升降）
-    const inner = this.innerRect();
-    if (inner.w > 0 && inner.h > 0) {
-      const vol = this.solution.volume > 0 ? this.solution.volume : Infinity;
-      const lh = inner.h * Math.max(0, Math.min(1, this.solution.totalMass() / vol));
-      if (lh > 2) renderLiquid(ctx, inner.x, inner.y + inner.h - lh, inner.w, lh, this.solution, scene.time ?? 0);
-    }
-    // 沉淀：从反应位置生成的视觉颗粒，物理堆叠成堆
-    this.renderGrains(ctx);
-    // 玻璃杯（U 形，半透明 + 亮边 + 高光）
-    ctx.save();
-    ctx.fillStyle = 'rgba(210,240,255,0.12)';
-    rr(ctx, this.x, this.y, this.w, this.h, 7);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(225,245,255,0.8)';
-    ctx.lineWidth = 2;
-    ctx.shadowColor = 'rgba(180,230,255,0.6)';
-    ctx.shadowBlur = 6;
-    ctx.beginPath();
-    ctx.moveTo(this.x, this.y);
-    ctx.lineTo(this.x, this.y + this.h - 7);
-    ctx.arcTo(this.x, this.y + this.h, this.x + 7, this.y + this.h, 7);
-    ctx.lineTo(this.x + this.w - 7, this.y + this.h);
-    ctx.arcTo(this.x + this.w, this.y + this.h, this.x + this.w, this.y + this.h - 7, 7);
-    ctx.lineTo(this.x + this.w, this.y);
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-    // 左侧高光
-    ctx.fillStyle = 'rgba(255,255,255,0.16)';
-    ctx.fillRect(this.x + 1, this.y + 2, 2, this.h - 4);
-    ctx.restore();
-    ctx.restore(); // 倾旋包裹结束
-    this.renderContentsLabel(ctx, scene);
-  }
-}
-
-exports.Beaker = Beaker;
-
-  };
-  __modules["src/objects/drip.js"] = function (module, exports, __require) {
-// ============================================================================
-// 液滴（Drip）：滴管滴液的下坠视觉（带滴管液体颜色；到达液面即消失）。
-// 只有视觉反馈——化学由溶液模型处理（落点记录在容器 depositAt）。
-// ============================================================================
-
-const { Obj } = __require('src/objects/obj.js');;
-
-class Drip extends Obj {
-  constructor({ x, y, targetY, color = '#9fd8ff', ...rest }) {
-    super({ x, y, w: 4, h: 6, solid: false, physicsKind: 'none', noLift: true, ...rest });
-    this.targetY = targetY;
-    this.color = color;
-    this.vy = 0;
-    this.life = 2;
-  }
-
-  update(dt, scene) {
-    this.vy += 900 * dt; // 重力加速下坠
-    this.y += this.vy * dt;
-    if (this.y >= this.targetY) scene.removeObject(this);
-  }
-
-  render(ctx) {
-    // 泪滴形（上尖下圆）：上端尖锥收拢、下端圆胖——下坠中的液滴
-    const cx = this.x + this.w / 2;
-    const top = this.y;
-    const bottom = this.y + this.h;
-    const r = Math.max(3, this.h * 0.62); // 下部圆球半径
-    ctx.save();
-    ctx.shadowColor = this.color;
-    ctx.shadowBlur = 7;
-    ctx.fillStyle = this.color;
-    ctx.beginPath();
-    ctx.moveTo(cx, top); // 尖端
-    ctx.bezierCurveTo(cx + r * 0.5, top + r * 0.8, cx + r, bottom - r * 0.7, cx, bottom);
-    ctx.bezierCurveTo(cx - r, bottom - r * 0.7, cx - r * 0.5, top + r * 0.8, cx, top);
-    ctx.closePath();
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    // 下部高光（左上方）
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.beginPath();
-    ctx.ellipse(cx - r * 0.28, bottom - r * 0.62, r * 0.2, r * 0.32, -0.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
-}
-
-exports.Drip = Drip;
-
-  };
   __modules["src/objects/sign.js"] = function (module, exports, __require) {
 // ============================================================================
 // 文字标签：关卡内显示说明文字（帮助玩家理解每个区域的机制）
@@ -15717,585 +16429,6 @@ class Extractor extends Obj {
 exports.Extractor = Extractor;
 
   };
-  __modules["src/objects/dropper.js"] = function (module, exports, __require) {
-// ============================================================================
-// 滴管（Dropper）：编辑器原版物体——玩家左键单击即向正下方容器滴加液体。
-// ----------------------------------------------------------------------------
-// - 可设置管内物质（液体/可溶物质 id）、容量（g）、每滴量（g）；
-// - 只滴不吸：液体用尽为止（编辑器重设/重开局 = 满管）；
-// - 外观 = 玻璃滴管 + 橡皮胶头 + 锥形滴嘴，管内液体颜色与溶液取色一致
-//   （solutionColor：离子颜色/指示剂 pH 显色），液面随剩余量下降；
-// - 拖动平滑：渲染坐标 (rx,ry) 追赶逻辑坐标——拖动时滴管"滑行"跟随指针，
-//   不生硬瞬移（纯表现层，物理/化学仍用精确 x/y）；
-// - 点击命中由共享点击管线 handleSceneClick 触发（编辑试玩/导出关卡同一套）。
-// ============================================================================
-
-const { Obj } = __require('src/objects/obj.js');;
-const { getSubstance } = __require('src/chem/substances.js');;
-const { Solution } = __require('src/chem/solution.js');;
-const { solutionColor } = __require('src/render/liquidrender.js');;
-const { Drip } = __require('src/objects/drip.js');;
-const { flowFx, puffFx } = __require('src/objects/fx.js');;
-const { CFG } = __require('src/core/config.js');;
-const { pushNotice } = __require('src/level/click.js');;
-
-const DROPPER_W = 11;
-const DROPPER_H = 52;
-
-class Dropper extends Obj {
-  constructor({ x, y, substance = 'H2O', capacity = 50, drop = 0.5, liquid, ...rest } = {}) {
-    super({
-      x, y, w: DROPPER_W, h: DROPPER_H,
-      solid: false, physicsKind: 'none', noLift: true,
-      ...rest,
-    });
-    this.substance = substance;
-    this.capacity = Math.max(0.1, capacity);
-    this.drop = Math.max(0.01, drop);
-    this.liquid = liquid == null ? this.capacity : Math.min(this.capacity, liquid);
-    this.rx = x; // 渲染坐标（追赶 x/y，拖动时产生平滑滑行感）
-    this.ry = y;
-  }
-
-  /** 渲染坐标每 tick 向真实坐标收敛（指数趋近，帧率无关） */
-  update(dt) {
-    const k = 1 - Math.exp(-14 * dt);
-    this.rx += (this.x - this.rx) * k;
-    this.ry += (this.y - this.ry) * k;
-  }
-
-  get hoverLabel() {
-    const sub = getSubstance(this.substance);
-    const name = sub ? (sub.name ?? this.substance) : this.substance;
-    if (this.liquid <= 1e-9) return '滴管（空）'; // 空管不标物质名——免误导（管里明明没有）
-    return `滴管·${name}（${this.liquid.toFixed(1)}g）`;
-  }
-
-  get isCarryItem() {
-    return 'dropper';
-  }
-
-  /** 玩家附近可拖动（改变位置，无碰撞箱）；锁定（noCarry）的滴管不可拖动 */
-  get isDraggable() {
-    return !this.noCarry;
-  }
-
-  /** 点击点是否落在"红色胶头"上——只有胶头区能触发滴加（单击=滴一滴、
-   *  长按=持续滴/液下吸取）；玻璃段只能拖动。world 为世界坐标。 */
-  onBulb(world) {
-    if (!world) return false;
-    return world.y <= this.y + 12; // 胶头（顶 ~11px，含边缘 1-2px 容差）
-  }
-
-  /**
-   * 尖端正浸在哪个容器的液面下？（水平对齐容器内区 + 尖端低于**真实液面**
-   * （随量升降：surface = r.bottom - r.h×min(1,total/volume)）+ 未深穿容器底）。
-   * 与烧杯/池的渲染液面同一公式——液面只有一半时，尖端在"杯沿与液面之间"不算浸入。
-   */
-  _submergedIn(scene) {
-    const cx = this.x + this.w / 2;
-    const tipY = this.bottom; // 滴管尖端（锥尖最底点）
-    let best = null;
-    let bestDepth = -Infinity;
-    for (const c of scene.containers ?? []) {
-      const r = c.innerRect();
-      if (!(cx >= r.x && cx <= r.x + r.w)) continue;
-      const sol = c.solution;
-      if (!sol || !(sol.volume > 0)) continue;
-      const total = sol.totalMass ? sol.totalMass() : 0;
-      if (total <= 1e-9) continue; // 容器里没有液体（干杯不算液下）
-      const lh = r.h * Math.max(0, Math.min(1, total / sol.volume)); // 与渲染同公式
-      const surface = r.y + r.h - lh;
-      if (tipY < surface + 2) continue; // 尖端未到达液面下（≥2px）
-      if (tipY > r.y + r.h + 8) continue; // 穿底过多（伸穿容器底按无效）
-      if (tipY - surface > bestDepth) {
-        bestDepth = tipY - surface;
-        best = c;
-      }
-    }
-    return best;
-  }
-
-  /**
-   * 液下吸取一手（长按胶头、尖端在液面下时每 suckPeriod 执行一次）：
-   *  - 管里没有液体：直接吸一手（≤ dropperTransfer g，占优溶质/纯水→H2O）；
-   *  - 管里已有**同一液体**：可以续吸（直到容量上限——与 C 键吸液同一语义）；
-   *  - 管里是**别的液体**：拒绝（无法混吸）；
-   *  - 尖端不在液面下 / 源已无液体：拒绝并提示。
-   */
-  attemptSuckOnce(scene) {
-    if (!scene) return false;
-    const c = this._submergedIn(scene);
-    if (!c) {
-      pushNotice(scene, '把滴管尖端伸到液面下再吸');
-      return false;
-    }
-    const room = this.capacity - this.liquid;
-    if (room <= 1e-9) {
-      pushNotice(scene, '滴管已装满');
-      return false;
-    }
-    // 取占优成分（无溶质 = 纯水）
-    let id = 'H2O';
-    let m = 0;
-    for (const [sid, sm] of c.solution.solutes) {
-      if (sm > m) {
-        id = sid;
-        m = sm;
-      }
-    }
-    if (this.liquid > 1e-9 && id !== this.substance) {
-      pushNotice(scene, '管里是别的液体——不能混吸');
-      return false;
-    }
-    const take = Math.min(CFG.item.dropperTransfer, room);
-    let got = 0;
-    if (id === 'H2O') {
-      got = c.solution.water > 0 ? Math.min(take, c.solution.water) : 0;
-      if (got > 1e-9) c.solution.water -= got;
-    } else {
-      got = c.solution.remove(id, take);
-    }
-    if (got <= 1e-9) {
-      pushNotice(scene, '这里已经没有可吸的液体');
-      return false;
-    }
-    this.substance = id;
-    this.liquid += got;
-    c.noteSolOrigin?.(id, { kind: 'fill', text: '液下吸取' });
-    // 特效：表面涟漪尘雾 + 一串上行液滴飞进管口
-    const r = c.innerRect();
-    const sx = Math.max(r.x + 4, Math.min(r.x + r.w - 4, this.x + this.w / 2));
-    puffFx(scene, sx, r.y + 3, { color: '225,245,255', r: 4, spread: 10, life: 0.35 });
-    flowFx(scene, {
-      x0: sx, y0: r.y + 6,
-      x1: this.x + this.w / 2, y1: this.y + this.h * 0.45,
-      color: solutionColor(new Solution({ volume: this.capacity, water: this.liquid > 0 ? 1 : 0, solutes: this.substance === 'H2O' ? {} : { [this.substance]: this.liquid } })).color,
-      life: 0.4, n: 6, bend: 0.25,
-    });
-    return true;
-  }
-
-  /** 管内液体颜色：与烧杯/池同一套溶液取色（离子颜色/指示剂 pH 显色） */
-  liquidColor() {
-    const m = Math.max(1e-6, this.liquid);
-    const sol = new Solution({
-      volume: this.capacity,
-      solutes: this.liquid > 1e-9 ? { [this.substance]: m } : {},
-      water: this.liquid > 1e-9 ? m : 0,
-    });
-    return solutionColor(sol);
-  }
-
-  /** 玩家左键单击：向正下方容器滴一滴（下方无容器/已滴空则不滴） */
-  onTap(scene) {
-    if (!scene || this.liquid <= 1e-9) return false;
-    const c = this._containerBelow(scene);
-    if (!c) return false;
-    const take = Math.min(this.drop, this.liquid);
-    c.solutionMat.add(this.substance, take); // H2O 走"水"字段，其它走溶质
-    if (this.substance !== 'H2O') c.noteSolOrigin(this.substance, { kind: 'dropper', text: '滴管滴入' });
-    this.liquid -= take;
-    // 记录落点：化学/气泡/沉淀围绕"滴入处"发生（不再默认容器中心）
-    const r = c.innerRect();
-    const dx = Math.max(r.x + 4, Math.min(r.x + r.w - 4, this.x + this.w / 2));
-    const dy = Math.max(r.y + 4, Math.min(r.y + r.h - 6, this.bottom + 30));
-    c.depositAt = { x: dx, y: dy };
-    // 液滴下坠动画（从滴管口到液面；带滴管液体颜色）
-    if (typeof scene.addObject === 'function') {
-      const { color } = this.liquidColor();
-      scene._dripSeq = (scene._dripSeq ?? 0) + 1;
-      scene.addObject(new Drip({
-        x: dx - 2,
-        y: this.bottom + 2,
-        targetY: r.y + 6,
-        color,
-        id: `drip${scene._dripSeq}`,
-      }));
-    }
-    return true;
-  }
-
-  /** 正下方的容器：水平中心在容器口内即可（**高度不限**——用户要求"只要下面有
-   *  就可以"；滴管底可悬在口上方任意高度，伸入容器（内深 ≤ 容器深+8）也接受）。
-   *  取离口最近的一个（水平不重叠的容器不算）。 */
-  _containerBelow(scene) {
-    const cx = this.x + this.w / 2;
-    let best = null;
-    let bestDy = Infinity;
-    for (const c of scene.containers ?? []) {
-      const r = c.innerRect();
-      if (cx < r.x || cx > r.x + r.w) continue;
-      const dy = r.y - this.bottom; // 口沿到滴管底（正值=滴管底在口沿上方）
-      if (dy >= -r.h - 8 && dy < bestDy) {
-        best = c;
-        bestDy = dy;
-      }
-    }
-    return best;
-  }
-
-  render(ctx) {
-    const x = Number.isFinite(this.rx) ? this.rx : this.x;
-    const y = Number.isFinite(this.ry) ? this.ry : this.y;
-    const w = this.w;
-    const h = this.h;
-    // 橡皮胶头（红色泪滴形：大头在上，下缘收进管口）——参照真实胶头滴管
-    const hx = x + w / 2;
-    const bulbY = y + 4.5;
-    ctx.fillStyle = '#c0303a';
-    ctx.beginPath();
-    ctx.ellipse(hx, bulbY, w * 0.44, 6.5, 0, 0, Math.PI * 2);
-    ctx.fill();
-    // 胶头高光（左上亮斑 + 下棱线）
-    ctx.fillStyle = 'rgba(255,255,255,0.35)';
-    ctx.beginPath();
-    ctx.ellipse(hx - 1.6, bulbY - 2, 1.6, 2.6, -0.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(120,20,24,0.5)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(hx - 3.4, bulbY + 5.4);
-    ctx.quadraticCurveTo(hx, bulbY + 6.8, hx + 3.4, bulbY + 5.4);
-    ctx.stroke();
-    // 玻璃管（细长）：管口从胶头垂到细管口
-    const gx = hx - w * 0.14;
-    const gw = w * 0.28;
-    const gy = y + 10;
-    const gh = h - 14 - 8; // 上到锥尖
-    ctx.fillStyle = 'rgba(215,235,255,0.16)';
-    ctx.fillRect(gx, gy, gw, gh);
-    ctx.strokeStyle = 'rgba(215,235,255,0.85)';
-    ctx.lineWidth = 1.2;
-    ctx.strokeRect(gx, gy, gw, gh);
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.fillRect(gx + 0.6, gy, 0.7, gh); // 左侧玻璃高光
-    // 管内液体（颜色与溶液取色一致；液面随剩余比例下降；液体**贯穿到锥形滴嘴**——
-    // 滴嘴也是玻璃腔的一部分，装的是同一管液体，不该是空的）
-    const frac = Math.max(0, Math.min(1, this.liquid / this.capacity));
-    const innerY = gy + 1;
-    const innerH = gh - 2;
-    const lh = innerH * frac;
-    if (lh > 0.6) {
-      const { color, alpha } = this.liquidColor();
-      const bodyTop = innerY + innerH - lh; // 液面 y（管内部）
-      const tipBase = gy + gh; // 管底 → 滴嘴起
-      ctx.globalAlpha = Math.max(alpha, 0.45);
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.moveTo(gx + 0.6, bodyTop);
-      ctx.lineTo(gx + gw - 0.6, bodyTop);
-      // 沿管向下 → 两侧收进锥形滴嘴（液体充满到尖端）
-      ctx.lineTo(gx + gw - 0.6, tipBase);
-      ctx.lineTo(hx, y + h - 1);
-      ctx.lineTo(gx + 0.6, tipBase);
-      ctx.closePath();
-      ctx.fill();
-      ctx.globalAlpha = 1;
-      // 液面线（只在管内部分显示）
-      if (bodyTop >= innerY + 1) {
-        ctx.strokeStyle = 'rgba(255,255,255,0.7)';
-        ctx.lineWidth = 0.8;
-        ctx.beginPath();
-        ctx.moveTo(gx + 0.8, bodyTop);
-        ctx.lineTo(gx + gw - 0.8, bodyTop);
-        ctx.stroke();
-      }
-      // 液面下"尖嘴"与管交界的光泽（液体连贯感）
-      ctx.fillStyle = 'rgba(255,255,255,0.18)';
-      ctx.beginPath();
-      ctx.moveTo(gx + 0.6, tipBase - 1);
-      ctx.lineTo(gx + gw - 0.6, tipBase - 1);
-      ctx.lineTo(hx + 0.5, y + h - 2.5);
-      ctx.lineTo(hx - 0.5, y + h - 2.5);
-      ctx.closePath();
-      ctx.fill();
-    }
-    // 锥形滴嘴（细管下端收尖）
-    ctx.fillStyle = 'rgba(215,235,255,0.2)';
-    ctx.beginPath();
-    ctx.moveTo(gx, gy + gh);
-    ctx.lineTo(hx, y + h);
-    ctx.lineTo(gx + gw, gy + gh);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(215,235,255,0.7)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-  }
-}
-
-exports.DROPPER_W = DROPPER_W;
-exports.DROPPER_H = DROPPER_H;
-exports.Dropper = Dropper;
-
-  };
-  __modules["src/objects/gasbottle.js"] = function (module, exports, __require) {
-// ============================================================================
-// 集气瓶（GasBottle）：可收集气体的玻璃瓶（**有实体**——与烧杯同一套容器物理）。
-// ----------------------------------------------------------------------------
-// - 碰撞箱 = 玻璃瓶身轮廓（左右瓶壁沿**瓶身段** = 瓶口以下 10px → 瓶底；
-//   瓶口/瓶颈区开放——细瓶颈两侧是空气，不该挡人；玻璃盖板贴住瓶口，
-//   与视觉对齐——修"碰撞箱看起来异常偏大（盖板悬空+瓶口假墙挡人）"）
-// - 可推动：玩家贴外壁行走会推动整只瓶子；受重力，无支撑时下落；
-// - 容量默认 5g：按住 C（背包含集气瓶）时，把最近气泡柱产生的气体直接截留进瓶
-//   （气体不再进大气）；按住 X 向最近液体容器通入气体（0.05g/s）；
-// - 收集/倒出/放置与烧杯、滴管同一套"可携带物品"流程（C 拾取 / Shift 放置），
-//   进背包时瓶壁子体一并移出场景。
-// ============================================================================
-
-const { Obj } = __require('src/objects/obj.js');;
-const { getSubstance } = __require('src/chem/substances.js');;
-const { CFG } = __require('src/core/config.js');;
-const { shallowestSupportY, settleBodyOnSupport } = __require('src/physics/support.js');;
-
-const BOTTLE_W = 30;
-const BOTTLE_H = 56;
-
-const WALL = 4; // 瓶壁厚（px）
-const LID_H = 4; // 盖板厚（px）
-const LID_LIFT = 2.5; // 装气时盖板被顶起的最大高度（px）
-const NECK_H = 10; // 瓶口/瓶颈区高度（px）：无侧壁，只有透明瓶颈
-
-let SEQ_N = 0; // 无 id 集气瓶的子体命名序号（防 byId 键冲突）
-
-class GasBottle extends Obj {
-  constructor({ x, y, capacity = CFG.item.bottleCapacity, gases = null, ...rest } = {}) {
-    super({
-      x, y, w: BOTTLE_W, h: BOTTLE_H,
-      solid: false, physicsKind: 'none', noLift: true,
-      ...rest,
-    });
-    this.wall = WALL;
-    this.vy = 0;
-    this._lidLift = 0; // 0→1 装气顶盖动画进度
-    this._fillPulse = 0; // 装气辉光脉冲
-    // 实体子体：左右瓶壁（**瓶身段**：口下 NECK_H → 瓶底）+ 底 + 贴口玻璃盖板。
-    // static：壁是"与瓶身联动的死墙"——不参与动量交换（动态壁会被玩家撞飞再被
-    // syncWalls 拉回 → 推动强烈震动——用户反馈）；noLift：不被气泡柱顶飞。
-    // 瓶颈区（顶部 NECK_H）无侧壁——细瓶颈两侧是空气，不该挡人。
-    const pid = rest.id ? `${rest.id}_gb` : `gb${++SEQ_N}`;
-    this.subBodies = [
-      new Obj({ id: `${pid}_l`, x, y: y + NECK_H, w: WALL, h: BOTTLE_H - NECK_H, solid: true, static: true, physicsKind: 'static', noLift: true }),
-      new Obj({ id: `${pid}_r`, x: x + BOTTLE_W - WALL, y: y + NECK_H, w: WALL, h: BOTTLE_H - NECK_H, solid: true, static: true, physicsKind: 'static', noLift: true }),
-      new Obj({ id: `${pid}_b`, x, y: y + BOTTLE_H - WALL, w: BOTTLE_W, h: WALL, solid: true, static: true, physicsKind: 'static', noLift: true }),
-      new Obj({ id: `${pid}_lid`, x: x + 4, y: y - 2, w: BOTTLE_W - 8, h: LID_H, solid: true, static: true, physicsKind: 'static', noLift: true }),
-    ];
-    this.syncWalls();
-    this.capacity = Math.max(0.1, capacity);
-    this.gases = new Map(); // gasId → g
-    if (gases) {
-      for (const [id, m] of Object.entries(gases)) {
-        if (Number.isFinite(m) && m > 0) this.gases.set(id, Math.min(m, this.capacity - this.totalGas()));
-      }
-    }
-  }
-
-  get isCarryItem() {
-    return 'bottle';
-  }
-
-  get hoverLabel() {
-    if (this.totalGas() <= 1e-9) return '集气瓶（空）';
-    return `集气瓶·${this.gasLabel()}（${this.totalGas().toFixed(1)}g）`;
-  }
-
-  /** 瓶内气体标签：单一气体显示 id，混合显示"多气体" */
-  gasLabel() {
-    const d = this.dominantGas();
-    if (!d) return '';
-    if (this.gases.size > 1) return `${d[0]}等`;
-    return d[0];
-  }
-
-  /** 当前总量最占优的气体（通入时先通它）：[id, mass] 或 null */
-  dominantGas() {
-    let best = null;
-    for (const [id, m] of this.gases) {
-      if (!best || m > best[1]) best = [id, m];
-    }
-    return best;
-  }
-
-  totalGas() {
-    let s = 0;
-    for (const m of this.gases.values()) s += m;
-    return s;
-  }
-
-  /** 装入气体（容量封顶），返回实际装入量；装气时顶一下盖板 + 辉光 */
-  addGas(id, mass) {
-    if (!(mass > 0)) return 0;
-    const room = this.capacity - this.totalGas();
-    if (room <= 1e-9) return 0;
-    const take = Math.min(room, mass);
-    this.gases.set(id, (this.gases.get(id) ?? 0) + take);
-    this._lidLift = 1;
-    this._fillPulse = 1;
-    return take;
-  }
-
-  /** 取出气体（不超过持有量），返回实际取出量 */
-  removeGas(id, mass) {
-    if (!(mass > 0)) return 0;
-    const cur = this.gases.get(id) ?? 0;
-    const r = Math.min(cur, mass);
-    const n = cur - r;
-    if (n <= 1e-9) this.gases.delete(id);
-    else this.gases.set(id, n);
-    return r;
-  }
-
-  /** 瓶内气体代表色（占优气体）；空瓶淡青 */
-  gasColor() {
-    const d = this.dominantGas();
-    if (!d) return '#78dcff';
-    const sub = getSubstance(d[0]);
-    return sub?.gasColor ?? '#78dcff';
-  }
-
-  /** 壁体跟随瓶身位置（含盖板顶起动画位移） */
-  syncWalls() {
-    const [l, r, b, lid] = this.subBodies;
-    l.x = this.x;
-    l.y = this.y + NECK_H;
-    r.x = this.x + this.w - this.wall;
-    r.y = this.y + NECK_H;
-    b.x = this.x;
-    b.y = this.y + this.h - this.wall;
-    lid.x = this.x + 4;
-    lid.y = this.y - LID_LIFT * this._lidLift - 2; // 盖板底边贴住瓶口线（装气时顶起微隙）
-  }
-
-  /** 无支撑时受重力下落，落到**最浅**支撑面停住（与烧杯同款：statics + 实心动态体，
-   *  不沉入池盆/高台侧面——见 physics/support.js） */
-  applyGravity(dt, scene) {
-    const sup = shallowestSupportY(this, scene);
-    this._onIce = sup.ice; // 是否立在冰面上（冰面惯性滑行用）
-    settleBodyOnSupport(this, dt, sup.y);
-  }
-
-  update(dt, scene) {
-    this.applyGravity(dt, scene);
-    // 冰面惯性滑行在 pushContainers（Player.update）里驱动
-    // 玩家贴壁推动已挪到 Player.update（pushContainers——时序要求：玩家重设 vel 之后、
-    // 物理步之前：吸附+清 vel，否则推-弹交替"一卡一卡"——用户反馈）
-    // 动画计时衰减（盖板回落、辉光消退）
-    if (this._lidLift > 0) this._lidLift = Math.max(0, this._lidLift - dt * 2.6);
-    if (this._fillPulse > 0) this._fillPulse = Math.max(0, this._fillPulse - dt * 1.8);
-  }
-
-  /** 物理结算后：壁体贴回瓶身当前位置（爆炸推散等下一帧即复位）。
-   *  注：瓶坐头顶时不做帽子式跟随（用户明确不要胶合感）。 */
-  lateUpdate() {
-    this.syncWalls();
-  }
-
-  render(ctx, scene) {
-    const x = this.x;
-    const y = this.y;
-    const w = this.w;
-    const h = this.h;
-    const frac = Math.max(0, Math.min(1, this.totalGas() / this.capacity));
-    const color = this.gasColor();
-    const cx = x + w / 2;
-    ctx.save();
-    // 瓶身玻璃（圆柱体：底圆角矩形 + 上口收窄）
-    const bodyW = w;
-    const bodyH = h - 12; // 上 12px 为颈/口
-    const bodyY = y + 12;
-    ctx.fillStyle = 'rgba(210,240,255,0.14)';
-    ctx.beginPath();
-    ctx.roundRect(x, bodyY, bodyW, bodyH, 6);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(225,245,255,0.75)';
-    ctx.lineWidth = 1.6;
-    ctx.beginPath();
-    ctx.roundRect(x, bodyY, bodyW, bodyH, 6);
-    ctx.stroke();
-    // 瓶颈 + 瓶口（宽口：便于集气；口上盖着玻璃板）
-    ctx.strokeStyle = 'rgba(225,245,255,0.75)';
-    ctx.lineWidth = 1.4;
-    ctx.beginPath();
-    ctx.moveTo(x + 5, bodyY);
-    ctx.lineTo(x + 7, y);
-    ctx.lineTo(x + w - 7, y);
-    ctx.lineTo(x + w - 5, bodyY);
-    ctx.stroke();
-    // 气体填充（从瓶底往上按比例；装气时带辉光脉冲）
-    if (frac > 0.01) {
-      const fh = (bodyH - 4) * frac;
-      const fy = bodyY + bodyH - 2 - fh;
-      const hexToRgb = (hex) => {
-        const g = hex.replace('#', '');
-        return { r: parseInt(g.slice(0, 2), 16), g: parseInt(g.slice(2, 4), 16), b: parseInt(g.slice(4, 6), 16) };
-      };
-      const c = hexToRgb(color);
-      ctx.globalAlpha = 0.4 + 0.25 * frac;
-      ctx.fillStyle = `rgb(${c.r},${c.g},${c.b})`;
-      ctx.shadowColor = color;
-      ctx.shadowBlur = 8 + this._fillPulse * 14;
-      ctx.beginPath();
-      ctx.roundRect(x + 2, fy, w - 4, fh, 4);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      ctx.globalAlpha = 1;
-    }
-    // 玻璃盖板（盖在瓶口上，装气时微微顶起再落下）——与 gb_*_lid 子体同位
-    const [, , , lid] = this.subBodies;
-    const lx = lid ? lid.x : x + 2;
-    const ly = lid ? lid.y : y - LID_LIFT * this._lidLift - LID_H + 2;
-    const lw = lid ? lid.w : w - 4;
-    ctx.fillStyle = 'rgba(225,245,255,0.28)';
-    ctx.beginPath();
-    ctx.roundRect(lx, ly, lw, LID_H, 1.5);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(240,250,255,0.9)';
-    ctx.lineWidth = 1.2;
-    ctx.stroke();
-    // 盖板高光条
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.fillRect(lx + 2, ly + 0.8, lw - 4, 1);
-    // 盖板边缘把手颗粒（两端小圆点，示意"磨砂玻璃片"）
-    ctx.fillStyle = 'rgba(240,250,255,0.55)';
-    ctx.beginPath();
-    ctx.arc(lx + lw - 3, ly + LID_H / 2, 1.2, 0, Math.PI * 2);
-    ctx.fill();
-    // 装气闪环（收气成功的一圈扩散光）
-    if (this._fillPulse > 0.01) {
-      ctx.globalAlpha = this._fillPulse * 0.5;
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.arc(cx, y + h / 2, w * 0.62 + (1 - this._fillPulse) * 14, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-    }
-    // 瓶口高光
-    ctx.fillStyle = 'rgba(255,255,255,0.25)';
-    ctx.fillRect(x + 2, bodyY + 1, 2, bodyH - 4);
-    ctx.restore();
-    // 标签（非空时瓶身下方显示气体种类与量）
-    if (frac > 0.01) {
-      const d = this.dominantGas();
-      ctx.font = 'bold 10px "Segoe UI", "Microsoft YaHei", sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillStyle = 'rgba(8,18,32,0.72)';
-      const label = `${d[0]} ${this.totalGas().toFixed(1)}g`;
-      const tw = ctx.measureText(label).width;
-      ctx.fillRect(cx - tw / 2 - 4, this.bottom - 2, tw + 8, 14);
-      ctx.fillStyle = color;
-      ctx.fillText(label, cx, this.bottom + 8);
-      ctx.textAlign = 'left';
-    }
-  }
-}
-
-exports.BOTTLE_W = BOTTLE_W;
-exports.BOTTLE_H = BOTTLE_H;
-exports.GasBottle = GasBottle;
-
-  };
   __modules["src/level/multiscene.js"] = function (module, exports, __require) {
 // ============================================================================
 // Multiscene：多场景（章节）关卡管理器。
@@ -16578,4 +16711,4 @@ exports.Multiscene = Multiscene;
   };
   global.Chezzle = __require("src/index.js");
 })(typeof window !== 'undefined' ? window : globalThis);
-console.log('[Chezzle] 引擎构建 "vmto8z4z8"');
+console.log('[Chezzle] 引擎构建 "vmtoad8q0"');

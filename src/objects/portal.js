@@ -13,6 +13,7 @@
 
 import { Obj } from './obj.js';
 import { overlaps } from '../physics/collision.js';
+import { applyInventorySetup } from '../level/items.js';
 
 const EMBED_TOL = 8; // 落点嵌入实心体多少 px 以内仍可落（物理一帧即可温柔推开）
 function overlapsBox(box, o, m = EMBED_TOL) {
@@ -76,7 +77,7 @@ function searchSpot(obj, pair, scene, strict) {
 }
 
 export class Portal extends Obj {
-  constructor({ x, y, w = 40, h = 64, color = '#c78bff', once = false, uses = Infinity, switchId = null, group = null, ...rest } = {}) {
+  constructor({ x, y, w = 40, h = 64, color = '#c78bff', once = false, uses = Infinity, switchId = null, group = null, inventory = null, clearInventory = false, ...rest } = {}) {
     super({ x, y, w, h, solid: false, physicsKind: 'none', ...rest });
     this.color = color; // 外观色（不再承担配对职责——配对由 group 承担）
     this.group = group; // 组号（字符串）：同组 = 配对/共享预算/属性同步；null = 旧数据，按颜色兜底配对
@@ -85,6 +86,10 @@ export class Portal extends Obj {
     this.uses = once ? 1 : uses;
     this.usesLeft = Number.isFinite(this.uses) ? this.uses : Infinity;
     this.switchId = switchId; // 绑定开关 id：开关有效开启时才可传送（null = 常开）
+    // 传送后物品栏重置：inventory = 多行文本配置（解析见 items.parseInventorySetup），
+    // clearInventory = 只清空不配送（勾选"清空物品栏"；两层语义：清空+装配 / 只清空）
+    this.inventory = inventory ?? null;
+    this.clearInventory = !!clearInventory;
     this.pair = null; // 对侧门（惰性解析）
   }
 
@@ -176,6 +181,7 @@ export class Portal extends Obj {
               portalLanding: true,
               spawn: { x: spot.x, y: spot.y },
             });
+            this._applyInventory(obj);
             this._consumeUse(scene, pair);
           }
           continue;
@@ -185,12 +191,21 @@ export class Portal extends Obj {
         obj.x = spot.x;
         obj.y = spot.y;
         obj._portalLast = pair; // 站在对侧门内：本门不重复触发；离开本门后才能再进本门
+        this._applyInventory(obj);
         this._consumeUse(scene, pair);
       } else if (!inside && obj._portalLast === this) {
         // 已走出本门：允许下次再进本门
         obj._portalLast = null;
       }
     }
+  }
+
+  /** 传送门"物品栏重置"：只有玩家（有 inventory）生效；没配置不动（null/空文本）。
+   *  配置 = this.inventory（多行文本或数组）+ this.clearInventory（只清空）。 */
+  _applyInventory(obj) {
+    if (!obj || !obj.inventory) return;
+    if (this.inventory == null && !this.clearInventory) return;
+    applyInventorySetup(obj, this.inventory, this.clearInventory);
   }
 
   /** n次门：整组共享剩余次数，用尽后整组消失（任一扇配置的有限次数 = 整组预算） */

@@ -25,9 +25,12 @@ import { stepPressTap } from '../level/click.js';
 import { deathQuip } from '../render/hud.js';
 
 export class Scene {
-  constructor({ worldW = CFG.worldW, worldH = CFG.worldH, physics = {} } = {}) {
+  constructor({ worldW = CFG.worldW, worldH = CFG.worldH, physics = {}, hideTouchGrab = false } = {}) {
     this.worldW = worldW;
     this.worldH = worldH;
+    // 移动端"拾取/吸液"按钮（=电脑端 C 键：拾烧杯/吸液/集气）开关：
+    // 很多关卡用不到它，默认收起防误导（true=隐藏）；桌面端无影响
+    this.hideTouchGrab = !!hideTouchGrab;
     this.objects = [];
     this.dynamics = [];
     this.statics = [];

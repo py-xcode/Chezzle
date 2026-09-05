@@ -28,10 +28,18 @@
 // }
 // @@end
 
+/** 编辑器提示数据（{text, mode, items}）→ 引擎场景提示（{text, when:{mode, items}}）——
+ *  试玩注入用；导出走 ed.sceneDsl（内部同规格转换）。 */
+const toSceneTips = (tips) => (Array.isArray(tips) ? tips : [])
+  .map((t) => (t && typeof t.text === 'string'
+    ? { text: t.text, when: { mode: t.mode === 'any' ? 'any' : 'and', items: (Array.isArray(t.items) ? t.items : []).filter((c) => c && c.type) } }
+    : null))
+  .filter(Boolean);
+
 Chezzle.Plugin.register('chapters', {
   editor(ed) {
     const st = ed.state;
-    st.scenes = st.scenes ?? []; // [{ id, snap }]；snap = { worldW, worldH, rx, atm, objects }
+    st.scenes = st.scenes ?? []; // [{ id, snap }]；snap = { worldW, worldH, rx, atm, tips, hideTouchGrab, objects }
     st.current = st.current ?? null;
     st.start = st.start ?? null; // 初始场景 id
 
@@ -59,9 +67,10 @@ Chezzle.Plugin.register('chapters', {
     const addScene = () => {
       saveCurrent();
       const id = nextId();
-      st.scenes.push({ id, snap: { worldW: 3000, worldH: 800, rx: [], atm: {}, objects: [] } });
+      const blank = { worldW: 3000, worldH: 800, rx: [], atm: {}, tips: [], hideTouchGrab: false, objects: [] };
+      st.scenes.push({ id, snap: { ...blank } });
       st.current = id;
-      ed.applySnapshot({ worldW: 3000, worldH: 800, rx: [], atm: {}, objects: [] });
+      ed.applySnapshot({ ...blank });
       refresh();
     };
     let armDel = -1;
@@ -195,7 +204,10 @@ Chezzle.Plugin.register('chapters', {
         plugins: ed.getActivePlugins().map((p) => ({ ...p, cfg: { ...(p.cfg ?? {}), M: () => M } })),
       });
       for (const s of scenesGo) {
-        const b = M.scene(s.id, { worldW: s.snap.worldW, worldH: s.snap.worldH });
+        const b = M.scene(s.id, { worldW: s.snap.worldW, worldH: s.snap.worldH, hideTouchGrab: !!s.snap.hideTouchGrab });
+        // 条件提示（多场景每场景独立清单；与导出 sceneDsl 同规格）
+        const tps = toSceneTips(s.snap.tips);
+        if (tps.length) b.tips(tps);
         let hasPlayer = false;
         for (const p of ed.objectsFrom(s.snap)) {
           if (p.type === 'rope') continue;

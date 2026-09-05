@@ -18,6 +18,9 @@ import { CFG } from '../core/config.js';
 import { solutionColor } from '../render/liquidrender.js';
 import { puffFx, flowFx } from '../objects/fx.js';
 import { Bubble } from '../objects/bubble.js';
+import { Beaker } from '../objects/beaker.js';
+import { Dropper } from '../objects/dropper.js';
+import { GasBottle } from '../objects/gasbottle.js';
 
 let FX_SEQ = 0; // 特效对象 id 序号（fx.js 的计数器不跨模块共享）
 
@@ -290,4 +293,110 @@ export function injectBottleGas(player, scene, dt) {
     }));
   }
   return true;
+}
+
+// ============================================================================
+// 传送门物品栏重置（Portal 调用）——"穿过传送门时重设玩家物品栏"
+// ----------------------------------------------------------------------------
+// 配置文本（编辑器多行字段）每行一种：
+//   Cu:50                  物质 50g（进格子；跨格收集同真实拾取）
+//   beaker                 空烧杯
+//   beaker:HCl:20,ZnCl2:5  烧杯 + 满杯水 + 溶质（逗号分隔 溶质:质量）
+//   dropper:H2O:40         滴管装 40g 液体
+//   gasbottle              空集气瓶（gasbottle:H2:3 装 3g 气体）
+//   # 注释 / 空行跳过。也接受数组形式 [{substance, amount} | {item, opts}]。
+// ============================================================================
+
+export const ITEM_NAMES = ['beaker', 'dropper', 'gasbottle'];
+
+/** 解析配置文本 → [{substance, amount} | {item, opts}]（数组直接规范化返回） */
+export function parseInventorySetup(text) {
+  if (Array.isArray(text)) {
+    return text.filter((e) => e && (e.substance || e.item)); // 已是结构：直接收
+  }
+  if (typeof text !== 'string') return [];
+  const out = [];
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const n = normalizeSetupLine(line);
+    if (n) out.push(n);
+  }
+  return out;
+}
+
+function normalizeSetupLine(line) {
+  if (typeof line !== 'string') return null;
+  const [head, ...rest] = line.split(':');
+  const name = head.trim();
+  if (!name) return null;
+  if (ITEM_NAMES.includes(name)) {
+    // 物品行剩余段：溶质/液体/气体清单（id:g, id:g）
+    const solutes = {};
+    for (const seg of rest.join(':').split(',')) {
+      const t = seg.trim();
+      if (!t) continue;
+      const [id, m] = t.split(':').map((s) => s.trim());
+      if (id && Number.isFinite(Number(m)) && Number(m) > 0) solutes[id] = Number(m);
+    }
+    const opts = {};
+    if (Object.keys(solutes).length) opts.solutes = solutes;
+    return { item: name, opts };
+  }
+  // 物质行：物质:质量
+  const [id, m] = line.split(':');
+  const mass = Number(m);
+  if (id && Number.isFinite(mass) && mass > 0) return { substance: id.trim(), amount: mass };
+  return null;
+}
+
+/**
+ * 把玩家物品栏替换为配置（清空 + 装配）。仅玩家（有 inventory）生效。
+ * clearOnly=true → 只清空（clearInventory 字段用）。
+ * 返回装配数量（物品/物质各计），供调试/测试断言。
+ */
+export function applyInventorySetup(player, setupText, clearOnly = false) {
+  const inv = player && player.inventory;
+  if (!inv) return 0;
+  inv.slots = new Array(inv.slots.length).fill(null);
+  inv.selected = 0;
+  if (clearOnly) return 0;
+  const entries = parseInventorySetup(setupText);
+  let n = 0;
+  for (const e of entries) {
+    if (e.substance) {
+      inv.add(e.substance, e.amount); // 跨格收集：同物质格优先、再空格
+      n++;
+    } else if (e.item) {
+      const slot = inv.slots.findIndex((s) => s === null);
+      if (slot < 0) continue; // 格子满：跳过
+      const o = createSetupItem(e.item, e.opts, player);
+      if (o) {
+        inv.slots[slot] = { item: e.item, obj: o };
+        n++;
+      }
+    }
+  }
+  return n;
+}
+
+/** 配置物品 → 真实物品对象（x/y 挂玩家附近：拿在手里的坐标不影响使用） */
+function createSetupItem(name, opts = {}, player = null) {
+  const x = player ? player.x : 0;
+  const y = player ? player.y : 0;
+  const solutes = opts.solutes ?? {};
+  if (name === 'beaker') {
+    // 默认 200mL（编辑器常见值）；带溶质 → 满杯水作溶剂（液面=总质量/体积）
+    const volume = opts.volume ?? 200;
+    const water = opts.water !== undefined ? opts.water : (Object.keys(solutes).length ? volume : 0);
+    return new Beaker({ x, y, volume, water, solutes });
+  }
+  if (name === 'dropper') {
+    const liquid = Object.entries(solutes)[0] ?? null;
+    return new Dropper({ x, y, substance: liquid ? liquid[0] : (opts.substance ?? 'H2O'), liquid: liquid ? liquid[1] : (opts.liquid ?? 0), capacity: opts.capacity ?? 50 });
+  }
+  if (name === 'gasbottle') {
+    return new GasBottle({ x, y, capacity: opts.capacity ?? 5, gases: Object.keys(solutes).length ? solutes : null });
+  }
+  return null;
 }

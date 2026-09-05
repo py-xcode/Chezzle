@@ -11,7 +11,7 @@
 </head>
 <body>
 <canvas id="game"></canvas>
-<script src="../dist/chezzle.js?vmto8z4z8"></script>
+<script src="../dist/chezzle.js?vmtoad8q0"></script>
 <!-- 插件: 演出编排 v1.0（showtime.js） -->
 <script>
 // ============================================================================
@@ -365,6 +365,13 @@ Chezzle.Plugin.register('checkpoint', {
 // }
 // @@end
 
+/** 编辑器提示数据（{text, mode, items}）→ 引擎场景提示（{text, when:{mode, items}}）——试玩注入用 */
+const toSceneTips = (tips) => (Array.isArray(tips) ? tips : [])
+  .map((t) => (t && typeof t.text === 'string'
+    ? { text: t.text, when: { mode: t.mode === 'any' ? 'any' : 'and', items: (Array.isArray(t.items) ? t.items : []).filter((c) => c && c.type) } }
+    : null))
+  .filter(Boolean);
+
 Chezzle.Plugin.register('chapters', {
   editor(ed) {
     const st = ed.state;
@@ -396,9 +403,10 @@ Chezzle.Plugin.register('chapters', {
     const addScene = () => {
       saveCurrent();
       const id = nextId();
-      st.scenes.push({ id, snap: { worldW: 3000, worldH: 800, rx: [], atm: {}, objects: [] } });
+      const blank = { worldW: 3000, worldH: 800, rx: [], atm: {}, tips: [], hideTouchGrab: false, objects: [] };
+      st.scenes.push({ id, snap: { ...blank } });
       st.current = id;
-      ed.applySnapshot({ worldW: 3000, worldH: 800, rx: [], atm: {}, objects: [] });
+      ed.applySnapshot({ ...blank });
       refresh();
     };
     let armDel = -1;
@@ -509,7 +517,9 @@ Chezzle.Plugin.register('chapters', {
         plugins: ed.getActivePlugins().map((p) => ({ ...p, cfg: { ...(p.cfg ?? {}), M: () => M } })),
       });
       for (const s of scenesGo) {
-        const b = M.scene(s.id, { worldW: s.snap.worldW, worldH: s.snap.worldH });
+        const b = M.scene(s.id, { worldW: s.snap.worldW, worldH: s.snap.worldH, hideTouchGrab: !!s.snap.hideTouchGrab });
+        const tps = toSceneTips(s.snap.tips);
+        if (tps.length) b.tips(tps);
         for (const p of ed.objectsFrom(s.snap)) {
           if (p.type === 'rope') continue;
           if (p.obj) b.add(p.obj);
@@ -791,14 +801,11 @@ M.scene("plain", { worldW: 3000, worldH: 800 })
   .floor(1260, 620, 120, 16, { id: 'p_gap1a' })
   .floor(1580, 620, 120, 16, { id: 'p_gap1b' })
   .player(140, 600, { substance: 'NaOH', mass: 30, id: 'player1' })
-  .sign(260, 690, 'A / D 移动 · 空格跳跃 · R 重开
-先往右走走，感受一下脚步', { id: 'p_s0' })
+  .sign(260, 690, 'A / D 移动 · 空格跳跃 · R 重开\n先往右走走，感受一下脚步', { id: 'p_s0' })
   .sign(260, 640, '按 V "灵魂出窍"看整片草原（再按 V 回来）', { id: 'p_s0b' })
   .sign(60, 660, '💀 死了会回到这里——这是本关的「检查点」', { id: 'p_s0c' })
   .sign(310, 560, '踩上石头看风景——你是要"跋山涉水"的化学物质！', { id: 'p_s1' })
-  .sign(1930, 660, '这是「开关」：
-①踩上就开——现在这个（站上去试试）
-②需要化学物质才能开（世界 2 见）', { id: 'p_sw' })
+  .sign(1930, 660, '这是「开关」：\n①踩上就开——现在这个（站上去试试）\n②需要化学物质才能开（世界 2 见）', { id: 'p_sw' })
   .switch(2000, 678, { mode: 'pressure', deleteId: 'p_wall', id: 'p_gate_sw' })
   .floor(2124, 460, 16, 260, { id: 'p_wall' })
   .sign(2080, 620, '开关开了 = 墙消失 = 过去', { id: 'p_gate_s' })
@@ -809,33 +816,24 @@ M.scene("canyon", { worldW: 1800, worldH: 1000 })
   .floor(760, 900, 320, 150, { id: 'c_l1' })
   .floor(1180, 900, 700, 150, { id: 'c_l2' })
   .pool(160, 900, 260, 55, { volume: 220, solutes: {"CuSO4":30}, id: 'c_pool' })
-  .sign(110, 855, '第一个「池子」：池子 = 溶液。
-跳进去看看身体会发生什么——看飘出的反应标签！', { id: 'c_s0' })
-  .sign(120, 795, '反应成功！表面长出蓝色沉淀 Cu(OH)₂
-（碱 + 硫酸铜 → 蓝沉淀）', { id: 'c_s1' })
-  .sign(700, 855, '「Q 收集」：走进沉淀按 Q，收进物品栏
-（屏幕下方那一格；点格子可选中）', { id: 'c_s2' })
+  .sign(110, 855, '第一个「池子」：池子 = 溶液。\n跳进去看看身体会发生什么——看飘出的反应标签！', { id: 'c_s0' })
+  .sign(120, 795, '反应成功！表面长出蓝色沉淀 Cu(OH)₂\n（碱 + 硫酸铜 → 蓝沉淀）', { id: 'c_s1' })
+  .sign(700, 855, '「Q 收集」：走进沉淀按 Q，收进物品栏\n（屏幕下方那一格；点格子可选中）', { id: 'c_s2' })
   .floor(1060, 740, 170, 16, { id: 'c_tower_top' })
   .floor(1060, 900, 22, 176, { id: 'c_tower_l' })
   .floor(1208, 900, 22, 176, { id: 'c_tower_r' })
   .switch(1150, 718, { mode: 'chemical', opening: 'Cu(OH)2', deleteId: 'c_wall', id: 'c_swCu' })
   .floor(1318, 560, 16, 360, { id: 'c_wall' })
-  .sign(1100, 700, '第二种「开关」：要化学物质才能开。
-它头顶写着要什么（Cu(OH)₂）。
-怎么放：点物品栏选中 → 站开关旁按 Shift', { id: 'c_sw_s' })
-  .sign(1030, 855, '塔 160px 高跳不上去？
-Shift 往脚下放沉淀把自己垫高——爬塔！', { id: 'c_tower_s' })
+  .sign(1100, 700, '第二种「开关」：要化学物质才能开。\n它头顶写着要什么（Cu(OH)₂）。\n怎么放：点物品栏选中 → 站开关旁按 Shift', { id: 'c_sw_s' })
+  .sign(1030, 855, '塔 160px 高跳不上去？\nShift 往脚下放沉淀把自己垫高——爬塔！', { id: 'c_tower_s' })
   .floor(1360, 900, 340, 150, { ice: true, id: 'c_ice' })
-  .sign(1370, 855, '「冰面」：滑！沉淀放上去会自己溜走——
-在这搭不了高（放一把试试，看它跑）', { id: 'c_ice_s' })
+  .sign(1370, 855, '「冰面」：滑！沉淀放上去会自己溜走——\n在这搭不了高（放一把试试，看它跑）', { id: 'c_ice_s' })
 ;
 M.scene("plateau", { worldW: 1600, worldH: 800 })
   .floor(-60, 700, 1720, 130, { id: 'd_floor' })
   .switch(120, 678, { mode: 'pressure', igniteId: 'd_l1', extinguishId: 'd_l1', id: 'd_s1' })
   .lamp(220, 660, { autoOn: false, id: 'd_l1' })
-  .sign(60, 640, '「灯」：用开关点燃（开关第①种）。
-站上开关→灯亮；离开→灯灭。
-粉末也可以放灯上（灯=加热台）', { id: 'd_s0' })
+  .sign(60, 640, '「灯」：用开关点燃（开关第①种）。\n站上开关→灯亮；离开→灯灭。\n粉末也可以放灯上（灯=加热台）', { id: 'd_s0' })
   .switch(560, 678, { mode: 'pressure', igniteId: 'd_l2', extinguishId: 'd_l2', id: 'd_s2' })
   .lamp(660, 660, { autoOn: false, id: 'd_l2' })
   .switch(760, 678, { mode: 'pressure', igniteId: 'd_l3', extinguishId: 'd_l3', id: 'd_s3' })
@@ -847,13 +845,10 @@ M.scene("plateau", { worldW: 1600, worldH: 800 })
   .lamp(1280, 660, { autoOn: true, id: 'd_flame' })
   .deposit(1340, 690, { substance: 'CuSO4', w: 145, h: 15, id: 'd_cu' })
   .deposit(1380, 690, { substance: 'NaCl', w: 145, h: 15, id: 'd_na' })
-  .sign(1260, 600, '「焰色反应」：粉末放上常燃灯 → 火焰变色！
-CuSO₄ 绿 · NaCl 黄——每种元素一种颜色。
-不消耗：移开就还原', { id: 'd_note3' })
+  .sign(1260, 600, '「焰色反应」：粉末放上常燃灯 → 火焰变色！\nCuSO₄ 绿 · NaCl 黄——每种元素一种颜色。\n不消耗：移开就还原', { id: 'd_note3' })
   .switch(1470, 678, { mode: 'chemical', opening: 'CuO', deleteId: 'd_wall', id: 'd_swCuO' })
   .floor(1524, 460, 16, 260, { id: 'd_wall' })
-  .sign(1460, 600, '又见「化学开关」——它要 CuO。
-点物品栏选中 → Shift 放下', { id: 'd_s4' })
+  .sign(1460, 600, '又见「化学开关」——它要 CuO。\n点物品栏选中 → Shift 放下', { id: 'd_s4' })
 ;
 M.scene("well", { worldW: 1200, worldH: 900 })
   .floor(-60, 720, 480, 130, { id: 'w_l0' })
@@ -864,77 +859,58 @@ M.scene("well", { worldW: 1200, worldH: 900 })
   .floor(680, 820, 40, 100, { id: 'w_floor2b' })
   .block(450, 760, { substance: 'Zn', w: 40, h: 40, id: 'w_zn' })
   .pool(440, 820, 240, 46, { volume: 170, solutes: {"HCl":40}, gasHeight: 140, id: 'w_hcl' })
-  .sign(150, 660, '前方是「深坑」——跳下去！
-（坑底 = 实验室）', { id: 'w_s0' })
-  .sign(440, 775, '「盐酸池」：酸！你是碱（NaOH），跳进去会掉血，别试。
-把 Zn 块推进池子！', { id: 'w_s1' })
+  .sign(150, 660, '前方是「深坑」——跳下去！\n（坑底 = 实验室）', { id: 'w_s0' })
+  .sign(440, 775, '「盐酸池」：酸！你是碱（NaOH），跳进去会掉血，别试。\n把 Zn 块推进池子！', { id: 'w_s1' })
   .sign(470, 750, 'Zn + 2HCl → ZnCl₂ + H₂↑（产氢！看气泡柱）', { id: 'w_s2' })
-  .sign(560, 560, '站上「气泡柱」：氢气比你轻，它背着你飞！
-（托你回地面）', { id: 'w_s3' })
+  .sign(560, 560, '站上「气泡柱」：氢气比你轻，它背着你飞！\n（托你回地面）', { id: 'w_s3' })
   .gasdetector(660, 798, { gas: 'H2', threshold: 0.15, deleteId: 'w_gwall', id: 'w_det' })
   .floor(1128, 540, 16, 180, { id: 'w_gwall' })
-  .sign(640, 755, '「气体探测器」：检测反应产生的气体。
-它写着 H₂ > 0.25g——氢气超 0.25 克它就亮。
-亮 = 出口解锁', { id: 'w_s4' })
-  .sign(360, 700, '🕳 注意：这里空气稀薄——没有氧气！
-坑底想点灯？先别做梦（燃烧需要氧气）', { id: 'w_s5' })
+  .sign(640, 755, '「气体探测器」：检测反应产生的气体。\n它写着 H₂ > 0.25g——氢气超 0.25 克它就亮。\n亮 = 出口解锁', { id: 'w_s4' })
+  .sign(360, 700, '🕳 注意：这里空气稀薄——没有氧气！\n坑底想点灯？先别做梦（燃烧需要氧气）', { id: 'w_s5' })
   .sign(880, 660, '出口在右前方（探测器亮了才能过）', { id: 'w_s6' })
 ;
 M.scene("basin", { worldW: 2000, worldH: 800 })
   .floor(-60, 700, 698, 130, { id: 'b_floor' })
   .floor(902, 700, 1158, 130, { id: 'b_floorb' })
   .block(200, 640, { substance: 'Na', w: 25, h: 25, id: 'b_na' })
-  .sign(80, 655, '测验②：把 Na 块推进水池——
-推完就快跑！这次真的会炸。', { id: 'b_s0' })
+  .sign(80, 655, '测验②：把 Na 块推进水池——\n推完就快跑！这次真的会炸。', { id: 'b_s0' })
   .pool(650, 700, 240, 50, { volume: 220, solutes: {}, gasHeight: 120, id: 'b_pool' })
-  .sign(560, 660, '把 Na 推进池子：Na + H₂O → NaOH + H₂↑
-（还会…炸！所以让你快跑）', { id: 'b_s1' })
+  .sign(560, 660, '把 Na 推进池子：Na + H₂O → NaOH + H₂↑\n（还会…炸！所以让你快跑）', { id: 'b_s1' })
   .lamp(1180, 680, { autoOn: false, id: 'b_lamp' })
   .switch(1120, 678, { mode: 'pressure', igniteId: 'b_lamp', extinguishId: 'b_lamp', id: 'b_swL' })
-  .sign(1080, 640, '把灯点着——这里空气富氧：
-氢气够多 + 火苗 = 轰！', { id: 'b_s2' })
+  .sign(1080, 640, '把灯点着——这里空气富氧：\n氢气够多 + 火苗 = 轰！', { id: 'b_s2' })
   .gasdetector(1540, 698, { gas: 'H2', threshold: 0.05, id: 'b_det' })
-  .sign(1480, 655, '爆炸会切断附近的绳子！
-（看：吊着的块"哐"地砸下来）', { id: 'b_s3' })
+  .sign(1480, 655, '爆炸会切断附近的绳子！\n（看：吊着的块"哐"地砸下来）', { id: 'b_s3' })
   .portal(1780, 620, { w: 44, h: 64, color: '#c78bff', switchId: 'b_det', id: 'b_p1a' })
-  .sign(1700, 655, '「传送门」（第一次见）：紫色拱门！
-开关"承认"它才亮——亮了就走进去。', { id: 'b_s4' })
+  .sign(1700, 655, '「传送门」（第一次见）：紫色拱门！\n开关"承认"它才亮——亮了就走进去。', { id: 'b_s4' })
 ;
 M.scene("temple", { worldW: 1800, worldH: 800 })
   .floor(-60, 700, 608, 130, { id: 't_floor' })
   .floor(792, 700, 1068, 130, { id: 't_floorb' })
   .block(420, 640, { substance: 'CuO', w: 40, h: 40, id: 't_cuo' })
-  .sign(300, 655, '「溶解」：CuO 块推进酸池——固体会"消失"在液体里
-CuO + 2HCl → CuCl₂（溶液变蓝）', { id: 't_s0' })
+  .sign(300, 655, '「溶解」：CuO 块推进酸池——固体会"消失"在液体里\nCuO + 2HCl → CuCl₂（溶液变蓝）', { id: 't_s0' })
   .pool(560, 700, 220, 50, { volume: 180, solutes: {"HCl":40}, id: 't_pool' })
   .extractor(900, 686, { w: 50, h: 14, poolId: 't_pool', switchId: 't_ext_sw', rate: 1.2, id: 't_ext' })
   .switch(990, 678, { mode: 'pressure', id: 't_ext_sw' })
-  .sign(850, 645, '「提取器」：站上旁边的开关，
-它会把池子里的固体盐"提"出来冒在地上——Q 收！', { id: 't_s1' })
+  .sign(850, 645, '「提取器」：站上旁边的开关，\n它会把池子里的固体盐"提"出来冒在地上——Q 收！', { id: 't_s1' })
   .key(1180, 678, { opening: 'CuCl2', id: 't_key' })
-  .sign(1120, 645, '「钥匙」：永久锁！放对它要的物质就永远开着（不消耗）。
-它写着 CuCl₂——点物品栏选中 → Shift 放', { id: 't_s2' })
+  .sign(1120, 645, '「钥匙」：永久锁！放对它要的物质就永远开着（不消耗）。\n它写着 CuCl₂——点物品栏选中 → Shift 放', { id: 't_s2' })
   .portal(1500, 620, { w: 44, h: 64, color: '#c78bff', switchId: 't_key', id: 't_go' })
   .portal(1650, 620, { w: 44, h: 64, color: '#7fe0ff', id: 't_back' })
-  .sign(1470, 580, '两扇门：左边（蓝）=回盆地，右边（紫）=前进。
-看清楚哪扇通哪里再进！', { id: 't_s3' })
+  .sign(1470, 580, '两扇门：左边（蓝）=回盆地，右边（紫）=前进。\n看清楚哪扇通哪里再进！', { id: 't_s3' })
 ;
 M.scene("crater", { worldW: 2200, worldH: 1200 })
   .floor(-60, 1040, 478, 190, { id: 'v_floor' })
   .floor(662, 1040, 1598, 190, { id: 'v_floorb' })
   .block(380, 980, { substance: 'MnO2', w: 30, h: 30, id: 'v_mno2' })
   .pool(430, 1040, 220, 50, { volume: 170, solutes: {"H2O2":90}, gasHeight: 260, id: 'v_h2o2' })
-  .sign(300, 995, '「催化」：MnO₂ 推入双氧水池：
-2H₂O₂ → 2H₂O + O₂↑（吐泡泡！）
-催化剂自己一根毛都不掉', { id: 'v_s0' })
+  .sign(300, 995, '「催化」：MnO₂ 推入双氧水池：\n2H₂O₂ → 2H₂O + O₂↑（吐泡泡！）\n催化剂自己一根毛都不掉', { id: 'v_s0' })
   .block(760, 980, { substance: 'C', w: 30, h: 30, id: 'v_c' })
   .lamp(800, 1020, { autoOn: true, id: 'v_burnlamp' })
-  .sign(700, 985, '「燃烧」：把 C 放上灯：
-C + O₂ → CO₂——氧气就是草原空气里那个（闭环）', { id: 'v_s1' })
+  .sign(700, 985, '「燃烧」：把 C 放上灯：\nC + O₂ → CO₂——氧气就是草原空气里那个（闭环）', { id: 'v_s1' })
   .switch(1120, 1018, { mode: 'pressure', igniteId: 'v_hot', extinguishId: 'v_hot', id: 'v_hot_sw' })
   .blastlamp(1220, 1030, { autoOn: false, highTemp: true, id: 'v_hot' })
-  .sign(1100, 985, '「喷灯」：高温版酒精灯。
-站在旁边开关上点火：CuO + C → Cu——敢不敢把铜收藏了', { id: 'v_s2' })
+  .sign(1100, 985, '「喷灯」：高温版酒精灯。\n站在旁边开关上点火：CuO + C → Cu——敢不敢把铜收藏了', { id: 'v_s2' })
   .floor(1500, 960, 260, 16, { id: 'v_bridge' })
   .sign(1450, 920, '跳过熔岩裂缝——掉下去的话，检查点会把你捞回来', { id: 'v_s3' })
   .switch(1900, 1018, { mode: 'pressure', id: 'v_win_sw' })

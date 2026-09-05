@@ -265,11 +265,14 @@ export class TouchUI {
     return joyGeom(this.canvas.width, this.canvas.height, this.insets);
   }
 
-  /** 按钮矩形（画布坐标） */
+  /** 按钮矩形（画布坐标）；场景设置了 hideTouchGrab → 不返回/不渲染'grab'（拾取/吸液
+   *  按钮，=电脑端 C 键）。其余按钮位置不变（2×2 留一格空白，手指不会误触）。 */
   buttonRects() {
     const act = this.getActive();
+    const scene = act && act.scene ? act.scene : null;
     const slots = act && act.scene && act.scene.player ? act.scene.player.inventory.slots : [];
-    return touchButtonRects(this.canvas.width, this.canvas.height, slots, this.insets);
+    const rs = touchButtonRects(this.canvas.width, this.canvas.height, slots, this.insets);
+    return scene && scene.hideTouchGrab ? rs.filter((r) => r.key !== 'grab') : rs;
   }
 
   /** 设备/布局刷新：安全区、画布铺满、相机移动端视野（forceTouch / resize 时调用）。

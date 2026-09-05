@@ -143,6 +143,7 @@
     <label>高 <input type="number" id="inH" value="800" min="300" step="50"></label>
     <label style="color:#9fb2c8">大气 <input type="text" id="inAtm" placeholder="CO2:8, O2:15（不填=默认地球大气）" style="width:100px;background:#0e1432;color:#fff;border:1px solid var(--edge);padding:2px 5px;font-size:11px"></label>
     <button class="btn" id="btnAtmSet" title="把大气设置存入关卡（编辑器自带；多场景下随场景快照保存）" style="padding:1px 6px">设</button>
+    <label style="color:#9fb2c8"><input type="checkbox" id="cbHideGrab" title="很多关卡用不到"拾取/吸液"（=电脑端 C 键），隐藏后移动端不显示该按钮、不误导玩家"> 隐藏移动端「拾取」按钮</label>
     <span id="verBadge" style="margin-right:6px;color:#7fe0ff;font-size:11px;border:1px solid #3a4178;padding:1px 6px;border-radius:3px">v3</span>
     <span id="status">就绪</span>
   </div>
@@ -189,11 +190,11 @@
   </div>
 </div>
 <datalist id="substances"></datalist>
-<script src="../dist/chezzle.js?vmto8z4z8"></script>
+<script src="../dist/chezzle.js?vmtoad8q0"></script>
 <script>
 // ============================================================================
 // Chezzle 可视化关卡编辑器
-// 复用 dist/chezzle.js?vmto8z4z8 的全局 Chezzle：对象类、Scene、渲染、物理循环。
+// 复用 dist/chezzle.js?vmtoad8q0 的全局 Chezzle：对象类、Scene、渲染、物理循环。
 // 编辑模式：自建 transform 渲染已摆放物体；试玩模式：重建 Scene 跑物理+化学。
 // ============================================================================
 const C = Chezzle;
@@ -277,12 +278,15 @@ const CATALOG = [
     collect: (o) => ({ x: o.x, y: o.y, text: o.text, id: o.id }),
     fields: [F.num('x'), F.num('y'), F.txtM('text', '文字'), F.txt('id', 'id')] },
   { type: 'portal', label: '传送门', dsl: 'portal', color: '#c78bff',
-    construct: (o) => new C.Portal({ x: o.x, y: o.y, w: o.w ?? 44, h: o.h ?? 64, color: o.color ?? '#c78bff', uses: o.uses > 0 ? o.uses : (o.once ? 1 : Infinity), switchId: o.switchId, group: o.group ?? null, id: o.id }),
-    collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, color: o.color, uses: Number.isFinite(o.uses) ? o.uses : 0, switchId: o.switchId, group: o.group ?? null, id: o.id }),
+    construct: (o) => new C.Portal({ x: o.x, y: o.y, w: o.w ?? 44, h: o.h ?? 64, color: o.color ?? '#c78bff', uses: o.uses > 0 ? o.uses : (o.once ? 1 : Infinity), switchId: o.switchId, group: o.group ?? null, inventory: o.inventory, clearInventory: o.clearInventory, id: o.id }),
+    collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, color: o.color, uses: Number.isFinite(o.uses) ? o.uses : 0, switchId: o.switchId, group: o.group ?? null, inventory: o.inventory, clearInventory: o.clearInventory, id: o.id }),
     fields: [
       { k: 'group', label: '组号', kind: 'portalg', d: '' },  // 组 = 配对/共享预算单位（先设组再改其它）
       F.num('x'), F.num('y'), F.num('w', '宽'), F.num('h', '高'), F.txt('color', '外观色(hex)'),
-      F.num('uses', '可用次数(0=无限)'), F.txt('switchId', '开关id'), F.txt('id', 'id')] },
+      F.num('uses', '可用次数(0=无限)'), F.txt('switchId', '开关id'),
+      F.bool('clearInventory', '传送后清空物品栏', false),
+      F.txtM('inventory', '传送后物品栏(每行一样: 物质:质量 | beaker | beaker:HCl:20 | dropper:H2O:40 | gasbottle | #注释)', ''),
+      F.txt('id', 'id')] },
   { type: 'gasdetector', label: '气体探测器', dsl: 'gasdetector', color: '#3fa8e0',
     construct: (o) => {
       const gd = new C.GasDetector({ x: o.x, y: o.y, gas: o.gas ?? 'H2', threshold: o.threshold ?? 0.5, opening: o.opening, and: o.and, deleteId: o.deleteId, showId: o.showId, igniteId: o.igniteId, extinguishId: o.extinguishId, openId: o.openId, id: o.id });
@@ -1215,12 +1219,15 @@ function makeEditorApi(reg) {
     save: () => saveState(),
     refresh: () => { buildRenderScene(); renderEdit(); refreshProps(); renderRxPanel(); renderPluginPanel(); refreshExport(); },
     $: (id) => document.getElementById(id),
-    /** 画布快照（可序列化；切换/备份场景数据用；含编辑器自带的大气设置） */
+    /** 画布快照（可序列化；切换/备份场景数据用；含编辑器自带的大气设置）
+     *  条件提示/隐藏拾取按钮随快照走——多场景（章节）下每场景独立 */
     snapshot: () => ({
       worldW: state.worldW,
       worldH: state.worldH,
       rx: [...state.customReactions],
       atm: { ...state.atmosphere },
+      tips: state.tips.map((t) => ({ text: t.text ?? '', mode: t.mode ?? 'and', items: (t.items ?? []).map((c) => ({ ...c })) })),
+      hideTouchGrab: state.hideTouchGrab,
       objects: state.placed.map((p) => ({ type: p.type, opts: byType[p.type].collect(p.obj) })),
     }),
     /** 载入快照 */
@@ -1229,7 +1236,11 @@ function makeEditorApi(reg) {
       state.worldH = snap.worldH ?? state.worldH;
       state.customReactions = (snap.rx ?? []).slice();
       state.atmosphere = { ...(snap.atm ?? {}) };
+      state.tips = Array.isArray(snap.tips) ? snap.tips.map((t) => ({ text: t.text ?? '', mode: t.mode ?? 'and', items: Array.isArray(t.items) ? t.items : [] })) : [];
+      state.hideTouchGrab = !!snap.hideTouchGrab;
+      $('cbHideGrab').checked = state.hideTouchGrab;
       refreshAtmInput();
+      renderTipPanel();
       state.placed = (snap.objects ?? []).filter((o) => byType[o.type]).map((o) => ({ type: o.type, obj: byType[o.type].construct(gridOpts(o.type, o.opts)) }));
       $('inW').value = state.worldW;
       $('inH').value = state.worldH;
@@ -1268,7 +1279,7 @@ function makeEditorApi(reg) {
         }
         placed.push(p);
       }
-      const chain = [`M.scene(${q(name)}, { worldW: ${snap.worldW ?? state.worldW}, worldH: ${snap.worldH ?? state.worldH} })`];
+      const chain = [`M.scene(${q(name)}, { worldW: ${snap.worldW ?? state.worldW}, worldH: ${snap.worldH ?? state.worldH}${snap.hideTouchGrab ? ', hideTouchGrab: true' : ''} })`];
       const post = [];
       for (const p of placed) {
         if (p.type === 'rope') continue;
@@ -1291,6 +1302,16 @@ function makeEditorApi(reg) {
         chain.push(`  .player(${ep.x}, ${ep.y}, { substance: 'NaOH', mass: 30, id: 'auto_player' })`);
       }
       for (const rx of snap.rx ?? []) chain.push(`  .reaction(${q(rx)})`);
+      // 条件提示（多场景导出：场景各自独立清单——与单场景 buildScript 同规格）
+      const tps = tipsToScene(snap.tips ?? []);
+      if (tps.length) {
+        chain.push('  .tips([');
+        for (const t of tps) {
+          const when = t.when.items.length ? { mode: t.when.mode, items: t.when.items } : null;
+          chain.push(`    { text: ${q(t.text)}${when ? `, when: ${q(when)}` : ''}},`);
+        }
+        chain.push('  ])');
+      }
       chain.push(';');
       for (const p of placed) {
         if (p.type !== 'rope') continue;
@@ -1356,7 +1377,7 @@ for (const e of CATALOG) {
 // ---- 状态 ----------------------------------------------------------------
 // 单场景编辑器：场景/章节这类"不常用玩法"由**编辑器插件**实现（ed API 可加 UI/按钮/
 // 导出钩子/持久化；官方示例 plugin/chapters.js 演示）。
-const state = { worldW: 3000, worldH: 800, palette: 'floor', placed: [], selected: null, sel: new Set(), selBox: null, playing: false, customReactions: [], plugins: [], atmosphere: {}, tips: [] };
+const state = { worldW: 3000, worldH: 800, palette: 'floor', placed: [], selected: null, sel: new Set(), selBox: null, playing: false, customReactions: [], plugins: [], atmosphere: {}, tips: [], hideTouchGrab: false };
 const view = { scale: 1, ox: 0, oy: 0 }; // 屏幕→世界：world=(screen-offset)/scale
 let renderScene = new C.Scene({ worldW: state.worldW, worldH: state.worldH });
 let drag = null; // {mode:'place'|'move'|'resize'|'select'|'rect'|'pan', ...}
@@ -2480,7 +2501,7 @@ function buildScript() {
     `const canvas = document.getElementById('game');`,
     `Chezzle.fitCanvasToWindow(canvas);`, // 高清+窗口自适应（缓冲 ×devicePixelRatio）
     `window.addEventListener('resize', () => Chezzle.fitCanvasToWindow(canvas));`,
-    `const L = new Chezzle.LevelBuilder(canvas, { worldW: ${state.worldW}, worldH: ${state.worldH} });`,
+    `const L = new Chezzle.LevelBuilder(canvas, { worldW: ${state.worldW}, worldH: ${state.worldH}, hideTouchGrab: ${!!state.hideTouchGrab} });`,
     'L',
   ];
   if ($('cbDebug') && $('cbDebug').checked) lines.push(`  // 调试模式：打开本关时 URL 加 ?debug=1（.debugmode() 已废弃，导出仅留提示）`); // 可选：提示调试模式开启方式
@@ -2617,7 +2638,7 @@ function exportHTML() {
 </head>
 <body>
 <canvas id="game"></canvas>
-<script src="../dist/chezzle.js?vmto8z4z8"><\/script>
+<script src="../dist/chezzle.js?vmtoad8q0"><\/script>
 ${pluginTags()}
 <script src="report.js"><\/script>
 <script>
@@ -2653,6 +2674,7 @@ function saveState() {
       rx: state.customReactions,
       atmosphere: state.atmosphere, // 编辑器自带：关卡大气（多场景下随场景快照保存）
       tips: state.tips, // 条件提示清单（文本 + 条件组）
+      hideTouchGrab: state.hideTouchGrab, // 隐藏移动端"拾取/吸液"按钮（=电脑端 C 键）
       editorState: Object.fromEntries([...editorStates].map(([k, v]) => [k, v])), // 编辑器插件的持久化状态
       objects: state.placed.map((p) => ({ type: p.type, opts: byType[p.type].collect(p.obj) })),
     };
@@ -2715,6 +2737,8 @@ async function loadState(errors) {
     state.customReactions = Array.isArray(src.rx) ? src.rx : (src.rx ? [src.rx] : []);
     state.atmosphere = { ...(src.atmosphere ?? {}) };
     state.tips = Array.isArray(src.tips) ? src.tips.map((t) => ({ text: t.text ?? '', mode: t.mode ?? 'and', items: Array.isArray(t.items) ? t.items : [] })) : [];
+    state.hideTouchGrab = !!src.hideTouchGrab;
+    $('cbHideGrab').checked = state.hideTouchGrab;
     refreshAtmInput();
     renderTipPanel();
     state.placed = (src.objects || [])
@@ -2806,7 +2830,7 @@ function togglePlay() {
   // 重建 Scene 试玩：用**新构造**的对象（编辑器里的对象不被物理移动污染）
   ensureStableIds(); // 试玩对象 id 稳定（延迟出现/接线按 id 引用）
   enterPlayView(); // 试玩视口 = 导出实机（1100×700 等比）+ 编辑器提示隐藏
-  const scene = new C.Scene({ worldW: state.worldW, worldH: state.worldH });
+  const scene = new C.Scene({ worldW: state.worldW, worldH: state.worldH, hideTouchGrab: state.hideTouchGrab });
   for (const p of state.placed) {
     if (p.type === 'rope') continue; // 绳子走后置接线（需要引用重建后的物体）
     const obj = buildPlayObject(p);  // 插件组件经 C.Plugin.create 生成真实对象
@@ -3018,6 +3042,8 @@ function saveJSON() {
     plugins: state.plugins, // 插件引用清单（加载 JSON 时自动从 plugin/ 目录或缓存加载；找不到=报错）
     rx: state.customReactions,
     atmosphere: state.atmosphere, // 编辑器自带：关卡大气
+    tips: state.tips, // 条件提示清单（文本 + 条件组）
+    hideTouchGrab: state.hideTouchGrab, // 隐藏移动端"拾取/吸液"按钮
     editorState: Object.fromEntries([...editorStates].map(([k, v]) => [k, v])),
     objects: state.placed.map((p) => ({ type: p.type, opts: byType[p.type].collect(p.obj) })),
   };
@@ -3063,7 +3089,11 @@ async function applyLevel(data) {
   $('inH').value = state.worldH;
   state.customReactions = Array.isArray(src.rx) ? src.rx : (src.rx ? [src.rx] : []);
   state.atmosphere = { ...(src.atmosphere ?? {}) };
+  state.tips = Array.isArray(src.tips) ? src.tips.map((t) => ({ text: t.text ?? '', mode: t.mode ?? 'and', items: Array.isArray(t.items) ? t.items : [] })) : [];
+  state.hideTouchGrab = !!src.hideTouchGrab;
+  $('cbHideGrab').checked = state.hideTouchGrab;
   refreshAtmInput();
+  renderTipPanel();
   state.placed = (src.objects || [])
     .filter((o) => byType[o.type])
     .map((o) => ({ type: o.type, obj: byType[o.type].construct(gridOpts(o.type, o.opts)) }));
@@ -3188,6 +3218,7 @@ $('btnExportHTML').onclick = () => {
 };
 $('inW').onchange = () => { const v = +$('inW').value || 3000; if (v === state.worldW) return; pushUndo(); state.worldW = v; buildRenderScene(); resizeCanvas(); saveState(); };
 $('inH').onchange = () => { const v = +$('inH').value || 800; if (v === state.worldH) return; pushUndo(); state.worldH = v; buildRenderScene(); resizeCanvas(); saveState(); };
+$('cbHideGrab').onchange = () => { state.hideTouchGrab = !!$('cbHideGrab').checked; saveState(); refreshExport(); };
 $('inLevelId').addEventListener('change', () => {
   const v = $('inLevelId').value;
   if (v === levelId) return;
