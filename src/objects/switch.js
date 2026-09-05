@@ -130,8 +130,8 @@ export class Switch extends Container {
 
   /** 标注开启物质 + 剩余量（钥匙等子类复用） */
   renderLabel(ctx) {
-    // 标注文字屏幕最小字号保底（相机缩放后 10px 变 8px——移动端眯眼）
-    const k = screenTextScale(ctx, 10, 12);
+    // 标注文字屏幕最小字号保底（11px 与路牌同档、上限 1.15——比路牌略小不抢戏）
+    const k = screenTextScale(ctx, 10, 11);
     const f = (px) => `${Math.round(px * k * 10) / 10}px monospace`;
     if (this.mode === 'pressure') {
       // 压力开关：写明触发方式（与化学开关同位——化学开关标开启物，压力标"压力"）
@@ -183,7 +183,7 @@ export class Switch extends Container {
     ctx.fill();
     ctx.shadowBlur = 0;
     ctx.fillStyle = eff ? '#3a2a08' : waiting ? '#4a2a08' : 'rgba(150,140,110,0.6)';
-    ctx.font = `bold ${Math.round(9 * screenTextScale(ctx, 9, 11) * 10) / 10}px monospace`;
+    ctx.font = `bold ${Math.round(9 * screenTextScale(ctx, 9, 10) * 10) / 10}px monospace`;
     ctx.textAlign = 'center';
     ctx.fillText(eff ? '开' : waiting ? '等' : '关', cx, cy + 3);
     ctx.textAlign = 'left';
@@ -215,7 +215,7 @@ export class Switch extends Container {
     ctx.setLineDash([]);
     // "&" 标记（居中于连线）
     ctx.fillStyle = color;
-    ctx.font = `bold ${Math.round(12 * screenTextScale(ctx, 12, 13) * 10) / 10}px serif`;
+    ctx.font = `bold ${Math.round(12 * screenTextScale(ctx, 12, 11) * 10) / 10}px serif`;
     ctx.textAlign = 'center';
     ctx.fillText('&', (ax + bx) / 2, (ay + by) / 2 - 4);
     ctx.textAlign = 'left';

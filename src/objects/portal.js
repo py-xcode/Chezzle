@@ -277,7 +277,7 @@ export class Portal extends Obj {
     ctx.fill();
     ctx.shadowBlur = 0;
     if (this.group) {
-      const kg = screenTextScale(ctx, 10, 12); // 组号屏幕最小字号保底
+      const kg = screenTextScale(ctx, 10, 11); // 组号保底（与路牌同档、上限 1.15）
       ctx.font = `bold ${Math.round(10 * kg * 10) / 10}px monospace`;
       ctx.textAlign = 'center';
       ctx.fillStyle = active ? '#e8e0ff' : '#9fb2c8';
@@ -291,7 +291,7 @@ export class Portal extends Obj {
     // n次门：顶部显示剩余次数（无限次数不显示）——大号数字 + 深色底板（任何背景下可读）
     if (Number.isFinite(this.usesLeft)) {
       ctx.shadowBlur = 0;
-      const kn = screenTextScale(ctx, 16, 14); // 次数数字保底（常用 16px，保底 14px 屏幕）
+      const kn = screenTextScale(ctx, 16, 12); // 次数数字保底 12px、上限 1.15（别盖过组号）
       ctx.font = `bold ${Math.round(16 * kn * 10) / 10}px monospace`;
       ctx.textAlign = 'center';
       const txt = String(this.usesLeft);

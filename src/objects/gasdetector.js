@@ -30,8 +30,8 @@ export class GasDetector extends Switch {
   }
 
   renderLabel(ctx) {
-    // 标注文字屏幕最小字号保底（相机缩放后 10px 太小）
-    const k = screenTextScale(ctx, 10, 12);
+    // 标注文字屏幕最小字号保底（11px 与路牌同档、上限 1.15）
+    const k = screenTextScale(ctx, 10, 11);
     const f10 = `bold ${Math.round(10 * k * 10) / 10}px monospace`;
     glowText(ctx, `${this.gas} > ${this.threshold}g`, this.x, this.y - 4 * k, THEME.water.light, f10, 4 * k);
     // 开启物质（若有）：显示在下方，剩余量实时更新（同开关）

@@ -5372,10 +5372,12 @@ const THEME = {
 // ---- 常用绘制辅助 ----
 
 /** 世界内文本的"屏幕最小字号"保底系数：路牌/开关标注等在相机缩放后过小
- *  （移动端视口小、世界被压到 0.8× 左右，12px 变 10px 眯眼）→ 返回放大倍数 k，
+ *  （移动端视口小、世界被压到 0.8× 左右，10px 变 8px 眯眼）→ 返回放大倍数 k，
  *  使 世界字号 size × 相机缩放 ≥ minScreen（逻辑屏幕 px）。桌面（缩放≈1）返回 1。
+ *  ★ maxK 上限默认 1.15：路牌/标注是**世界摆位**的文字，放大过猛会与相邻
+ *  文字压叠（用户截图复现）——收敛幅度保可读，不破坏摆位。
  *  仅读当前变换（含 dpr 基座），不影响任何布局状态。 */
-function screenTextScale(ctx, sizeWorld, minScreen = 13) {
+function screenTextScale(ctx, sizeWorld, minScreen = 12, maxK = 1.15) {
   if (!(sizeWorld > 0)) return 1;
   const cnv = ctx && ctx.canvas && typeof ctx.canvas === 'object' ? ctx.canvas : null;
   const dpr = cnv && Number.isFinite(cnv._dpr) ? Math.max(1, cnv._dpr) : 1;
@@ -5384,7 +5386,7 @@ function screenTextScale(ctx, sizeWorld, minScreen = 13) {
   const vscale = ((m ? Math.hypot(m.a, m.b) : 1) || 1) / dpr; // 世界 → 逻辑屏幕像素
   if (vscale <= 0.01) return 1;
   const k = (minScreen / sizeWorld) / vscale;
-  return Math.max(1, Math.min(3, k));
+  return Math.max(1, Math.min(maxK, k));
 }
 
 /** 圆角矩形路径 */
@@ -8250,7 +8252,7 @@ class Portal extends Obj {
     ctx.fill();
     ctx.shadowBlur = 0;
     if (this.group) {
-      const kg = screenTextScale(ctx, 10, 12); // 组号屏幕最小字号保底
+      const kg = screenTextScale(ctx, 10, 11); // 组号保底（与路牌同档、上限 1.15）
       ctx.font = `bold ${Math.round(10 * kg * 10) / 10}px monospace`;
       ctx.textAlign = 'center';
       ctx.fillStyle = active ? '#e8e0ff' : '#9fb2c8';
@@ -8264,7 +8266,7 @@ class Portal extends Obj {
     // n次门：顶部显示剩余次数（无限次数不显示）——大号数字 + 深色底板（任何背景下可读）
     if (Number.isFinite(this.usesLeft)) {
       ctx.shadowBlur = 0;
-      const kn = screenTextScale(ctx, 16, 14); // 次数数字保底（常用 16px，保底 14px 屏幕）
+      const kn = screenTextScale(ctx, 16, 12); // 次数数字保底 12px、上限 1.15（别盖过组号）
       ctx.font = `bold ${Math.round(16 * kn * 10) / 10}px monospace`;
       ctx.textAlign = 'center';
       const txt = String(this.usesLeft);
@@ -15435,8 +15437,8 @@ class Switch extends Container {
 
   /** 标注开启物质 + 剩余量（钥匙等子类复用） */
   renderLabel(ctx) {
-    // 标注文字屏幕最小字号保底（相机缩放后 10px 变 8px——移动端眯眼）
-    const k = screenTextScale(ctx, 10, 12);
+    // 标注文字屏幕最小字号保底（11px 与路牌同档、上限 1.15——比路牌略小不抢戏）
+    const k = screenTextScale(ctx, 10, 11);
     const f = (px) => `${Math.round(px * k * 10) / 10}px monospace`;
     if (this.mode === 'pressure') {
       // 压力开关：写明触发方式（与化学开关同位——化学开关标开启物，压力标"压力"）
@@ -15488,7 +15490,7 @@ class Switch extends Container {
     ctx.fill();
     ctx.shadowBlur = 0;
     ctx.fillStyle = eff ? '#3a2a08' : waiting ? '#4a2a08' : 'rgba(150,140,110,0.6)';
-    ctx.font = `bold ${Math.round(9 * screenTextScale(ctx, 9, 11) * 10) / 10}px monospace`;
+    ctx.font = `bold ${Math.round(9 * screenTextScale(ctx, 9, 10) * 10) / 10}px monospace`;
     ctx.textAlign = 'center';
     ctx.fillText(eff ? '开' : waiting ? '等' : '关', cx, cy + 3);
     ctx.textAlign = 'left';
@@ -15520,7 +15522,7 @@ class Switch extends Container {
     ctx.setLineDash([]);
     // "&" 标记（居中于连线）
     ctx.fillStyle = color;
-    ctx.font = `bold ${Math.round(12 * screenTextScale(ctx, 12, 13) * 10) / 10}px serif`;
+    ctx.font = `bold ${Math.round(12 * screenTextScale(ctx, 12, 11) * 10) / 10}px serif`;
     ctx.textAlign = 'center';
     ctx.fillText('&', (ax + bx) / 2, (ay + by) / 2 - 4);
     ctx.textAlign = 'left';
@@ -16307,8 +16309,8 @@ class GasDetector extends Switch {
   }
 
   renderLabel(ctx) {
-    // 标注文字屏幕最小字号保底（相机缩放后 10px 太小）
-    const k = screenTextScale(ctx, 10, 12);
+    // 标注文字屏幕最小字号保底（11px 与路牌同档、上限 1.15）
+    const k = screenTextScale(ctx, 10, 11);
     const f10 = `bold ${Math.round(10 * k * 10) / 10}px monospace`;
     glowText(ctx, `${this.gas} > ${this.threshold}g`, this.x, this.y - 4 * k, THEME.water.light, f10, 4 * k);
     // 开启物质（若有）：显示在下方，剩余量实时更新（同开关）
@@ -16538,7 +16540,7 @@ class Extractor extends Obj {
       ctx.stroke();
     }
     // 标注：压力提取器写"压力"（与压力开关同位同义：站在上面即触发）
-    const kT = screenTextScale(ctx, 10, 12); // 屏幕最小字号保底
+    const kT = screenTextScale(ctx, 10, 11); // 屏幕最小字号保底（与路牌同档、上限 1.15）
     glowText(ctx, this.switchId ? '提取' : '压力', this.x + this.w / 2, this.y - 4 * kT, active ? THEME.water.light : '#9fb2c8', `bold ${Math.round(10 * kT * 10) / 10}px monospace`, 3);
     ctx.restore();
   }
@@ -16843,4 +16845,4 @@ exports.Multiscene = Multiscene;
   };
   global.Chezzle = __require("src/index.js");
 })(typeof window !== 'undefined' ? window : globalThis);
-console.log('[Chezzle] 引擎构建 "vmtofjx56"');
+console.log('[Chezzle] 引擎构建 "vmtofuk9d"');
