@@ -10,7 +10,7 @@ export class Sign extends Obj {
   get hoverLabel() {
     return '路标';
   }
-  constructor({ x, y, text, color = '#ffe9b0', size = 12, ...rest } = {}) {
+  constructor({ x, y, text = '', color = '#ffe9b0', size = 12, ...rest } = {}) {
     // 石板尺寸按文字估算（构造期无 ctx 测量；中文字符宽≈size，西文字符≈0.6×size）
     const lines = String(text ?? '').split('\n');
     let maxChars = 0;

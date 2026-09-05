@@ -189,11 +189,11 @@
   </div>
 </div>
 <datalist id="substances"></datalist>
-<script src="../dist/chezzle.js?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b"></script>
+<script src="../dist/chezzle.js?vmtnwuuru?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b"></script>
 <script>
 // ============================================================================
 // Chezzle 可视化关卡编辑器
-// 复用 dist/chezzle.js?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b 的全局 Chezzle：对象类、Scene、渲染、物理循环。
+// 复用 dist/chezzle.js?vmtnwuuru?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b 的全局 Chezzle：对象类、Scene、渲染、物理循环。
 // 编辑模式：自建 transform 渲染已摆放物体；试玩模式：重建 Scene 跑物理+化学。
 // ============================================================================
 const C = Chezzle;
@@ -2060,9 +2060,16 @@ function refreshProps() {
         el.title = err || '';
         if (err) { $('status').textContent = `自定义反应无效：${err}`; return; }
       }
-      // 物质/文本字段不允许空值（空会破坏物块等），空则保留旧值
-      if (val === '' && (el.dataset.kind === 'substance' || el.dataset.kind === 'dropsub' || el.dataset.kind === 'text')) val = opts[k];
-      opts[k] = val;
+      // 物质/核心 id 不允许空值（空会破坏物块等），空则保留旧值；
+      // 引用文本字段（switchId/igniteId/poolId/and/…）清空 = 解除绑定：
+      // 删除键（构造走默认 null = 常开/不接线），否则"清空=删不掉"（用户反馈）
+      if (val === '' && (el.dataset.kind === 'substance' || el.dataset.kind === 'dropsub' || k === 'id')) {
+        val = opts[k];
+      } else if (val === '') {
+        delete opts[k];
+        val = undefined;
+      }
+      if (val !== undefined) opts[k] = val;
       // 网格物体（物块/沉淀堆）：改"质量"字段时丢弃 w/h —— 让质量重新决定形状；
       // 改 w/h 字段时保留（显式尺寸优先于质量，缩放/放置结果可持久化）
       if (k === 'mass' && ['block', 'deposit'].includes(item.type)) {
@@ -2350,7 +2357,7 @@ function exportHTML() {
 </head>
 <body>
 <canvas id="game"></canvas>
-<script src="../dist/chezzle.js?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b"><\/script>
+<script src="../dist/chezzle.js?vmtnwuuru?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b"><\/script>
 ${pluginTags()}
 <script src="report.js"><\/script>
 <script>
