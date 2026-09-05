@@ -189,11 +189,11 @@
   </div>
 </div>
 <datalist id="substances"></datalist>
-<script src="../dist/chezzle.js?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b"></script>
+<script src="../dist/chezzle.js?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b"></script>
 <script>
 // ============================================================================
 // Chezzle 可视化关卡编辑器
-// 复用 dist/chezzle.js?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b 的全局 Chezzle：对象类、Scene、渲染、物理循环。
+// 复用 dist/chezzle.js?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b 的全局 Chezzle：对象类、Scene、渲染、物理循环。
 // 编辑模式：自建 transform 渲染已摆放物体；试玩模式：重建 Scene 跑物理+化学。
 // ============================================================================
 const C = Chezzle;
@@ -1028,6 +1028,31 @@ function buildPlayObject(p) {
   return byType[p.type].construct(gridOpts(p.type, byType[p.type].collect(p.obj)));
 }
 
+/**
+ * 把"编辑器 rope 对象"正确接线后加入 scene（chapters 试玩 / 默认试玩共用）。
+ * 编辑器对象只存引用 id（hanging/anchorMode/anchorObj 或带下划线的私有字段），
+ * 必须在此转成场景内的真实悬挂/锚点对象——直接 addObject 预览对象会得到一条
+ * 不吊任何东西的绳子（用户 level(23) basin：绳子没能挂住 block2 的根因）。
+ * obj 锚点带偏移（绳子顶端相对锚物体左上角）——旧代码 { obj } 会把锚点定在
+ * 锚物体左上角，挂点随之错位（可能撞到上方平台 → 断绳）。
+ */
+function wireRopeInto(scene, r) {
+  const hangingId = r._hangingId ?? r.hanging ?? '';
+  const anchorMode = r._anchorMode ?? r.anchorMode ?? 'fixed';
+  const anchorObjId = r._anchorObj ?? r.anchorObj ?? '';
+  const hang = hangingId ? scene.byId[hangingId] : undefined;
+  let anchor;
+  if (anchorMode === 'obj' && anchorObjId) {
+    const ao = scene.byId[anchorObjId];
+    anchor = ao
+      ? { obj: ao, dx: (r.x ?? 0) - ao.x, dy: (r.y ?? 0) - ao.y }
+      : { fixed: { x: r.x ?? 0, y: r.y ?? 0 } }; // 锚点物体缺失（如已被删除）→ 按固定点兜底
+  } else {
+    anchor = { fixed: { x: r.x ?? 0, y: r.y ?? 0 } };
+  }
+  scene.addObject(new C.Rope({ x: r.x ?? 0, y: r.y ?? 0, length: r.length ?? 100, anchor, hanging: hang }));
+}
+
 /** 导出/注入用：启用的插件清单（注册名；参数在物体上，无需 cfg）。
  *  注：组件/增强插件的源码仍须随导出注册（见 requiredPluginFiles），此处只注入 run 逻辑。 */
 function activePlugins() {
@@ -1201,6 +1226,13 @@ function makeEditorApi(reg) {
       buildRenderScene(); resizeCanvas(); renderEdit(); refreshProps(); renderRxPanel(); refreshExport();
       saveState();
     },
+    /** 把快照里的 rope 正确接线后加入场景（试玩接管插件用；与默认试玩同一条逻辑） */
+    wireRopes: (scene, snap) => {
+      for (const o of snap.objects ?? []) {
+        if (o.type !== 'rope') continue;
+        wireRopeInto(scene, o.opts ?? {});
+      }
+    },
     /** 快照 → 场景 DSL（章节类插件用）：{chain 行, post 行}（accessor 用 M.byId/M.byName） */
     sceneDsl: (snap, name) => {
       const q = safeJson;
@@ -1234,8 +1266,10 @@ function makeEditorApi(reg) {
       for (const p of placed) {
         if (p.type !== 'rope') continue;
         const o = byType.rope.collect(p.obj);
-        const anchor = o.anchorMode === 'obj' && o.anchorObj
-          ? `{ obj: M.byId(${q(name)}, ${q(o.anchorObj)}) }`
+        // obj 锚点带偏移：绳子顶端相对锚物体的位置（old { obj } 锚点=锚物体左上角，错位）
+        const ao = placed.find((x) => x.obj.id === o.anchorObj)?.obj;
+        const anchor = o.anchorMode === 'obj' && ao
+          ? `{ obj: M.byId(${q(name)}, ${q(o.anchorObj)}), dx: ${(o.x - ao.x).toFixed(2)}, dy: ${(o.y - ao.y).toFixed(2)} }`
           : `{ fixed: { x: ${o.x}, y: ${o.y} } }`;
         const hang = o.hanging ? `M.byId(${q(name)}, ${q(o.hanging)})` : 'undefined';
         post.push(`M.byName(${q(name)}).addObject(new Chezzle.Rope({ x: ${o.x}, y: ${o.y}, length: ${o.length}, anchor: ${anchor}, hanging: ${hang} }));`);
@@ -2189,8 +2223,10 @@ function buildScript() {
   for (const p of state.placed) {
     if (p.type !== 'rope') continue;
     const o = byType.rope.collect(p.obj);
-    const anchor = o.anchorMode === 'obj' && o.anchorObj
-      ? `{ obj: scene.byId['${o.anchorObj}'] }`
+    // obj 锚点带偏移：绳子顶端相对锚物体的位置
+    const ao = state.placed.find((x) => x.obj.id === o.anchorObj)?.obj;
+    const anchor = o.anchorMode === 'obj' && ao
+      ? `{ obj: scene.byId['${o.anchorObj}'], dx: ${(o.x - ao.x).toFixed(2)}, dy: ${(o.y - ao.y).toFixed(2)} }`
       : `{ fixed: { x: ${o.x}, y: ${o.y} } }`;
     const hang = o.hanging ? `scene.byId['${o.hanging}']` : 'undefined';
     post.push(`scene.addObject(new Chezzle.Rope({ x: ${o.x}, y: ${o.y}, length: ${o.length}, anchor: ${anchor}, hanging: ${hang} }));`);
@@ -2306,7 +2342,7 @@ function exportHTML() {
 </head>
 <body>
 <canvas id="game"></canvas>
-<script src="../dist/chezzle.js?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b"><\/script>
+<script src="../dist/chezzle.js?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b"><\/script>
 ${pluginTags()}
 <script src="report.js"><\/script>
 <script>
@@ -2496,15 +2532,11 @@ function togglePlay() {
     const obj = buildPlayObject(p);  // 插件组件经 C.Plugin.create 生成真实对象
     if (obj) scene.addObject(obj);
   }
-  // 绳子：试玩也要接线悬挂/锚点（用重建后的物体），否则物块会掉下去
+  // 绳子：试玩也要接线悬挂/锚点（用重建后的物体），否则物块会掉下去。
+  // 与 wireRopeInto 同一逻辑（含 obj 锚点偏移）——入口统一防再次分叉
   for (const p of state.placed) {
     if (p.type !== 'rope') continue;
-    const o = byType.rope.collect(p.obj);
-    const hangObj = o.hanging ? scene.byId[o.hanging] : undefined;
-    const anchor = o.anchorMode === 'obj' && o.anchorObj
-      ? { obj: scene.byId[o.anchorObj] }
-      : { fixed: { x: o.x, y: o.y } };
-    scene.addObject(new C.Rope({ x: o.x, y: o.y, length: o.length, anchor, hanging: hangObj }));
+    wireRopeInto(scene, byType.rope.collect(p.obj));
   }
   // 关卡自定义反应（最高优先级）
   for (const rx of state.customReactions) {

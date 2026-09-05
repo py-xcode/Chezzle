@@ -200,13 +200,12 @@ Chezzle.Plugin.register('chapters', {
         }
       }
       M.buildAll();
-      // 绳子 + 大气预设（buildAll 后）
+      // 绳子 + 大气预设（buildAll 后；rope 必须用编辑器 API 接线——直接 add 未接线
+      // 的预览对象会得到一条"不吊任何东西"的绳子，用户 level(23) 复现）
       for (const s of scenesGo) {
         const sc = M.byName(s.id);
         if (!sc) continue;
-        for (const p of ed.objectsFrom(s.snap)) {
-          if (p.type === 'rope' && p.obj) sc.addObject(p.obj);
-        }
+        ed.wireRopes(sc, s.snap);
         for (const [gid, mass] of Object.entries(s.snap.atm ?? {})) {
           if (Number.isFinite(mass) && mass > 0) sc.atmosphere.setGas(gid, mass);
         }

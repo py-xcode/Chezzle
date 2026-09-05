@@ -128,6 +128,8 @@ export class Multiscene {
       e.scene.status = 'running';
       // 移动端触控挂载点：HUD 渲染读取 + 相机移动端视野
       e.scene._touchUI = e.touch?.ui ?? null;
+      // 场景背面引用管理器：传送门跨场景同色配对/传送需要（无此引用 = 单场景原逻辑）
+      e.scene.multiscene = this;
       if (e.touch && e.touch.ui.enabled()) e.touch.ui.refresh();
       // 插件注入：场景级（scene(name,{plugins})) 优先于全局
       const entries = e.plugins ?? this.plugins;
@@ -200,7 +202,9 @@ export class Multiscene {
           ?? tScene.objects.find((o) => o.isPlayerObj)
           ?? tScene.hidden.find((o) => o.isPlayerObj);
         let spawn = opts.spawn;
-        if (target && target !== carriedObj) spawn = { x: target.x, y: target.y };
+        // ★ 传送门跨场景落点 = 对侧门前（portalLanding 优先）；其它切换维持
+        //   "摆放玩家位置优先"约定（剧本 goto/开关切场景）
+        if (!opts.portalLanding && target && target !== carriedObj) spawn = { x: target.x, y: target.y };
         if (target && target !== carriedObj) tScene.removeObject(target); // 替换占位玩家
         if (tScene.byId[carriedObj.id] && tScene.byId[carriedObj.id] !== carriedObj) {
           carriedObj.id = `${carriedObj.id}_carry${this.switches}`;

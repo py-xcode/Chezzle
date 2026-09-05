@@ -7919,23 +7919,51 @@ class Portal extends Obj {
     return typeof sw.effectiveOpen === 'function' ? sw.effectiveOpen(scene) : sw.open;
   }
 
-  /** 解析对侧门：scene.portals 中同色且非自身的另一扇（对侧被移除时重新解析） */
+  /**
+   * 解析对侧门：本场景同色且非自身的另一扇（对侧被移除时重新解析）；
+   * Multiscene 关卡（scene.multiscene）下配对**跨场景**：全局扫描所有场景的同色门——
+   * 同色门在哪个场景都配对（用户约定：跨场景同色传送）。跨场景对侧记录
+   * pairScene/pairSceneName 供 update 传送时切场景。同场景配对优先（同色多组时就近）。
+   */
   _resolvePair(scene) {
-    if (this.pair && scene.portals.includes(this.pair)) return this.pair;
+    const valid = this.pair && (
+      scene.portals.includes(this.pair)
+      || (this.pairScene && this.pairScene.portals.includes(this.pair))
+    );
+    if (valid) return this.pair;
     this.pair = null;
+    this.pairScene = null;
+    this.pairSceneName = null;
     for (const o of scene.portals) {
       if (o !== this && o.color === this.color) {
         this.pair = o;
         break;
       }
     }
-    return this.pair;
+    if (this.pair) return this.pair;
+    const M = scene.multiscene;
+    if (M) {
+      for (const [name, e] of M.scenes) {
+        const sc = e && e.scene;
+        if (!sc || sc === scene || !sc.portals) continue;
+        for (const o of sc.portals) {
+          if (o !== this && o.color === this.color) {
+            this.pair = o;
+            this.pairScene = sc;
+            this.pairSceneName = name;
+            return o;
+          }
+        }
+      }
+    }
+    return null;
   }
 
   update(dt, scene) {
     const pair = this._resolvePair(scene);
     if (!pair) return;
     const active = this._isActive(scene); // 绑定开关时只有开关开启才传送
+    const crossScene = this.pairScene && this.pairScene !== scene;
     // 候选：动态体（玩家/物块）+ 自由沉淀粒子
     for (const obj of [...scene.dynamics, ...scene.particles]) {
       if (obj === this || obj.static) continue;
@@ -7943,29 +7971,52 @@ class Portal extends Obj {
       if (inside && active && obj._portalLast !== this) {
         // 刚走入本门：传送到同色对侧门（落点避开实心体/其它门）。找不到空位说明对侧
         // 被完全堵死 → 本次不传，避免塞进墙里被碰撞系统甩飞。
+        if (crossScene) {
+          // ★ 跨场景传送（多边形关卡）：对侧门在另一个场景 → 落点=对侧门前 +
+          //   Multiscene.switchTo 搬玩家（物品栏/血量保留）。只对玩家生效——
+          //   物块/沉淀是场景内对象，不随玩家跨场景（会丢在旧场景里）。
+          if (obj.isPlayerObj && scene.multiscene) {
+            const spot = findFreeSpot(obj, pair, this.pairScene);
+            if (!spot) continue;
+            obj._portalLast = pair;
+            scene.multiscene.switchTo(this.pairSceneName, {
+              carryPlayer: true,
+              portalLanding: true,
+              spawn: { x: spot.x, y: spot.y },
+            });
+            this._consumeUse(scene, pair);
+          }
+          continue;
+        }
         const spot = findFreeSpot(obj, pair, scene);
         if (!spot) continue;
         obj.x = spot.x;
         obj.y = spot.y;
         obj._portalLast = pair; // 站在对侧门内：本门不重复触发；离开本门后才能再进本门
-        // n次门：整组共享剩余次数，用尽后整组消失（任一扇配置的有限次数 = 整组预算）
-        const lThis = Number.isFinite(this.usesLeft) ? this.usesLeft : Infinity;
-        const lPair = pair && Number.isFinite(pair.usesLeft) ? pair.usesLeft : Infinity;
-        const left = Math.min(lThis, lPair);
-        if (left !== Infinity) {
-          const newLeft = left - 1;
-          if (newLeft <= 0) {
-            scene.removeObject(this);
-            if (pair) scene.removeObject(pair);
-          } else {
-            this.usesLeft = newLeft;
-            if (pair) pair.usesLeft = newLeft;
-          }
-        }
+        this._consumeUse(scene, pair);
       } else if (!inside && obj._portalLast === this) {
         // 已走出本门：允许下次再进本门
         obj._portalLast = null;
       }
+    }
+  }
+
+  /** n次门：整组共享剩余次数，用尽后整组消失（任一扇配置的有限次数 = 整组预算） */
+  _consumeUse(scene, pair) {
+    const lThis = Number.isFinite(this.usesLeft) ? this.usesLeft : Infinity;
+    const lPair = pair && Number.isFinite(pair.usesLeft) ? pair.usesLeft : Infinity;
+    const left = Math.min(lThis, lPair);
+    if (left === Infinity) return;
+    const newLeft = left - 1;
+    if (newLeft <= 0) {
+      scene.removeObject(this);
+      if (pair) scene.removeObject(pair); // 同场景：pair 在本场景索引里
+      if (pair && this.pairScene && this.pairScene !== scene) {
+        this.pairScene.removeObject(pair); // 跨场景：pair 在对侧场景索引里
+      }
+    } else {
+      this.usesLeft = newLeft;
+      if (pair) pair.usesLeft = newLeft;
     }
   }
 
@@ -16119,6 +16170,8 @@ class Multiscene {
       e.scene.status = 'running';
       // 移动端触控挂载点：HUD 渲染读取 + 相机移动端视野
       e.scene._touchUI = e.touch?.ui ?? null;
+      // 场景背面引用管理器：传送门跨场景同色配对/传送需要（无此引用 = 单场景原逻辑）
+      e.scene.multiscene = this;
       if (e.touch && e.touch.ui.enabled()) e.touch.ui.refresh();
       // 插件注入：场景级（scene(name,{plugins})) 优先于全局
       const entries = e.plugins ?? this.plugins;
@@ -16191,7 +16244,9 @@ class Multiscene {
           ?? tScene.objects.find((o) => o.isPlayerObj)
           ?? tScene.hidden.find((o) => o.isPlayerObj);
         let spawn = opts.spawn;
-        if (target && target !== carriedObj) spawn = { x: target.x, y: target.y };
+        // ★ 传送门跨场景落点 = 对侧门前（portalLanding 优先）；其它切换维持
+        //   "摆放玩家位置优先"约定（剧本 goto/开关切场景）
+        if (!opts.portalLanding && target && target !== carriedObj) spawn = { x: target.x, y: target.y };
         if (target && target !== carriedObj) tScene.removeObject(target); // 替换占位玩家
         if (tScene.byId[carriedObj.id] && tScene.byId[carriedObj.id] !== carriedObj) {
           carriedObj.id = `${carriedObj.id}_carry${this.switches}`;
