@@ -16425,3 +16425,4 @@ exports.Multiscene = Multiscene;
   };
   global.Chezzle = __require("src/index.js");
 })(typeof window !== 'undefined' ? window : globalThis);
+console.log('[Chezzle] 引擎构建 "vmto481vx"');

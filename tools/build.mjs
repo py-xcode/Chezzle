@@ -96,13 +96,15 @@ lines.push(`  global.Chezzle = __require(${JSON.stringify(modules.get(entry).id)
 lines.push("})(typeof window !== 'undefined' ? window : globalThis);");
 
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
+// 构建版本标记（用户 Ctrl+F5 后 console 一眼确认是否新代码——防"还是旧行为"再误导排查）
+const VER = 'v' + Date.now().toString(36);
+lines.push(`console.log('[Chezzle] 引擎构建 ${JSON.stringify(VER)}');`);
 fs.writeFileSync(OUT, lines.join('\n') + '\n');
 console.log(`built ${modules.size} modules → dist/chezzle.js (${fs.statSync(OUT).size} bytes)`);
 
 // ---- 缓存版本同步：所有引用 dist/chezzle.js 的 HTML 加 ?v=<时间戳> ----
 // 引擎每次构建产物变、URL 不变 → 浏览器拿旧 dist（用户"啥也没修"最常见根因）。
 // build 时自动改写引用：页面刷新即拿到新引擎。
-const VER = 'v' + Date.now().toString(36);
 const refFiles = [];
 const walkRefs = (dir) => {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
