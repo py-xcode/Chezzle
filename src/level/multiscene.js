@@ -36,6 +36,18 @@ export class Multiscene {
    */
   constructor(container, opts = {}) {
     if (!container || typeof container !== 'object') throw new Error('Multiscene 需要容器元素');
+    // ★ 容器兼容：把 <canvas> 当容器（旧导出模板常见写法）时自动包一层 div——
+    //   场景画布 appendChild 到 canvas 会变成它的 fallback 内容（HTML 规范：canvas
+    //   的子元素永远不显示）→ 整关黑屏且无任何报错（用户 level6 复现）。包装后取
+    //   原 canvas 的尺寸（fitCanvasToWindow 已设 style）/宽高兜底，原 canvas 隐藏。
+    if (typeof container.tagName === 'string' && container.tagName.toUpperCase() === 'CANVAS') {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = `position:relative;width:${container.style?.width || '100vw'};height:${container.style?.height || '100vh'};`;
+      if (container.parentNode) container.parentNode.insertBefore(wrap, container);
+      wrap.appendChild(container);
+      container.style.display = 'none';
+      container = wrap;
+    }
     this.container = container;
     // 宽高 0 = 窗口自适应（逻辑尺寸 = 窗口可用尺寸，缓冲再 ×dpr 高清）；
     // 显式传 width/height 则固定（编辑器试玩/测试注入）

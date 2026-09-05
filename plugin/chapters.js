@@ -281,8 +281,7 @@ Chezzle.Plugin.register('chapters', {
       const startId = st.scenes.some((s) => s.id === st.start) ? st.start : scenes[0].id;
       lines.length = 0;
       lines.push("const canvas = document.getElementById('game');");
-      lines.push('Chezzle.fitCanvasToWindow(canvas);'); // 高清+窗口自适应（缓冲 ×devicePixelRatio）
-      lines.push("window.addEventListener('resize', () => Chezzle.fitCanvasToWindow(canvas));");
+      lines.push('Chezzle.fitCanvasToWindow(canvas);'); // 尺寸交给引擎兜底（canvas 容器自动包 div 后取 style 尺寸）
       // 插件（含编辑器配置的 cfg：演出剧本/检查点等）；构造后再补 M 惰性引用
       lines.push(`const PLUGINS = ${ctx.safeJson(ed.getActivePlugins())};`);
       lines.push('const M = new Chezzle.Multiscene(canvas, { plugins: PLUGINS });');

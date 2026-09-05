@@ -70,6 +70,24 @@ test('未传宽高 → 画布自适应窗口（逻辑=窗口，缓冲×dpr 高�
   assert.equal(c.height, 800);
 });
 
+test('container 是 <canvas> 时自动包装 div（旧导出模板兼容：场景画布不再成为不显示的 fallback）', () => {
+  const parent = { insertBefore: (n) => { parent.first = n; } };
+  const container = {
+    tagName: 'CANVAS',
+    style: { width: '1280px', height: '800px', display: 'block' },
+    parentNode: parent,
+    appendChild: () => {},
+  };
+  const M = new Multiscene(container, { canvasFactory: fakeCanvas });
+  M.scene('a');
+  const wrap = parent.first;
+  assert.ok(wrap, '应创建包装 div 并插入原位置');
+  assert.ok(wrap.style.cssText.includes('width:1280px'), '包装 div 继承原 canvas 的尺寸');
+  assert.ok(wrap.style.cssText.includes('height:800px'), '包装 div 继承原 canvas 的尺寸');
+  assert.equal(container.style.display, 'none', '原 canvas 隐藏（不再显示场景子画布）');
+  assert.equal(M.container, wrap, 'Multiscene 内部容器 = 包装 div');
+});
+
 test('携带玩家落点是目标场景摆放玩家的位置', () => {
   const M = makeM();
   const a = reg(M, 'a', { playerAt: { x: 100, y: 600 } });
