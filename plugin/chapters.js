@@ -136,6 +136,11 @@ Chezzle.Plugin.register('chapters', {
     applyPlayUi(false); // 初始（编辑器态）
     ed.onPlayState(applyPlayUi);
 
+    // ★ 顶层画布对象变更 → 当前场景快照回写（ed.snapshot() 读顶层 state）。
+    //   否则多场景里改属性只进顶层 state，刷新/切场景/试玩都从旧快照还原
+    //   （用户"修改传送门开关属性不保存"的根因）。
+    ed.onSceneSync(() => saveCurrent());
+
     // 初始化：空则登记当前画布为场景 a
     if (st.scenes.length === 0) {
       st.scenes.push({ id: 'a', snap: ed.snapshot() });

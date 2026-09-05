@@ -1097,6 +1097,7 @@ const editorPluginCfgs = new Map(); // reg -> fn()（返回运行时配置 cfg�
 const editorStateLoadedHooks = new Map(); // reg -> [fn]（存档恢复后调用——插件重渲染面板用）
 const editorPlayHooks = new Map(); // mode('current'|'all') -> {reg, fn}（试玩接管：返回 stop 函数）
 const editorPlayStateHooks = new Map(); // reg -> [fn]（试玩开始/结束通知：插件同步自己 UI，如「▶当前」变「⏹ 退出」）
+const editorSceneSyncHooks = new Map(); // reg -> [fn]（顶层对象变更后调用：chapters 等场景管理插件把当前场景快照回写）
 const editorPlaySceneHooks = new Map(); // reg -> [fn(scene)]（默认试玩场景构建后、插件注入前——与导出脚本"先写数据后 inject"同一时机）
 let editorPlayMode = 'all';        // 试玩方向：'all'=整关(初始场景开始) / 'current'=仅当前视图（插件可切换）
 function notifyPlayState(playing) {
@@ -1155,6 +1156,13 @@ function makeEditorApi(reg) {
     /** 试玩状态变化回调（true=开始，false=结束）：插件同步自己的 UI（如开始按钮变退出按钮） */
     onPlayState: (fn) => {
       const arr = editorPlayStateHooks.get(reg) ?? (editorPlayStateHooks.set(reg, []), editorPlayStateHooks.get(reg));
+      arr.push(fn);
+    },
+    /** 顶层画布对象已变更（属性修改/添加/删除/拖动落定后，saveState 时触发）：
+     *  场景管理插件（chapters 等）在此把"当前场景快照"回写为 ed.snapshot()——
+     *  否则多场景中改属性只进顶层 state，刷新/切场景后从旧快照还原（用户"修改不保存"根因）。 */
+    onSceneSync: (fn) => {
+      const arr = editorSceneSyncHooks.get(reg) ?? (editorSceneSyncHooks.set(reg, []), editorSceneSyncHooks.get(reg));
       arr.push(fn);
     },
     /** 试玩前置钩子 fn(scene)：默认试玩场景构建后、插件 inject 前调用（改 scene 数据用；
@@ -2366,6 +2374,11 @@ const STORAGE_KEY = 'chezzle-level-editor-v2'; // v2：旧 v1 存档先迁移去
 const LEGACY_KEY = 'chezzle-level-editor-v1';
 function saveState() {
   try {
+    // ★ 场景同步钩子先跑：chapters 等插件把当前场景快照 = 顶层画布的最新状态，
+    //   再序列化进 editorState——否则多场景下"改属性不保存"（刷新/切场景还原旧快照）
+    for (const fns of editorSceneSyncHooks.values()) {
+      for (const fn of fns) { try { fn(); } catch (e) { /* 插件同步失败不阻断保存 */ } }
+    }
     const data = {
       version: 2,
       levelId, // 关卡ID随存档保存：刷新/换电脑不丢
