@@ -189,11 +189,11 @@
   </div>
 </div>
 <datalist id="substances"></datalist>
-<script src="../dist/chezzle.js?vmtnwuuru?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b"></script>
+<script src="../dist/chezzle.js?vmtnxszpm?vmtnwuuru?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b"></script>
 <script>
 // ============================================================================
 // Chezzle 可视化关卡编辑器
-// 复用 dist/chezzle.js?vmtnwuuru?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b 的全局 Chezzle：对象类、Scene、渲染、物理循环。
+// 复用 dist/chezzle.js?vmtnxszpm?vmtnwuuru?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b 的全局 Chezzle：对象类、Scene、渲染、物理循环。
 // 编辑模式：自建 transform 渲染已摆放物体；试玩模式：重建 Scene 跑物理+化学。
 // ============================================================================
 const C = Chezzle;
@@ -1301,10 +1301,8 @@ function makeEditorApi(reg) {
           if (fd > 0) post.push(`M.byId(${q(name)}, ${q(p.obj.id)}).appearFade = ${fd};`);
         }
       }
-      // 场景大气预设（需求：每个场景可设置大气物质）
-      for (const [gid, mass] of Object.entries(snap.atm ?? {})) {
-        if (Number.isFinite(mass) && mass > 0) post.push(`M.byName(${q(name)}).atmosphere.setGas(${q(gid)}, ${mass});`);
-      }
+      // 场景大气预设（整组独占：设置过的按值、没设置的=没有；空=保持默认）
+      post.push(`M.byName(${q(name)}).atmosphere.preset(${safeJson(snap.atm ?? {})});`);
       return { chain, post, placed };
     },
   };
@@ -2265,10 +2263,8 @@ function buildScript() {
       if (fd > 0) post.push(`scene.byId['${p.obj.id}'].appearFade = ${fd};`);
     }
   }
-  // 编辑器自带：关卡大气
-  for (const [gid, mass] of Object.entries(state.atmosphere ?? {})) {
-    if (Number.isFinite(mass) && mass > 0) post.push(`scene.atmosphere.setGas(${safeJson(gid)}, ${mass}); // 关卡大气`);
-  }
+  // 编辑器自带：关卡大气（preset = 整组独占：设置过的按值、没设置的=没有；空=保持默认）
+  post.push(`scene.atmosphere.preset(${safeJson(state.atmosphere ?? {})}); // 关卡大气`);
   for (const rx of state.customReactions) {
     lines.push(`  .reaction('${rx.replace(/'/g, "\\'")}')`); // 关卡自定义反应（最高优先级）
   }
@@ -2357,7 +2353,7 @@ function exportHTML() {
 </head>
 <body>
 <canvas id="game"></canvas>
-<script src="../dist/chezzle.js?vmtnwuuru?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b"><\/script>
+<script src="../dist/chezzle.js?vmtnxszpm?vmtnwuuru?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b"><\/script>
 ${pluginTags()}
 <script src="report.js"><\/script>
 <script>
@@ -2580,10 +2576,8 @@ function togglePlay() {
       scene.cameraFocus = { x: x0 - 60, y: y0 - 40, w: x1 - x0 + 120, h: y1 - y0 + 80 };
     }
   }
-  // 编辑器自带：关卡大气
-  for (const [gid, mass] of Object.entries(state.atmosphere ?? {})) {
-    if (Number.isFinite(mass) && mass > 0) scene.atmosphere.setGas(gid, mass);
-  }
+  // 编辑器自带：关卡大气（preset = 整组独占：设置过的按值、没设置的=没有；空=保持默认）
+  scene.atmosphere.preset(state.atmosphere);
   // 插件试玩前置钩子（scene 构建后、注入前）：把插件的 scene 数据写进去
   // （如新手引导模组的横幅剧本）——与导出脚本"数据行在 inject 之前"同一时机，所见即所得。
   for (const fns of editorPlaySceneHooks.values()) {

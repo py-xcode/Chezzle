@@ -3008,8 +3008,9 @@ SUBSTANCES['CH4'] = { id: 'CH4', mm: 16, state: 'gas', kind: 'gas', soluble: 'na
 SUBSTANCES['SO3'] = { id: 'SO3', mm: 80, state: 'gas', kind: 'acidicGas', soluble: 'na', gasColor: '#f0f0ff', solid: [] }; // 白烟
 
 // --- 指示剂（pH 显色：stops = [[pH起点, 颜色]...]，按 pH 找最后一个 ≤ 的段）---
-SUBSTANCES['Litmus'] = { id: 'Litmus', mm: 210, state: 'solid', kind: 'indicator', soluble: 'soluble', indicator: { stops: [[0, '#ff3b30'], [5, '#b06ad4'], [8, '#3b6cff']] }, solid: ['#b06ad4'] }; // 石蕊：红<5 / 紫5~8 / 蓝>8
-SUBSTANCES['C20H14O4'] = { id: 'C20H14O4', mm: 318, state: 'solid', kind: 'indicator', soluble: 'soluble', indicator: { stops: [[0, '#ffffff'], [8.2, '#ffb3c1'], [10, '#ff2d55']], transparent: true }, solid: ['#ffffff'] }; // 酚酞：无色<8.2 / 浅红8.2~10 / 深红>10
+// cn = 中文名：指示剂/特定物质在游戏里用中文显示（酚酞/石蕊不显示 C20H14O4/Litmus 化学式）
+SUBSTANCES['Litmus'] = { id: 'Litmus', mm: 210, state: 'solid', kind: 'indicator', soluble: 'soluble', cn: '石蕊', indicator: { stops: [[0, '#ff3b30'], [5, '#b06ad4'], [8, '#3b6cff']] }, solid: ['#b06ad4'] }; // 石蕊：红<5 / 紫5~8 / 蓝>8
+SUBSTANCES['C20H14O4'] = { id: 'C20H14O4', mm: 318, state: 'solid', kind: 'indicator', soluble: 'soluble', cn: '酚酞', indicator: { stops: [[0, '#ffffff'], [8.2, '#ffb3c1'], [10, '#ff2d55']], transparent: true }, solid: ['#ffffff'] }; // 酚酞：无色<8.2 / 浅红8.2~10 / 深红>10
 
 // --- 催化剂 / 其它 ---
 SUBSTANCES['MnO2'] = { id: 'MnO2', mm: 87, state: 'solid', kind: 'catalyst', soluble: 'insoluble', solid: ['#333333'] };
@@ -3033,6 +3034,11 @@ function getSubstance(id) {
   if (s) return s;
   // 兜底：从未知公式构造一条"白盐"记录（数据缺失时保证不崩，属性可在表中补齐）
   return { id, mm: 100, state: 'solid', kind: 'other', soluble: 'soluble', solid: ['#cccccc'] };
+}
+
+/** 用户可见名称：指示剂等设置过 cn 的显示中文名，其余显示化学式 id（科学教育向）。 */
+function displayName(id) {
+  return getSubstance(id).cn ?? normId(id);
 }
 
 function isSoluble(id) {
@@ -3146,6 +3152,7 @@ exports.SUBSTANCES = SUBSTANCES;
 exports.ALIASES = ALIASES;
 exports.normId = normId;
 exports.getSubstance = getSubstance;
+exports.displayName = displayName;
 exports.isSoluble = isSoluble;
 exports.CONC_HIGH = CONC_HIGH;
 exports.PASSIVATION_CONC = PASSIVATION_CONC;
@@ -4052,6 +4059,22 @@ class Atmosphere {
     const prev = this.mass(id);
     this.gas.set(id, mass);
     if (this._cause && Math.abs(mass - prev) > 1e-9) this._log.push({ id, delta: mass - prev, cause: this._cause });
+  }
+
+  /**
+   * 整组大气预设：**先清空所有气体、再按 entries 设置**——"设置过的气体 = 配置值，
+   * 没设置的 = 没有"（用户语义：N2:5000, O2:0 → 只剩 N2，氧气为 0）。
+   * 空表 = 无预设 → 保持默认地球大气（N2 80% / O2 20%）不动。
+   * 注意与 setGas 的区别：setGas 是"覆盖单个"，preset 是"独占整组"（先清零）。
+   */
+  preset(entries) {
+    const list = Object.entries(entries ?? {}).filter(([, m]) => Number.isFinite(m) && m >= 0);
+    if (!list.length) return; // 没设置任何气体 → 保持默认（地球大气）
+    this.gas.clear();
+    for (const [id, mass] of list) {
+      this.gas.set(id, mass);
+      if (this._cause) this._log.push({ id, delta: mass, cause: this._cause });
+    }
   }
 
   remove(id, mass) {
@@ -7217,7 +7240,7 @@ const { Obj } = __require('src/objects/obj.js');;
 const { Solution, SolutionMaterial, MIN_ENTRY } = __require('src/chem/solution.js');;
 const { ContainerMaterial } = __require('src/objects/material.js');;
 const { renderFormula } = __require('src/render/label.js');;
-const { getSubstance, acidLabelOf } = __require('src/chem/substances.js');;
+const { getSubstance, acidLabelOf, displayName } = __require('src/chem/substances.js');;
 const { renderPrecipitateBall, splitPile, particleSizeOf } = __require('src/objects/particle.js');;
 
 const GRAIN_MAX = 140; // 容器内沉淀的视觉颗粒上限（超出按 1.5g 合并，与自由粒子同规则）
@@ -7256,10 +7279,11 @@ class Container extends Obj {
       if (mass >= MIN_ENTRY) {
         // 酸类标注浓/稀（阈值：≥300 g/L = 浓，与引擎"浓酸"判定一致——MnO2+浓盐酸制氯气等）
         const c = acidLabelOf(id, mass, this.solution.volume / 1000);
-        parts.push(c ? `${id}(${c})` : id); // 微量溶质不显示化学式（防"出现/消失"闪烁）
+        // 显示名：指示剂（酚酞/石蕊）显示中文名，其余显示化学式
+        parts.push(c ? `${displayName(id)}(${c})` : displayName(id)); // 微量溶质不显示化学式（防"出现/消失"闪烁）
       }
     }
-    for (const [id] of this.precipitates) parts.push(`${id}(↓)`);
+    for (const [id] of this.precipitates) parts.push(`${displayName(id)}(↓)`);
     if (parts.length === 0 && this.solution.water > 0) parts.push('H2O'); // 只有水的池子
     // 含指示剂时显示 pH 数值（石蕊/酚酞加入后即可读数）
     if (this.solution && this.solution.pH) {
@@ -8744,7 +8768,7 @@ exports.requestFullscreenOnce = requestFullscreenOnce;
 // ============================================================================
 
 const { THEME, rr, panel, glowText, clearText } = __require('src/render/theme.js');;
-const { getSubstance, acidLabelOf } = __require('src/chem/substances.js');;
+const { getSubstance, acidLabelOf, displayName } = __require('src/chem/substances.js');;
 const { MIN_ENTRY } = __require('src/chem/solution.js');;
 const { solutionColor } = __require('src/render/liquidrender.js');;
 const { CFG } = __require('src/core/config.js');;
@@ -9875,7 +9899,7 @@ class Hud {
     ctx.fillStyle = sel ? '#fff6dd' : THEME.gold.text;
     ctx.font = 'bold 9.5px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(s.substance, x + size / 2, sy + 15);
+    ctx.fillText(displayName(s.substance), x + size / 2, sy + 15);
     ctx.font = '11px monospace';
     ctx.fillStyle = '#ffffff';
     const m = Number.isFinite(s.mass) ? s.mass : 0; // NaN 质量显示 0，不显示 NaN
@@ -10249,8 +10273,10 @@ const { hexToRgb, rgbToHex, mix } = __require('src/render/color.js');;
  * 指示剂（石蕊/酚酞）：按溶液 pH 显色，与离子色叠加。
  * 微溶物质（solubilityLimit）：按"浓度/饱和线"产生**浑浊度**——接近饱和时溶液
  * 开始泛乳白（先浑浊），过饱和带（1.25×）时最浑（随后才开始析出沉淀）。
+ * frame：渲染帧号。传入时指示剂色按帧**渐变**（pH 骤变颜色渐变，不瞬间跳变）；
+ * 不传（测试/单次取色）→ 直出目标色。
  */
-function solutionColor(solution) {
+function solutionColor(solution, frame = undefined) {
   let idx = 0;
   let r = 0;
   let g = 0;
@@ -10313,22 +10339,76 @@ function solutionColor(solution) {
     ib += c.b * f;
     iw += f;
   }
-  if (iw <= 1e-9) return base;
-  const ind = { r: ir / iw, g: ig / iw, b: ib / iw };
+  if (iw <= 1e-9) {
+    // 无指示剂显色：淡出（悬停/移除后颜色缓慢回落到基础色，不瞬间跳变）
+    if (solution._indCur) {
+      if (frame == null) {
+        solution._indCur = null;
+        return base;
+      }
+      solution._indCur = mixToward(solution._indCur, { r: 0, g: 0, b: 0, w: 0 }, frameK(frame));
+      const f = Math.min(0.5, solution._indCur.w);
+      if (f > 0.005) {
+        const rc = hexToRgb(base.color);
+        return {
+          color: rgbToHex({ r: rc.r + (solution._indCur.r - rc.r) * f, g: rc.g + (solution._indCur.g - rc.g) * f, b: rc.b + (solution._indCur.b - rc.b) * f }),
+          alpha: Math.max(base.alpha, 0.25 + 0.5 * f),
+        };
+      }
+      solution._indCur = null;
+    }
+    return base;
+  }
+  const ind = { r: ir / iw, g: ig / iw, b: ib / iw, w: Math.min(1, iw) };
+  // ★ 指示剂色动态过渡：往目标色收敛（帧率无关缓动），pH 骤变时颜色渐变成
+  //   （酚酞无色→浅红→深红是渐变过程，不再瞬间跳红——用户反馈）。
+  //   frame 未传入（测试/单次取色）→ 直出目标色。
+  //   传入 time：首次从无色（w=0）起步，之后每帧收敛——首帧即渐变起点。
+  if (frame == null) {
+    solution._indCur = ind;
+  } else if (solution._indCur && solution._indCur.w > 0.005) {
+    solution._indCur = mixToward(solution._indCur, ind, frameK(frame));
+  } else {
+    solution._indCur = solution._indCur ? mixToward(solution._indCur, ind, frameK(frame)) : { r: 0, g: 0, b: 0, w: 0 };
+  }
+  const cur = solution._indCur;
   const bc = hexToRgb(base.color);
+  const f = Math.min(0.5, cur.w);
   // 指示剂色与基础色叠加（各半）：石蕊加入酸性溶液 → 红
   const mixed = rgbToHex({
-    r: (bc.r + ind.r) / 2,
-    g: (bc.g + ind.g) / 2,
-    b: (bc.b + ind.b) / 2,
+    r: (bc.r + cur.r) / 2,
+    g: (bc.g + cur.g) / 2,
+    b: (bc.b + cur.b) / 2,
   });
-  return { color: mixed, alpha: Math.max(base.alpha, 0.25 + 0.5 * Math.min(1, iw)) };
+  return { color: mixed, alpha: Math.max(base.alpha, 0.25 + 0.5 * f) };
 }
+
+/** 渲染时间(秒) → 缓动比例（帧率无关：指数时间常数 0.9^（Δt×18），收敛 ~1s 达 86%） */
+function frameK(sec) {
+  if (sec == null) return 1;
+  if (solution_frameT == null) solution_frameT = sec;
+  const dt = Math.max(0, Math.min(0.5, sec - solution_frameT));
+  solution_frameT = sec;
+  return 1 - Math.pow(0.9, dt * 18);
+}
+
+/** 把 cur 向 target 缓动收敛（k 比例；w 同步淡入/淡出） */
+function mixToward(cur, target, k) {
+  return {
+    r: cur.r + (target.r - cur.r) * k,
+    g: cur.g + (target.g - cur.g) * k,
+    b: cur.b + (target.b - cur.b) * k,
+    w: cur.w + ((target.w ?? 1) - cur.w) * k,
+  };
+}
+
+// 模块级：最近渲染时间（frameK 计算帧间流逝用）
+let solution_frameT = null;
 
 /** 渲染一个矩形液面（灵动：起伏波浪 + 持续上升的气泡 + 辉光） */
 function renderLiquid(ctx, x, y, w, h, solution, time = 0) {
   if (w <= 0 || h <= 0) return;
-  const { color, alpha } = solutionColor(solution);
+  const { color, alpha } = solutionColor(solution, time);
   ctx.save();
   // 主体：纵向渐变（底部更深）
   const g = ctx.createLinearGradient(x, y, x, y + h);
@@ -10390,7 +10470,7 @@ const { Obj } = __require('src/objects/obj.js');;
 const { SolidMaterial } = __require('src/objects/material.js');;
 const { MaterialGrid, renderGrid } = __require('src/render/gridrender.js');;
 const { THEME, rr, contrastEdge, luminance } = __require('src/render/theme.js');;
-const { getSubstance } = __require('src/chem/substances.js');;
+const { getSubstance, displayName } = __require('src/chem/substances.js');;
 const { renderFormula } = __require('src/render/label.js');;
 
 class Block extends Obj {
@@ -10487,7 +10567,7 @@ class Block extends Obj {
     ctx.restore();
     if (this.formulaVisible) {
       const ids = this.grid.ids();
-      if (ids.length) renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.join(' + '), { scene: opts?.scene });
+      if (ids.length) renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.map((i) => displayName(i)).join(' + '), { scene: opts?.scene });
     }
   }
 }
@@ -12701,7 +12781,7 @@ exports.Pool = Pool;
 const { Obj } = __require('src/objects/obj.js');;
 const { MaterialGrid, renderGrid, CELL_SIZE } = __require('src/render/gridrender.js');;
 const { contrastEdge, luminance } = __require('src/render/theme.js');;
-const { getSubstance } = __require('src/chem/substances.js');;
+const { getSubstance, displayName } = __require('src/chem/substances.js');;
 const { renderFormula } = __require('src/render/label.js');;
 
 class Deposit extends Obj {
@@ -12820,7 +12900,7 @@ class Deposit extends Obj {
     ctx.stroke();
     ctx.restore();
     if (this.formulaVisible && ids.length) {
-      renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.join(' + '), { scene: opts?.scene });
+      renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.map((i) => displayName(i)).join(' + '), { scene: opts?.scene });
     }
   }
 }

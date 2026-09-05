@@ -7,7 +7,7 @@ import { Obj } from './obj.js';
 import { SolidMaterial } from './material.js';
 import { MaterialGrid, renderGrid } from '../render/gridrender.js';
 import { THEME, rr, contrastEdge, luminance } from '../render/theme.js';
-import { getSubstance } from '../chem/substances.js';
+import { getSubstance, displayName } from '../chem/substances.js';
 import { renderFormula } from '../render/label.js';
 
 export class Block extends Obj {
@@ -104,7 +104,7 @@ export class Block extends Obj {
     ctx.restore();
     if (this.formulaVisible) {
       const ids = this.grid.ids();
-      if (ids.length) renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.join(' + '), { scene: opts?.scene });
+      if (ids.length) renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.map((i) => displayName(i)).join(' + '), { scene: opts?.scene });
     }
   }
 }

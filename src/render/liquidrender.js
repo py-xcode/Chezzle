@@ -13,8 +13,10 @@ import { hexToRgb, rgbToHex, mix } from './color.js';
  * 指示剂（石蕊/酚酞）：按溶液 pH 显色，与离子色叠加。
  * 微溶物质（solubilityLimit）：按"浓度/饱和线"产生**浑浊度**——接近饱和时溶液
  * 开始泛乳白（先浑浊），过饱和带（1.25×）时最浑（随后才开始析出沉淀）。
+ * frame：渲染帧号。传入时指示剂色按帧**渐变**（pH 骤变颜色渐变，不瞬间跳变）；
+ * 不传（测试/单次取色）→ 直出目标色。
  */
-export function solutionColor(solution) {
+export function solutionColor(solution, frame = undefined) {
   let idx = 0;
   let r = 0;
   let g = 0;
@@ -77,22 +79,76 @@ export function solutionColor(solution) {
     ib += c.b * f;
     iw += f;
   }
-  if (iw <= 1e-9) return base;
-  const ind = { r: ir / iw, g: ig / iw, b: ib / iw };
+  if (iw <= 1e-9) {
+    // 无指示剂显色：淡出（悬停/移除后颜色缓慢回落到基础色，不瞬间跳变）
+    if (solution._indCur) {
+      if (frame == null) {
+        solution._indCur = null;
+        return base;
+      }
+      solution._indCur = mixToward(solution._indCur, { r: 0, g: 0, b: 0, w: 0 }, frameK(frame));
+      const f = Math.min(0.5, solution._indCur.w);
+      if (f > 0.005) {
+        const rc = hexToRgb(base.color);
+        return {
+          color: rgbToHex({ r: rc.r + (solution._indCur.r - rc.r) * f, g: rc.g + (solution._indCur.g - rc.g) * f, b: rc.b + (solution._indCur.b - rc.b) * f }),
+          alpha: Math.max(base.alpha, 0.25 + 0.5 * f),
+        };
+      }
+      solution._indCur = null;
+    }
+    return base;
+  }
+  const ind = { r: ir / iw, g: ig / iw, b: ib / iw, w: Math.min(1, iw) };
+  // ★ 指示剂色动态过渡：往目标色收敛（帧率无关缓动），pH 骤变时颜色渐变成
+  //   （酚酞无色→浅红→深红是渐变过程，不再瞬间跳红——用户反馈）。
+  //   frame 未传入（测试/单次取色）→ 直出目标色。
+  //   传入 time：首次从无色（w=0）起步，之后每帧收敛——首帧即渐变起点。
+  if (frame == null) {
+    solution._indCur = ind;
+  } else if (solution._indCur && solution._indCur.w > 0.005) {
+    solution._indCur = mixToward(solution._indCur, ind, frameK(frame));
+  } else {
+    solution._indCur = solution._indCur ? mixToward(solution._indCur, ind, frameK(frame)) : { r: 0, g: 0, b: 0, w: 0 };
+  }
+  const cur = solution._indCur;
   const bc = hexToRgb(base.color);
+  const f = Math.min(0.5, cur.w);
   // 指示剂色与基础色叠加（各半）：石蕊加入酸性溶液 → 红
   const mixed = rgbToHex({
-    r: (bc.r + ind.r) / 2,
-    g: (bc.g + ind.g) / 2,
-    b: (bc.b + ind.b) / 2,
+    r: (bc.r + cur.r) / 2,
+    g: (bc.g + cur.g) / 2,
+    b: (bc.b + cur.b) / 2,
   });
-  return { color: mixed, alpha: Math.max(base.alpha, 0.25 + 0.5 * Math.min(1, iw)) };
+  return { color: mixed, alpha: Math.max(base.alpha, 0.25 + 0.5 * f) };
 }
+
+/** 渲染时间(秒) → 缓动比例（帧率无关：指数时间常数 0.9^（Δt×18），收敛 ~1s 达 86%） */
+function frameK(sec) {
+  if (sec == null) return 1;
+  if (solution_frameT == null) solution_frameT = sec;
+  const dt = Math.max(0, Math.min(0.5, sec - solution_frameT));
+  solution_frameT = sec;
+  return 1 - Math.pow(0.9, dt * 18);
+}
+
+/** 把 cur 向 target 缓动收敛（k 比例；w 同步淡入/淡出） */
+function mixToward(cur, target, k) {
+  return {
+    r: cur.r + (target.r - cur.r) * k,
+    g: cur.g + (target.g - cur.g) * k,
+    b: cur.b + (target.b - cur.b) * k,
+    w: cur.w + ((target.w ?? 1) - cur.w) * k,
+  };
+}
+
+// 模块级：最近渲染时间（frameK 计算帧间流逝用）
+let solution_frameT = null;
 
 /** 渲染一个矩形液面（灵动：起伏波浪 + 持续上升的气泡 + 辉光） */
 export function renderLiquid(ctx, x, y, w, h, solution, time = 0) {
   if (w <= 0 || h <= 0) return;
-  const { color, alpha } = solutionColor(solution);
+  const { color, alpha } = solutionColor(solution, time);
   ctx.save();
   // 主体：纵向渐变（底部更深）
   const g = ctx.createLinearGradient(x, y, x, y + h);

@@ -342,8 +342,9 @@ SUBSTANCES['CH4'] = { id: 'CH4', mm: 16, state: 'gas', kind: 'gas', soluble: 'na
 SUBSTANCES['SO3'] = { id: 'SO3', mm: 80, state: 'gas', kind: 'acidicGas', soluble: 'na', gasColor: '#f0f0ff', solid: [] }; // 白烟
 
 // --- 指示剂（pH 显色：stops = [[pH起点, 颜色]...]，按 pH 找最后一个 ≤ 的段）---
-SUBSTANCES['Litmus'] = { id: 'Litmus', mm: 210, state: 'solid', kind: 'indicator', soluble: 'soluble', indicator: { stops: [[0, '#ff3b30'], [5, '#b06ad4'], [8, '#3b6cff']] }, solid: ['#b06ad4'] }; // 石蕊：红<5 / 紫5~8 / 蓝>8
-SUBSTANCES['C20H14O4'] = { id: 'C20H14O4', mm: 318, state: 'solid', kind: 'indicator', soluble: 'soluble', indicator: { stops: [[0, '#ffffff'], [8.2, '#ffb3c1'], [10, '#ff2d55']], transparent: true }, solid: ['#ffffff'] }; // 酚酞：无色<8.2 / 浅红8.2~10 / 深红>10
+// cn = 中文名：指示剂/特定物质在游戏里用中文显示（酚酞/石蕊不显示 C20H14O4/Litmus 化学式）
+SUBSTANCES['Litmus'] = { id: 'Litmus', mm: 210, state: 'solid', kind: 'indicator', soluble: 'soluble', cn: '石蕊', indicator: { stops: [[0, '#ff3b30'], [5, '#b06ad4'], [8, '#3b6cff']] }, solid: ['#b06ad4'] }; // 石蕊：红<5 / 紫5~8 / 蓝>8
+SUBSTANCES['C20H14O4'] = { id: 'C20H14O4', mm: 318, state: 'solid', kind: 'indicator', soluble: 'soluble', cn: '酚酞', indicator: { stops: [[0, '#ffffff'], [8.2, '#ffb3c1'], [10, '#ff2d55']], transparent: true }, solid: ['#ffffff'] }; // 酚酞：无色<8.2 / 浅红8.2~10 / 深红>10
 
 // --- 催化剂 / 其它 ---
 SUBSTANCES['MnO2'] = { id: 'MnO2', mm: 87, state: 'solid', kind: 'catalyst', soluble: 'insoluble', solid: ['#333333'] };
@@ -367,6 +368,11 @@ export function getSubstance(id) {
   if (s) return s;
   // 兜底：从未知公式构造一条"白盐"记录（数据缺失时保证不崩，属性可在表中补齐）
   return { id, mm: 100, state: 'solid', kind: 'other', soluble: 'soluble', solid: ['#cccccc'] };
+}
+
+/** 用户可见名称：指示剂等设置过 cn 的显示中文名，其余显示化学式 id（科学教育向）。 */
+export function displayName(id) {
+  return getSubstance(id).cn ?? normId(id);
 }
 
 export function isSoluble(id) {

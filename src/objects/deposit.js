@@ -10,7 +10,7 @@
 import { Obj } from './obj.js';
 import { MaterialGrid, renderGrid, CELL_SIZE } from '../render/gridrender.js';
 import { contrastEdge, luminance } from '../render/theme.js';
-import { getSubstance } from '../chem/substances.js';
+import { getSubstance, displayName } from '../chem/substances.js';
 import { renderFormula } from '../render/label.js';
 
 export class Deposit extends Obj {
@@ -129,7 +129,7 @@ export class Deposit extends Obj {
     ctx.stroke();
     ctx.restore();
     if (this.formulaVisible && ids.length) {
-      renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.join(' + '), { scene: opts?.scene });
+      renderFormula(ctx, this.x + this.w / 2, this.y - 6, ids.map((i) => displayName(i)).join(' + '), { scene: opts?.scene });
     }
   }
 }

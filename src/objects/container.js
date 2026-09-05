@@ -7,7 +7,7 @@ import { Obj } from './obj.js';
 import { Solution, SolutionMaterial, MIN_ENTRY } from '../chem/solution.js';
 import { ContainerMaterial } from './material.js';
 import { renderFormula } from '../render/label.js';
-import { getSubstance, acidLabelOf } from '../chem/substances.js';
+import { getSubstance, acidLabelOf, displayName } from '../chem/substances.js';
 import { renderPrecipitateBall, splitPile, particleSizeOf } from './particle.js';
 
 const GRAIN_MAX = 140; // 容器内沉淀的视觉颗粒上限（超出按 1.5g 合并，与自由粒子同规则）
@@ -46,10 +46,11 @@ export class Container extends Obj {
       if (mass >= MIN_ENTRY) {
         // 酸类标注浓/稀（阈值：≥300 g/L = 浓，与引擎"浓酸"判定一致——MnO2+浓盐酸制氯气等）
         const c = acidLabelOf(id, mass, this.solution.volume / 1000);
-        parts.push(c ? `${id}(${c})` : id); // 微量溶质不显示化学式（防"出现/消失"闪烁）
+        // 显示名：指示剂（酚酞/石蕊）显示中文名，其余显示化学式
+        parts.push(c ? `${displayName(id)}(${c})` : displayName(id)); // 微量溶质不显示化学式（防"出现/消失"闪烁）
       }
     }
-    for (const [id] of this.precipitates) parts.push(`${id}(↓)`);
+    for (const [id] of this.precipitates) parts.push(`${displayName(id)}(↓)`);
     if (parts.length === 0 && this.solution.water > 0) parts.push('H2O'); // 只有水的池子
     // 含指示剂时显示 pH 数值（石蕊/酚酞加入后即可读数）
     if (this.solution && this.solution.pH) {

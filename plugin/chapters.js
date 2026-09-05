@@ -211,9 +211,8 @@ Chezzle.Plugin.register('chapters', {
         const sc = M.byName(s.id);
         if (!sc) continue;
         ed.wireRopes(sc, s.snap);
-        for (const [gid, mass] of Object.entries(s.snap.atm ?? {})) {
-          if (Number.isFinite(mass) && mass > 0) sc.atmosphere.setGas(gid, mass);
-        }
+        // 大气 preset（整组独占：设置过的按值、没设置的=没有；空=保持默认）
+        sc.atmosphere.preset(s.snap.atm ?? {});
       }
       // 开关「切到场景」→ switchTo（落点 = 目标场景入口点：摆放玩家/地板中心）
       for (const s of scenesGo) {

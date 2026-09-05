@@ -7,7 +7,7 @@
 // ============================================================================
 
 import { THEME, rr, panel, glowText, clearText } from './theme.js';
-import { getSubstance, acidLabelOf } from '../chem/substances.js';
+import { getSubstance, acidLabelOf, displayName } from '../chem/substances.js';
 import { MIN_ENTRY } from '../chem/solution.js';
 import { solutionColor } from './liquidrender.js';
 import { CFG } from '../core/config.js';
@@ -1138,7 +1138,7 @@ export class Hud {
     ctx.fillStyle = sel ? '#fff6dd' : THEME.gold.text;
     ctx.font = 'bold 9.5px monospace';
     ctx.textAlign = 'center';
-    ctx.fillText(s.substance, x + size / 2, sy + 15);
+    ctx.fillText(displayName(s.substance), x + size / 2, sy + 15);
     ctx.font = '11px monospace';
     ctx.fillStyle = '#ffffff';
     const m = Number.isFinite(s.mass) ? s.mass : 0; // NaN 质量显示 0，不显示 NaN

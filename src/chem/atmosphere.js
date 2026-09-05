@@ -47,6 +47,22 @@ export class Atmosphere {
     if (this._cause && Math.abs(mass - prev) > 1e-9) this._log.push({ id, delta: mass - prev, cause: this._cause });
   }
 
+  /**
+   * 整组大气预设：**先清空所有气体、再按 entries 设置**——"设置过的气体 = 配置值，
+   * 没设置的 = 没有"（用户语义：N2:5000, O2:0 → 只剩 N2，氧气为 0）。
+   * 空表 = 无预设 → 保持默认地球大气（N2 80% / O2 20%）不动。
+   * 注意与 setGas 的区别：setGas 是"覆盖单个"，preset 是"独占整组"（先清零）。
+   */
+  preset(entries) {
+    const list = Object.entries(entries ?? {}).filter(([, m]) => Number.isFinite(m) && m >= 0);
+    if (!list.length) return; // 没设置任何气体 → 保持默认（地球大气）
+    this.gas.clear();
+    for (const [id, mass] of list) {
+      this.gas.set(id, mass);
+      if (this._cause) this._log.push({ id, delta: mass, cause: this._cause });
+    }
+  }
+
   remove(id, mass) {
     if (mass <= 0) return 0;
     const cur = this.mass(id);
