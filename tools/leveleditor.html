@@ -189,11 +189,11 @@
   </div>
 </div>
 <datalist id="substances"></datalist>
-<script src="../dist/chezzle.js?vmtnyxblw?vmtnxszpm?vmtnwuuru?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b"></script>
+<script src="../dist/chezzle.js?vmtnzn7a4?vmtnyxblw?vmtnxszpm?vmtnwuuru?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b"></script>
 <script>
 // ============================================================================
 // Chezzle 可视化关卡编辑器
-// 复用 dist/chezzle.js?vmtnyxblw?vmtnxszpm?vmtnwuuru?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b 的全局 Chezzle：对象类、Scene、渲染、物理循环。
+// 复用 dist/chezzle.js?vmtnzn7a4?vmtnyxblw?vmtnxszpm?vmtnwuuru?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b 的全局 Chezzle：对象类、Scene、渲染、物理循环。
 // 编辑模式：自建 transform 渲染已摆放物体；试玩模式：重建 Scene 跑物理+化学。
 // ============================================================================
 const C = Chezzle;
@@ -1200,10 +1200,12 @@ function makeEditorApi(reg) {
     setPlayMode: (mode) => { editorPlayMode = mode; },
     /** 试玩注入的插件清单（与导出一致） */
     getActivePlugins: () => activePlugins(),
-    /** 快照 → 可放入场景的《真实》对象数组（组件经 C.Plugin.create；编辑器对象不被复用） */
+    /** 快照 → 可放入场景的《真实》对象数组（组件经 C.Plugin.create；编辑器对象不被复用）。
+     *  传送门旧数据（snap 只有颜色没组号）→ 按颜色补稳定组号（跨场景同色=同组，互通），
+     *  并**写回 snap 数据**（后续 sceneDsl/再构建也一致，不产生"运行时一种号、存盘一种号"）。 */
     objectsFrom: (snap) => (snap.objects ?? [])
       .filter((o) => byType[o.type])
-      .map((o) => ({ type: o.type, obj: buildPlayObject({ type: o.type, obj: byType[o.type].construct(gridOpts(o.type, o.opts)) }) })),
+      .map((o) => ({ type: o.type, obj: ensurePortalGroup(buildPlayObject({ type: o.type, obj: byType[o.type].construct(gridOpts(o.type, o.opts)) }), o) })),
     /** 存档恢复后回调（editor() 执行在恢复之前——面板需在恢复后重渲染） */
     onStateLoaded: (fn) => {
       const arr = editorStateLoadedHooks.get(reg) ?? (editorStateLoadedHooks.set(reg, []), editorStateLoadedHooks.get(reg));
@@ -1254,6 +1256,8 @@ function makeEditorApi(reg) {
       let seq = 0;
       for (const o of snap.objects ?? []) {
         const p = { type: o.type, obj: byType[o.type].construct(gridOpts(o.type, o.opts)) };
+        // 传送门旧数据（无组号）→ 按颜色补稳定组号（跨场景同色=同组，互通）
+        if (p.type === 'portal') ensurePortalGroup(p.obj, o);
         if (PREC_TYPES.includes(p.type) && !p.obj.id && Object.keys(mapToObj(p.obj.precipitates)).length) p.obj.id = `${idPrefix[p.type]}${++seq}`;
         // 无 id 但有非默认增强值（如"延迟出现(秒)"）：补 id——增强走 M.byId 引用
         if (!p.obj.id && p.type !== 'rope') {
@@ -1555,27 +1559,51 @@ function portalGroupSync(key, patch, exceptIdx) {
 }
 
 /**
- * 旧版本迁移：把只有颜色（无组号）的传送门自动分组——同色 = 同一组号
- * （从已有组号继续编号：g1/g2/…；有组号的保持不变）。仅在加载/存档时调用一次。
+ * 旧版本迁移：把只有颜色（无组号）的传送门按颜色补**稳定组号**（同色=同组）。
+ * 与 objectsFrom/sceneDsl 的 portalGroupOf 同一条规则（颜色哈希）——两种入口统一，
+ * 否则加载时按 g1/g2 顺序编号、快照构建按哈希编号，同色门会得到不同组号（跨场景不通）。
  */
 function migratePortalGroups() {
-  let seq = 0;
-  const used = new Set(state.placed.filter((p) => p.type === 'portal' && p.obj.group).map((p) => p.obj.group));
-  while (used.has('g' + (seq + 1))) seq++;
-  const byColor = new Map();
+  let migrated = 0;
   for (const [i, p] of state.placed.entries()) {
     if (p.type !== 'portal' || p.obj.group != null) continue;
-    if (!byColor.has(p.obj.color)) {
-      const g = 'g' + (++seq);
-      used.add(g);
-      byColor.set(p.obj.color, g);
-    }
-    const g = byColor.get(p.obj.color);
+    const g = portalGroupOf(p.obj.color);
+    if (!g) continue;
     const opts = byType.portal.collect(p.obj);
     opts.group = g;
     state.placed[i].obj = byType.portal.construct(gridOpts('portal', opts));
+    migrated++;
   }
-  return seq;
+  return migrated;
+}
+
+/**
+ * 颜色 → 稳定组号：同一颜色在任何场景都映射到同一组号（确定性哈希）——
+ * 多场景的"旧数据（无组号）按颜色兜底"这样才跨场景一致（否则场景A按颜色分 g1、
+ * 场景B又按颜色重头分 g1，同色能对、异色可能撞组）。颜色哈希到色板索引+1。
+ */
+const PORTAL_GROUPS_BY_COLOR = new Map();
+function portalGroupOf(color) {
+  if (!color) return null;
+  if (PORTAL_GROUPS_BY_COLOR.has(color)) return PORTAL_GROUPS_BY_COLOR.get(color);
+  const hash = [...color].reduce((h, c) => (h * 31 + c.charCodeAt(0)) & 0x7fffffff, 7);
+  const g = 'g' + (hash % 9999 + 1);
+  PORTAL_GROUPS_BY_COLOR.set(color, g);
+  return g;
+}
+
+/**
+ * 给 Portal 对象补组号：无 group 且有色 → 按颜色的稳定组号（旧数据迁移，跨场景一致）。
+ * data 可选：原始数据对象（{type, opts}），补组号时同步写回 opts.group（快照数据持久化，
+ * 保证运行时/存盘同一种号）。
+ */
+function ensurePortalGroup(obj, data = null) {
+  if (!obj || obj.group != null || !obj.color) return obj;
+  const g = portalGroupOf(obj.color);
+  if (!g) return obj;
+  obj.group = g;
+  if (data && data.opts && data.opts.group == null) data.opts.group = g;
+  return obj;
 }
 function removeAt(idx) {
   state.placed.splice(idx, 1);
@@ -2323,7 +2351,7 @@ function dslLine(item) {
       const extra = fmtOpts({ hidden: HID, id: o.id });
       return `.sign(${pos}, '${t}'${extra ? `, ${extra}` : ''})`;
     }
-    case 'portal': return `.portal(${pos}, ${fmtOpts({ w: o.w, h: o.h, color: o.color, uses: Number.isFinite(o.uses) ? o.uses : undefined, switchId: o.switchId || undefined, hidden: HID, id: o.id })})`;
+    case 'portal': return `.portal(${pos}, ${fmtOpts({ w: o.w, h: o.h, color: o.color, uses: Number.isFinite(o.uses) ? o.uses : undefined, switchId: o.switchId || undefined, group: o.group || undefined, hidden: HID, id: o.id })})`;
     case 'gasdetector': return `.gasdetector(${pos}, ${fmtOpts({ gas: o.gas, threshold: o.threshold, opening: o.opening, and: o.and, deleteId: o.deleteId || undefined, showId: o.showId || undefined, igniteId: o.igniteId || undefined, extinguishId: o.extinguishId || undefined, openId: o.openId || undefined, hidden: HID, id: o.id })})`;
     case 'extractor': return `.extractor(${pos}, ${fmtOpts({ w: o.w, h: o.h, poolId: o.poolId, switchId: o.switchId, rate: o.rate, hidden: HID, id: o.id })})`;
     case 'beaker': {
@@ -2509,7 +2537,7 @@ function exportHTML() {
 </head>
 <body>
 <canvas id="game"></canvas>
-<script src="../dist/chezzle.js?vmtnyxblw?vmtnxszpm?vmtnwuuru?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b"><\/script>
+<script src="../dist/chezzle.js?vmtnzn7a4?vmtnyxblw?vmtnxszpm?vmtnwuuru?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b"><\/script>
 ${pluginTags()}
 <script src="report.js"><\/script>
 <script>
