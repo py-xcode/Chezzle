@@ -1489,6 +1489,27 @@ function addPlaced(type, opts) {
   }
   // 数字 id（属性面板/旧数据可能给数字）统一转字符串
   if (opts.id != null) opts.id = String(opts.id);
+  // 传送门组编辑：自动配对——场景里有"未配对"的组（同色计数为奇）就加入它
+  // （继承组色/开关/次数；引擎按同色配对，组内共享 n次预算），全配对完才开新组色。
+  if (type === 'portal') {
+    const cnt = new Map();
+    for (const p of state.placed) {
+      if (p.type === 'portal' && p.obj.color) cnt.set(p.obj.color, (cnt.get(p.obj.color) ?? 0) + 1);
+    }
+    let mateColor = null;
+    for (const [color, n] of cnt) if (n % 2 === 1) { mateColor = color; break; }
+    if (mateColor) {
+      const src = state.placed.find((p) => p.type === 'portal' && p.obj.color === mateColor);
+      opts.color = mateColor;
+      if (src) {
+        if (opts.switchId == null) opts.switchId = src.obj.switchId ?? null;
+        if (opts.uses == null) opts.uses = Number.isFinite(src.obj.uses) ? src.obj.uses : 0;
+      }
+      $('status').textContent = '传送门已自动配对同色组（颜色/开关/次数已继承）——改组任一扇门，组属性自动同步';
+    } else if (!opts.color) {
+      opts.color = nextPortalColor([...cnt.keys()]);
+    }
+  }
   // 自动分配可读 id（block1/pool1/lamp1…），供绳子悬挂/接线引用
   if (!opts.id) {
     const t = type === 'player' ? 'player' : type;
@@ -1507,6 +1528,32 @@ function replaceAt(idx, opts) {
   state.placed[idx].obj = e.construct(gridOpts(state.placed[idx].type, opts));
   buildRenderScene();
   saveState();
+}
+
+/** 传送门组色候选（避免花哨随机——按"未用色"顺序取，全用尽再随机） */
+const PORTAL_COLORS = ['#c78bff', '#7fd8ff', '#ffb340', '#4dff5f', '#ff5f8a', '#ffe05f', '#7fe0c8', '#5f8aff'];
+function nextPortalColor(used = []) {
+  const c = PORTAL_COLORS.find((x) => !used.includes(x));
+  return c ?? PORTAL_COLORS[Math.floor(Math.random() * PORTAL_COLORS.length)];
+}
+
+/** 传送门组属性同步（组 = 同色）：改颜色/次数/开关 → 全组其余门跟随。
+ *  返回受影响的门索引列表（不含自身）。编辑器中"组为单位编辑"的核心。 */
+function portalGroupSync(color, patch, exceptIdx) {
+  const hits = [];
+  for (let i = 0; i < state.placed.length; i++) {
+    if (i === exceptIdx) continue;
+    const p = state.placed[i];
+    if (p.type !== 'portal' || p.obj.color !== color) continue;
+    const opts = byType.portal.collect(p.obj);
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined) delete opts[k];
+      else opts[k] = v;
+    }
+    state.placed[i].obj = byType.portal.construct(gridOpts('portal', opts));
+    hits.push(i);
+  }
+  return hits;
 }
 function removeAt(idx) {
   state.placed.splice(idx, 1);
@@ -1992,6 +2039,14 @@ function refreshProps() {
     : '';
   // 标题显示：类型 + id（方便绳子悬挂/接线引用）
   let html = multi + `<h3>${e.label} <small style="color:#9fd8ff">#${item.obj.id ?? '?'}</small> <small style="color:#6a7a96">(${e.type})</small></h3>`;
+  // 传送门：组信息条（同色 = 一组；组属性 颜色/次数/开关 编辑自动同步全组）
+  if (e.type === 'portal') {
+    const gColor = item.obj.color;
+    const mates = state.placed.filter((p) => p.type === 'portal' && p.obj.color === gColor);
+    html += `<div style="margin:4px 0 8px;padding:5px 8px;background:rgba(199,139,255,0.12);border:1px solid rgba(199,139,255,0.4);border-radius:6px;font-size:11px;color:#e8d6ff;line-height:1.6">
+      组色 <b style="color:#e8b84b">${gColor ?? '（无）'}</b> · 同色成员 <b style="color:#7fe0ff">${mates.length}</b> 扇（${mates.map((p) => p.obj.id ?? '?').join('、') || '—'}）<br>
+      <span style="color:#9fb2c8">组级属性（颜色/可用次数/开关id）改动自动同步全组——改一扇，全组生效</span></div>`;
+  }
   const opts = e.collect(item.obj);
   for (const f of e.fields) {
     const v = opts[f.k];
@@ -2033,6 +2088,9 @@ function refreshProps() {
       const item = state.placed[idx];
       const e2 = byType[item.type];
       const opts = e2.collect(item.obj);
+      // 传送门组编辑：改动前记录组色（改颜色=整组换色；改开关/次数=整组同步）
+      const grpColor = item.obj.color;
+      const grpOld = { color: item.obj.color, switchId: item.obj.switchId ?? null, uses: Number.isFinite(item.obj.uses) ? item.obj.uses : 0 };
       let val;
       if (el.dataset.kind === 'bool') val = el.checked;
       else if (el.dataset.kind === 'solutes') {
@@ -2076,6 +2134,22 @@ function refreshProps() {
       }
       pushUndo();
       replaceAt(idx, opts);
+      // ★ 传送门组属性同步（组 = 同色）：color/uses/switchId 改动 → 全组其它门跟随。
+      //   改 color 时先把整组换成新色（新对象已是新色），再用新色同步旧组员。
+      if (item.type === 'portal' && ['color', 'uses', 'switchId'].includes(k)) {
+        const patch = {};
+        if (k === 'color') patch.color = opts.color;
+        else if (k === 'uses') patch.uses = opts.uses;
+        else if (k === 'switchId') patch.switchId = opts.switchId;
+        const hits = portalGroupSync(k === 'color' ? grpColor : (opts.color ?? grpColor), patch, idx);
+        if (hits.length) {
+          buildRenderScene();
+          $('status').textContent = `传送门组同步：已联动 ${hits.length} 扇同色门（${k === 'color' ? '换色' : k === 'uses' ? '可用次数' : '开关绑定'}）`;
+          saveState();
+        } else {
+          $('status').textContent = '传送门组同步：该颜色下没有其它门（只有这一扇，未成对）';
+        }
+      }
       renderEdit(); // 不重建属性面板：保留正在编辑的输入框与光标
     });
   });
