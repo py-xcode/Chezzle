@@ -195,9 +195,18 @@ Chezzle.Plugin.register('chapters', {
       });
       for (const s of scenesGo) {
         const b = M.scene(s.id, { worldW: s.snap.worldW, worldH: s.snap.worldH });
+        let hasPlayer = false;
         for (const p of ed.objectsFrom(s.snap)) {
           if (p.type === 'rope') continue;
           if (p.obj) b.add(p.obj);
+          if (p.type === 'player') hasPlayer = true;
+        }
+        // ★ 无摆放玩家的场景 → 注入默认玩家（放入口点：地板中心上方）。
+        //   否则 temple 等"无玩家关卡"启动/传送进后 scene.player=null，相机无焦点、
+        //   永远看不到玩家（用户 level(24) 复现：temple 直接启动没有玩家出现）
+        if (!hasPlayer && s.snap.objects != null) {
+          const ep = entryPoint(s);
+          b.add(new Chezzle.Player({ x: ep.x, y: ep.y, substance: 'NaOH', mass: 30, id: 'auto_player' }));
         }
         for (const rxc of s.snap.rx ?? []) {
           const rule = Chezzle.parseReactionStr(rxc);
@@ -267,7 +276,7 @@ Chezzle.Plugin.register('chapters', {
       lines.push('for (const p of PLUGINS) if (p.cfg && typeof p.cfg === "object") p.cfg.M = () => M;');
       const post = [];
       for (const s of scenes) {
-        const d = ed.sceneDsl(s.snap, s.id);
+        const d = ed.sceneDsl(s.snap, s.id, true); // ensurePlayer：无玩家场景注入默认玩家（否则启动无玩家/无焦点）
         lines.push(...d.chain);
         post.push(...d.post);
         for (const p of d.placed) {
