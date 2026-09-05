@@ -215,7 +215,11 @@ function fitCanvas(canvas) {
   setupCanvasSize(canvas, w, h); // 缓冲 ×dpr 高清；CSS 尺寸 = 逻辑 px（铺满窗口）
   canvas.style.position = 'fixed';
   canvas.style.inset = '0';
-  canvas.style.display = 'block';
+  // ★ 不覆盖 display：多场景下场景画布按 e.canvas.style.display 切换显隐（激活=block、
+  //   非激活=none）——强制 block 会让所有场景画布叠在屏上，最顶层是非激活场景的
+  //   空画布 → 画面全黑且无任何报错（用户 level6 手机端复现）。只把"已显示"的改成
+  //   block（消除内联 canvas 的 baseline 空隙），none 保持 none。
+  if (canvas.style.display !== 'none') canvas.style.display = 'block';
   canvas.style['z-index'] = '1';
   canvas.style.touchAction = 'none';
 }

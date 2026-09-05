@@ -42,7 +42,9 @@ export class Multiscene {
     //   原 canvas 的尺寸（fitCanvasToWindow 已设 style）/宽高兜底，原 canvas 隐藏。
     if (typeof container.tagName === 'string' && container.tagName.toUpperCase() === 'CANVAS') {
       const wrap = document.createElement('div');
-      wrap.style.cssText = `position:relative;width:${container.style?.width || '100vw'};height:${container.style?.height || '100vh'};`;
+      // 尺寸直接全屏：不继承 canvas.style（那是 fitCanvasToWindow 的时序读数，
+      // 在设备模拟/转屏初期可能拿旧值，导致 wrap 比视口小→画面角落悬空）
+      wrap.style.cssText = 'position:relative;width:100vw;height:100vh;';
       if (container.parentNode) container.parentNode.insertBefore(wrap, container);
       wrap.appendChild(container);
       container.style.display = 'none';

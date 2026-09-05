@@ -82,8 +82,8 @@ test('container 是 <canvas> 时自动包装 div（旧导出模板兼容：场�
   M.scene('a');
   const wrap = parent.first;
   assert.ok(wrap, '应创建包装 div 并插入原位置');
-  assert.ok(wrap.style.cssText.includes('width:1280px'), '包装 div 继承原 canvas 的尺寸');
-  assert.ok(wrap.style.cssText.includes('height:800px'), '包装 div 继承原 canvas 的尺寸');
+  assert.ok(wrap.style.cssText.includes('100vw'), '包装 div 全屏宽度（不依赖时序读数）');
+  assert.ok(wrap.style.cssText.includes('100vh'), '包装 div 全屏高度');
   assert.equal(container.style.display, 'none', '原 canvas 隐藏（不再显示场景子画布）');
   assert.equal(M.container, wrap, 'Multiscene 内部容器 = 包装 div');
 });
