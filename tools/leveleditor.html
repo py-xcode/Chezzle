@@ -1784,6 +1784,13 @@ canvas.addEventListener('mousedown', (e) => {
   }
   const sp = canvasPos(e);
   const w = screenToWorld(sp.x, sp.y);
+  // ★ 中键平移：先于一切编辑/框选模式——演出剧本「🎯 画布框选」时也能用中键移动画布
+  //   （用户反馈：框选模式下无法拖地图，只能框错地方重来）
+  if (e.button === 1) {
+    drag = { mode: 'pan', sx: sp.x, sy: sp.y };
+    e.preventDefault();
+    return;
+  }
   // 插件框选模式（演出剧本 pos 触发区域）：先于一切编辑交互
   if (pickRectCb) {
     drag = { mode: 'pickrect', sx: sp.x, sy: sp.y, wx: w.x, wy: w.y };
@@ -1798,7 +1805,6 @@ canvas.addEventListener('mousedown', (e) => {
     renderEdit();
     return;
   }
-  if (e.button === 1) { drag = { mode: 'pan', sx: sp.x, sy: sp.y }; e.preventDefault(); return; }
   const ctrl = e.ctrlKey || e.metaKey;
   if (ctrl) {
     const hit = hitTest(w.x, w.y);
