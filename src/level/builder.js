@@ -32,6 +32,7 @@ import { bindSceneClick } from './click.js';
 import { bindOverviewInput } from '../core/overview.js';
 import { bindTouchUI } from '../core/touch.js';
 import { attachRecorderPanel } from '../core/recorder.js';
+import { canvasLW, canvasLH } from '../render/canvas.js';
 
 export class LevelBuilder {
   constructor(canvas, opts = {}) {
@@ -226,8 +227,8 @@ export class LevelBuilder {
     const screenPos = (e) => {
       const rect = canvas.getBoundingClientRect();
       return {
-        x: (e.clientX - rect.left) * (canvas.width / rect.width),
-        y: (e.clientY - rect.top) * (canvas.height / rect.height),
+        x: (e.clientX - rect.left) * (canvasLW(canvas) / rect.width),
+        y: (e.clientY - rect.top) * (canvasLH(canvas) / rect.height),
       };
     };
     // 记录鼠标位置（调试模式悬停显示物体来源用）；离开画布清除

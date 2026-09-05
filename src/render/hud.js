@@ -15,6 +15,7 @@ import { GasColumn } from '../objects/gascolumn.js';
 import { Block } from '../objects/block.js';
 import { inventorySlotRects, uiMargins, overviewButtonRect, fullscreenButtonRect, hudTopOffset, touchInsetsOf } from '../level/click.js';
 import { joyGeom, touchButtonRects } from '../core/touch.js';
+import { canvasLW, canvasLH, canvasTransformDpr } from './canvas.js';
 
 // 溯源 kind → 中文（调试悬停显示物体"为何存在"）
 const ORIGIN_LABELS = {
@@ -139,10 +140,12 @@ export class Hud {
   render(ctx, time = 0) {
     const scene = this.scene;
     const p = scene.player;
-    const W = ctx.canvas.width;
-    const H = ctx.canvas.height;
+    // 屏幕空间 UI 以**逻辑像素**布局与绘制（基座乘 dpr）——否则 dpr>1 设备上
+    // 68px 按钮按物理像素结算、显示只有 34px（"移动端 HUD 明显偏小"根因）
+    const W = canvasLW(ctx.canvas);
+    const H = canvasLH(ctx.canvas);
     ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.setTransform(canvasTransformDpr(ctx.canvas), 0, 0, canvasTransformDpr(ctx.canvas), 0, 0);
 
     // 条件提示：出现"可点击展示"的新提示 → 按钮闪光（提示只在点按钮时展示，
     // 不自动弹面板；点按钮后由 onTipClick 拉取/收起）

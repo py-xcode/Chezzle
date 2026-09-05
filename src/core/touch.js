@@ -22,7 +22,7 @@
 // ============================================================================
 
 import { CFG } from './config.js';
-import { setupCanvasSize } from '../render/canvas.js';
+import { setupCanvasSize, canvasLW, canvasLH } from '../render/canvas.js';
 import {
   handleSceneClick,
   handleScenePressDown,
@@ -255,7 +255,7 @@ export class TouchUI {
 
   /** 竖屏（触屏端）？HUD 画旋转提示 */
   isPortrait() {
-    return this.enabled() && this.canvas.width < this.canvas.height;
+    return this.enabled() && canvasLW(this.canvas) < canvasLH(this.canvas);
   }
 
   /** 某按键当前是否被按住（HUD 高亮用） */
@@ -266,7 +266,7 @@ export class TouchUI {
 
   /** 摇杆几何（画布坐标） */
   geom() {
-    return joyGeom(this.canvas.width, this.canvas.height, this.insets);
+    return joyGeom(canvasLW(this.canvas), canvasLH(this.canvas), this.insets);
   }
 
   /** 按钮矩形（画布坐标）；场景设置了 hideTouchGrab → 不返回/不渲染'grab'（拾取/吸液
@@ -275,7 +275,7 @@ export class TouchUI {
     const act = this.getActive();
     const scene = act && act.scene ? act.scene : null;
     const slots = act && act.scene && act.scene.player ? act.scene.player.inventory.slots : [];
-    const rs = touchButtonRects(this.canvas.width, this.canvas.height, slots, this.insets);
+    const rs = touchButtonRects(canvasLW(this.canvas), canvasLH(this.canvas), slots, this.insets);
     return scene && scene.hideTouchGrab ? rs.filter((r) => r.key !== 'grab') : rs;
   }
 
@@ -385,7 +385,7 @@ export class TouchUI {
     }
     // ⓪ 鸟瞰模式：返回按钮 = 退出；其余触点进手势管线（1指平移 / 2指捏合缩放）
     if (scene.overview) {
-      const b = overviewButtonRect(this.canvas.width, hudTopOffset(scene), (scene._touchUI && scene._touchUI.insets.right) || 0);
+      const b = overviewButtonRect(canvasLW(this.canvas), hudTopOffset(scene), (scene._touchUI && scene._touchUI.insets.right) || 0);
       if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
         scene.toggleOverview();
         return 'ui';
@@ -412,7 +412,7 @@ export class TouchUI {
     // ②.5 提示面板（展开中）：点面板 = 消费（不穿透到场景）；右上 ✕ = 关闭；
     //     按住右滑 = 关闭（面板跟随手指，超 60px 触发关闭）
     if (hud && hud.showTip) {
-      const pr = tipPanelRect(this.canvas.width, hudTopOffset(scene), touchInsetsOf(scene).right || 0);
+      const pr = tipPanelRect(canvasLW(this.canvas), hudTopOffset(scene), touchInsetsOf(scene).right || 0);
       if (x >= pr.x && x <= pr.x + pr.w && y >= pr.y && y <= pr.y + pr.h) {
         const r = hud._tipRect ?? pr;
         if (x >= r.x + r.w - 32 && y <= r.y + 32) {
@@ -444,7 +444,7 @@ export class TouchUI {
     const prev = this.ovTouches.get(id);
     if (!scene || !scene.camera || !prev) return;
     if (this.ovTouches.size === 1) {
-      scene.camera.panOverview(x - prev.x, y - prev.y, this.canvas.width, this.canvas.height);
+      scene.camera.panOverview(x - prev.x, y - prev.y, canvasLW(this.canvas), canvasLH(this.canvas));
     } else if (this.ovTouches.size >= 2) {
       // 取另外一根手指组成捏合对
       let otherId = null;
@@ -458,8 +458,8 @@ export class TouchUI {
         const m0y = (prev.y + o.y) / 2;
         const m1x = (x + o.x) / 2;
         const m1y = (y + o.y) / 2;
-        scene.camera.panOverview(m1x - m0x, m1y - m0y, this.canvas.width, this.canvas.height);
-        if (d0 > 8) scene.camera.zoomOverview(d1 / d0, m1x, m1y, this.canvas.width, this.canvas.height);
+        scene.camera.panOverview(m1x - m0x, m1y - m0y, canvasLW(this.canvas), canvasLH(this.canvas));
+        if (d0 > 8) scene.camera.zoomOverview(d1 / d0, m1x, m1y, canvasLW(this.canvas), canvasLH(this.canvas));
       }
     }
     this.ovTouches.set(id, { x, y });
@@ -567,8 +567,8 @@ export class TouchUI {
     const canvas = this.canvas;
     const pos = (t) => {
       const r = canvas.getBoundingClientRect();
-      const kx = canvas.width / Math.max(1, r.width);
-      const ky = canvas.height / Math.max(1, r.height);
+      const kx = canvasLW(canvas) / Math.max(1, r.width);
+      const ky = canvasLH(canvas) / Math.max(1, r.height);
       return { x: (t.clientX - r.left) * kx, y: (t.clientY - r.top) * ky };
     };
     const enabled = () => isTouchDevice();

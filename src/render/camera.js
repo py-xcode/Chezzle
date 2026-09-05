@@ -137,10 +137,13 @@ export class Camera {
     return { scale, ox, oy, offsetX, offsetY };
   }
 
-  /** 应用到 canvas 上下文（世界坐标 → 屏幕坐标；含震动偏移） */
+  /** 应用到 canvas 上下文（世界坐标 → 屏幕坐标；含震动偏移）。
+   *  vw/vh = 逻辑视口（CSS px）；基座乘 dpr → 物理像素 1:1 渲染。 */
   apply(ctx, vw, vh, focus = null) {
     const { scale, offsetX, offsetY } = this.compute(vw, vh, focus);
     const sh = this.shakeOffset();
-    ctx.setTransform(scale, 0, 0, scale, offsetX + sh.x, offsetY + sh.y);
+    const cnv = ctx && ctx.canvas && typeof ctx.canvas === 'object' ? ctx.canvas : null;
+    const dpr = cnv && Number.isFinite(cnv._dpr) ? cnv._dpr : 1;
+    ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * (offsetX + sh.x), dpr * (offsetY + sh.y));
   }
 }

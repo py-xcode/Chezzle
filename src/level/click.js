@@ -12,12 +12,14 @@
 
 import { CFG } from '../core/config.js';
 import { toggleFullscreen, fullscreenSupported, isFullscreen } from '../core/fullscreen.js';
+import { canvasLW, canvasLH } from '../render/canvas.js';
 
-/** 屏幕坐标 → 世界坐标（与 Renderer.frame 同口径：跟随玩家/聚焦内容；鸟瞰时走鸟瞰视图） */
+/** 屏幕坐标 → 世界坐标（与 Renderer.frame 同口径：跟随玩家/聚焦内容；鸟瞰时走鸟瞰视图）。
+ *  输入/输出均为**逻辑像素**（canvas 缓冲 ×dpr，UI/命中统一逻辑系）。 */
 export function screenToWorld(scene, canvas, sx, sy) {
   const c = scene.camera;
   if (!c) return { x: sx, y: sy };
-  const { scale, offsetX, offsetY } = c.compute(canvas.width, canvas.height, scene.player ?? scene.cameraFocus ?? null);
+  const { scale, offsetX, offsetY } = c.compute(canvasLW(canvas), canvasLH(canvas), scene.player ?? scene.cameraFocus ?? null);
   return { x: (sx - offsetX) / scale, y: (sy - offsetY) / scale };
 }
 
@@ -140,7 +142,7 @@ export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   const right = touchInsetsOf(scene).right || 0;
   // 0) 鸟瞰模式：只认"返回"按钮（暂停态；未中 → 交给鸟瞰拖动/缩放管线）
   if (scene.overview) {
-    if (inRect(overviewButtonRect(canvas.width, top, right), sx, sy)) {
+    if (inRect(overviewButtonRect(canvasLW(canvas), top, right), sx, sy)) {
       scene.toggleOverview();
       onInfo?.({ type: 'overview-exit' });
     }
@@ -149,7 +151,7 @@ export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   // 1) 全屏按钮（仅触屏端显示；click/触点都在用户手势内，可请求全屏）。
   //    老设备/浏览器不支持元素全屏 API → 明确提示（不静默失效）
   if (scene._touchUI && typeof scene._touchUI.enabled === 'function' && scene._touchUI.enabled()) {
-    if (inRect(fullscreenButtonRect(canvas.width, top, right), sx, sy)) {
+    if (inRect(fullscreenButtonRect(canvasLW(canvas), top, right), sx, sy)) {
       if (fullscreenSupported()) toggleFullscreen();
       else pushNotice(scene, '此浏览器不支持全屏');
       onInfo?.({ type: 'fullscreen' });
@@ -157,21 +159,21 @@ export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
     }
   }
   // 2) 鸟瞰按钮（双端）
-  if (inRect(overviewButtonRect(canvas.width, top, right), sx, sy)) {
+  if (inRect(overviewButtonRect(canvasLW(canvas), top, right), sx, sy)) {
     scene.toggleOverview();
     onInfo?.({ type: 'overview' });
     return true;
   }
   // 3) 提示按钮（右上；hud.tipButton 同几何：top..top+34）
   //    点击 = 展示下一条可用提示（没有则俏皮话/收起）——面板/文案由 hud.onTipClick 管理
-  if (sx > canvas.width - right - 84 && sx < canvas.width - right - 8 && sy > top && sy < top + 34) {
+  if (sx > canvasLW(canvas) - right - 84 && sx < canvasLW(canvas) - right - 8 && sy > top && sy < top + 34) {
     if (hud && typeof hud.onTipClick === 'function') hud.onTipClick(scene);
     onInfo?.({ type: 'tip' });
     return true;
   }
   // 3.5) 提示面板（展开中）：面板上点击 = 消费（不穿透到场景）；右上 ✕ = 关闭
   if (hud && hud.showTip) {
-    const pr = tipPanelRect(canvas.width, top, right);
+    const pr = tipPanelRect(canvasLW(canvas), top, right);
     if (sx >= pr.x && sx <= pr.x + pr.w && sy >= pr.y && sy <= pr.y + pr.h) {
       const r = hud._tipRect ?? pr;
       if (sx >= r.x + r.w - 32 && sy <= r.y + 32) {
@@ -187,7 +189,7 @@ export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   // 4) 物品栏选格（右下；几何与 HUD 渲染共用 inventorySlotRects）
   const p = scene.player;
   if (p && p.inventory) {
-    const rects = inventorySlotRects(canvas.width, canvas.height, p.inventory.slots, uiMargins(scene));
+    const rects = inventorySlotRects(canvasLW(canvas), canvasLH(canvas), p.inventory.slots, uiMargins(scene));
     for (let i = 0; i < rects.length; i++) {
       const r = rects[i];
       if (sx >= r.x && sx <= r.x + r.size && sy >= r.y && sy <= r.y + r.size) {

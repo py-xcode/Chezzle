@@ -7,6 +7,7 @@
 // ============================================================================
 
 import { overviewButtonRect, hudTopOffset, touchInsetsOf } from '../level/click.js';
+import { canvasLW, canvasLH } from '../render/canvas.js';
 
 /**
  * 给画布绑定鸟瞰输入。
@@ -33,7 +34,7 @@ export function bindOverviewInput(canvas, getActive) {
     // 滚轮一格 ≈ 1.12×；deltaMode=1（行）时放大系数
     const step = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
     const factor = Math.pow(1.12, -step / 53);
-    scene.camera.zoomOverview(factor, px, py, canvas.width, canvas.height);
+    scene.camera.zoomOverview(factor, px, py, canvasLW(canvas), canvasLH(canvas));
   };
 
   const onDown = (e) => {
@@ -44,7 +45,7 @@ export function bindOverviewInput(canvas, getActive) {
     const px = e.clientX - r.left;
     const py = e.clientY - r.top;
     // "返回"按钮：不进入拖动（click 事件负责切换）
-    const b = overviewButtonRect(canvas.width, hudTopOffset(scene), touchInsetsOf(scene).right || 0);
+    const b = overviewButtonRect(canvasLW(canvas), hudTopOffset(scene), touchInsetsOf(scene).right || 0);
     if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) return;
     pan = { x: e.clientX, y: e.clientY };
   };
@@ -56,7 +57,7 @@ export function bindOverviewInput(canvas, getActive) {
       pan = null;
       return;
     }
-    scene.camera.panOverview(e.clientX - pan.x, e.clientY - pan.y, canvas.width, canvas.height);
+    scene.camera.panOverview(e.clientX - pan.x, e.clientY - pan.y, canvasLW(canvas), canvasLH(canvas));
     pan = { x: e.clientX, y: e.clientY };
   };
 

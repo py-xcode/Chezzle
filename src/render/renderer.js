@@ -9,6 +9,7 @@ import { Camera } from './camera.js';
 import { renderBackground } from './background.js';
 import { Particle } from '../objects/particle.js';
 import { flushLabels } from './label.js';
+import { canvasLW, canvasLH } from './canvas.js';
 
 function renderParticles(ctx, particles, opts) {
   for (const pt of particles) {
@@ -49,9 +50,9 @@ export class Renderer {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     renderBackground(ctx, this.canvas.width, this.canvas.height, opts.time ?? 0);
     ctx.restore();
-    // 世界对象
+    // 世界对象（相机以逻辑视口计算，apply 内部乘 dpr → 显示 1:1 物理像素）
     ctx.save();
-    this.camera.apply(ctx, this.canvas.width, this.canvas.height, opts.focus);
+    this.camera.apply(ctx, canvasLW(this.canvas), canvasLH(this.canvas), opts.focus);
     const particles = [];
     for (const obj of objects) {
       if (obj instanceof Particle) { particles.push(obj); continue; }

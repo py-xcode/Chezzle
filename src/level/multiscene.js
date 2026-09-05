@@ -27,7 +27,7 @@ import { handleSceneClick } from './click.js';
 import { bindTouchUI } from '../core/touch.js';
 import { bindOverviewInput } from '../core/overview.js';
 import { attachRecorderPanel } from '../core/recorder.js';
-import { setupCanvasSize, fitCanvasToWindow } from '../render/canvas.js';
+import { setupCanvasSize, fitCanvasToWindow, canvasLW, canvasLH } from '../render/canvas.js';
 
 export class Multiscene {
   /**
@@ -98,8 +98,8 @@ export class Multiscene {
     const screenPos = (e) => {
       const r = canvas.getBoundingClientRect();
       return {
-        x: (e.clientX - r.left) * (canvas.width / r.width),
-        y: (e.clientY - r.top) * (canvas.height / r.height),
+        x: (e.clientX - r.left) * (canvasLW(canvas) / r.width),
+        y: (e.clientY - r.top) * (canvasLH(canvas) / r.height),
       };
     };
     const activeOf = () => (this.current === entry.name && entry.active ? entry : null);

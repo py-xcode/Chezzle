@@ -18,6 +18,21 @@ export function canvasDpr() {
   return Math.max(1, Math.min(3, Math.round(window.devicePixelRatio * 100) / 100));
 }
 
+/** 画布逻辑尺寸（CSS px）读取：HUD/标签/触控等"屏幕空间"UI 以逻辑像素布局与
+ *  绘制（渲染基座乘 dpr），否则 dpr>1 的设备上 68px 按钮按物理像素结算 → 显示
+ *  只有 34px（用户"移动端 HUD 明显偏小"）。世界坐标系仍以 canvas.width（物理
+ *  网格）为准（相机 scale 与 dpr 互抵，视觉正确）。 */
+export function canvasLW(canvas) {
+  return canvas && Number.isFinite(canvas._lw) ? canvas._lw : (canvas ? canvas.width : 0);
+}
+export function canvasLH(canvas) {
+  return canvas && Number.isFinite(canvas._lh) ? canvas._lh : (canvas ? canvas.height : 0);
+}
+/** 渲染基座 dpr（无可信值时 1） */
+export function canvasTransformDpr(canvas) {
+  return canvas && Number.isFinite(canvas._dpr) ? canvas._dpr : 1;
+}
+
 /** 设定画布：w/h = 逻辑尺寸（CSS px）；缓冲 = w×h×dpr，CSS 尺寸 = w×h。
  *  尺寸没变则不重设缓冲（重设会清空画布，避免无谓闪烁——同编辑器 ensureCanvasSize）。 */
 export function setupCanvasSize(canvas, w, h) {
@@ -27,6 +42,8 @@ export function setupCanvasSize(canvas, w, h) {
   if (canvas.width !== bw) canvas.width = bw;
   if (canvas.height !== bh) canvas.height = bh;
   canvas._dpr = dpr;
+  canvas._lw = w; // ★ 逻辑尺寸记录：屏幕空间 UI（HUD/标签/触控）以它布局绘制
+  canvas._lh = h; //   ——缺了它 canvasLW 回退物理值，UI 在基座 dpr 下再放大 → 只露左上角
   if (canvas.style) {
     canvas.style.width = w + 'px';
     canvas.style.height = h + 'px';

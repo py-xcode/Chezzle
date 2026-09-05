@@ -13,18 +13,21 @@
 // ============================================================================
 
 import { THEME, rr } from './theme.js';
+import { canvasLW, canvasLH, canvasTransformDpr } from './canvas.js';
 
 // ---- 二次绘制队列：世界 + HUD 画完 → flushLabels 统一画出 ----
 
 const labelQueue = [];
 
-/** 世界物件画完之后、HUD 之前调用：统一画出本帧入队的全部标签（浮于物件之上、HUD 之下） */
+/** 世界物件画完之后、HUD 之前调用：统一画出本帧入队的全部标签（浮于物件之上、HUD 之下）。
+ *  队列存**逻辑屏幕坐标**；基座乘 dpr → 物理 1:1。 */
 export function flushLabels(ctx) {
-  const W = ctx.canvas ? ctx.canvas.width : 9999;
-  const H = ctx.canvas ? ctx.canvas.height : 9999;
+  const cnv = ctx && ctx.canvas && typeof ctx.canvas === 'object' ? ctx.canvas : null;
+  const W = cnv ? canvasLW(cnv) : 9999;
+  const H = cnv ? canvasLH(cnv) : 9999;
   for (const c of labelQueue) {
     ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0); // 命令存的是屏幕坐标
+    ctx.setTransform(canvasTransformDpr(cnv), 0, 0, canvasTransformDpr(cnv), 0, 0); // 队列存的是逻辑屏幕坐标
     // 入队后画布可能又 resize 过（转屏/分屏）：按当前画布尺寸再钳一次
     const bx = Math.max(4, Math.min(W - 4 - c.bw, c.bx));
     const by = Math.max(4, Math.min(H - 4 - c.bh, c.by));
@@ -55,31 +58,35 @@ export function clearLabelQueue() {
 export function renderFormula(ctx, x, y, text, opts = {}) {
   // 字号按"屏幕实际像素"保证：标签画在世界变换里，低分辨率手机上会被相机
   // 缩到 6-7px（糊成一团）——从当前变换读出缩放，把字号补足到屏幕上至少
-  // 12px（封顶 22 世界像素，免得鸟瞰/大缩放时标签大得离谱）
+  // 12px（封顶 22 世界像素，免得鸟瞰/大缩放时标签大得离谱）。
+  // ★ 变换含 dpr（相机基座乘 dpr）：s/投影都是物理像素，入队前统一 ÷dpr →
+  //   队列/翻转绘制都在逻辑像素系（与 HUD 一致）。
   let size = opts.size ?? 12;
   let m = null;
   try {
     m = ctx.getTransform ? ctx.getTransform() : null;
   } catch (e) { /* 老浏览器 */ }
-  const s = m ? Math.hypot(m.a, m.b) : 1;
+  const cnv = ctx && ctx.canvas && typeof ctx.canvas === 'object' ? ctx.canvas : null;
+  const dpr = cnv && Number.isFinite(cnv._dpr) ? Math.max(1, cnv._dpr) : 1;
+  const s = ((m ? Math.hypot(m.a, m.b) : 1) || 1) / dpr; // 逻辑缩放（世界→逻辑屏幕 px）
   if (s > 0.01 && !opts.size) size = Math.max(size, Math.min(22, Math.round(12 / s)));
-  const fs = size * s; // 屏幕字号
+  const fs = size * s; // 逻辑屏幕字号
   const color = opts.color ?? THEME.gold.text;
   // 居中锚定：盒以 (x, y) 的屏幕投影为水平中心、文字基线为竖直基准
-  const sx = m ? m.a * x + m.c * y + m.e : x;
-  const sy = m ? m.b * x + m.d * y + m.f : y;
+  const sx = ((m ? m.a * x + m.c * y + m.e : x) || 0) / dpr;
+  const sy = ((m ? m.b * x + m.d * y + m.f : y) || 0) / dpr;
   let textW = 0;
   try {
     ctx.font = `bold ${size}px monospace`;
-    textW = ctx.measureText(text).width * s;
+    textW = ctx.measureText(text).width * (s > 0 ? s : 1);
   } catch (e) {
     textW = text.length * fs * 0.62;
   }
   const bw = textW + 12 * s;
   const bh = fs + 7 * s;
   // 锚点（物件标注点）投影在画面外 → 标签不入队：物件都看不见，标签不该出现
-  const W = ctx.canvas ? ctx.canvas.width : 9999;
-  const H = ctx.canvas ? ctx.canvas.height : 9999;
+  const W = cnv ? canvasLW(cnv) : 9999;
+  const H = cnv ? canvasLH(cnv) : 9999;
   if (sx < -2 || sx > W + 2 || sy < -2 || sy > H + 2) return;
   // 画面内钳制：长标签贴边时收进来（这是唯一的位移——永不飞远、永不截断）
   const bx = Math.max(4, Math.min(W - 4 - bw, sx - bw / 2));

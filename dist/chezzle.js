@@ -7780,18 +7780,21 @@ exports.Container = Container;
 // ============================================================================
 
 const { THEME, rr } = __require('src/render/theme.js');;
+const { canvasLW, canvasLH, canvasTransformDpr } = __require('src/render/canvas.js');;
 
 // ---- 二次绘制队列：世界 + HUD 画完 → flushLabels 统一画出 ----
 
 const labelQueue = [];
 
-/** 世界物件画完之后、HUD 之前调用：统一画出本帧入队的全部标签（浮于物件之上、HUD 之下） */
+/** 世界物件画完之后、HUD 之前调用：统一画出本帧入队的全部标签（浮于物件之上、HUD 之下）。
+ *  队列存**逻辑屏幕坐标**；基座乘 dpr → 物理 1:1。 */
 function flushLabels(ctx) {
-  const W = ctx.canvas ? ctx.canvas.width : 9999;
-  const H = ctx.canvas ? ctx.canvas.height : 9999;
+  const cnv = ctx && ctx.canvas && typeof ctx.canvas === 'object' ? ctx.canvas : null;
+  const W = cnv ? canvasLW(cnv) : 9999;
+  const H = cnv ? canvasLH(cnv) : 9999;
   for (const c of labelQueue) {
     ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0); // 命令存的是屏幕坐标
+    ctx.setTransform(canvasTransformDpr(cnv), 0, 0, canvasTransformDpr(cnv), 0, 0); // 队列存的是逻辑屏幕坐标
     // 入队后画布可能又 resize 过（转屏/分屏）：按当前画布尺寸再钳一次
     const bx = Math.max(4, Math.min(W - 4 - c.bw, c.bx));
     const by = Math.max(4, Math.min(H - 4 - c.bh, c.by));
@@ -7822,31 +7825,35 @@ function clearLabelQueue() {
 function renderFormula(ctx, x, y, text, opts = {}) {
   // 字号按"屏幕实际像素"保证：标签画在世界变换里，低分辨率手机上会被相机
   // 缩到 6-7px（糊成一团）——从当前变换读出缩放，把字号补足到屏幕上至少
-  // 12px（封顶 22 世界像素，免得鸟瞰/大缩放时标签大得离谱）
+  // 12px（封顶 22 世界像素，免得鸟瞰/大缩放时标签大得离谱）。
+  // ★ 变换含 dpr（相机基座乘 dpr）：s/投影都是物理像素，入队前统一 ÷dpr →
+  //   队列/翻转绘制都在逻辑像素系（与 HUD 一致）。
   let size = opts.size ?? 12;
   let m = null;
   try {
     m = ctx.getTransform ? ctx.getTransform() : null;
   } catch (e) { /* 老浏览器 */ }
-  const s = m ? Math.hypot(m.a, m.b) : 1;
+  const cnv = ctx && ctx.canvas && typeof ctx.canvas === 'object' ? ctx.canvas : null;
+  const dpr = cnv && Number.isFinite(cnv._dpr) ? Math.max(1, cnv._dpr) : 1;
+  const s = ((m ? Math.hypot(m.a, m.b) : 1) || 1) / dpr; // 逻辑缩放（世界→逻辑屏幕 px）
   if (s > 0.01 && !opts.size) size = Math.max(size, Math.min(22, Math.round(12 / s)));
-  const fs = size * s; // 屏幕字号
+  const fs = size * s; // 逻辑屏幕字号
   const color = opts.color ?? THEME.gold.text;
   // 居中锚定：盒以 (x, y) 的屏幕投影为水平中心、文字基线为竖直基准
-  const sx = m ? m.a * x + m.c * y + m.e : x;
-  const sy = m ? m.b * x + m.d * y + m.f : y;
+  const sx = ((m ? m.a * x + m.c * y + m.e : x) || 0) / dpr;
+  const sy = ((m ? m.b * x + m.d * y + m.f : y) || 0) / dpr;
   let textW = 0;
   try {
     ctx.font = `bold ${size}px monospace`;
-    textW = ctx.measureText(text).width * s;
+    textW = ctx.measureText(text).width * (s > 0 ? s : 1);
   } catch (e) {
     textW = text.length * fs * 0.62;
   }
   const bw = textW + 12 * s;
   const bh = fs + 7 * s;
   // 锚点（物件标注点）投影在画面外 → 标签不入队：物件都看不见，标签不该出现
-  const W = ctx.canvas ? ctx.canvas.width : 9999;
-  const H = ctx.canvas ? ctx.canvas.height : 9999;
+  const W = cnv ? canvasLW(cnv) : 9999;
+  const H = cnv ? canvasLH(cnv) : 9999;
   if (sx < -2 || sx > W + 2 || sy < -2 || sy > H + 2) return;
   // 画面内钳制：长标签贴边时收进来（这是唯一的位移——永不飞远、永不截断）
   const bx = Math.max(4, Math.min(W - 4 - bw, sx - bw / 2));
@@ -7858,6 +7865,92 @@ function renderFormula(ctx, x, y, text, opts = {}) {
 exports.flushLabels = flushLabels;
 exports.clearLabelQueue = clearLabelQueue;
 exports.renderFormula = renderFormula;
+
+  };
+  __modules["src/render/canvas.js"] = function (module, exports, __require) {
+// ============================================================================
+// 设备像素密度画布工具（高清适配）
+// ----------------------------------------------------------------------------
+// 问题：游戏画布缓冲曾固定 1100×700。高分屏（dpr=2/3）上浏览器把缓冲按
+// CSS 尺寸放大到物理像素 → 每画布像素被拉伸成 2-3 物理像素 → 糊。
+// 做法：逻辑尺寸（CSS px）与物理缓冲（×devicePixelRatio）分离——
+//   canvas.width/height = 逻辑 × dpr（物理像素）
+//   canvas.style.width/height = 逻辑 px
+// 引擎全局以 canvas.width/height（物理网格）为坐标系：相机 scale、HUD 布局、
+// 点击坐标换算全部不变（上下文均乘以同一 dpr，缩放互为倒数），显示时浏览器
+// 把缓冲缩回 CSS 尺寸 → 视觉尺寸与改造前完全一致，清晰度按设备像素密度提升。
+// 与 tools/leveleditor.html 编辑器已用的 dpr 方案同构。
+// ============================================================================
+
+/** 设备像素密度（钳制 1..3：4K 双缩放等极端值不再无脑放大，保护 fillrate） */
+function canvasDpr() {
+  if (typeof window === 'undefined' || !window.devicePixelRatio) return 1;
+  return Math.max(1, Math.min(3, Math.round(window.devicePixelRatio * 100) / 100));
+}
+
+/** 画布逻辑尺寸（CSS px）读取：HUD/标签/触控等"屏幕空间"UI 以逻辑像素布局与
+ *  绘制（渲染基座乘 dpr），否则 dpr>1 的设备上 68px 按钮按物理像素结算 → 显示
+ *  只有 34px（用户"移动端 HUD 明显偏小"）。世界坐标系仍以 canvas.width（物理
+ *  网格）为准（相机 scale 与 dpr 互抵，视觉正确）。 */
+function canvasLW(canvas) {
+  return canvas && Number.isFinite(canvas._lw) ? canvas._lw : (canvas ? canvas.width : 0);
+}
+function canvasLH(canvas) {
+  return canvas && Number.isFinite(canvas._lh) ? canvas._lh : (canvas ? canvas.height : 0);
+}
+/** 渲染基座 dpr（无可信值时 1） */
+function canvasTransformDpr(canvas) {
+  return canvas && Number.isFinite(canvas._dpr) ? canvas._dpr : 1;
+}
+
+/** 设定画布：w/h = 逻辑尺寸（CSS px）；缓冲 = w×h×dpr，CSS 尺寸 = w×h。
+ *  尺寸没变则不重设缓冲（重设会清空画布，避免无谓闪烁——同编辑器 ensureCanvasSize）。 */
+function setupCanvasSize(canvas, w, h) {
+  const dpr = canvasDpr();
+  const bw = Math.max(1, Math.round(w * dpr));
+  const bh = Math.max(1, Math.round(h * dpr));
+  if (canvas.width !== bw) canvas.width = bw;
+  if (canvas.height !== bh) canvas.height = bh;
+  canvas._dpr = dpr;
+  canvas._lw = w; // ★ 逻辑尺寸记录：屏幕空间 UI（HUD/标签/触控）以它布局绘制
+  canvas._lh = h; //   ——缺了它 canvasLW 回退物理值，UI 在基座 dpr 下再放大 → 只露左上角
+  if (canvas.style) {
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+  }
+  return canvas;
+}
+
+/** 窗口自适应视口上限（逻辑 px）≈ 原参考视口 1100×700 的 1.6 倍：
+ *  超大窗口（4K/超宽屏 dpr=1）不再无脑放大——世界内容会变成 2.7 倍怪大。 */
+const MAX_VIEW_W = 1760;
+const MAX_VIEW_H = 1120;
+
+/** 逻辑尺寸 = 窗口可用尺寸（扣 pad）但不超过上限；返回 {w,h}（由 setupCanvasSize 应用）。
+ *  无 window（Node 测试）→ 直接使用上限值。 */
+function fitCanvasToWindow(canvas, { maxW = MAX_VIEW_W, maxH = MAX_VIEW_H, pad = 0 } = {}) {
+  let w = maxW;
+  let h = maxH;
+  if (typeof window !== 'undefined') {
+    const dw = (typeof document !== 'undefined' && document.documentElement && document.documentElement.clientWidth) || window.innerWidth || 0;
+    const dh = (typeof document !== 'undefined' && document.documentElement && document.documentElement.clientHeight) || window.innerHeight || 0;
+    if (dw > 0) w = Math.min(dw - pad * 2, maxW);
+    if (dh > 0) h = Math.min(dh - pad * 2, maxH);
+  }
+  const lw = Math.max(64, Math.round(w));
+  const lh = Math.max(64, Math.round(h));
+  setupCanvasSize(canvas, lw, lh);
+  return { w: lw, h: lh };
+}
+
+exports.canvasDpr = canvasDpr;
+exports.canvasLW = canvasLW;
+exports.canvasLH = canvasLH;
+exports.canvasTransformDpr = canvasTransformDpr;
+exports.setupCanvasSize = setupCanvasSize;
+exports.MAX_VIEW_W = MAX_VIEW_W;
+exports.MAX_VIEW_H = MAX_VIEW_H;
+exports.fitCanvasToWindow = fitCanvasToWindow;
 
   };
   __modules["src/objects/portal.js"] = function (module, exports, __require) {
@@ -9723,12 +9816,14 @@ exports.Dropper = Dropper;
 
 const { CFG } = __require('src/core/config.js');;
 const { toggleFullscreen, fullscreenSupported, isFullscreen } = __require('src/core/fullscreen.js');;
+const { canvasLW, canvasLH } = __require('src/render/canvas.js');;
 
-/** 屏幕坐标 → 世界坐标（与 Renderer.frame 同口径：跟随玩家/聚焦内容；鸟瞰时走鸟瞰视图） */
+/** 屏幕坐标 → 世界坐标（与 Renderer.frame 同口径：跟随玩家/聚焦内容；鸟瞰时走鸟瞰视图）。
+ *  输入/输出均为**逻辑像素**（canvas 缓冲 ×dpr，UI/命中统一逻辑系）。 */
 function screenToWorld(scene, canvas, sx, sy) {
   const c = scene.camera;
   if (!c) return { x: sx, y: sy };
-  const { scale, offsetX, offsetY } = c.compute(canvas.width, canvas.height, scene.player ?? scene.cameraFocus ?? null);
+  const { scale, offsetX, offsetY } = c.compute(canvasLW(canvas), canvasLH(canvas), scene.player ?? scene.cameraFocus ?? null);
   return { x: (sx - offsetX) / scale, y: (sy - offsetY) / scale };
 }
 
@@ -9851,7 +9946,7 @@ function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   const right = touchInsetsOf(scene).right || 0;
   // 0) 鸟瞰模式：只认"返回"按钮（暂停态；未中 → 交给鸟瞰拖动/缩放管线）
   if (scene.overview) {
-    if (inRect(overviewButtonRect(canvas.width, top, right), sx, sy)) {
+    if (inRect(overviewButtonRect(canvasLW(canvas), top, right), sx, sy)) {
       scene.toggleOverview();
       onInfo?.({ type: 'overview-exit' });
     }
@@ -9860,7 +9955,7 @@ function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   // 1) 全屏按钮（仅触屏端显示；click/触点都在用户手势内，可请求全屏）。
   //    老设备/浏览器不支持元素全屏 API → 明确提示（不静默失效）
   if (scene._touchUI && typeof scene._touchUI.enabled === 'function' && scene._touchUI.enabled()) {
-    if (inRect(fullscreenButtonRect(canvas.width, top, right), sx, sy)) {
+    if (inRect(fullscreenButtonRect(canvasLW(canvas), top, right), sx, sy)) {
       if (fullscreenSupported()) toggleFullscreen();
       else pushNotice(scene, '此浏览器不支持全屏');
       onInfo?.({ type: 'fullscreen' });
@@ -9868,21 +9963,21 @@ function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
     }
   }
   // 2) 鸟瞰按钮（双端）
-  if (inRect(overviewButtonRect(canvas.width, top, right), sx, sy)) {
+  if (inRect(overviewButtonRect(canvasLW(canvas), top, right), sx, sy)) {
     scene.toggleOverview();
     onInfo?.({ type: 'overview' });
     return true;
   }
   // 3) 提示按钮（右上；hud.tipButton 同几何：top..top+34）
   //    点击 = 展示下一条可用提示（没有则俏皮话/收起）——面板/文案由 hud.onTipClick 管理
-  if (sx > canvas.width - right - 84 && sx < canvas.width - right - 8 && sy > top && sy < top + 34) {
+  if (sx > canvasLW(canvas) - right - 84 && sx < canvasLW(canvas) - right - 8 && sy > top && sy < top + 34) {
     if (hud && typeof hud.onTipClick === 'function') hud.onTipClick(scene);
     onInfo?.({ type: 'tip' });
     return true;
   }
   // 3.5) 提示面板（展开中）：面板上点击 = 消费（不穿透到场景）；右上 ✕ = 关闭
   if (hud && hud.showTip) {
-    const pr = tipPanelRect(canvas.width, top, right);
+    const pr = tipPanelRect(canvasLW(canvas), top, right);
     if (sx >= pr.x && sx <= pr.x + pr.w && sy >= pr.y && sy <= pr.y + pr.h) {
       const r = hud._tipRect ?? pr;
       if (sx >= r.x + r.w - 32 && sy <= r.y + 32) {
@@ -9898,7 +9993,7 @@ function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   // 4) 物品栏选格（右下；几何与 HUD 渲染共用 inventorySlotRects）
   const p = scene.player;
   if (p && p.inventory) {
-    const rects = inventorySlotRects(canvas.width, canvas.height, p.inventory.slots, uiMargins(scene));
+    const rects = inventorySlotRects(canvasLW(canvas), canvasLH(canvas), p.inventory.slots, uiMargins(scene));
     for (let i = 0; i < rects.length; i++) {
       const r = rects[i];
       if (sx >= r.x && sx <= r.x + r.size && sy >= r.y && sy <= r.y + r.size) {
@@ -10621,6 +10716,7 @@ const { GasColumn } = __require('src/objects/gascolumn.js');;
 const { Block } = __require('src/objects/block.js');;
 const { inventorySlotRects, uiMargins, overviewButtonRect, fullscreenButtonRect, hudTopOffset, touchInsetsOf } = __require('src/level/click.js');;
 const { joyGeom, touchButtonRects } = __require('src/core/touch.js');;
+const { canvasLW, canvasLH, canvasTransformDpr } = __require('src/render/canvas.js');;
 
 // 溯源 kind → 中文（调试悬停显示物体"为何存在"）
 const ORIGIN_LABELS = {
@@ -10745,10 +10841,12 @@ class Hud {
   render(ctx, time = 0) {
     const scene = this.scene;
     const p = scene.player;
-    const W = ctx.canvas.width;
-    const H = ctx.canvas.height;
+    // 屏幕空间 UI 以**逻辑像素**布局与绘制（基座乘 dpr）——否则 dpr>1 设备上
+    // 68px 按钮按物理像素结算、显示只有 34px（"移动端 HUD 明显偏小"根因）
+    const W = canvasLW(ctx.canvas);
+    const H = canvasLH(ctx.canvas);
     ctx.save();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.setTransform(canvasTransformDpr(ctx.canvas), 0, 0, canvasTransformDpr(ctx.canvas), 0, 0);
 
     // 条件提示：出现"可点击展示"的新提示 → 按钮闪光（提示只在点按钮时展示，
     // 不自动弹面板；点按钮后由 onTipClick 拉取/收起）
@@ -12242,7 +12340,7 @@ exports.Block = Block;
 // ============================================================================
 
 const { CFG } = __require('src/core/config.js');;
-const { setupCanvasSize } = __require('src/render/canvas.js');;
+const { setupCanvasSize, canvasLW, canvasLH } = __require('src/render/canvas.js');;
 const { handleSceneClick, handleScenePressDown, handleScenePressMove, handleScenePressUp, inventorySlotRects, uiMargins, overviewButtonRect, hudTopOffset, touchInsetsOf, tipPanelRect } = __require('src/level/click.js');;
 const { requestFullscreenOnce } = __require('src/core/fullscreen.js');;
 
@@ -12464,7 +12562,7 @@ class TouchUI {
 
   /** 竖屏（触屏端）？HUD 画旋转提示 */
   isPortrait() {
-    return this.enabled() && this.canvas.width < this.canvas.height;
+    return this.enabled() && canvasLW(this.canvas) < canvasLH(this.canvas);
   }
 
   /** 某按键当前是否被按住（HUD 高亮用） */
@@ -12475,7 +12573,7 @@ class TouchUI {
 
   /** 摇杆几何（画布坐标） */
   geom() {
-    return joyGeom(this.canvas.width, this.canvas.height, this.insets);
+    return joyGeom(canvasLW(this.canvas), canvasLH(this.canvas), this.insets);
   }
 
   /** 按钮矩形（画布坐标）；场景设置了 hideTouchGrab → 不返回/不渲染'grab'（拾取/吸液
@@ -12484,7 +12582,7 @@ class TouchUI {
     const act = this.getActive();
     const scene = act && act.scene ? act.scene : null;
     const slots = act && act.scene && act.scene.player ? act.scene.player.inventory.slots : [];
-    const rs = touchButtonRects(this.canvas.width, this.canvas.height, slots, this.insets);
+    const rs = touchButtonRects(canvasLW(this.canvas), canvasLH(this.canvas), slots, this.insets);
     return scene && scene.hideTouchGrab ? rs.filter((r) => r.key !== 'grab') : rs;
   }
 
@@ -12594,7 +12692,7 @@ class TouchUI {
     }
     // ⓪ 鸟瞰模式：返回按钮 = 退出；其余触点进手势管线（1指平移 / 2指捏合缩放）
     if (scene.overview) {
-      const b = overviewButtonRect(this.canvas.width, hudTopOffset(scene), (scene._touchUI && scene._touchUI.insets.right) || 0);
+      const b = overviewButtonRect(canvasLW(this.canvas), hudTopOffset(scene), (scene._touchUI && scene._touchUI.insets.right) || 0);
       if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
         scene.toggleOverview();
         return 'ui';
@@ -12621,7 +12719,7 @@ class TouchUI {
     // ②.5 提示面板（展开中）：点面板 = 消费（不穿透到场景）；右上 ✕ = 关闭；
     //     按住右滑 = 关闭（面板跟随手指，超 60px 触发关闭）
     if (hud && hud.showTip) {
-      const pr = tipPanelRect(this.canvas.width, hudTopOffset(scene), touchInsetsOf(scene).right || 0);
+      const pr = tipPanelRect(canvasLW(this.canvas), hudTopOffset(scene), touchInsetsOf(scene).right || 0);
       if (x >= pr.x && x <= pr.x + pr.w && y >= pr.y && y <= pr.y + pr.h) {
         const r = hud._tipRect ?? pr;
         if (x >= r.x + r.w - 32 && y <= r.y + 32) {
@@ -12653,7 +12751,7 @@ class TouchUI {
     const prev = this.ovTouches.get(id);
     if (!scene || !scene.camera || !prev) return;
     if (this.ovTouches.size === 1) {
-      scene.camera.panOverview(x - prev.x, y - prev.y, this.canvas.width, this.canvas.height);
+      scene.camera.panOverview(x - prev.x, y - prev.y, canvasLW(this.canvas), canvasLH(this.canvas));
     } else if (this.ovTouches.size >= 2) {
       // 取另外一根手指组成捏合对
       let otherId = null;
@@ -12667,8 +12765,8 @@ class TouchUI {
         const m0y = (prev.y + o.y) / 2;
         const m1x = (x + o.x) / 2;
         const m1y = (y + o.y) / 2;
-        scene.camera.panOverview(m1x - m0x, m1y - m0y, this.canvas.width, this.canvas.height);
-        if (d0 > 8) scene.camera.zoomOverview(d1 / d0, m1x, m1y, this.canvas.width, this.canvas.height);
+        scene.camera.panOverview(m1x - m0x, m1y - m0y, canvasLW(this.canvas), canvasLH(this.canvas));
+        if (d0 > 8) scene.camera.zoomOverview(d1 / d0, m1x, m1y, canvasLW(this.canvas), canvasLH(this.canvas));
       }
     }
     this.ovTouches.set(id, { x, y });
@@ -12776,8 +12874,8 @@ class TouchUI {
     const canvas = this.canvas;
     const pos = (t) => {
       const r = canvas.getBoundingClientRect();
-      const kx = canvas.width / Math.max(1, r.width);
-      const ky = canvas.height / Math.max(1, r.height);
+      const kx = canvasLW(canvas) / Math.max(1, r.width);
+      const ky = canvasLH(canvas) / Math.max(1, r.height);
       return { x: (t.clientX - r.left) * kx, y: (t.clientY - r.top) * ky };
     };
     const enabled = () => isTouchDevice();
@@ -12883,72 +12981,6 @@ exports.touchButtonRects = touchButtonRects;
 exports.joyInput = joyInput;
 exports.TouchUI = TouchUI;
 exports.bindTouchUI = bindTouchUI;
-
-  };
-  __modules["src/render/canvas.js"] = function (module, exports, __require) {
-// ============================================================================
-// 设备像素密度画布工具（高清适配）
-// ----------------------------------------------------------------------------
-// 问题：游戏画布缓冲曾固定 1100×700。高分屏（dpr=2/3）上浏览器把缓冲按
-// CSS 尺寸放大到物理像素 → 每画布像素被拉伸成 2-3 物理像素 → 糊。
-// 做法：逻辑尺寸（CSS px）与物理缓冲（×devicePixelRatio）分离——
-//   canvas.width/height = 逻辑 × dpr（物理像素）
-//   canvas.style.width/height = 逻辑 px
-// 引擎全局以 canvas.width/height（物理网格）为坐标系：相机 scale、HUD 布局、
-// 点击坐标换算全部不变（上下文均乘以同一 dpr，缩放互为倒数），显示时浏览器
-// 把缓冲缩回 CSS 尺寸 → 视觉尺寸与改造前完全一致，清晰度按设备像素密度提升。
-// 与 tools/leveleditor.html 编辑器已用的 dpr 方案同构。
-// ============================================================================
-
-/** 设备像素密度（钳制 1..3：4K 双缩放等极端值不再无脑放大，保护 fillrate） */
-function canvasDpr() {
-  if (typeof window === 'undefined' || !window.devicePixelRatio) return 1;
-  return Math.max(1, Math.min(3, Math.round(window.devicePixelRatio * 100) / 100));
-}
-
-/** 设定画布：w/h = 逻辑尺寸（CSS px）；缓冲 = w×h×dpr，CSS 尺寸 = w×h。
- *  尺寸没变则不重设缓冲（重设会清空画布，避免无谓闪烁——同编辑器 ensureCanvasSize）。 */
-function setupCanvasSize(canvas, w, h) {
-  const dpr = canvasDpr();
-  const bw = Math.max(1, Math.round(w * dpr));
-  const bh = Math.max(1, Math.round(h * dpr));
-  if (canvas.width !== bw) canvas.width = bw;
-  if (canvas.height !== bh) canvas.height = bh;
-  canvas._dpr = dpr;
-  if (canvas.style) {
-    canvas.style.width = w + 'px';
-    canvas.style.height = h + 'px';
-  }
-  return canvas;
-}
-
-/** 窗口自适应视口上限（逻辑 px）≈ 原参考视口 1100×700 的 1.6 倍：
- *  超大窗口（4K/超宽屏 dpr=1）不再无脑放大——世界内容会变成 2.7 倍怪大。 */
-const MAX_VIEW_W = 1760;
-const MAX_VIEW_H = 1120;
-
-/** 逻辑尺寸 = 窗口可用尺寸（扣 pad）但不超过上限；返回 {w,h}（由 setupCanvasSize 应用）。
- *  无 window（Node 测试）→ 直接使用上限值。 */
-function fitCanvasToWindow(canvas, { maxW = MAX_VIEW_W, maxH = MAX_VIEW_H, pad = 0 } = {}) {
-  let w = maxW;
-  let h = maxH;
-  if (typeof window !== 'undefined') {
-    const dw = (typeof document !== 'undefined' && document.documentElement && document.documentElement.clientWidth) || window.innerWidth || 0;
-    const dh = (typeof document !== 'undefined' && document.documentElement && document.documentElement.clientHeight) || window.innerHeight || 0;
-    if (dw > 0) w = Math.min(dw - pad * 2, maxW);
-    if (dh > 0) h = Math.min(dh - pad * 2, maxH);
-  }
-  const lw = Math.max(64, Math.round(w));
-  const lh = Math.max(64, Math.round(h));
-  setupCanvasSize(canvas, lw, lh);
-  return { w: lw, h: lh };
-}
-
-exports.canvasDpr = canvasDpr;
-exports.setupCanvasSize = setupCanvasSize;
-exports.MAX_VIEW_W = MAX_VIEW_W;
-exports.MAX_VIEW_H = MAX_VIEW_H;
-exports.fitCanvasToWindow = fitCanvasToWindow;
 
   };
   __modules["src/core/input.js"] = function (module, exports, __require) {
@@ -13136,6 +13168,7 @@ exports.startLoop = startLoop;
 // ============================================================================
 
 const { overviewButtonRect, hudTopOffset, touchInsetsOf } = __require('src/level/click.js');;
+const { canvasLW, canvasLH } = __require('src/render/canvas.js');;
 
 /**
  * 给画布绑定鸟瞰输入。
@@ -13162,7 +13195,7 @@ function bindOverviewInput(canvas, getActive) {
     // 滚轮一格 ≈ 1.12×；deltaMode=1（行）时放大系数
     const step = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
     const factor = Math.pow(1.12, -step / 53);
-    scene.camera.zoomOverview(factor, px, py, canvas.width, canvas.height);
+    scene.camera.zoomOverview(factor, px, py, canvasLW(canvas), canvasLH(canvas));
   };
 
   const onDown = (e) => {
@@ -13173,7 +13206,7 @@ function bindOverviewInput(canvas, getActive) {
     const px = e.clientX - r.left;
     const py = e.clientY - r.top;
     // "返回"按钮：不进入拖动（click 事件负责切换）
-    const b = overviewButtonRect(canvas.width, hudTopOffset(scene), touchInsetsOf(scene).right || 0);
+    const b = overviewButtonRect(canvasLW(canvas), hudTopOffset(scene), touchInsetsOf(scene).right || 0);
     if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) return;
     pan = { x: e.clientX, y: e.clientY };
   };
@@ -13185,7 +13218,7 @@ function bindOverviewInput(canvas, getActive) {
       pan = null;
       return;
     }
-    scene.camera.panOverview(e.clientX - pan.x, e.clientY - pan.y, canvas.width, canvas.height);
+    scene.camera.panOverview(e.clientX - pan.x, e.clientY - pan.y, canvasLW(canvas), canvasLH(canvas));
     pan = { x: e.clientX, y: e.clientY };
   };
 
@@ -13710,6 +13743,7 @@ const { bindSceneClick } = __require('src/level/click.js');;
 const { bindOverviewInput } = __require('src/core/overview.js');;
 const { bindTouchUI } = __require('src/core/touch.js');;
 const { attachRecorderPanel } = __require('src/core/recorder.js');;
+const { canvasLW, canvasLH } = __require('src/render/canvas.js');;
 
 class LevelBuilder {
   constructor(canvas, opts = {}) {
@@ -13904,8 +13938,8 @@ class LevelBuilder {
     const screenPos = (e) => {
       const rect = canvas.getBoundingClientRect();
       return {
-        x: (e.clientX - rect.left) * (canvas.width / rect.width),
-        y: (e.clientY - rect.top) * (canvas.height / rect.height),
+        x: (e.clientX - rect.left) * (canvasLW(canvas) / rect.width),
+        y: (e.clientY - rect.top) * (canvasLH(canvas) / rect.height),
       };
     };
     // 记录鼠标位置（调试模式悬停显示物体来源用）；离开画布清除
@@ -14108,6 +14142,7 @@ const { Camera } = __require('src/render/camera.js');;
 const { renderBackground } = __require('src/render/background.js');;
 const { Particle } = __require('src/objects/particle.js');;
 const { flushLabels } = __require('src/render/label.js');;
+const { canvasLW, canvasLH } = __require('src/render/canvas.js');;
 
 function renderParticles(ctx, particles, opts) {
   for (const pt of particles) {
@@ -14148,9 +14183,9 @@ class Renderer {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     renderBackground(ctx, this.canvas.width, this.canvas.height, opts.time ?? 0);
     ctx.restore();
-    // 世界对象
+    // 世界对象（相机以逻辑视口计算，apply 内部乘 dpr → 显示 1:1 物理像素）
     ctx.save();
-    this.camera.apply(ctx, this.canvas.width, this.canvas.height, opts.focus);
+    this.camera.apply(ctx, canvasLW(this.canvas), canvasLH(this.canvas), opts.focus);
     const particles = [];
     for (const obj of objects) {
       if (obj instanceof Particle) { particles.push(obj); continue; }
@@ -14325,11 +14360,14 @@ class Camera {
     return { scale, ox, oy, offsetX, offsetY };
   }
 
-  /** 应用到 canvas 上下文（世界坐标 → 屏幕坐标；含震动偏移） */
+  /** 应用到 canvas 上下文（世界坐标 → 屏幕坐标；含震动偏移）。
+   *  vw/vh = 逻辑视口（CSS px）；基座乘 dpr → 物理像素 1:1 渲染。 */
   apply(ctx, vw, vh, focus = null) {
     const { scale, offsetX, offsetY } = this.compute(vw, vh, focus);
     const sh = this.shakeOffset();
-    ctx.setTransform(scale, 0, 0, scale, offsetX + sh.x, offsetY + sh.y);
+    const cnv = ctx && ctx.canvas && typeof ctx.canvas === 'object' ? ctx.canvas : null;
+    const dpr = cnv && Number.isFinite(cnv._dpr) ? cnv._dpr : 1;
+    ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * (offsetX + sh.x), dpr * (offsetY + sh.y));
   }
 }
 
@@ -16463,7 +16501,7 @@ const { handleSceneClick } = __require('src/level/click.js');;
 const { bindTouchUI } = __require('src/core/touch.js');;
 const { bindOverviewInput } = __require('src/core/overview.js');;
 const { attachRecorderPanel } = __require('src/core/recorder.js');;
-const { setupCanvasSize, fitCanvasToWindow } = __require('src/render/canvas.js');;
+const { setupCanvasSize, fitCanvasToWindow, canvasLW, canvasLH } = __require('src/render/canvas.js');;
 
 class Multiscene {
   /**
@@ -16534,8 +16572,8 @@ class Multiscene {
     const screenPos = (e) => {
       const r = canvas.getBoundingClientRect();
       return {
-        x: (e.clientX - r.left) * (canvas.width / r.width),
-        y: (e.clientY - r.top) * (canvas.height / r.height),
+        x: (e.clientX - r.left) * (canvasLW(canvas) / r.width),
+        y: (e.clientY - r.top) * (canvasLH(canvas) / r.height),
       };
     };
     const activeOf = () => (this.current === entry.name && entry.active ? entry : null);
@@ -16729,4 +16767,4 @@ exports.Multiscene = Multiscene;
   };
   global.Chezzle = __require("src/index.js");
 })(typeof window !== 'undefined' ? window : globalThis);
-console.log('[Chezzle] 引擎构建 "vmtocdw35"');
+console.log('[Chezzle] 引擎构建 "vmtodua0j"');
