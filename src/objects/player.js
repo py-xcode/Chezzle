@@ -293,7 +293,7 @@ export class Player extends Obj {
       for (const [a, b] of scene.contactPairs) {
         const block = a === this ? b : b === this ? a : null;
         if (!block || !block.grid) continue;
-        if (block.avail?.(this.substance) ?? block.grid.avail(this.substance) <= 1e-9) continue;
+        if ((block.avail?.(this.substance) ?? block.grid.avail(this.substance)) <= 1e-9) continue;
         const avail = block.grid.avail(this.substance);
         const take = Math.min(avail, rest);
         block.grid.consume(this.substance, take);
@@ -311,9 +311,9 @@ export class Player extends Obj {
    *  - 脱落对象：**玩家表面（暴露格）**中非玩家核心物质的格——表面所有位置都会
    *    被摩擦蹭到（不只底部）
    *  - 每格速率 = 脱落系数 × (格内该物质浓度 / 满格浓度)：浓度越高越容易脱落，
-   *    满格（0.1g）时达到脱落系数上限（可溶物 0.01、不溶物 0.005 g/格/s，按物质
+   *    满格（0.1g）时达到脱落系数上限（可溶物 0.005、不溶物 0.001 g/格/s，按物质
    *    表 shedCoeff 可覆盖）；浓度低于阈值（0.01g，与碰撞/渲染阈值一致）彻底不再脱落
-   *  - 脱落量**累积**：攒够 SHED_BURST（0.5g）才生成一小簇粒子——走路是"走一段
+   *  - 脱落量**累积**：攒够 SHED_BURST（2g）才生成一小簇粒子——走路是"走一段
    *    偶尔掉一下"，不是每帧冒微量渣（连续细流视觉上像"一直掉"）
    * 脱落物成沉淀粒子（可收集）。
    */
@@ -331,7 +331,7 @@ export class Player extends Obj {
         for (const [id, mass] of [...m]) {
           if (id === this.substance) continue; // 玩家自身物质不脱落
           if (!(mass >= SHED_MIN)) continue; // 低浓度彻底不脱落
-          const rateMax = shedCoeffOf(id); // 脱落系数（可溶 0.01 / 不溶 0.005）
+          const rateMax = shedCoeffOf(id); // 脱落系数（可溶 0.005 / 不溶 0.001）
           const rate = Math.min(rateMax, rateMax * (mass / CELL_MASS)); // 浓度越高越容易
           const take = Math.min(mass, rate * dt);
           if (take <= 1e-12) continue;

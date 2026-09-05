@@ -104,15 +104,18 @@ export class Extractor extends Obj {
       ctx.lineTo(gx, this.y + this.h - 2);
       ctx.stroke();
     }
-    // L 形地下管道（用户预期：表面底中心 → 竖直下到池底深度 → 水平接到池**近侧壁**
-    // 就停——不横穿池子、不潜到池底以下）
+    // L 形地下管道（用户预期：表面底中心 → 竖直下到**池体中间高度** → 水平接到池
+    // **近侧壁内边（水面可见处）**——高度在池子正中，不垂到池底"太下面"）
     if (pool) {
       const startX = this.x + this.w / 2;
       const startY = this.y + this.h;
-      const depth = Math.max(pool.y + pool.h, startY + 8);
-      let endX = startX; // 提取器在池正上方：竖直段直接下插（在池内）
-      if (startX > pool.x + pool.w) endX = pool.x + pool.w; // 在池右侧 → 接右壁
-      else if (startX < pool.x) endX = pool.x; // 在池左侧 → 接左壁
+      // 水平段高度 = 池体垂直中点；提取器底低于中点（罕见）→ 最小下探 10px
+      const depth = Math.max(pool.y + pool.h / 2, startY + 10);
+      // 水平终点 = 池近侧**内壁**（扣除壁厚 wall——水面可见处；正上方则直插池内）
+      const wall = Number.isFinite(pool.wall) ? pool.wall : 8;
+      const endX = (startX >= pool.x + pool.w - wall) ? pool.x + pool.w - wall
+        : (startX <= pool.x + wall) ? pool.x + wall
+        : startX;
       ctx.strokeStyle = active ? '#7fe0ff' : '#4a4f70';
       ctx.lineWidth = 5;
       ctx.lineCap = 'round';

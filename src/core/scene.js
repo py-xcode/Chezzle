@@ -203,11 +203,17 @@ export class Scene {
       this._timers = next;
     }
     if (this._intervals.length) {
+      // 追赶护栏：回调内拨回 scene.time 或周期 ≤0 会让 while 永远追不上 → 单帧死循环。
+      // 每帧最多补跑 MAX_CATCHUP 次，超出后把下次触发点推到当前时间（防下帧继续卡死）。
+      const MAX_CATCHUP = 120;
       for (const t of this._intervals) {
-        while (this.time >= t.next) {
+        let n = 0;
+        while (this.time >= t.next && n < MAX_CATCHUP) {
           t.next += t.period;
           try { t.fn(); } catch (err) { /* 同上 */ }
+          n++;
         }
+        if (this.time >= t.next) t.next = this.time + t.period;
       }
     }
   }
@@ -1061,7 +1067,15 @@ export class Scene {
   // 产物路由
   // ===========================================================================
   routeProduct(product, origin = null) {
-    const ctx = this._emitCtx;
+    // 防御：无物体场景（_emitCtx 从未被 _setEmitCtx 设置）时兜底世界中心，
+    // 避免 ctx.point 直接解引用抛 TypeError（问题表 B12）
+    const ctx = this._emitCtx ?? {
+      obj: null,
+      container: null,
+      player: null,
+      point: { x: this.worldW / 2, y: this.worldH / 2 },
+      spread: 20,
+    };
     // 引擎传回的是反应方程式字符串 → 归一化为溯源对象（反应生成）
     if (typeof origin === 'string' && origin) origin = { kind: 'reaction', text: origin };
     if (product.phase === 'adhere') {

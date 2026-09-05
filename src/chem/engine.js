@@ -575,6 +575,9 @@ export class ChemistryEngine {
       if (!eA.ions) continue;
       for (const idB of matB.ids()) {
         if (idA === idB) continue;
+        // 同材料路径（reactSelf 同池双溶质）：无序对只跑一次，否则 (X,Y) 与 (Y,X)
+        // 两个方向各执行一轮 → 一 tick 反应两遍、速率≈双倍、日志双份（问题表 B1）
+        if (matA === matB && idA > idB) continue;
         const eB = getSubstance(idB);
         if (!eB.ions) continue;
         // 不溶物（沉淀/不溶固体）不电离，不能参与离子交换：
@@ -1185,5 +1188,5 @@ const REDOX_REDUCIBILITY = {
   KI: 100, NaI: 100, H2S: 95, FeS: 95, H2SO3: 80, SO2: 80, Na2SO3: 80,
   FeSO4: 70, FeCl2: 70, H2C2O4: 65, C2H5OH: 60, H2O2: 50, CO: 45, H2: 40,
   C: 30, KBr: 25, NaBr: 25, HCl: 15, Fe: 10, Cu: 9, Zn: 8, Mg: 7, Al: 6,
-  Na: 5, K: 5, Li: 5, 'K2MnO4': 40, H2: 40,
+  Na: 5, K: 5, Li: 5, 'K2MnO4': 40,
 };

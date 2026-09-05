@@ -195,11 +195,11 @@ export class GasBottle extends Obj {
       const fy = bodyY + bodyH - 2 - fh;
       const hexToRgb = (hex) => {
         const g = hex.replace('#', '');
-        return { r: parseInt(g.slice(0, 2), 16), g2: parseInt(g.slice(2, 4), 16), b: parseInt(g.slice(4, 6), 16) };
+        return { r: parseInt(g.slice(0, 2), 16), g: parseInt(g.slice(2, 4), 16), b: parseInt(g.slice(4, 6), 16) };
       };
       const c = hexToRgb(color);
       ctx.globalAlpha = 0.4 + 0.25 * frac;
-      ctx.fillStyle = `rgb(${c.r},${c.g2},${c.b})`;
+      ctx.fillStyle = `rgb(${c.r},${c.g},${c.b})`;
       ctx.shadowColor = color;
       ctx.shadowBlur = 8 + this._fillPulse * 14;
       ctx.beginPath();

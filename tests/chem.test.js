@@ -127,6 +127,24 @@ test('微溶驱动：CaCl2+NaOH 同池 → Ca(OH)2 生成并过饱和析出（�
   assert.ok(mat.solution.mass('NaCl') > 5, `副产物 NaCl：${mat.solution.mass('NaCl').toFixed(2)}`);
 });
 
+test('同池双溶质离子反应：无序对每 tick 只执行一次（不双向重复）', () => {
+  // 问题表 B1：修复前 reactSelf 同材料路径对 (X,Y)/(Y,X) 各跑一轮 → 速率≈双倍。
+  // 同池 1 tick 消耗应与"两液接触"的单向限速一致（本用例等价 24 g/s → 0.8g）
+  const engine = new ChemistryEngine();
+  const same = new SolutionMaterial(new Solution({ volume: 100, solutes: { CaCl2: 20, NaOH: 20 } }));
+  const pairA = new SolutionMaterial(new Solution({ volume: 100, solutes: { CaCl2: 20 } }));
+  const pairB = new SolutionMaterial(new Solution({ volume: 100, solutes: { NaOH: 20 } }));
+  const envSame = makeEnv();
+  const envPair = makeEnv();
+  engine.reactSelf(same, TICK, envSame, { skipDissolution: true });
+  engine.reactPair(pairA, pairB, TICK, envPair);
+  const usedSame = 20 - same.solution.mass('CaCl2');
+  const usedPair = 20 - pairA.solution.mass('CaCl2');
+  assert.ok(Math.abs(usedSame - usedPair) < 1e-9,
+    `同池消耗应与两液接触一致（单向）：同池 ${usedSame.toFixed(4)}g vs 接触 ${usedPair.toFixed(4)}g`);
+  assert.ok(usedSame > 0 && usedSame < 1.2, `同池 1 tick 消耗应在单向限速内：${usedSame.toFixed(4)}g`);
+});
+
 // ---- 3. 中和反应与质量守恒 --------------------------------------------------
 test('中和：NaOH + HCl → NaCl + H2O（质量守恒）', () => {
   const engine = new ChemistryEngine();
@@ -414,6 +432,23 @@ test('制氧：2KMnO4 --加热--> K2MnO4 + MnO2↓ + O2↑', () => {
   assert.ok(Math.abs(pool.solution.mass('K2MnO4') - 197) < 1e-3, `K2MnO4=${pool.solution.mass('K2MnO4')}`);
   const mno2 = sumEmitted(env, 'MnO2', 'precipitate');
   assert.ok(Math.abs(mno2 - 87) < 1e-3, `MnO2 沉淀=${mno2}`);
+});
+
+test('氯酸钾分解需要加热：KClO3 --加热/MnO2--> 2KCl + 3O2↑（常温不反应）', () => {
+  // 问题表 B6：原规则只查 catalyst 缺 heat——MnO2 与 KClO3 同处即常温生氧
+  const engine = new ChemistryEngine();
+  const cat = (id) => id === 'MnO2';
+  const plain = new SolutionMaterial(new Solution({ volume: 200, solutes: { KClO3: 24.5 } })); // 0.2 mol
+  const envCold = makeEnv({ hasCatalyst: cat });
+  runSelf(engine, plain, envCold);
+  assert.ok(Math.abs(plain.solution.mass('KClO3') - 24.5) < 1e-9, '常温 + MnO2 不应分解');
+
+  const hot = new SolutionMaterial(new Solution({ volume: 200, solutes: { KClO3: 24.5 } }));
+  const envHot = makeEnv({ heat: true, hasCatalyst: cat });
+  runSelf(engine, hot, envHot);
+  assert.ok(hot.solution.mass('KClO3') <= 1e-6, '加热 + MnO2 应分解完');
+  // 0.2 mol KClO3 → 0.3 mol O2 = 9.6g（大气初始 O2=400g）
+  assert.ok(Math.abs(envHot.atmosphere.mass('O2') - 409.6) < 1e-3, `O2=${envHot.atmosphere.mass('O2')}`);
 });
 
 // ---- 14. 燃烧与大气 ---------------------------------------------------------

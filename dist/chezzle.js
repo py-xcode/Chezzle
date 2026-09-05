@@ -398,11 +398,17 @@ class Scene {
       this._timers = next;
     }
     if (this._intervals.length) {
+      // 追赶护栏：回调内拨回 scene.time 或周期 ≤0 会让 while 永远追不上 → 单帧死循环。
+      // 每帧最多补跑 MAX_CATCHUP 次，超出后把下次触发点推到当前时间（防下帧继续卡死）。
+      const MAX_CATCHUP = 120;
       for (const t of this._intervals) {
-        while (this.time >= t.next) {
+        let n = 0;
+        while (this.time >= t.next && n < MAX_CATCHUP) {
           t.next += t.period;
           try { t.fn(); } catch (err) { /* 同上 */ }
+          n++;
         }
+        if (this.time >= t.next) t.next = this.time + t.period;
       }
     }
   }
@@ -1256,7 +1262,15 @@ class Scene {
   // 产物路由
   // ===========================================================================
   routeProduct(product, origin = null) {
-    const ctx = this._emitCtx;
+    // 防御：无物体场景（_emitCtx 从未被 _setEmitCtx 设置）时兜底世界中心，
+    // 避免 ctx.point 直接解引用抛 TypeError（问题表 B12）
+    const ctx = this._emitCtx ?? {
+      obj: null,
+      container: null,
+      player: null,
+      point: { x: this.worldW / 2, y: this.worldH / 2 },
+      spread: 20,
+    };
     // 引擎传回的是反应方程式字符串 → 归一化为溯源对象（反应生成）
     if (typeof origin === 'string' && origin) origin = { kind: 'reaction', text: origin };
     if (product.phase === 'adhere') {
@@ -2043,6 +2057,9 @@ class ChemistryEngine {
       if (!eA.ions) continue;
       for (const idB of matB.ids()) {
         if (idA === idB) continue;
+        // 同材料路径（reactSelf 同池双溶质）：无序对只跑一次，否则 (X,Y) 与 (Y,X)
+        // 两个方向各执行一轮 → 一 tick 反应两遍、速率≈双倍、日志双份（问题表 B1）
+        if (matA === matB && idA > idB) continue;
         const eB = getSubstance(idB);
         if (!eB.ions) continue;
         // 不溶物（沉淀/不溶固体）不电离，不能参与离子交换：
@@ -2653,7 +2670,7 @@ const REDOX_REDUCIBILITY = {
   KI: 100, NaI: 100, H2S: 95, FeS: 95, H2SO3: 80, SO2: 80, Na2SO3: 80,
   FeSO4: 70, FeCl2: 70, H2C2O4: 65, C2H5OH: 60, H2O2: 50, CO: 45, H2: 40,
   C: 30, KBr: 25, NaBr: 25, HCl: 15, Fe: 10, Cu: 9, Zn: 8, Mg: 7, Al: 6,
-  Na: 5, K: 5, Li: 5, 'K2MnO4': 40, H2: 40,
+  Na: 5, K: 5, Li: 5, 'K2MnO4': 40,
 };
 
 exports.COMBUSTION_MIN_O2 = COMBUSTION_MIN_O2;
@@ -3445,7 +3462,7 @@ const CATALYTIC_RULES = [
   // 2KMnO4 --加热--> K2MnO4 + MnO2 + O2↑
   { type: 'catalytic', reactants: [{ id: 'KMnO4', coeff: 2 }], products: [{ id: 'K2MnO4', coeff: 1 }, { id: 'MnO2', coeff: 1 }, { id: 'O2', coeff: 1 }], condition: 'heat', rate: RATE.catalytic },
   // 2KClO3 --加热/MnO2--> 2KCl + 3O2↑
-  { type: 'catalytic', reactants: [{ id: 'KClO3', coeff: 2 }], products: [{ id: 'KCl', coeff: 2 }, { id: 'O2', coeff: 3 }], condition: { catalyst: 'MnO2' }, rate: RATE.catalytic },
+  { type: 'catalytic', reactants: [{ id: 'KClO3', coeff: 2 }], products: [{ id: 'KCl', coeff: 2 }, { id: 'O2', coeff: 3 }], condition: { catalyst: 'MnO2', heat: true }, rate: RATE.catalytic },
 ];
 
 // ---- 自反应：燃烧（O2 取自大气；需要点燃条件）----
@@ -13275,7 +13292,7 @@ class Player extends Obj {
       for (const [a, b] of scene.contactPairs) {
         const block = a === this ? b : b === this ? a : null;
         if (!block || !block.grid) continue;
-        if (block.avail?.(this.substance) ?? block.grid.avail(this.substance) <= 1e-9) continue;
+        if ((block.avail?.(this.substance) ?? block.grid.avail(this.substance)) <= 1e-9) continue;
         const avail = block.grid.avail(this.substance);
         const take = Math.min(avail, rest);
         block.grid.consume(this.substance, take);
@@ -13293,9 +13310,9 @@ class Player extends Obj {
    *  - 脱落对象：**玩家表面（暴露格）**中非玩家核心物质的格——表面所有位置都会
    *    被摩擦蹭到（不只底部）
    *  - 每格速率 = 脱落系数 × (格内该物质浓度 / 满格浓度)：浓度越高越容易脱落，
-   *    满格（0.1g）时达到脱落系数上限（可溶物 0.01、不溶物 0.005 g/格/s，按物质
+   *    满格（0.1g）时达到脱落系数上限（可溶物 0.005、不溶物 0.001 g/格/s，按物质
    *    表 shedCoeff 可覆盖）；浓度低于阈值（0.01g，与碰撞/渲染阈值一致）彻底不再脱落
-   *  - 脱落量**累积**：攒够 SHED_BURST（0.5g）才生成一小簇粒子——走路是"走一段
+   *  - 脱落量**累积**：攒够 SHED_BURST（2g）才生成一小簇粒子——走路是"走一段
    *    偶尔掉一下"，不是每帧冒微量渣（连续细流视觉上像"一直掉"）
    * 脱落物成沉淀粒子（可收集）。
    */
@@ -13313,7 +13330,7 @@ class Player extends Obj {
         for (const [id, mass] of [...m]) {
           if (id === this.substance) continue; // 玩家自身物质不脱落
           if (!(mass >= SHED_MIN)) continue; // 低浓度彻底不脱落
-          const rateMax = shedCoeffOf(id); // 脱落系数（可溶 0.01 / 不溶 0.005）
+          const rateMax = shedCoeffOf(id); // 脱落系数（可溶 0.005 / 不溶 0.001）
           const rate = Math.min(rateMax, rateMax * (mass / CELL_MASS)); // 浓度越高越容易
           const take = Math.min(mass, rate * dt);
           if (take <= 1e-12) continue;
@@ -15344,7 +15361,6 @@ class Sign extends Obj {
     const maxW = Math.max(...lines.map((ln) => ctx.measureText(ln).width));
     // 盒模型：this.y = 石板顶（与编辑器选中框一致）；文字基线 = 顶 + size + 8
     const baseY = this.y + size + 8;
-    ctx.save();
     // 石板底：顶边在文字上方留出 padding
     ctx.fillStyle = 'rgba(14,10,38,0.74)';
     rr(ctx, this.x - 7, this.y, maxW + 14, lines.length * lh + 18, 9);
@@ -15597,15 +15613,18 @@ class Extractor extends Obj {
       ctx.lineTo(gx, this.y + this.h - 2);
       ctx.stroke();
     }
-    // L 形地下管道（用户预期：表面底中心 → 竖直下到池底深度 → 水平接到池**近侧壁**
-    // 就停——不横穿池子、不潜到池底以下）
+    // L 形地下管道（用户预期：表面底中心 → 竖直下到**池体中间高度** → 水平接到池
+    // **近侧壁内边（水面可见处）**——高度在池子正中，不垂到池底"太下面"）
     if (pool) {
       const startX = this.x + this.w / 2;
       const startY = this.y + this.h;
-      const depth = Math.max(pool.y + pool.h, startY + 8);
-      let endX = startX; // 提取器在池正上方：竖直段直接下插（在池内）
-      if (startX > pool.x + pool.w) endX = pool.x + pool.w; // 在池右侧 → 接右壁
-      else if (startX < pool.x) endX = pool.x; // 在池左侧 → 接左壁
+      // 水平段高度 = 池体垂直中点；提取器底低于中点（罕见）→ 最小下探 10px
+      const depth = Math.max(pool.y + pool.h / 2, startY + 10);
+      // 水平终点 = 池近侧**内壁**（扣除壁厚 wall——水面可见处；正上方则直插池内）
+      const wall = Number.isFinite(pool.wall) ? pool.wall : 8;
+      const endX = (startX >= pool.x + pool.w - wall) ? pool.x + pool.w - wall
+        : (startX <= pool.x + wall) ? pool.x + wall
+        : startX;
       ctx.strokeStyle = active ? '#7fe0ff' : '#4a4f70';
       ctx.lineWidth = 5;
       ctx.lineCap = 'round';
@@ -16144,11 +16163,11 @@ class GasBottle extends Obj {
       const fy = bodyY + bodyH - 2 - fh;
       const hexToRgb = (hex) => {
         const g = hex.replace('#', '');
-        return { r: parseInt(g.slice(0, 2), 16), g2: parseInt(g.slice(2, 4), 16), b: parseInt(g.slice(4, 6), 16) };
+        return { r: parseInt(g.slice(0, 2), 16), g: parseInt(g.slice(2, 4), 16), b: parseInt(g.slice(4, 6), 16) };
       };
       const c = hexToRgb(color);
       ctx.globalAlpha = 0.4 + 0.25 * frac;
-      ctx.fillStyle = `rgb(${c.r},${c.g2},${c.b})`;
+      ctx.fillStyle = `rgb(${c.r},${c.g},${c.b})`;
       ctx.shadowColor = color;
       ctx.shadowBlur = 8 + this._fillPulse * 14;
       ctx.beginPath();
@@ -16465,4 +16484,4 @@ exports.Multiscene = Multiscene;
   };
   global.Chezzle = __require("src/index.js");
 })(typeof window !== 'undefined' ? window : globalThis);
-console.log('[Chezzle] 引擎构建 "vmto4sim9"');
+console.log('[Chezzle] 引擎构建 "vmto82t6f"');

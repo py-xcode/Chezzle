@@ -63,7 +63,7 @@ export const CATALYTIC_RULES = [
   // 2KMnO4 --加热--> K2MnO4 + MnO2 + O2↑
   { type: 'catalytic', reactants: [{ id: 'KMnO4', coeff: 2 }], products: [{ id: 'K2MnO4', coeff: 1 }, { id: 'MnO2', coeff: 1 }, { id: 'O2', coeff: 1 }], condition: 'heat', rate: RATE.catalytic },
   // 2KClO3 --加热/MnO2--> 2KCl + 3O2↑
-  { type: 'catalytic', reactants: [{ id: 'KClO3', coeff: 2 }], products: [{ id: 'KCl', coeff: 2 }, { id: 'O2', coeff: 3 }], condition: { catalyst: 'MnO2' }, rate: RATE.catalytic },
+  { type: 'catalytic', reactants: [{ id: 'KClO3', coeff: 2 }], products: [{ id: 'KCl', coeff: 2 }, { id: 'O2', coeff: 3 }], condition: { catalyst: 'MnO2', heat: true }, rate: RATE.catalytic },
 ];
 
 // ---- 自反应：燃烧（O2 取自大气；需要点燃条件）----

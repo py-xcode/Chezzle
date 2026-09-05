@@ -125,6 +125,17 @@ test('interval 周期执行', () => {
   assert.equal(n, before + 5);
 });
 
+test('interval 追赶护栏：回调把 scene.time 拨到未来也不会死循环', { timeout: 6000 }, () => {
+  // 问题表 B8：修复前 while (time >= t.next) 无上限，回调内把时间拨得远超 t.next
+  // 时单帧死循环卡死；修复后每帧最多补跑 120 次并跳到当前时间
+  const s = makeScene();
+  let n = 0;
+  s.interval(0.05, () => { n++; s.time = 1e9; }); // 每次回调把游戏时间拨到 1e9
+  assert.doesNotThrow(() => stepN(s, 3));
+  assert.ok(n > 0, '护栏应允许正常触发');
+  assert.ok(n <= 3 * (120 + 1), `每帧最多补跑 120 次，实际 ${n}`);
+});
+
 test('钩子异常不拖垮 step', () => {
   const s = makeScene();
   s.onTick(() => { throw new Error('x'); });

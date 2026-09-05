@@ -37,7 +37,6 @@ export class Sign extends Obj {
     const maxW = Math.max(...lines.map((ln) => ctx.measureText(ln).width));
     // 盒模型：this.y = 石板顶（与编辑器选中框一致）；文字基线 = 顶 + size + 8
     const baseY = this.y + size + 8;
-    ctx.save();
     // 石板底：顶边在文字上方留出 padding
     ctx.fillStyle = 'rgba(14,10,38,0.74)';
     rr(ctx, this.x - 7, this.y, maxW + 14, lines.length * lh + 18, 9);
