@@ -185,8 +185,10 @@ export class Multiscene {
       if (from.scene) {
         from.scene.control.clear();
         from.scene.pressed.clear();
-        if (from.touch) from.touch.ui.releaseAll();
       }
+      // ★ 但"仍按住的输入"要续到新场景（按住方向键/摇杆走过传送门，切过去继续走，
+      //   不用松开重按——键盘由 bindKeyboard 从物理按住键恢复，触控由 sceneSwitchTo 移交）
+      if (from.touch) from.touch.ui.sceneSwitchTo(e.scene);
     }
     if (from) from.canvas.style.display = 'none';
 

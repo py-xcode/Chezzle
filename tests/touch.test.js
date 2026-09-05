@@ -186,6 +186,30 @@ test('摇杆：按住左=control.left（玩家左移），上左=跳+左，抬�
   assert.equal(scene.control.has('left') || scene.control.has('jump'), false, '抬指释放');
 });
 
+// ---- 4.5 TouchUI：场景切换（传送门）按下续接 ----------------------------------
+test('场景切换 sceneSwitchTo：摇杆按住 → 方向续到新场景（不用抬指重按，旧场景释放）', () => {
+  forceTouch(true);
+  const canvas = fakeCanvas();
+  const a = flatScene();
+  const b = flatScene();
+  let cur = a; // 模拟 Multiscene.activeOf（M.current 决定当前激活场景）
+  const ui = new TouchUI(canvas, () => ({ scene: cur, hud: null }));
+  const g = joyGeom(W, H, ui.insets);
+  ui.down(1, g.cx + 90, g.cy - 2); // 向右
+  assert.equal(a.control.has('right'), true, '按住右走');
+  // Multiscene.switchTo 调用：按住续到新场景（键盘同语义——用户"按住走传送门会停下"）
+  cur = b; // M.current 已切
+  ui.sceneSwitchTo(b);
+  assert.equal(b.control.has('right'), true, '摇杆方向续到新场景');
+  assert.equal(a.control.has('right'), false, '旧场景释放（防切回泄漏）');
+  // move 仍有效（getActive 已指向 b，_ctlScene = b）
+  ui.move(1, g.cx + 90, g.cy - 2);
+  assert.equal(b.control.has('right'), true, '移动继续写入新场景');
+  // 抬指：释放新场景
+  ui.up(1);
+  assert.equal(b.control.has('right'), false, '抬指释放');
+});
+
 // ---- 5. TouchUI：右下按钮按住/边缘 + 多点 -------------------------------------
 test('按钮：按下=keydown(pressed+control)，抬指=keyup；摇杆+按钮多点并行', () => {
   forceTouch(true);

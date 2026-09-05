@@ -305,6 +305,25 @@ export class TouchUI {
     for (const k of JOY_KEYS) scene.control.delete(k);
   }
 
+  /**
+   * 场景切换（Multiscene.switchTo 调用）：摇杆/按钮仍按住 → 按键**续到新场景**
+   * （手指不动也能继续走/集气，不用抬指重按——与键盘按住过门同语义）；
+   * 场景内触点（滴管长按等）释放。之后 move 事件仍走 _applyJoy（_ctlScene 已换新）。
+   */
+  sceneSwitchTo(nextScene) {
+    this.ovTouches.clear();
+    this.tipSwipe = null;
+    if (this.joy) {
+      this._releaseJoyControl(this._ctlScene);
+      this._ctlScene = nextScene;
+      for (const k of JOY_KEYS) if (this.joy.dir?.[k]) nextScene?.control.add(k);
+    }
+    // 按钮按住（C/X 等）续到新场景：抬指时 up() 对新场景的 control 释放
+    for (const key of this.buttons.values()) nextScene?.control.add(key);
+    this.uiTouches.clear();
+    this.sceneTouch = null;
+  }
+
   /** 摇杆触点移动 → 写入当前激活场景的 control（5 向吸附） */
   _applyJoy(x, y) {
     const act = this.getActive();

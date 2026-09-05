@@ -10894,6 +10894,25 @@ class TouchUI {
     for (const k of JOY_KEYS) scene.control.delete(k);
   }
 
+  /**
+   * 场景切换（Multiscene.switchTo 调用）：摇杆/按钮仍按住 → 按键**续到新场景**
+   * （手指不动也能继续走/集气，不用抬指重按——与键盘按住过门同语义）；
+   * 场景内触点（滴管长按等）释放。之后 move 事件仍走 _applyJoy（_ctlScene 已换新）。
+   */
+  sceneSwitchTo(nextScene) {
+    this.ovTouches.clear();
+    this.tipSwipe = null;
+    if (this.joy) {
+      this._releaseJoyControl(this._ctlScene);
+      this._ctlScene = nextScene;
+      for (const k of JOY_KEYS) if (this.joy.dir?.[k]) nextScene?.control.add(k);
+    }
+    // 按钮按住（C/X 等）续到新场景：抬指时 up() 对新场景的 control 释放
+    for (const key of this.buttons.values()) nextScene?.control.add(key);
+    this.uiTouches.clear();
+    this.sceneTouch = null;
+  }
+
   /** 摇杆触点移动 → 写入当前激活场景的 control（5 向吸附） */
   _applyJoy(x, y) {
     const act = this.getActive();
@@ -11258,9 +11277,16 @@ const KEYMAP = {
   KeyX: 'use', // 烧杯倒入 /（按住）集气瓶通气
 };
 
+// 物理按住的键（window 级）：bindKeyboard 随场景切换重绑后，把"仍按住的键"恢复进新
+// 场景 control——否则按住方向键走过传送门/切场景会停下（keydown 只发一次，新绑定
+// 拿不到按住态；浏览器 auto-repeat 不可依赖）。pressed 不恢复（那是"刚按下"语义，
+// 恢复会导致跳跃/放置被误触发）。
+const HELD = new Set();
+
 function bindKeyboard(scene) {
   // 立即清空：右键菜单、焦点切换、页面隐藏等会吞掉 keyup 的场景
   const onClear = () => {
+    HELD.clear();
     scene.control.clear();
     scene.pressed.clear();
   };
@@ -11269,6 +11295,7 @@ function bindKeyboard(scene) {
     if (typeof document !== 'undefined' && !document.hasFocus()) return;
     // 运行时钩子：任意键都可被插件/关卡脚本监听（返回 true 表示已处理）
     scene._fireKey('down', e);
+    HELD.add(e.code); // 先记物理态（KeyR 等非方向键 keyup 也要精确释放）
     if (e.code === 'KeyR') {
       scene.restart();
       return;
@@ -11309,6 +11336,7 @@ function bindKeyboard(scene) {
     scene.control.add(c);
   };
   const onUp = (e) => {
+    HELD.delete(e.code);
     scene._fireKey('up', e);
     const c = KEYMAP[e.code];
     if (c) scene.control.delete(c);
@@ -11319,6 +11347,12 @@ function bindKeyboard(scene) {
   window.addEventListener('contextmenu', onClear); // 右键菜单会吞 keyup
   window.addEventListener('focusout', onClear); // 焦点移出（点击别处、切换焦点）
   document.addEventListener('visibilitychange', onClear);
+  // ★ 恢复仍按住的键（Multiscene.switchTo 重绑时会调 bindKeyboard——按住方向键
+  //   走过传送门，切场景后继续走，不用松开重按）
+  for (const code of HELD) {
+    const c = KEYMAP[code];
+    if (c) scene.control.add(c);
+  }
   return () => {
     window.removeEventListener('keydown', onDown);
     window.removeEventListener('keyup', onUp);
@@ -11326,6 +11360,9 @@ function bindKeyboard(scene) {
     window.removeEventListener('contextmenu', onClear);
     window.removeEventListener('focusout', onClear);
     document.removeEventListener('visibilitychange', onClear);
+    // 只移除监听器——HELD 是"物理按住态"，由 keyup/blur/contextmenu 清除；
+    // 解绑（Multiscene.switchTo 先 unbind 再 bind）若清掉 HELD，重绑就恢复不了
+    // 仍按住的键（按住方向键走传送门会停下）。
   };
 }
 
@@ -15560,12 +15597,15 @@ class Extractor extends Obj {
       ctx.lineTo(gx, this.y + this.h - 2);
       ctx.stroke();
     }
-    // L 形地下管道：表面底中心 → 向下 → 横向到池中心 → 向上接入池
+    // L 形地下管道（用户预期：表面底中心 → 竖直下到池底深度 → 水平接到池**近侧壁**
+    // 就停——不横穿池子、不潜到池底以下）
     if (pool) {
       const startX = this.x + this.w / 2;
       const startY = this.y + this.h;
-      const depth = Math.min(startY + 70, Math.max(pool.y + 10, startY + 40));
-      const endX = pool.x + pool.w / 2;
+      const depth = Math.max(pool.y + pool.h, startY + 8);
+      let endX = startX; // 提取器在池正上方：竖直段直接下插（在池内）
+      if (startX > pool.x + pool.w) endX = pool.x + pool.w; // 在池右侧 → 接右壁
+      else if (startX < pool.x) endX = pool.x; // 在池左侧 → 接左壁
       ctx.strokeStyle = active ? '#7fe0ff' : '#4a4f70';
       ctx.lineWidth = 5;
       ctx.lineCap = 'round';
@@ -15573,7 +15613,6 @@ class Extractor extends Obj {
       ctx.moveTo(startX, startY);
       ctx.lineTo(startX, depth);
       ctx.lineTo(endX, depth);
-      ctx.lineTo(endX, pool.y + pool.h);
       ctx.stroke();
       ctx.lineCap = 'butt';
       // 管道内衬高光
@@ -15583,7 +15622,6 @@ class Extractor extends Obj {
       ctx.moveTo(startX, startY);
       ctx.lineTo(startX, depth);
       ctx.lineTo(endX, depth);
-      ctx.lineTo(endX, pool.y + pool.h);
       ctx.stroke();
     }
     // 标注：压力提取器写"压力"（与压力开关同位同义：站在上面即触发）
@@ -16362,8 +16400,10 @@ class Multiscene {
       if (from.scene) {
         from.scene.control.clear();
         from.scene.pressed.clear();
-        if (from.touch) from.touch.ui.releaseAll();
       }
+      // ★ 但"仍按住的输入"要续到新场景（按住方向键/摇杆走过传送门，切过去继续走，
+      //   不用松开重按——键盘由 bindKeyboard 从物理按住键恢复，触控由 sceneSwitchTo 移交）
+      if (from.touch) from.touch.ui.sceneSwitchTo(e.scene);
     }
     if (from) from.canvas.style.display = 'none';
 
@@ -16425,4 +16465,4 @@ exports.Multiscene = Multiscene;
   };
   global.Chezzle = __require("src/index.js");
 })(typeof window !== 'undefined' ? window : globalThis);
-console.log('[Chezzle] 引擎构建 "vmto481vx"');
+console.log('[Chezzle] 引擎构建 "vmto4sim9"');

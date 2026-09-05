@@ -104,12 +104,15 @@ export class Extractor extends Obj {
       ctx.lineTo(gx, this.y + this.h - 2);
       ctx.stroke();
     }
-    // L 形地下管道：表面底中心 → 向下 → 横向到池中心 → 向上接入池
+    // L 形地下管道（用户预期：表面底中心 → 竖直下到池底深度 → 水平接到池**近侧壁**
+    // 就停——不横穿池子、不潜到池底以下）
     if (pool) {
       const startX = this.x + this.w / 2;
       const startY = this.y + this.h;
-      const depth = Math.min(startY + 70, Math.max(pool.y + 10, startY + 40));
-      const endX = pool.x + pool.w / 2;
+      const depth = Math.max(pool.y + pool.h, startY + 8);
+      let endX = startX; // 提取器在池正上方：竖直段直接下插（在池内）
+      if (startX > pool.x + pool.w) endX = pool.x + pool.w; // 在池右侧 → 接右壁
+      else if (startX < pool.x) endX = pool.x; // 在池左侧 → 接左壁
       ctx.strokeStyle = active ? '#7fe0ff' : '#4a4f70';
       ctx.lineWidth = 5;
       ctx.lineCap = 'round';
@@ -117,7 +120,6 @@ export class Extractor extends Obj {
       ctx.moveTo(startX, startY);
       ctx.lineTo(startX, depth);
       ctx.lineTo(endX, depth);
-      ctx.lineTo(endX, pool.y + pool.h);
       ctx.stroke();
       ctx.lineCap = 'butt';
       // 管道内衬高光
@@ -127,7 +129,6 @@ export class Extractor extends Obj {
       ctx.moveTo(startX, startY);
       ctx.lineTo(startX, depth);
       ctx.lineTo(endX, depth);
-      ctx.lineTo(endX, pool.y + pool.h);
       ctx.stroke();
     }
     // 标注：压力提取器写"压力"（与压力开关同位同义：站在上面即触发）

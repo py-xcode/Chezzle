@@ -189,11 +189,11 @@
   </div>
 </div>
 <datalist id="substances"></datalist>
-<script src="../dist/chezzle.js?vmto4374a"></script>
+<script src="../dist/chezzle.js?vmto4sim9"></script>
 <script>
 // ============================================================================
 // Chezzle 可视化关卡编辑器
-// 复用 dist/chezzle.js?vmto4374a 的全局 Chezzle：对象类、Scene、渲染、物理循环。
+// 复用 dist/chezzle.js?vmto4sim9 的全局 Chezzle：对象类、Scene、渲染、物理循环。
 // 编辑模式：自建 transform 渲染已摆放物体；试玩模式：重建 Scene 跑物理+化学。
 // ============================================================================
 const C = Chezzle;
@@ -1544,8 +1544,52 @@ function nextPortalColor(used = []) {
 }
 
 /**
+ * 其它场景快照（编辑器插件 chapters 等带 scenes 数组的持久状态）：
+ * 传送门组是**全局命名空间**——同组号的门跨场景互通（引擎按组号配对），
+ * 所以组下拉/成员列表/组属性同步都必须跨场景（用户"场景A设了 g1-g5，
+ * 切到场景B全不见了"→ 跨场景配对无从设置）。
+ * ★ 排除当前场景快照（当前画布的 state.placed 已代表它，避免重复统计）。
+ */
+function portalSceneSnaps() {
+  const out = [];
+  for (const v of editorStates.values()) {
+    if (!v || !Array.isArray(v.scenes)) continue;
+    const curId = v.current ?? null;
+    for (const s of v.scenes) {
+      if (!s || !s.snap || !Array.isArray(s.snap.objects)) continue;
+      if (curId != null && s.id === curId) continue;
+      out.push(s);
+    }
+  }
+  return out;
+}
+
+/** 传送门组在"其它场景快照"里的成员（数据对象，写回即持久）：[{scene, data}] */
+function otherScenePortalMates(group) {
+  const out = [];
+  if (group == null) return out;
+  for (const s of portalSceneSnaps()) {
+    for (const o of s.snap.objects) {
+      if (o.type !== 'portal' || !o.opts || o.opts.group !== group) continue;
+      out.push({ scene: s.id, data: o });
+    }
+  }
+  return out;
+}
+
+/** 组属性模板：本场景成员优先，其次其它场景成员（跨场景入组一致化用） */
+function portalGroupTemplate(group, exceptObj) {
+  const local = state.placed.find((p) => p.type === 'portal' && p.obj !== exceptObj && p.obj.group === group);
+  if (local) return { tpl: local.obj };
+  const o = otherScenePortalMates(group)[0];
+  if (o) return { tpl: o.data.opts, scene: o.scene };
+  return null;
+}
+
+/**
  * 传送门组属性同步（组 = 同组号；旧数据无组号 → 按颜色兜底同步）：
- * 改颜色/次数/开关 → 组内其余门跟随。返回受影响的门索引列表（不含自身）。
+ * 改颜色/次数/开关 → 组内其余门跟随（**含其它场景快照**——跨场景组一致）。
+ * 返回受影响项列表（不含自身；跨场景项记 场景#门id）。
  */
 function portalGroupSync(key, patch, exceptIdx) {
   const byGroup = !key.startsWith('__color:');
@@ -1567,6 +1611,21 @@ function portalGroupSync(key, patch, exceptIdx) {
     }
     state.placed[i].obj = byType.portal.construct(gridOpts('portal', opts));
     hits.push(i);
+  }
+  // ★ 其它场景快照：同组门数据同步（引擎按组号跨场景配对，属性必须一致）
+  for (const s of portalSceneSnaps()) {
+    for (const o of s.snap.objects) {
+      if (o.type !== 'portal' || !o.opts) continue;
+      const match = byGroup
+        ? (o.opts.group != null && o.opts.group === key)
+        : (o.opts.group == null && o.opts.color === color);
+      if (!match) continue;
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === undefined) delete o.opts[k];
+        else o.opts[k] = v;
+      }
+      hits.push(`${s.id}#${o.opts.id ?? '?'}`);
+    }
   }
   return hits;
 }
@@ -2112,12 +2171,14 @@ function refreshProps() {
   if (e.type === 'portal') {
     const g = item.obj.group;
     const mates = g ? state.placed.filter((p) => p.type === 'portal' && p.obj.group === g) : [];
+    const other = g ? otherScenePortalMates(g).map((m) => `${m.scene}#${m.data.opts.id ?? '?'}`) : [];
+    const allN = mates.length + other.length;
     html += `<div style="margin:4px 0 8px;padding:5px 8px;background:rgba(199,139,255,0.12);border:1px solid rgba(199,139,255,0.4);border-radius:6px;font-size:11px;color:#e8d6ff;line-height:1.6">
       ${g
-        ? `组号 <b style="color:#e8b84b">${escHtml(g)}</b> · 同组成员 <b style="color:#7fe0ff">${mates.length}</b> 扇（${mates.map((p) => p.obj.id ?? '?').join('、')}）<br>
-          <span style="color:#9fb2c8">组级属性（颜色/可用次数/开关id）改动自动同步全组——改一扇，全组生效</span>`
-        : `<b style="color:#ffb340">未分组</b>：先在「组号」里选已有组或输入新组号并点「加入组」<br>
-          <span style="color:#9fb2c8">设置组之后（同组 = 配对/共享预算），组级属性才会启用并自动同步</span>`}</div>`;
+        ? `组号 <b style="color:#e8b84b">${escHtml(g)}</b> · 同组成员 <b style="color:#7fe0ff">${allN}</b> 扇${allN ? '（' + (mates.length ? `本场景：${mates.map((p) => p.obj.id ?? '?').join('、')}` : '') + (mates.length && other.length ? '；' : '') + (other.length ? `其它场景：${other.join('、')}` : '') + '）' : ''}<br>
+          <span style="color:#9fb2c8">组级属性（颜色/可用次数/开关id）改动自动同步全组（<b style="color:#e8b84b">含其它场景</b>）；同组门可在任意场景之间互相传送</span>`
+        : `<b style="color:#ffb340">未分组</b>：先在「组号」里选已有组（含其它场景设过的组）或输入新组号并点「加入组」<br>
+          <span style="color:#9fb2c8">设置组之后（同组 = 配对/共享预算，跨场景互通），组级属性才会启用并自动同步</span>`}</div>`;
   }
   const opts = e.collect(item.obj);
   for (const f of e.fields) {
@@ -2127,9 +2188,12 @@ function refreshProps() {
     const freezeAttr = portalGroupFreeze ? ' disabled title="先设置组号（[组] 字段，如 A）才能修改组属性"' : '';
     html += `<div class="fld"><label>${f.label}</label>`;
     if (f.kind === 'portalg') {
-      const groups = [...new Set(state.placed.filter((p) => p.type === 'portal' && p.obj.group).map((p) => p.obj.group))];
+      // 组号全局命名空间：下拉列本场景 + 其它场景已设的组（跨场景配对从这里选）
+      const localGroups = [...new Set(state.placed.filter((p) => p.type === 'portal' && p.obj.group).map((p) => p.obj.group))];
+      const otherGroups = [...new Set(portalSceneSnaps().flatMap((s) => (s.snap.objects ?? []).filter((o) => o.type === 'portal' && o.opts?.group).map((o) => o.opts.group)))].filter((g) => !localGroups.includes(g));
       const gopts = (v ? [`<option value="${escHtml(v)}" selected>${escHtml(v)}（当前）</option>`] : []).concat(
-        groups.filter((g) => g !== v).map((g) => `<option value="${escHtml(g)}">${escHtml(g)}</option>`),
+        localGroups.filter((g) => g !== v).map((g) => `<option value="${escHtml(g)}">${escHtml(g)}</option>`),
+        otherGroups.map((g) => `<option value="${escHtml(g)}">${escHtml(g)}（其它场景）</option>`),
       );
       html += `<select data-k="${f.k}" data-kind="portalg" style="width:64px"><option value="" ${!v ? 'selected' : ''}>（未分组）</option>${gopts.join('')}</select>
         <input type="text" data-k="${f.k}" data-kind="portalg-new" placeholder="新组号" style="width:70px" value="">
@@ -2178,16 +2242,16 @@ function refreshProps() {
       opts.group = g;
       pushUndo();
       replaceAt(idx, opts);
-      // 加入已有组 → 组属性一致化（颜色/次数/开关取组内成员）
-      const mates = state.placed.filter((p) => p.type === 'portal' && p !== item && p.obj.group === g).map((p) => p.obj);
-      if (mates.length) {
-        const tpl = mates[0];
+      // 加入已有组 → 组属性一致化（颜色/次数/开关取组内成员；**跨场景**：其它场景已设
+      // 此组的门就是模板——在场景 B 里把门加入场景 A 的组，属性自动对齐 A 的门）
+      const tpl = portalGroupTemplate(g, item.obj);
+      if (tpl) {
         const o2 = byType.portal.collect(item.obj);
-        o2.color = tpl.color; o2.uses = Number.isFinite(tpl.uses) ? tpl.uses : 0; o2.switchId = tpl.switchId ?? null;
+        o2.color = tpl.tpl.color; o2.uses = Number.isFinite(tpl.tpl.uses) ? tpl.tpl.uses : 0; o2.switchId = tpl.tpl.switchId ?? null;
         replaceAt(idx, o2);
-        $('status').textContent = `传送门入组「${g}」：组属性（颜色/次数/开关）已按组内成员一致化`;
+        $('status').textContent = `传送门入组「${g}」：组属性（颜色/次数/开关）已按${tpl.scene ? `其它场景（${tpl.scene}）` : '组内成员'}一致化——同组门跨场景互通`;
       } else {
-        $('status').textContent = `传送门已设为组「${g}」（首个成员）——把另一扇门也选同一组号即配对`;
+        $('status').textContent = `传送门已设为组「${g}」（首个成员）——把另一扇门（可在其它场景）也选同一组号即配对`;
       }
       refreshProps(); renderEdit();
     };
@@ -2244,21 +2308,18 @@ function refreshProps() {
         delete opts.h;
       }
       // ★ 传送门"组"变更：把当前门加入/改到某组——同组成员继承该组的组属性；
-      //   若组里已有成员，把它们的属性同步到当前门（组属性以组为准）。
+      //   若组里已有成员（**含其它场景**——跨场景组），把它们的属性同步到当前门。
       if (item.type === 'portal' && k === 'group' && val !== undefined) {
-        const mates = state.placed
-          .filter((p) => p.type === 'portal' && p !== item && p.obj.group === val)
-          .map((p) => p.obj);
-        if (mates.length) {
+        const tpl = portalGroupTemplate(val, item.obj);
+        if (tpl) {
           // 加入已有组：从组员继承颜色/次数/开关（组属性一致化）
-          const tpl = mates[0];
-          opts.color = tpl.color;
-          opts.uses = Number.isFinite(tpl.uses) ? tpl.uses : 0;
-          opts.switchId = tpl.switchId ?? null;
-          $('status').textContent = `传送门已入组「${val}」：颜色/可用次数/开关绑定按组内成员同步（组属性以组为准）`;
+          opts.color = tpl.tpl.color;
+          opts.uses = Number.isFinite(tpl.tpl.uses) ? tpl.tpl.uses : 0;
+          opts.switchId = tpl.tpl.switchId ?? null;
+          $('status').textContent = `传送门已入组「${val}」：颜色/可用次数/开关绑定按${tpl.scene ? `其它场景（${tpl.scene}）` : '组内成员'}同步（组属性以组为准）`;
         } else {
           // 新建组（首个成员）：若曾按颜色成对，提示可再给另一扇设同组号
-          $('status').textContent = `传送门已设为组「${val}」（首个成员）——把另一扇门也选同一组号即配对`;
+          $('status').textContent = `传送门已设为组「${val}」（首个成员）——把另一扇门（可在其它场景）也选同一组号即配对`;
         }
       }
       pushUndo();
@@ -2556,7 +2617,7 @@ function exportHTML() {
 </head>
 <body>
 <canvas id="game"></canvas>
-<script src="../dist/chezzle.js?vmto4374a"><\/script>
+<script src="../dist/chezzle.js?vmto4sim9"><\/script>
 ${pluginTags()}
 <script src="report.js"><\/script>
 <script>
