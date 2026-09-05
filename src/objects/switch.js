@@ -6,7 +6,7 @@
 // ============================================================================
 
 import { Container } from './container.js';
-import { THEME, rr, glowText } from '../render/theme.js';
+import { THEME, rr, glowText, screenTextScale } from '../render/theme.js';
 
 export class Switch extends Container {
   get hoverLabel() {
@@ -130,18 +130,21 @@ export class Switch extends Container {
 
   /** 标注开启物质 + 剩余量（钥匙等子类复用） */
   renderLabel(ctx) {
+    // 标注文字屏幕最小字号保底（相机缩放后 10px 变 8px——移动端眯眼）
+    const k = screenTextScale(ctx, 10, 12);
+    const f = (px) => `${Math.round(px * k * 10) / 10}px monospace`;
     if (this.mode === 'pressure') {
       // 压力开关：写明触发方式（与化学开关同位——化学开关标开启物，压力标"压力"）
-      glowText(ctx, '压力', this.x, this.y - 4, THEME.gold.text, 'bold 10px monospace', 4);
+      glowText(ctx, '压力', this.x, this.y - 4 * k, THEME.gold.text, `bold ${f(10)}`, 4 * k);
     } else if (this.opening) {
-      glowText(ctx, this.opening, this.x, this.y - 4, THEME.gold.text, 'bold 10px monospace', 4);
+      glowText(ctx, this.opening, this.x, this.y - 4 * k, THEME.gold.text, `bold ${f(10)}`, 4 * k);
     } else if (this.mode === 'chemical') {
       // 化学开关没设开启物质：提示需要设置（否则永远不会开）
-      glowText(ctx, '未设开启物', this.x, this.y - 4, 'rgba(170,158,120,0.55)', 'bold 9px monospace', 3);
+      glowText(ctx, '未设开启物', this.x, this.y - 4 * k, 'rgba(170,158,120,0.55)', `bold ${f(9)}`, 3 * k);
     }
     const m = this.openingMass();
     if (m > 0) {
-      glowText(ctx, `${m.toFixed(1)}g`, this.x + this.w / 2, this.y + this.h + 12, '#ffffff', 'bold 10px monospace', 4);
+      glowText(ctx, `${m.toFixed(1)}g`, this.x + this.w / 2, this.y + this.h + 12 * k, '#ffffff', `bold ${f(10)}`, 4 * k);
     }
   }
 
@@ -180,7 +183,7 @@ export class Switch extends Container {
     ctx.fill();
     ctx.shadowBlur = 0;
     ctx.fillStyle = eff ? '#3a2a08' : waiting ? '#4a2a08' : 'rgba(150,140,110,0.6)';
-    ctx.font = 'bold 9px monospace';
+    ctx.font = `bold ${Math.round(9 * screenTextScale(ctx, 9, 11) * 10) / 10}px monospace`;
     ctx.textAlign = 'center';
     ctx.fillText(eff ? '开' : waiting ? '等' : '关', cx, cy + 3);
     ctx.textAlign = 'left';
@@ -212,7 +215,7 @@ export class Switch extends Container {
     ctx.setLineDash([]);
     // "&" 标记（居中于连线）
     ctx.fillStyle = color;
-    ctx.font = 'bold 12px serif';
+    ctx.font = `bold ${Math.round(12 * screenTextScale(ctx, 12, 13) * 10) / 10}px serif`;
     ctx.textAlign = 'center';
     ctx.fillText('&', (ax + bx) / 2, (ay + by) / 2 - 4);
     ctx.textAlign = 'left';

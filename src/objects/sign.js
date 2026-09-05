@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { Obj } from './obj.js';
-import { rr } from '../render/theme.js';
+import { rr, screenTextScale } from '../render/theme.js';
 
 export class Sign extends Obj {
   get hoverLabel() {
@@ -31,15 +31,19 @@ export class Sign extends Obj {
   render(ctx) {
     const lines = this.text.split('\n');
     const size = this.size;
-    const lh = size + 6;
+    // 屏幕最小字号保底：相机缩放后路牌字过小（移动端小视口 ~0.8×，12px→10px 眯眼）
+    // → 整块石板等比放大 k（以左上为锚，含文字与底板——不重排,可读优先）
+    const k = screenTextScale(ctx, size, 13);
+    const s2 = size * k;
+    const lh = s2 + 6 * k;
     ctx.save();
-    ctx.font = `${size}px "Segoe UI", sans-serif`;
+    ctx.font = `${s2}px "Segoe UI", sans-serif`;
     const maxW = Math.max(...lines.map((ln) => ctx.measureText(ln).width));
     // 盒模型：this.y = 石板顶（与编辑器选中框一致）；文字基线 = 顶 + size + 8
-    const baseY = this.y + size + 8;
-    // 石板底：顶边在文字上方留出 padding
+    const baseY = this.y + s2 + 8 * k;
+    // 石板底：顶边在文字上方留出 padding（整块等比 k）
     ctx.fillStyle = 'rgba(14,10,38,0.74)';
-    rr(ctx, this.x - 7, this.y, maxW + 14, lines.length * lh + 18, 9);
+    rr(ctx, this.x - 7 * k, this.y, maxW + 14 * k, lines.length * lh + 18 * k, 9 * k);
     ctx.fill();
     ctx.strokeStyle = 'rgba(232,184,75,0.55)';
     ctx.lineWidth = 1.2;

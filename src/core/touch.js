@@ -23,6 +23,7 @@
 
 import { CFG } from './config.js';
 import { setupCanvasSize, canvasLW, canvasLH } from '../render/canvas.js';
+import { compactView, compactK } from '../level/click.js';
 import {
   handleSceneClick,
   handleScenePressDown,
@@ -72,20 +73,23 @@ const UIS = [];
 // ---------------------------------------------------------------------------
 
 /** 摇杆：左下角半圆（直径贴底边，圆心即摇杆原点），cx/cy = 圆心，R = 半径。
- *  半圆 = { dist ≤ R 且 y ≤ cy }（上部半圆）。 */
+ *  半圆 = { dist ≤ R 且 y ≤ cy }（上部半圆）。小屏（compactView）半径缩 72%——
+ *  122px 的摇杆在 310px 高的视口里占掉 40%，玩家移动的可视区被吃掉。 */
 export function joyGeom(W, H, insets = {}) {
-  const R = CFG.touch.joyR;
+  const R = compactView(W, H) ? Math.max(70, Math.round(CFG.touch.joyR * 0.72)) : CFG.touch.joyR;
   const cx = (insets.left ?? 0) + 14 + R;
   const cy = H - (insets.bottom ?? 0) - 12;
   return { cx, cy, R };
 }
 
 /** 右下按钮：2×2 块（C 上左 / X 上右 / Q 下左 / ⇧ 下右），下方是物品栏。
- *  与物品栏几何（inventorySlotRects，触屏边距版）共用坐标，按钮块贴着物品栏上沿。 */
+ *  与物品栏几何（inventorySlotRects，触屏边距版）共用坐标，按钮块贴着物品栏上沿。
+ *  小屏：按钮 72%（68→49px，2×2 总高 ≈104px）。 */
 export function touchButtonRects(W, H, slots, insets = {}) {
   if (!slots || slots.length === 0) return [];
-  const btn = CFG.touch.btnSize;
-  const gap = CFG.touch.btnGap;
+  const k = compactK(W, H);
+  const btn = Math.max(36, Math.round(CFG.touch.btnSize * k));
+  const gap = Math.max(5, Math.round(CFG.touch.btnGap * k));
   const margins = { bottom: (insets.bottom ?? 0) + CFG.touch.pad, right: (insets.right ?? 0) + CFG.touch.pad };
   const inv = inventorySlotRects(W, H, slots, margins);
   let invTop = Infinity;
@@ -123,7 +127,9 @@ function hitRect(r, x, y, pad = 6) {
  */
 export function joyInput(dx, dy, R, engaged = false) {
   const mag = Math.hypot(dx, dy);
-  const dead = R * (engaged ? CFG.touch.joyDeadBack : CFG.touch.joyDead);
+  // 容错圈下限：紧凑摇杆（R≈88）乘比例死区会缩到 28px——起手偏 ~33px 就误跳
+  // （用户"点歪方向"场景）；下限 34px 在任何摇杆尺寸下保证容错（已启动回中≥24px）
+  const dead = Math.max(R * (engaged ? CFG.touch.joyDeadBack : CFG.touch.joyDead), engaged ? 24 : 34);
   if (mag < dead) return { left: false, right: false, jump: false, sx: 0, sy: 0 };
   const dyUp = -dy; // y 向下 → 向上为负
   if (dyUp > 0) {

@@ -124,9 +124,11 @@ test('摇杆：起手偏左 30px 先不动（不左跳），拖向右侧才向�
 });
 
 // ---- 3. 几何布局 -------------------------------------------------------------
-test('几何：摇杆半圆在左下、按钮 2×2 贴物品栏上沿、互不重叠', () => {
+// 测试窗口 844×390 = iPhone 8 Plus 横屏（小屏）→ 紧凑模式（摇杆/按钮 72%）；
+// 全尺寸窗口另测（桌面/大屏不变）
+test('几何：摇杆半圆在左下、按钮 2×2 贴物品栏上沿、互不重叠（844×390 小屏=紧凑）', () => {
   const g = joyGeom(W, H, {});
-  assert.equal(g.cx, 14 + CFG.touch.joyR, '圆心 x = 左边距+半径');
+  assert.equal(g.cx, 14 + Math.max(70, Math.round(CFG.touch.joyR * 0.72)), '圆心 x = 左边距+紧凑半径');
   assert.ok(g.cy < H && g.cx - g.R >= 0, '半圆在屏幕内左下');
   const slots = new Array(5).fill(null);
   const rects = touchButtonRects(W, H, slots, {});
@@ -151,6 +153,17 @@ test('几何：摇杆半圆在左下、按钮 2×2 贴物品栏上沿、互不�
   assert.deepEqual(m, { bottom: 31, right: 54 }, '超屏边距 = 安全区+固定');
   delete scene._touchUI;
   assert.deepEqual(uiMargins(scene), { bottom: 10, right: 10 }, '无触控=桌面默认');
+});
+
+test('几何：大屏（1200×800）保持设计尺寸（不触发紧凑）', () => {
+  const g = joyGeom(1200, 800, {});
+  assert.equal(g.cx, 14 + CFG.touch.joyR, '大屏摇杆全尺寸');
+  assert.equal(g.R, CFG.touch.joyR);
+  const slots = new Array(5).fill(null);
+  const rects = touchButtonRects(1200, 800, slots, {});
+  assert.equal(rects[0].size, CFG.touch.btnSize, '大屏按钮全尺寸');
+  const inv = inventorySlotRects(1200, 800, slots, { bottom: 10, right: 10 });
+  assert.equal(inv[inv.length - 1].size, CFG.inventory.slotPx, '大屏物品栏槽全尺寸');
 });
 
 // ---- 4. TouchUI：摇杆 → control -------------------------------------------------

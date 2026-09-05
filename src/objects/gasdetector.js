@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { Switch } from './switch.js';
-import { THEME, rr, glowText } from '../render/theme.js';
+import { THEME, rr, glowText, screenTextScale } from '../render/theme.js';
 
 export class GasDetector extends Switch {
   get hoverLabel() {
@@ -30,11 +30,14 @@ export class GasDetector extends Switch {
   }
 
   renderLabel(ctx) {
-    glowText(ctx, `${this.gas} > ${this.threshold}g`, this.x, this.y - 4, THEME.water.light, 'bold 10px monospace', 4);
+    // 标注文字屏幕最小字号保底（相机缩放后 10px 太小）
+    const k = screenTextScale(ctx, 10, 12);
+    const f10 = `bold ${Math.round(10 * k * 10) / 10}px monospace`;
+    glowText(ctx, `${this.gas} > ${this.threshold}g`, this.x, this.y - 4 * k, THEME.water.light, f10, 4 * k);
     // 开启物质（若有）：显示在下方，剩余量实时更新（同开关）
     if (this.opening) {
       const m = this.openingMass();
-      glowText(ctx, `${this.opening}${m > 0 ? ` ${m.toFixed(1)}g` : ''}`, this.x + this.w / 2, this.y + this.h + 12, THEME.gold.text, 'bold 10px monospace', 4);
+      glowText(ctx, `${this.opening}${m > 0 ? ` ${m.toFixed(1)}g` : ''}`, this.x + this.w / 2, this.y + this.h + 12 * k, THEME.gold.text, f10, 4 * k);
     }
   }
 

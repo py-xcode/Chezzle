@@ -40,6 +40,18 @@ export function hudTopOffset(scene) {
   return 10;
 }
 
+/** 小屏紧凑视图？触屏小屏（含老机型无全屏：浏览器 chrome 占高，视口实际很小——
+ *  iPhone 8 Plus 横屏可用高度≈310px）→ HUD 全系缩小防遮挡关卡内容。
+ *  iPad/大屏（高 ≥460 宽 ≥500）不触发，保持原尺寸。 */
+export function compactView(W, H) {
+  return W < 500 || H < 460;
+}
+
+/** 紧凑系数（非紧凑=1；紧凑=0.72 基准） */
+export function compactK(W, H) {
+  return compactView(W, H) ? 0.72 : 1;
+}
+
 /** 触屏端的安全区 insets；桌面/未启用 → 全 0（刘海横屏时 left/right 才有值） */
 export function touchInsetsOf(scene) {
   const t = scene && scene._touchUI;
@@ -71,15 +83,20 @@ export function pushNotice(scene, text) {
 
 /** 物品栏槽位几何（HUD 渲染与点击命中**共用这一套数字**，保证点哪是哪）：
  *  普通格 CFG.inventory.slotPx，装物品的格子放大为 itemSlotPx；底边对齐、右缘贴边。
- *  margins：触屏设备传 {bottom, right}（含安全区），桌面默认 10。 */
+ *  margins：触屏设备传 {bottom, right}（含安全区），桌面默认 10。
+ *  小屏（compactView）槽位缩 0.72×——否则 5 格 70px 占 350px，寸屏全被物品栏吃掉。 */
 export function inventorySlotRects(W, H, slots, margins = { bottom: 10, right: 10 }) {
-  const gap = 4;
+  const k = compactK(W, H);
+  const gap = Math.max(3, Math.round(4 * k));
   const margin = 10;
   const n = slots.length;
   const rects = new Array(n);
   let right = W - (margins.right ?? 10);
   for (let i = n - 1; i >= 0; i--) {
-    const size = slots[i] && slots[i].item ? CFG.inventory.itemSlotPx : CFG.inventory.slotPx;
+    const size = Math.max(
+      34,
+      Math.round((slots[i] && slots[i].item ? CFG.inventory.itemSlotPx : CFG.inventory.slotPx) * k),
+    );
     right -= size;
     rects[i] = { x: right, y: H - (margins.bottom ?? 10) - size, size };
     right -= gap;
@@ -126,9 +143,11 @@ function portraitScene(scene) {
   return !!(t && typeof t.isPortrait === 'function' && t.isPortrait());
 }
 
-/** 提示面板区域（HUD 渲染与触控滑闭/点击共用的命中几何，与 tipButton 同源） */
-export function tipPanelRect(W, top = 10, right = 0) {
-  const pw = Math.min(W - 20, 440);
+/** 提示面板区域（HUD 渲染与触控滑闭/点击共用的命中几何，与 tipButton 同源）；
+ *  小屏收窄（≤62%/340px）——中央面板是遮挡重灾区。H 缺省用 top+200 兜底。 */
+export function tipPanelRect(W, top = 10, right = 0, H = null) {
+  const c = compactView(W, H ?? top + 200);
+  const pw = c ? Math.min(Math.round(W * 0.62), 340) : Math.min(W - 20, 440);
   return { x: W - right - 10 - pw, y: top + 42, w: pw, h: 120 };
 }
 

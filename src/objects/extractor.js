@@ -8,7 +8,7 @@
 import { Obj } from './obj.js';
 import { getSubstance } from '../chem/substances.js';
 import { CFG } from '../core/config.js';
-import { THEME, rr, glowText } from '../render/theme.js';
+import { THEME, rr, glowText, screenTextScale } from '../render/theme.js';
 
 export class Extractor extends Obj {
   get hoverLabel() {
@@ -135,7 +135,8 @@ export class Extractor extends Obj {
       ctx.stroke();
     }
     // 标注：压力提取器写"压力"（与压力开关同位同义：站在上面即触发）
-    glowText(ctx, this.switchId ? '提取' : '压力', this.x + this.w / 2, this.y - 4, active ? THEME.water.light : '#9fb2c8', 'bold 10px monospace', 3);
+    const kT = screenTextScale(ctx, 10, 12); // 屏幕最小字号保底
+    glowText(ctx, this.switchId ? '提取' : '压力', this.x + this.w / 2, this.y - 4 * kT, active ? THEME.water.light : '#9fb2c8', `bold ${Math.round(10 * kT * 10) / 10}px monospace`, 3);
     ctx.restore();
   }
 }

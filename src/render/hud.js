@@ -13,7 +13,7 @@ import { solutionColor } from './liquidrender.js';
 import { CFG } from '../core/config.js';
 import { GasColumn } from '../objects/gascolumn.js';
 import { Block } from '../objects/block.js';
-import { inventorySlotRects, uiMargins, overviewButtonRect, fullscreenButtonRect, hudTopOffset, touchInsetsOf } from '../level/click.js';
+import { inventorySlotRects, uiMargins, overviewButtonRect, fullscreenButtonRect, hudTopOffset, touchInsetsOf, compactView } from '../level/click.js';
 import { joyGeom, touchButtonRects } from '../core/touch.js';
 import { canvasLW, canvasLH, canvasTransformDpr } from './canvas.js';
 
@@ -868,6 +868,9 @@ export class Hud {
   // 屏幕占用最小、信息不缺；移动端面板体按 CFG.touch.hudAlpha 降透明（文字不降）。
   playerPanelCompact(ctx, p, scene, time, top = 10) {
     const x0 = 10 + (touchInsetsOf(scene).left || 0); // 刘海横屏：卡片让出左缘安全区
+    // 小屏紧凑（视口高<460/宽<500——老机型无全屏时可用视口很小）：
+    // 整卡以左上为锚缩 0.76×——不动内部布局，占用面积减半（遮挡重灾区）
+    const k = compactView(canvasLW(ctx.canvas), canvasLH(ctx.canvas)) ? 0.76 : 1;
     const atm = scene.atmosphere;
     // 身体组成（多物质才显示，单物质=血量本身）
     const masses = p.grid ? p.grid.masses() : null;
@@ -880,15 +883,27 @@ export class Hud {
       ? EXTRA_GAS_IDS.map((id) => ({ id, frac: atm.fraction(id) * 100, mass: atm.mass(id) })).filter((g) => g.mass > 0.01)
       : [];
     const airLines = 1 + (extras.length ? 1 : 0);
-    const w = 280;
-    const h = 72
+    const w = 280 * k;
+    const h = (72
       + (compRows ? 17 + compRows * 17 + (entries.length > compRows ? 13 : 0) : 0)
-      + airLines * 16 + 8;
+      + airLines * 16 + 8) * k;
     this._leftH = h; // 左上卡实际高度（调试模式"最近反应"面板的堆叠定位用）
     ctx.save();
     ctx.globalAlpha = this._isTouch() ? CFG.touch.hudAlpha : 1;
     panel(ctx, x0, top, w, h, THEME.gold.deep, 12);
+    if (k !== 1) {
+      // 内部绘制仍按 280 布局（右对齐等硬编码坐标），整卡左上锚缩小
+      ctx.translate(x0, top);
+      ctx.scale(k, k);
+      ctx.translate(-x0, -top);
+    }
     ctx.restore();
+    if (k !== 1) {
+      ctx.save();
+      ctx.translate(x0, top);
+      ctx.scale(k, k);
+      ctx.translate(-x0, -top);
+    }
     // 头部：血量药瓶 + 物质 + 体质
     const sub = getSubstance(p.substance);
     const color = sub?.solid?.[0] ?? '#7fe0ff';
@@ -949,6 +964,7 @@ export class Hud {
       }
       if (extras.length > 3) clearText(ctx, `+${extras.length - 3}`, gx + 4, y + 4, '#9fb2c8', '10px monospace');
     }
+    if (k !== 1) ctx.restore(); // 关闭紧凑缩放（内部 clearText/vial 自管 save/restore）
   }
 
   /** 血量药瓶：玻璃烧瓶 + 发光液体填充 */

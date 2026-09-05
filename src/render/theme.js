@@ -59,6 +59,22 @@ export const THEME = {
 
 // ---- 常用绘制辅助 ----
 
+/** 世界内文本的"屏幕最小字号"保底系数：路牌/开关标注等在相机缩放后过小
+ *  （移动端视口小、世界被压到 0.8× 左右，12px 变 10px 眯眼）→ 返回放大倍数 k，
+ *  使 世界字号 size × 相机缩放 ≥ minScreen（逻辑屏幕 px）。桌面（缩放≈1）返回 1。
+ *  仅读当前变换（含 dpr 基座），不影响任何布局状态。 */
+export function screenTextScale(ctx, sizeWorld, minScreen = 13) {
+  if (!(sizeWorld > 0)) return 1;
+  const cnv = ctx && ctx.canvas && typeof ctx.canvas === 'object' ? ctx.canvas : null;
+  const dpr = cnv && Number.isFinite(cnv._dpr) ? Math.max(1, cnv._dpr) : 1;
+  let m = null;
+  try { m = ctx.getTransform ? ctx.getTransform() : null; } catch (e) { /* 老浏览器 */ }
+  const vscale = ((m ? Math.hypot(m.a, m.b) : 1) || 1) / dpr; // 世界 → 逻辑屏幕像素
+  if (vscale <= 0.01) return 1;
+  const k = (minScreen / sizeWorld) / vscale;
+  return Math.max(1, Math.min(3, k));
+}
+
 /** 圆角矩形路径 */
 export function rr(ctx, x, y, w, h, r) {
   const rr2 = Math.min(r, w / 2, h / 2);

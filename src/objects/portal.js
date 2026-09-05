@@ -14,6 +14,7 @@
 import { Obj } from './obj.js';
 import { overlaps } from '../physics/collision.js';
 import { applyInventorySetup } from '../level/items.js';
+import { screenTextScale } from '../render/theme.js';
 
 const EMBED_TOL = 8; // 落点嵌入实心体多少 px 以内仍可落（物理一帧即可温柔推开）
 function overlapsBox(box, o, m = EMBED_TOL) {
@@ -276,29 +277,31 @@ export class Portal extends Obj {
     ctx.fill();
     ctx.shadowBlur = 0;
     if (this.group) {
-      ctx.font = 'bold 10px monospace';
+      const kg = screenTextScale(ctx, 10, 12); // 组号屏幕最小字号保底
+      ctx.font = `bold ${Math.round(10 * kg * 10) / 10}px monospace`;
       ctx.textAlign = 'center';
       ctx.fillStyle = active ? '#e8e0ff' : '#9fb2c8';
       ctx.strokeStyle = 'rgba(10,14,30,0.9)';
       ctx.lineWidth = 3;
       const t2 = `组${this.group}`;
-      ctx.strokeText(t2, cx, this.y - 12);
-      ctx.fillText(t2, cx, this.y - 12);
+      ctx.strokeText(t2, cx, this.y - 12 * kg);
+      ctx.fillText(t2, cx, this.y - 12 * kg);
       ctx.textAlign = 'left';
     }
     // n次门：顶部显示剩余次数（无限次数不显示）——大号数字 + 深色底板（任何背景下可读）
     if (Number.isFinite(this.usesLeft)) {
       ctx.shadowBlur = 0;
-      ctx.font = 'bold 16px monospace';
+      const kn = screenTextScale(ctx, 16, 14); // 次数数字保底（常用 16px，保底 14px 屏幕）
+      ctx.font = `bold ${Math.round(16 * kn * 10) / 10}px monospace`;
       ctx.textAlign = 'center';
       const txt = String(this.usesLeft);
       const tw = ctx.measureText(txt).width;
       ctx.fillStyle = 'rgba(16,20,40,0.78)';
       ctx.beginPath();
-      ctx.roundRect(cx - tw / 2 - 5, this.y - 31, tw + 10, 21, 6);
+      ctx.roundRect(cx - tw / 2 - 5 * kn, this.y - 31 * kn, tw + 10 * kn, 21 * kn, 6 * kn);
       ctx.fill();
       ctx.fillStyle = active ? '#ffffff' : '#9fb2c8';
-      ctx.fillText(txt, cx, this.y - 16);
+      ctx.fillText(txt, cx, this.y - 16 * kn);
       ctx.textAlign = 'left';
     }
     ctx.restore();

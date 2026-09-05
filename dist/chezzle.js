@@ -5371,6 +5371,22 @@ const THEME = {
 
 // ---- 常用绘制辅助 ----
 
+/** 世界内文本的"屏幕最小字号"保底系数：路牌/开关标注等在相机缩放后过小
+ *  （移动端视口小、世界被压到 0.8× 左右，12px 变 10px 眯眼）→ 返回放大倍数 k，
+ *  使 世界字号 size × 相机缩放 ≥ minScreen（逻辑屏幕 px）。桌面（缩放≈1）返回 1。
+ *  仅读当前变换（含 dpr 基座），不影响任何布局状态。 */
+function screenTextScale(ctx, sizeWorld, minScreen = 13) {
+  if (!(sizeWorld > 0)) return 1;
+  const cnv = ctx && ctx.canvas && typeof ctx.canvas === 'object' ? ctx.canvas : null;
+  const dpr = cnv && Number.isFinite(cnv._dpr) ? Math.max(1, cnv._dpr) : 1;
+  let m = null;
+  try { m = ctx.getTransform ? ctx.getTransform() : null; } catch (e) { /* 老浏览器 */ }
+  const vscale = ((m ? Math.hypot(m.a, m.b) : 1) || 1) / dpr; // 世界 → 逻辑屏幕像素
+  if (vscale <= 0.01) return 1;
+  const k = (minScreen / sizeWorld) / vscale;
+  return Math.max(1, Math.min(3, k));
+}
+
 /** 圆角矩形路径 */
 function rr(ctx, x, y, w, h, r) {
   const rr2 = Math.min(r, w / 2, h / 2);
@@ -5501,6 +5517,7 @@ function flamePath(ctx, x, y, h, w, wob) {
 }
 
 exports.THEME = THEME;
+exports.screenTextScale = screenTextScale;
 exports.rr = rr;
 exports.panel = panel;
 exports.glowText = glowText;
@@ -7970,6 +7987,7 @@ exports.fitCanvasToWindow = fitCanvasToWindow;
 const { Obj } = __require('src/objects/obj.js');;
 const { overlaps } = __require('src/physics/collision.js');;
 const { applyInventorySetup } = __require('src/level/items.js');;
+const { screenTextScale } = __require('src/render/theme.js');;
 
 const EMBED_TOL = 8; // 落点嵌入实心体多少 px 以内仍可落（物理一帧即可温柔推开）
 function overlapsBox(box, o, m = EMBED_TOL) {
@@ -8232,29 +8250,31 @@ class Portal extends Obj {
     ctx.fill();
     ctx.shadowBlur = 0;
     if (this.group) {
-      ctx.font = 'bold 10px monospace';
+      const kg = screenTextScale(ctx, 10, 12); // 组号屏幕最小字号保底
+      ctx.font = `bold ${Math.round(10 * kg * 10) / 10}px monospace`;
       ctx.textAlign = 'center';
       ctx.fillStyle = active ? '#e8e0ff' : '#9fb2c8';
       ctx.strokeStyle = 'rgba(10,14,30,0.9)';
       ctx.lineWidth = 3;
       const t2 = `组${this.group}`;
-      ctx.strokeText(t2, cx, this.y - 12);
-      ctx.fillText(t2, cx, this.y - 12);
+      ctx.strokeText(t2, cx, this.y - 12 * kg);
+      ctx.fillText(t2, cx, this.y - 12 * kg);
       ctx.textAlign = 'left';
     }
     // n次门：顶部显示剩余次数（无限次数不显示）——大号数字 + 深色底板（任何背景下可读）
     if (Number.isFinite(this.usesLeft)) {
       ctx.shadowBlur = 0;
-      ctx.font = 'bold 16px monospace';
+      const kn = screenTextScale(ctx, 16, 14); // 次数数字保底（常用 16px，保底 14px 屏幕）
+      ctx.font = `bold ${Math.round(16 * kn * 10) / 10}px monospace`;
       ctx.textAlign = 'center';
       const txt = String(this.usesLeft);
       const tw = ctx.measureText(txt).width;
       ctx.fillStyle = 'rgba(16,20,40,0.78)';
       ctx.beginPath();
-      ctx.roundRect(cx - tw / 2 - 5, this.y - 31, tw + 10, 21, 6);
+      ctx.roundRect(cx - tw / 2 - 5 * kn, this.y - 31 * kn, tw + 10 * kn, 21 * kn, 6 * kn);
       ctx.fill();
       ctx.fillStyle = active ? '#ffffff' : '#9fb2c8';
-      ctx.fillText(txt, cx, this.y - 16);
+      ctx.fillText(txt, cx, this.y - 16 * kn);
       ctx.textAlign = 'left';
     }
     ctx.restore();
@@ -9844,6 +9864,18 @@ function hudTopOffset(scene) {
   return 10;
 }
 
+/** 小屏紧凑视图？触屏小屏（含老机型无全屏：浏览器 chrome 占高，视口实际很小——
+ *  iPhone 8 Plus 横屏可用高度≈310px）→ HUD 全系缩小防遮挡关卡内容。
+ *  iPad/大屏（高 ≥460 宽 ≥500）不触发，保持原尺寸。 */
+function compactView(W, H) {
+  return W < 500 || H < 460;
+}
+
+/** 紧凑系数（非紧凑=1；紧凑=0.72 基准） */
+function compactK(W, H) {
+  return compactView(W, H) ? 0.72 : 1;
+}
+
 /** 触屏端的安全区 insets；桌面/未启用 → 全 0（刘海横屏时 left/right 才有值） */
 function touchInsetsOf(scene) {
   const t = scene && scene._touchUI;
@@ -9875,15 +9907,20 @@ function pushNotice(scene, text) {
 
 /** 物品栏槽位几何（HUD 渲染与点击命中**共用这一套数字**，保证点哪是哪）：
  *  普通格 CFG.inventory.slotPx，装物品的格子放大为 itemSlotPx；底边对齐、右缘贴边。
- *  margins：触屏设备传 {bottom, right}（含安全区），桌面默认 10。 */
+ *  margins：触屏设备传 {bottom, right}（含安全区），桌面默认 10。
+ *  小屏（compactView）槽位缩 0.72×——否则 5 格 70px 占 350px，寸屏全被物品栏吃掉。 */
 function inventorySlotRects(W, H, slots, margins = { bottom: 10, right: 10 }) {
-  const gap = 4;
+  const k = compactK(W, H);
+  const gap = Math.max(3, Math.round(4 * k));
   const margin = 10;
   const n = slots.length;
   const rects = new Array(n);
   let right = W - (margins.right ?? 10);
   for (let i = n - 1; i >= 0; i--) {
-    const size = slots[i] && slots[i].item ? CFG.inventory.itemSlotPx : CFG.inventory.slotPx;
+    const size = Math.max(
+      34,
+      Math.round((slots[i] && slots[i].item ? CFG.inventory.itemSlotPx : CFG.inventory.slotPx) * k),
+    );
     right -= size;
     rects[i] = { x: right, y: H - (margins.bottom ?? 10) - size, size };
     right -= gap;
@@ -9930,9 +9967,11 @@ function portraitScene(scene) {
   return !!(t && typeof t.isPortrait === 'function' && t.isPortrait());
 }
 
-/** 提示面板区域（HUD 渲染与触控滑闭/点击共用的命中几何，与 tipButton 同源） */
-function tipPanelRect(W, top = 10, right = 0) {
-  const pw = Math.min(W - 20, 440);
+/** 提示面板区域（HUD 渲染与触控滑闭/点击共用的命中几何，与 tipButton 同源）；
+ *  小屏收窄（≤62%/340px）——中央面板是遮挡重灾区。H 缺省用 top+200 兜底。 */
+function tipPanelRect(W, top = 10, right = 0, H = null) {
+  const c = compactView(W, H ?? top + 200);
+  const pw = c ? Math.min(Math.round(W * 0.62), 340) : Math.min(W - 20, 440);
   return { x: W - right - 10 - pw, y: top + 42, w: pw, h: 120 };
 }
 
@@ -10242,6 +10281,8 @@ function bindSceneClick(canvas, getScreenPos, getActive) {
 
 exports.screenToWorld = screenToWorld;
 exports.hudTopOffset = hudTopOffset;
+exports.compactView = compactView;
+exports.compactK = compactK;
 exports.touchInsetsOf = touchInsetsOf;
 exports.overviewButtonRect = overviewButtonRect;
 exports.fullscreenButtonRect = fullscreenButtonRect;
@@ -10714,7 +10755,7 @@ const { solutionColor } = __require('src/render/liquidrender.js');;
 const { CFG } = __require('src/core/config.js');;
 const { GasColumn } = __require('src/objects/gascolumn.js');;
 const { Block } = __require('src/objects/block.js');;
-const { inventorySlotRects, uiMargins, overviewButtonRect, fullscreenButtonRect, hudTopOffset, touchInsetsOf } = __require('src/level/click.js');;
+const { inventorySlotRects, uiMargins, overviewButtonRect, fullscreenButtonRect, hudTopOffset, touchInsetsOf, compactView } = __require('src/level/click.js');;
 const { joyGeom, touchButtonRects } = __require('src/core/touch.js');;
 const { canvasLW, canvasLH, canvasTransformDpr } = __require('src/render/canvas.js');;
 
@@ -11569,6 +11610,9 @@ class Hud {
   // 屏幕占用最小、信息不缺；移动端面板体按 CFG.touch.hudAlpha 降透明（文字不降）。
   playerPanelCompact(ctx, p, scene, time, top = 10) {
     const x0 = 10 + (touchInsetsOf(scene).left || 0); // 刘海横屏：卡片让出左缘安全区
+    // 小屏紧凑（视口高<460/宽<500——老机型无全屏时可用视口很小）：
+    // 整卡以左上为锚缩 0.76×——不动内部布局，占用面积减半（遮挡重灾区）
+    const k = compactView(canvasLW(ctx.canvas), canvasLH(ctx.canvas)) ? 0.76 : 1;
     const atm = scene.atmosphere;
     // 身体组成（多物质才显示，单物质=血量本身）
     const masses = p.grid ? p.grid.masses() : null;
@@ -11581,15 +11625,27 @@ class Hud {
       ? EXTRA_GAS_IDS.map((id) => ({ id, frac: atm.fraction(id) * 100, mass: atm.mass(id) })).filter((g) => g.mass > 0.01)
       : [];
     const airLines = 1 + (extras.length ? 1 : 0);
-    const w = 280;
-    const h = 72
+    const w = 280 * k;
+    const h = (72
       + (compRows ? 17 + compRows * 17 + (entries.length > compRows ? 13 : 0) : 0)
-      + airLines * 16 + 8;
+      + airLines * 16 + 8) * k;
     this._leftH = h; // 左上卡实际高度（调试模式"最近反应"面板的堆叠定位用）
     ctx.save();
     ctx.globalAlpha = this._isTouch() ? CFG.touch.hudAlpha : 1;
     panel(ctx, x0, top, w, h, THEME.gold.deep, 12);
+    if (k !== 1) {
+      // 内部绘制仍按 280 布局（右对齐等硬编码坐标），整卡左上锚缩小
+      ctx.translate(x0, top);
+      ctx.scale(k, k);
+      ctx.translate(-x0, -top);
+    }
     ctx.restore();
+    if (k !== 1) {
+      ctx.save();
+      ctx.translate(x0, top);
+      ctx.scale(k, k);
+      ctx.translate(-x0, -top);
+    }
     // 头部：血量药瓶 + 物质 + 体质
     const sub = getSubstance(p.substance);
     const color = sub?.solid?.[0] ?? '#7fe0ff';
@@ -11650,6 +11706,7 @@ class Hud {
       }
       if (extras.length > 3) clearText(ctx, `+${extras.length - 3}`, gx + 4, y + 4, '#9fb2c8', '10px monospace');
     }
+    if (k !== 1) ctx.restore(); // 关闭紧凑缩放（内部 clearText/vial 自管 save/restore）
   }
 
   /** 血量药瓶：玻璃烧瓶 + 发光液体填充 */
@@ -12341,6 +12398,7 @@ exports.Block = Block;
 
 const { CFG } = __require('src/core/config.js');;
 const { setupCanvasSize, canvasLW, canvasLH } = __require('src/render/canvas.js');;
+const { compactView, compactK } = __require('src/level/click.js');;
 const { handleSceneClick, handleScenePressDown, handleScenePressMove, handleScenePressUp, inventorySlotRects, uiMargins, overviewButtonRect, hudTopOffset, touchInsetsOf, tipPanelRect } = __require('src/level/click.js');;
 const { requestFullscreenOnce } = __require('src/core/fullscreen.js');;
 
@@ -12379,20 +12437,23 @@ const UIS = [];
 // ---------------------------------------------------------------------------
 
 /** 摇杆：左下角半圆（直径贴底边，圆心即摇杆原点），cx/cy = 圆心，R = 半径。
- *  半圆 = { dist ≤ R 且 y ≤ cy }（上部半圆）。 */
+ *  半圆 = { dist ≤ R 且 y ≤ cy }（上部半圆）。小屏（compactView）半径缩 72%——
+ *  122px 的摇杆在 310px 高的视口里占掉 40%，玩家移动的可视区被吃掉。 */
 function joyGeom(W, H, insets = {}) {
-  const R = CFG.touch.joyR;
+  const R = compactView(W, H) ? Math.max(70, Math.round(CFG.touch.joyR * 0.72)) : CFG.touch.joyR;
   const cx = (insets.left ?? 0) + 14 + R;
   const cy = H - (insets.bottom ?? 0) - 12;
   return { cx, cy, R };
 }
 
 /** 右下按钮：2×2 块（C 上左 / X 上右 / Q 下左 / ⇧ 下右），下方是物品栏。
- *  与物品栏几何（inventorySlotRects，触屏边距版）共用坐标，按钮块贴着物品栏上沿。 */
+ *  与物品栏几何（inventorySlotRects，触屏边距版）共用坐标，按钮块贴着物品栏上沿。
+ *  小屏：按钮 72%（68→49px，2×2 总高 ≈104px）。 */
 function touchButtonRects(W, H, slots, insets = {}) {
   if (!slots || slots.length === 0) return [];
-  const btn = CFG.touch.btnSize;
-  const gap = CFG.touch.btnGap;
+  const k = compactK(W, H);
+  const btn = Math.max(36, Math.round(CFG.touch.btnSize * k));
+  const gap = Math.max(5, Math.round(CFG.touch.btnGap * k));
   const margins = { bottom: (insets.bottom ?? 0) + CFG.touch.pad, right: (insets.right ?? 0) + CFG.touch.pad };
   const inv = inventorySlotRects(W, H, slots, margins);
   let invTop = Infinity;
@@ -12430,7 +12491,9 @@ function hitRect(r, x, y, pad = 6) {
  */
 function joyInput(dx, dy, R, engaged = false) {
   const mag = Math.hypot(dx, dy);
-  const dead = R * (engaged ? CFG.touch.joyDeadBack : CFG.touch.joyDead);
+  // 容错圈下限：紧凑摇杆（R≈88）乘比例死区会缩到 28px——起手偏 ~33px 就误跳
+  // （用户"点歪方向"场景）；下限 34px 在任何摇杆尺寸下保证容错（已启动回中≥24px）
+  const dead = Math.max(R * (engaged ? CFG.touch.joyDeadBack : CFG.touch.joyDead), engaged ? 24 : 34);
   if (mag < dead) return { left: false, right: false, jump: false, sx: 0, sy: 0 };
   const dyUp = -dy; // y 向下 → 向上为负
   if (dyUp > 0) {
@@ -15248,7 +15311,7 @@ exports.Player = Player;
 // ============================================================================
 
 const { Container } = __require('src/objects/container.js');;
-const { THEME, rr, glowText } = __require('src/render/theme.js');;
+const { THEME, rr, glowText, screenTextScale } = __require('src/render/theme.js');;
 
 class Switch extends Container {
   get hoverLabel() {
@@ -15372,18 +15435,21 @@ class Switch extends Container {
 
   /** 标注开启物质 + 剩余量（钥匙等子类复用） */
   renderLabel(ctx) {
+    // 标注文字屏幕最小字号保底（相机缩放后 10px 变 8px——移动端眯眼）
+    const k = screenTextScale(ctx, 10, 12);
+    const f = (px) => `${Math.round(px * k * 10) / 10}px monospace`;
     if (this.mode === 'pressure') {
       // 压力开关：写明触发方式（与化学开关同位——化学开关标开启物，压力标"压力"）
-      glowText(ctx, '压力', this.x, this.y - 4, THEME.gold.text, 'bold 10px monospace', 4);
+      glowText(ctx, '压力', this.x, this.y - 4 * k, THEME.gold.text, `bold ${f(10)}`, 4 * k);
     } else if (this.opening) {
-      glowText(ctx, this.opening, this.x, this.y - 4, THEME.gold.text, 'bold 10px monospace', 4);
+      glowText(ctx, this.opening, this.x, this.y - 4 * k, THEME.gold.text, `bold ${f(10)}`, 4 * k);
     } else if (this.mode === 'chemical') {
       // 化学开关没设开启物质：提示需要设置（否则永远不会开）
-      glowText(ctx, '未设开启物', this.x, this.y - 4, 'rgba(170,158,120,0.55)', 'bold 9px monospace', 3);
+      glowText(ctx, '未设开启物', this.x, this.y - 4 * k, 'rgba(170,158,120,0.55)', `bold ${f(9)}`, 3 * k);
     }
     const m = this.openingMass();
     if (m > 0) {
-      glowText(ctx, `${m.toFixed(1)}g`, this.x + this.w / 2, this.y + this.h + 12, '#ffffff', 'bold 10px monospace', 4);
+      glowText(ctx, `${m.toFixed(1)}g`, this.x + this.w / 2, this.y + this.h + 12 * k, '#ffffff', `bold ${f(10)}`, 4 * k);
     }
   }
 
@@ -15422,7 +15488,7 @@ class Switch extends Container {
     ctx.fill();
     ctx.shadowBlur = 0;
     ctx.fillStyle = eff ? '#3a2a08' : waiting ? '#4a2a08' : 'rgba(150,140,110,0.6)';
-    ctx.font = 'bold 9px monospace';
+    ctx.font = `bold ${Math.round(9 * screenTextScale(ctx, 9, 11) * 10) / 10}px monospace`;
     ctx.textAlign = 'center';
     ctx.fillText(eff ? '开' : waiting ? '等' : '关', cx, cy + 3);
     ctx.textAlign = 'left';
@@ -15454,7 +15520,7 @@ class Switch extends Container {
     ctx.setLineDash([]);
     // "&" 标记（居中于连线）
     ctx.fillStyle = color;
-    ctx.font = 'bold 12px serif';
+    ctx.font = `bold ${Math.round(12 * screenTextScale(ctx, 12, 13) * 10) / 10}px serif`;
     ctx.textAlign = 'center';
     ctx.fillText('&', (ax + bx) / 2, (ay + by) / 2 - 4);
     ctx.textAlign = 'left';
@@ -16147,7 +16213,7 @@ exports.BlastLamp = BlastLamp;
 // ============================================================================
 
 const { Obj } = __require('src/objects/obj.js');;
-const { rr } = __require('src/render/theme.js');;
+const { rr, screenTextScale } = __require('src/render/theme.js');;
 
 class Sign extends Obj {
   get hoverLabel() {
@@ -16174,15 +16240,19 @@ class Sign extends Obj {
   render(ctx) {
     const lines = this.text.split('\n');
     const size = this.size;
-    const lh = size + 6;
+    // 屏幕最小字号保底：相机缩放后路牌字过小（移动端小视口 ~0.8×，12px→10px 眯眼）
+    // → 整块石板等比放大 k（以左上为锚，含文字与底板——不重排,可读优先）
+    const k = screenTextScale(ctx, size, 13);
+    const s2 = size * k;
+    const lh = s2 + 6 * k;
     ctx.save();
-    ctx.font = `${size}px "Segoe UI", sans-serif`;
+    ctx.font = `${s2}px "Segoe UI", sans-serif`;
     const maxW = Math.max(...lines.map((ln) => ctx.measureText(ln).width));
     // 盒模型：this.y = 石板顶（与编辑器选中框一致）；文字基线 = 顶 + size + 8
-    const baseY = this.y + size + 8;
-    // 石板底：顶边在文字上方留出 padding
+    const baseY = this.y + s2 + 8 * k;
+    // 石板底：顶边在文字上方留出 padding（整块等比 k）
     ctx.fillStyle = 'rgba(14,10,38,0.74)';
-    rr(ctx, this.x - 7, this.y, maxW + 14, lines.length * lh + 18, 9);
+    rr(ctx, this.x - 7 * k, this.y, maxW + 14 * k, lines.length * lh + 18 * k, 9 * k);
     ctx.fill();
     ctx.strokeStyle = 'rgba(232,184,75,0.55)';
     ctx.lineWidth = 1.2;
@@ -16209,7 +16279,7 @@ exports.Sign = Sign;
 // ============================================================================
 
 const { Switch } = __require('src/objects/switch.js');;
-const { THEME, rr, glowText } = __require('src/render/theme.js');;
+const { THEME, rr, glowText, screenTextScale } = __require('src/render/theme.js');;
 
 class GasDetector extends Switch {
   get hoverLabel() {
@@ -16235,11 +16305,14 @@ class GasDetector extends Switch {
   }
 
   renderLabel(ctx) {
-    glowText(ctx, `${this.gas} > ${this.threshold}g`, this.x, this.y - 4, THEME.water.light, 'bold 10px monospace', 4);
+    // 标注文字屏幕最小字号保底（相机缩放后 10px 太小）
+    const k = screenTextScale(ctx, 10, 12);
+    const f10 = `bold ${Math.round(10 * k * 10) / 10}px monospace`;
+    glowText(ctx, `${this.gas} > ${this.threshold}g`, this.x, this.y - 4 * k, THEME.water.light, f10, 4 * k);
     // 开启物质（若有）：显示在下方，剩余量实时更新（同开关）
     if (this.opening) {
       const m = this.openingMass();
-      glowText(ctx, `${this.opening}${m > 0 ? ` ${m.toFixed(1)}g` : ''}`, this.x + this.w / 2, this.y + this.h + 12, THEME.gold.text, 'bold 10px monospace', 4);
+      glowText(ctx, `${this.opening}${m > 0 ? ` ${m.toFixed(1)}g` : ''}`, this.x + this.w / 2, this.y + this.h + 12 * k, THEME.gold.text, f10, 4 * k);
     }
   }
 
@@ -16336,7 +16409,7 @@ exports.GasDetector = GasDetector;
 const { Obj } = __require('src/objects/obj.js');;
 const { getSubstance } = __require('src/chem/substances.js');;
 const { CFG } = __require('src/core/config.js');;
-const { THEME, rr, glowText } = __require('src/render/theme.js');;
+const { THEME, rr, glowText, screenTextScale } = __require('src/render/theme.js');;
 
 class Extractor extends Obj {
   get hoverLabel() {
@@ -16463,7 +16536,8 @@ class Extractor extends Obj {
       ctx.stroke();
     }
     // 标注：压力提取器写"压力"（与压力开关同位同义：站在上面即触发）
-    glowText(ctx, this.switchId ? '提取' : '压力', this.x + this.w / 2, this.y - 4, active ? THEME.water.light : '#9fb2c8', 'bold 10px monospace', 3);
+    const kT = screenTextScale(ctx, 10, 12); // 屏幕最小字号保底
+    glowText(ctx, this.switchId ? '提取' : '压力', this.x + this.w / 2, this.y - 4 * kT, active ? THEME.water.light : '#9fb2c8', `bold ${Math.round(10 * kT * 10) / 10}px monospace`, 3);
     ctx.restore();
   }
 }
@@ -16767,4 +16841,4 @@ exports.Multiscene = Multiscene;
   };
   global.Chezzle = __require("src/index.js");
 })(typeof window !== 'undefined' ? window : globalThis);
-console.log('[Chezzle] 引擎构建 "vmtodua0j"');
+console.log('[Chezzle] 引擎构建 "vmtof2gvh"');
