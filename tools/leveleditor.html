@@ -189,11 +189,11 @@
   </div>
 </div>
 <datalist id="substances"></datalist>
-<script src="../dist/chezzle.js?vmtnzn7a4?vmtnyxblw?vmtnxszpm?vmtnwuuru?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b"></script>
+<script src="../dist/chezzle.js?vmto13ecy?vmtnzn7a4?vmtnyxblw?vmtnxszpm?vmtnwuuru?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b"></script>
 <script>
 // ============================================================================
 // Chezzle 可视化关卡编辑器
-// 复用 dist/chezzle.js?vmtnzn7a4?vmtnyxblw?vmtnxszpm?vmtnwuuru?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b 的全局 Chezzle：对象类、Scene、渲染、物理循环。
+// 复用 dist/chezzle.js?vmto13ecy?vmtnzn7a4?vmtnyxblw?vmtnxszpm?vmtnwuuru?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b 的全局 Chezzle：对象类、Scene、渲染、物理循环。
 // 编辑模式：自建 transform 渲染已摆放物体；试玩模式：重建 Scene 跑物理+化学。
 // ============================================================================
 const C = Chezzle;
@@ -294,7 +294,7 @@ const CATALOG = [
   { type: 'extractor', label: '提取器', dsl: 'extractor', color: '#4a8a5a',
     construct: (o) => new C.Extractor({ x: o.x, y: o.y, w: o.w ?? 50, h: o.h ?? 14, poolId: o.poolId, switchId: o.switchId, rate: o.rate ?? 0.25, id: o.id }),
     collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, poolId: o.poolId, switchId: o.switchId, rate: o.rate, id: o.id }),
-    fields: [F.num('x'), F.num('y'), F.num('w', '宽'), F.num('h', '高'), F.txt('poolId', '池id'), F.txt('switchId', '开关id'), F.num('rate', '速率g/s', 0.25), F.txt('id', 'id')] },
+    fields: [F.num('x'), F.num('y'), F.num('w', '宽'), F.num('h', '高'), F.txt('poolId', '池id'), F.txt('switchId', '开关id(留空=压力提取器)'), F.num('rate', '速率g/s', 0.25), F.txt('id', 'id')] },
   { type: 'beaker', label: '烧杯', dsl: 'beaker', color: '#9adcff', rect: true,
     construct: (o) => new C.Beaker({ x: o.x, y: o.y, w: o.w ?? 60, h: o.h ?? 80, volume: o.volume ?? 200, water: o.water !== undefined ? o.water : undefined, solutes: o.solutes, noCarry: o.noCarry, id: o.id }),
     collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, volume: o.solution.volume, water: o.solution.water, solutes: mapToObj(o.solution.solutes), noCarry: o.noCarry, id: o.id }),
@@ -2543,7 +2543,7 @@ function exportHTML() {
 </head>
 <body>
 <canvas id="game"></canvas>
-<script src="../dist/chezzle.js?vmtnzn7a4?vmtnyxblw?vmtnxszpm?vmtnwuuru?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b"><\/script>
+<script src="../dist/chezzle.js?vmto13ecy?vmtnzn7a4?vmtnyxblw?vmtnxszpm?vmtnwuuru?vmtnvnx3h?vmtfspzrg?vmtfrfflh?vmtfr81ac?vmtfr1s0a?vmtfqm31b"><\/script>
 ${pluginTags()}
 <script src="report.js"><\/script>
 <script>

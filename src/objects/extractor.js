@@ -12,7 +12,7 @@ import { THEME, rr, glowText } from '../render/theme.js';
 
 export class Extractor extends Obj {
   get hoverLabel() {
-    return '提取器';
+    return this.switchId ? '提取器' : '压力提取器（站上即提取）';
   }
 
   constructor({
@@ -29,10 +29,13 @@ export class Extractor extends Obj {
 
   update(dt, scene) {
     const pool = scene.byId[this.poolId];
-    const sw = scene.byId[this.switchId];
-    if (!pool || !pool.material || !sw) return;
-    // 有效开启（支持开关"&"联锁）
-    const active = typeof sw.effectiveOpen === 'function' ? sw.effectiveOpen(scene) : sw.open;
+    const sw = this.switchId ? scene.byId[this.switchId] : null;
+    if (!pool || !pool.material) return;
+    // 激活判定：switchId 字段为空 → ★ 压力提取器（玩家/物块站上即提取，同压力开关）；
+    // 绑定了开关id → 只有开关有效开启才提取（开关不存在 = 未接线，不激活——不误退成压力）
+    const active = this.switchId
+      ? (sw ? (typeof sw.effectiveOpen === 'function' ? sw.effectiveOpen(scene) : sw.open) : false)
+      : this._onTop(scene);
     if (!active) return;
     // 池内所有物质：只提取能以固体形式出现的（state==='solid'）
     for (const id of pool.material.ids()) {
@@ -56,10 +59,22 @@ export class Extractor extends Obj {
     }
   }
 
+  /** 压力判定（与压力开关同一逻辑）：玩家/物块站在提取器上即触发。
+   *  只认动态实心（玩家/物块）；沉淀粒子不压；下方站地面不算。 */
+  _onTop(scene) {
+    for (const obj of scene.objects) {
+      if (obj === this || !obj.solid || obj.physicsKind !== 'dynamic') continue; // 排除自身与静态物
+      if (obj.amount !== undefined) continue; // 沉淀粒子不压（只有玩家/物块）
+      if (obj.right > this.x && obj.left < this.x + this.w &&
+          obj.bottom >= this.y - 12 && obj.bottom <= this.y + this.h + 4) return true;
+    }
+    return false;
+  }
+
   render(ctx, scene) {
     const pool = scene?.byId?.[this.poolId];
-    const sw = scene?.byId?.[this.switchId];
-    const active = sw ? (sw._lastEff ?? sw.open) : false;
+    const sw = this.switchId ? scene?.byId?.[this.switchId] : null;
+    const active = this.switchId ? (sw ? (sw._lastEff ?? sw.open) : false) : this._onTop(scene);
     ctx.save();
     // 地表矩形（金属台，激活时发光）
     const g = ctx.createLinearGradient(this.x, this.y, this.x, this.y + this.h);
@@ -109,8 +124,8 @@ export class Extractor extends Obj {
       ctx.lineTo(endX, pool.y + pool.h);
       ctx.stroke();
     }
-    // 标注
-    glowText(ctx, '提取', this.x + this.w / 2, this.y - 4, active ? THEME.water.light : '#9fb2c8', 'bold 10px monospace', 3);
+    // 标注：压力提取器写"压力"（与压力开关同位同义：站在上面即触发）
+    glowText(ctx, this.switchId ? '提取' : '压力', this.x + this.w / 2, this.y - 4, active ? THEME.water.light : '#9fb2c8', 'bold 10px monospace', 3);
     ctx.restore();
   }
 }
