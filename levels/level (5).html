@@ -11,7 +11,7 @@
 </head>
 <body>
 <canvas id="game"></canvas>
-<script src="../dist/chezzle.js?vmto82t6f"></script>
+<script src="../dist/chezzle.js?vmto8z4z8"></script>
 <!-- 插件: 演出编排 v1.0（showtime.js） -->
 <script>
 // ============================================================================
@@ -571,11 +571,11 @@ Chezzle.Plugin.register('chapters', {
       const startId = st.scenes.some((s) => s.id === st.start) ? st.start : scenes[0].id;
       lines.length = 0;
       lines.push("const canvas = document.getElementById('game');");
-      lines.push('canvas.width = 1100;');
-      lines.push('canvas.height = 700;');
+      lines.push('Chezzle.fitCanvasToWindow(canvas);'); // 高清+窗口自适应（缓冲 ×devicePixelRatio）
+      lines.push("window.addEventListener('resize', () => Chezzle.fitCanvasToWindow(canvas));");
       // 插件（含编辑器配置的 cfg：演出剧本/检查点等）；构造后再补 M 惰性引用
       lines.push(`const PLUGINS = ${ctx.safeJson(ed.getActivePlugins())};`);
-      lines.push('const M = new Chezzle.Multiscene(canvas, { width: 1100, height: 700, plugins: PLUGINS });');
+      lines.push('const M = new Chezzle.Multiscene(canvas, { plugins: PLUGINS });');
       lines.push('for (const p of PLUGINS) if (p.cfg && typeof p.cfg === "object") p.cfg.M = () => M;');
       const post = [];
       for (const s of scenes) {
@@ -779,10 +779,10 @@ Chezzle.Plugin.register('tutorial', {
 <script src="report.js"></script>
 <script>
 const canvas = document.getElementById('game');
-canvas.width = 1100;
-canvas.height = 700;
+Chezzle.fitCanvasToWindow(canvas); // 高清+窗口自适应（缓冲 ×devicePixelRatio）
+window.addEventListener('resize', () => Chezzle.fitCanvasToWindow(canvas));
 const PLUGINS = [{"name":"showtime"},{"name":"checkpoint"},{"name":"chapters"}];
-const M = new Chezzle.Multiscene(canvas, { width: 1100, height: 700, plugins: PLUGINS });
+const M = new Chezzle.Multiscene(canvas, { plugins: PLUGINS });
 for (const p of PLUGINS) if (p.cfg && typeof p.cfg === "object") p.cfg.M = () => M;
 M.scene("plain", { worldW: 3000, worldH: 800 })
   .floor(-260, 700, 2820, 130, { id: 'p_floor' })

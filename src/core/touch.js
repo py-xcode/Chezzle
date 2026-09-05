@@ -22,6 +22,7 @@
 // ============================================================================
 
 import { CFG } from './config.js';
+import { setupCanvasSize } from '../render/canvas.js';
 import {
   handleSceneClick,
   handleScenePressDown,
@@ -211,12 +212,9 @@ function fitCanvas(canvas) {
   if (typeof document === 'undefined') return;
   const w = Math.max(1, Math.round(document.documentElement.clientWidth || window.innerWidth || 0));
   const h = Math.max(1, Math.round(document.documentElement.clientHeight || window.innerHeight || 0));
-  if (canvas.width !== w) canvas.width = w;
-  if (canvas.height !== h) canvas.height = h;
+  setupCanvasSize(canvas, w, h); // 缓冲 ×dpr 高清；CSS 尺寸 = 逻辑 px（铺满窗口）
   canvas.style.position = 'fixed';
   canvas.style.inset = '0';
-  canvas.style.width = w + 'px';
-  canvas.style.height = h + 'px';
   canvas.style.display = 'block';
   canvas.style['z-index'] = '1';
   canvas.style.touchAction = 'none';

@@ -12,7 +12,7 @@
 </head>
 <body>
 <canvas id="game"></canvas>
-<script src="../dist/chezzle.js?vmto82t6f"></script>
+<script src="../dist/chezzle.js?vmto8z4z8"></script>
 <script>
   // ==========================================================================
   // 高中化学巡礼：①焰色反应 ②金属置换镀铜 ③碳粉燃烧/高温还原 ④氢气爆鸣
@@ -20,8 +20,9 @@
   // ⑧离子检验（Cl-/SO42-/CO32-/NH4+/Fe3+） ⑨pH 指示剂 ⑩碳化→回血再生
   // ==========================================================================
   const canvas = document.getElementById('game');
-  canvas.width = 1100;
-  canvas.height = 700;
+  // 高清 + 窗口自适应：逻辑尺寸=窗口（上限 1760×1120），缓冲 ×devicePixelRatio
+  Chezzle.fitCanvasToWindow(canvas);
+  window.addEventListener('resize', () => Chezzle.fitCanvasToWindow(canvas));
 
   const L = new Chezzle.LevelBuilder(canvas, { worldW: 7000, worldH: 800 });
 

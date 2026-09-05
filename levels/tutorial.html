@@ -7,13 +7,13 @@
 <style>
   html, body { margin: 0; height: 100%; background: #0b0e28; }
   body { display: flex; align-items: center; justify-content: center; }
-  #box { position: relative; width: 1100px; height: 700px; }
+  #box { position: relative; width: 100vw; height: 100vh; }
   canvas { position: absolute; inset: 0; }
 </style>
 </head>
 <body>
 <div id="box"></div>
-<script src="../dist/chezzle.js?vmto82t6f"></script>
+<script src="../dist/chezzle.js?vmto8z4z8"></script>
 <script src="../plugin/tutorial.js"></script>
 <script src="../plugin/checkpoint.js"></script>
 <script src="../plugin/showtime.js"></script>
@@ -126,7 +126,7 @@ const CHECKPOINTS = [
 // -------------------------------- 构建世界 ----------------------------------
 // 注意：plugins 不能在构造参数里引用 M（M 还没初始化——TDZ）；
 // 先构造，再赋 plugins（buildAll 时注入每个场景）。
-const M = new Chezzle.Multiscene(box, { width: 1100, height: 700 });
+const M = new Chezzle.Multiscene(box); // 尺寸自适应窗口（缓冲 ×devicePixelRatio 高清）
 M.plugins = [
   { name: 'showtime', cfg: { M, plays: SHOWTIME } },
   { name: 'checkpoint', cfg: { M, spawns: CHECKPOINTS, texts: [

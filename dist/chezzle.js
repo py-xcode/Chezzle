@@ -68,6 +68,7 @@ Object.assign(exports, __require('src/physics/collision.js'));;
 Object.assign(exports, __require('src/physics/support.js'));;
 
 Object.assign(exports, __require('src/render/renderer.js'));;
+Object.assign(exports, __require('src/render/canvas.js'));;
 Object.assign(exports, __require('src/render/camera.js'));;
 Object.assign(exports, __require('src/render/color.js'));;
 Object.assign(exports, __require('src/render/gridrender.js'));;
@@ -10639,6 +10640,7 @@ exports.Block = Block;
 // ============================================================================
 
 const { CFG } = __require('src/core/config.js');;
+const { setupCanvasSize } = __require('src/render/canvas.js');;
 const { handleSceneClick, handleScenePressDown, handleScenePressMove, handleScenePressUp, inventorySlotRects, uiMargins, overviewButtonRect, hudTopOffset, touchInsetsOf, tipPanelRect } = __require('src/level/click.js');;
 const { requestFullscreenOnce } = __require('src/core/fullscreen.js');;
 
@@ -10817,12 +10819,9 @@ function fitCanvas(canvas) {
   if (typeof document === 'undefined') return;
   const w = Math.max(1, Math.round(document.documentElement.clientWidth || window.innerWidth || 0));
   const h = Math.max(1, Math.round(document.documentElement.clientHeight || window.innerHeight || 0));
-  if (canvas.width !== w) canvas.width = w;
-  if (canvas.height !== h) canvas.height = h;
+  setupCanvasSize(canvas, w, h); // 缓冲 ×dpr 高清；CSS 尺寸 = 逻辑 px（铺满窗口）
   canvas.style.position = 'fixed';
   canvas.style.inset = '0';
-  canvas.style.width = w + 'px';
-  canvas.style.height = h + 'px';
   canvas.style.display = 'block';
   canvas.style['z-index'] = '1';
   canvas.style.touchAction = 'none';
@@ -11275,6 +11274,72 @@ exports.touchButtonRects = touchButtonRects;
 exports.joyInput = joyInput;
 exports.TouchUI = TouchUI;
 exports.bindTouchUI = bindTouchUI;
+
+  };
+  __modules["src/render/canvas.js"] = function (module, exports, __require) {
+// ============================================================================
+// 设备像素密度画布工具（高清适配）
+// ----------------------------------------------------------------------------
+// 问题：游戏画布缓冲曾固定 1100×700。高分屏（dpr=2/3）上浏览器把缓冲按
+// CSS 尺寸放大到物理像素 → 每画布像素被拉伸成 2-3 物理像素 → 糊。
+// 做法：逻辑尺寸（CSS px）与物理缓冲（×devicePixelRatio）分离——
+//   canvas.width/height = 逻辑 × dpr（物理像素）
+//   canvas.style.width/height = 逻辑 px
+// 引擎全局以 canvas.width/height（物理网格）为坐标系：相机 scale、HUD 布局、
+// 点击坐标换算全部不变（上下文均乘以同一 dpr，缩放互为倒数），显示时浏览器
+// 把缓冲缩回 CSS 尺寸 → 视觉尺寸与改造前完全一致，清晰度按设备像素密度提升。
+// 与 tools/leveleditor.html 编辑器已用的 dpr 方案同构。
+// ============================================================================
+
+/** 设备像素密度（钳制 1..3：4K 双缩放等极端值不再无脑放大，保护 fillrate） */
+function canvasDpr() {
+  if (typeof window === 'undefined' || !window.devicePixelRatio) return 1;
+  return Math.max(1, Math.min(3, Math.round(window.devicePixelRatio * 100) / 100));
+}
+
+/** 设定画布：w/h = 逻辑尺寸（CSS px）；缓冲 = w×h×dpr，CSS 尺寸 = w×h。
+ *  尺寸没变则不重设缓冲（重设会清空画布，避免无谓闪烁——同编辑器 ensureCanvasSize）。 */
+function setupCanvasSize(canvas, w, h) {
+  const dpr = canvasDpr();
+  const bw = Math.max(1, Math.round(w * dpr));
+  const bh = Math.max(1, Math.round(h * dpr));
+  if (canvas.width !== bw) canvas.width = bw;
+  if (canvas.height !== bh) canvas.height = bh;
+  canvas._dpr = dpr;
+  if (canvas.style) {
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+  }
+  return canvas;
+}
+
+/** 窗口自适应视口上限（逻辑 px）≈ 原参考视口 1100×700 的 1.6 倍：
+ *  超大窗口（4K/超宽屏 dpr=1）不再无脑放大——世界内容会变成 2.7 倍怪大。 */
+const MAX_VIEW_W = 1760;
+const MAX_VIEW_H = 1120;
+
+/** 逻辑尺寸 = 窗口可用尺寸（扣 pad）但不超过上限；返回 {w,h}（由 setupCanvasSize 应用）。
+ *  无 window（Node 测试）→ 直接使用上限值。 */
+function fitCanvasToWindow(canvas, { maxW = MAX_VIEW_W, maxH = MAX_VIEW_H, pad = 0 } = {}) {
+  let w = maxW;
+  let h = maxH;
+  if (typeof window !== 'undefined') {
+    const dw = (typeof document !== 'undefined' && document.documentElement && document.documentElement.clientWidth) || window.innerWidth || 0;
+    const dh = (typeof document !== 'undefined' && document.documentElement && document.documentElement.clientHeight) || window.innerHeight || 0;
+    if (dw > 0) w = Math.min(dw - pad * 2, maxW);
+    if (dh > 0) h = Math.min(dh - pad * 2, maxH);
+  }
+  const lw = Math.max(64, Math.round(w));
+  const lh = Math.max(64, Math.round(h));
+  setupCanvasSize(canvas, lw, lh);
+  return { w: lw, h: lh };
+}
+
+exports.canvasDpr = canvasDpr;
+exports.setupCanvasSize = setupCanvasSize;
+exports.MAX_VIEW_W = MAX_VIEW_W;
+exports.MAX_VIEW_H = MAX_VIEW_H;
+exports.fitCanvasToWindow = fitCanvasToWindow;
 
   };
   __modules["src/core/input.js"] = function (module, exports, __require) {
@@ -16261,6 +16326,7 @@ const { handleSceneClick } = __require('src/level/click.js');;
 const { bindTouchUI } = __require('src/core/touch.js');;
 const { bindOverviewInput } = __require('src/core/overview.js');;
 const { attachRecorderPanel } = __require('src/core/recorder.js');;
+const { setupCanvasSize, fitCanvasToWindow } = __require('src/render/canvas.js');;
 
 class Multiscene {
   /**
@@ -16270,8 +16336,10 @@ class Multiscene {
   constructor(container, opts = {}) {
     if (!container || typeof container !== 'object') throw new Error('Multiscene 需要容器元素');
     this.container = container;
-    this.width = opts.width ?? 1100;
-    this.height = opts.height ?? 700;
+    // 宽高 0 = 窗口自适应（逻辑尺寸 = 窗口可用尺寸，缓冲再 ×dpr 高清）；
+    // 显式传 width/height 则固定（编辑器试玩/测试注入）
+    this.width = opts.width ?? 0;
+    this.height = opts.height ?? 0;
     this.plugins = opts.plugins ?? []; // 全局插件（注入每个场景）
     this.scenes = new Map();           // name -> { name, builder, scene, canvas, renderer, hud, plugins, built, active }
     this.current = null;               // 当前激活场景名
@@ -16344,13 +16412,23 @@ class Multiscene {
     const canvas = this._canvasFactory
       ? this._canvasFactory()
       : document.createElement('canvas');
-    canvas.width = this.width;
-    canvas.height = this.height;
+    if (this.width > 0 && this.height > 0) setupCanvasSize(canvas, this.width, this.height);
+    else fitCanvasToWindow(canvas); // 窗口自适应：缓冲 ×dpr 高清
     canvas.style.position = 'absolute';
     canvas.style.inset = '0';
     canvas.style.display = 'none';
     this.container.appendChild(canvas);
     return canvas;
+  }
+
+  /** 窗口自适应（未显式传宽高时）：所有场景画布重设逻辑尺寸=窗口（×dpr 缓冲）。
+   *  窗口缩放时调用（start 已自动绑定 resize；手动调用可带 pad 调整内边距）。 */
+  fitWindow(opts = {}) {
+    let size = null;
+    for (const e of this.scenes.values()) {
+      size = fitCanvasToWindow(e.canvas, opts);
+    }
+    return size;
   }
 
   /** 构建全部场景（build + 插件注入）。返回 name -> scene 映射。 */
@@ -16387,6 +16465,18 @@ class Multiscene {
   start(name) {
     this.buildAll();
     for (const e of this.scenes.values()) if (e.scene) e.scene.applyAppearDelays(); // 延迟出现（全部场景）
+    // 窗口自适应：窗口缩放 → 重设所有场景画布（缓冲 ×dpr 高清不变糊；rAF 节流）
+    if (this.width <= 0) {
+      this.fitWindow();
+      if (typeof window !== 'undefined' && window.addEventListener) {
+        let raf = 0;
+        this._onResize = () => {
+          if (raf) cancelAnimationFrame(raf);
+          raf = requestAnimationFrame(() => { raf = 0; this.fitWindow(); });
+        };
+        window.addEventListener('resize', this._onResize);
+      }
+    }
     const e = this.scenes.get(name);
     if (!e) throw new Error(`场景不存在: ${name}`);
     e.canvas.style.display = 'block';
@@ -16470,12 +16560,16 @@ class Multiscene {
     return this;
   }
 
-  /** 关闭管理器（停止循环、解除键盘绑定） */
+  /** 关闭管理器（停止循环、解除键盘绑定、移除窗口自适应监听） */
   stop() {
     if (this._stop) this._stop();
     this._stop = null;
     if (this._unbindKeys) this._unbindKeys();
     this._unbindKeys = null;
+    if (this._onResize && typeof window !== 'undefined' && window.removeEventListener) {
+      window.removeEventListener('resize', this._onResize);
+      this._onResize = null;
+    }
   }
 }
 
@@ -16484,4 +16578,4 @@ exports.Multiscene = Multiscene;
   };
   global.Chezzle = __require("src/index.js");
 })(typeof window !== 'undefined' ? window : globalThis);
-console.log('[Chezzle] 引擎构建 "vmto82t6f"');
+console.log('[Chezzle] 引擎构建 "vmto8z4z8"');

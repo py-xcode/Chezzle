@@ -7,7 +7,7 @@
   html, body { margin: 0; height: 100%; background: #0b0e28; color: #cfd8ea; font-family: system-ui, sans-serif; }
   body { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
   h1 { font-size: 15px; color: #ffd76a; margin: 0; }
-  #stage { position: relative; width: 1100px; height: 700px; box-shadow: 0 0 60px rgba(120,90,220,0.25); }
+  #stage { position: relative; width: 100vw; height: calc(100vh - 90px); box-shadow: 0 0 60px rgba(120,90,220,0.25); }
   #stage canvas { background: #0b0e28; }
   #help { font-size: 11px; color: #6a7a96; max-width: 1100px; text-align: center; }
 </style>
@@ -19,9 +19,9 @@
   场景 A「研究室」：站上金色压力板 → 切到场景 B「完成区」。<br>
   场景 B：站上压力板 → 切回 A（回到离开时的原样）。每一步切换时玩家对象被完整搬移（物品栏/身上物质/血量保留）。
 </div>
-<script src="../../dist/chezzle.js?vmto82t6f"></script>
+<script src="../../dist/chezzle.js?vmto8z4z8"></script>
 <script>
-const M = new Chezzle.Multiscene(document.getElementById('stage'), { width: 1100, height: 700 });
+const M = new Chezzle.Multiscene(document.getElementById('stage')); // 尺寸自适应窗口（缓冲 ×dpr 高清）
 
 // ---- 场景 A：研究室 ----
 M.scene('a', { worldW: 1600, worldH: 700 })

@@ -189,11 +189,11 @@
   </div>
 </div>
 <datalist id="substances"></datalist>
-<script src="../dist/chezzle.js?vmto82t6f"></script>
+<script src="../dist/chezzle.js?vmto8z4z8"></script>
 <script>
 // ============================================================================
 // Chezzle 可视化关卡编辑器
-// 复用 dist/chezzle.js?vmto82t6f 的全局 Chezzle：对象类、Scene、渲染、物理循环。
+// 复用 dist/chezzle.js?vmto8z4z8 的全局 Chezzle：对象类、Scene、渲染、物理循环。
 // 编辑模式：自建 transform 渲染已摆放物体；试玩模式：重建 Scene 跑物理+化学。
 // ============================================================================
 const C = Chezzle;
@@ -2478,8 +2478,8 @@ function buildScript() {
   }
   const lines = [
     `const canvas = document.getElementById('game');`,
-    `canvas.width = 1100;`,
-    `canvas.height = 700;`,
+    `Chezzle.fitCanvasToWindow(canvas);`, // 高清+窗口自适应（缓冲 ×devicePixelRatio）
+    `window.addEventListener('resize', () => Chezzle.fitCanvasToWindow(canvas));`,
     `const L = new Chezzle.LevelBuilder(canvas, { worldW: ${state.worldW}, worldH: ${state.worldH} });`,
     'L',
   ];
@@ -2617,7 +2617,7 @@ function exportHTML() {
 </head>
 <body>
 <canvas id="game"></canvas>
-<script src="../dist/chezzle.js?vmto82t6f"><\/script>
+<script src="../dist/chezzle.js?vmto8z4z8"><\/script>
 ${pluginTags()}
 <script src="report.js"><\/script>
 <script>
@@ -2749,8 +2749,7 @@ function enterPlayView() {
   // 相机视野/缩放/黑边与实机完全一致（之前用编辑器画布全尺寸，比例/缩放对不上）
   const wrap = $('canvasWrap');
   playCanvasBackup = { w: canvas.width, h: canvas.height, sw: canvas.style.width, sh: canvas.style.height };
-  canvas.width = PLAY_VIEW.w;
-  canvas.height = PLAY_VIEW.h;
+  C.setupCanvasSize(canvas, PLAY_VIEW.w, PLAY_VIEW.h); // 缓冲 ×dpr 高清（与导出实机同密度）；CSS 先设逻辑 px
   const sc = Math.min(wrap.clientWidth / PLAY_VIEW.w, wrap.clientHeight / PLAY_VIEW.h);
   canvas.style.width = Math.max(1, Math.round(PLAY_VIEW.w * sc)) + 'px';
   canvas.style.height = Math.max(1, Math.round(PLAY_VIEW.h * sc)) + 'px';

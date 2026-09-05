@@ -17,6 +17,7 @@ if (typeof window === 'undefined') {
     matchMedia: () => ({ matches: false }),
     getComputedStyle: () => ({ getPropertyValue: () => '' }),
   };
+  globalThis.location = { search: '', href: 'http://localhost/x', origin: 'http://localhost', host: 'localhost' };
   globalThis.document = {
     hasFocus: () => true,
     head: el(), body: el(), documentElement: el(),
@@ -57,6 +58,17 @@ function reg(M, name, { playerAt = null, id = 'p_' + name } = {}) {
 function makeM() {
   return new Multiscene({ appendChild: () => {} }, { width: 100, height: 100, canvasFactory: fakeCanvas });
 }
+
+test('未传宽高 → 画布自适应窗口（逻辑=窗口，缓冲×dpr 高清）', () => {
+  const M = new Multiscene({ appendChild: () => {} }, { canvasFactory: fakeCanvas });
+  M.scene('auto');
+  const c = M.scenes.get('auto').canvas;
+  // window stub：innerWidth 1280 / innerHeight 800，dpr=1
+  assert.equal(c.style.width, '1280px', 'CSS=窗口宽');
+  assert.equal(c.style.height, '800px', 'CSS=窗口高');
+  assert.equal(c.width, 1280, '缓冲=逻辑×dpr');
+  assert.equal(c.height, 800);
+});
 
 test('携带玩家落点是目标场景摆放玩家的位置', () => {
   const M = makeM();

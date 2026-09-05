@@ -27,6 +27,7 @@ import { handleSceneClick } from './click.js';
 import { bindTouchUI } from '../core/touch.js';
 import { bindOverviewInput } from '../core/overview.js';
 import { attachRecorderPanel } from '../core/recorder.js';
+import { setupCanvasSize, fitCanvasToWindow } from '../render/canvas.js';
 
 export class Multiscene {
   /**
@@ -36,8 +37,10 @@ export class Multiscene {
   constructor(container, opts = {}) {
     if (!container || typeof container !== 'object') throw new Error('Multiscene 需要容器元素');
     this.container = container;
-    this.width = opts.width ?? 1100;
-    this.height = opts.height ?? 700;
+    // 宽高 0 = 窗口自适应（逻辑尺寸 = 窗口可用尺寸，缓冲再 ×dpr 高清）；
+    // 显式传 width/height 则固定（编辑器试玩/测试注入）
+    this.width = opts.width ?? 0;
+    this.height = opts.height ?? 0;
     this.plugins = opts.plugins ?? []; // 全局插件（注入每个场景）
     this.scenes = new Map();           // name -> { name, builder, scene, canvas, renderer, hud, plugins, built, active }
     this.current = null;               // 当前激活场景名
@@ -110,13 +113,23 @@ export class Multiscene {
     const canvas = this._canvasFactory
       ? this._canvasFactory()
       : document.createElement('canvas');
-    canvas.width = this.width;
-    canvas.height = this.height;
+    if (this.width > 0 && this.height > 0) setupCanvasSize(canvas, this.width, this.height);
+    else fitCanvasToWindow(canvas); // 窗口自适应：缓冲 ×dpr 高清
     canvas.style.position = 'absolute';
     canvas.style.inset = '0';
     canvas.style.display = 'none';
     this.container.appendChild(canvas);
     return canvas;
+  }
+
+  /** 窗口自适应（未显式传宽高时）：所有场景画布重设逻辑尺寸=窗口（×dpr 缓冲）。
+   *  窗口缩放时调用（start 已自动绑定 resize；手动调用可带 pad 调整内边距）。 */
+  fitWindow(opts = {}) {
+    let size = null;
+    for (const e of this.scenes.values()) {
+      size = fitCanvasToWindow(e.canvas, opts);
+    }
+    return size;
   }
 
   /** 构建全部场景（build + 插件注入）。返回 name -> scene 映射。 */
@@ -153,6 +166,18 @@ export class Multiscene {
   start(name) {
     this.buildAll();
     for (const e of this.scenes.values()) if (e.scene) e.scene.applyAppearDelays(); // 延迟出现（全部场景）
+    // 窗口自适应：窗口缩放 → 重设所有场景画布（缓冲 ×dpr 高清不变糊；rAF 节流）
+    if (this.width <= 0) {
+      this.fitWindow();
+      if (typeof window !== 'undefined' && window.addEventListener) {
+        let raf = 0;
+        this._onResize = () => {
+          if (raf) cancelAnimationFrame(raf);
+          raf = requestAnimationFrame(() => { raf = 0; this.fitWindow(); });
+        };
+        window.addEventListener('resize', this._onResize);
+      }
+    }
     const e = this.scenes.get(name);
     if (!e) throw new Error(`场景不存在: ${name}`);
     e.canvas.style.display = 'block';
@@ -236,11 +261,15 @@ export class Multiscene {
     return this;
   }
 
-  /** 关闭管理器（停止循环、解除键盘绑定） */
+  /** 关闭管理器（停止循环、解除键盘绑定、移除窗口自适应监听） */
   stop() {
     if (this._stop) this._stop();
     this._stop = null;
     if (this._unbindKeys) this._unbindKeys();
     this._unbindKeys = null;
+    if (this._onResize && typeof window !== 'undefined' && window.removeEventListener) {
+      window.removeEventListener('resize', this._onResize);
+      this._onResize = null;
+    }
   }
 }

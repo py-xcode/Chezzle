@@ -12,12 +12,13 @@
 </head>
 <body>
 <canvas id="game"></canvas>
-<script src="../dist/chezzle.js?vmto82t6f"></script>
+<script src="../dist/chezzle.js?vmto8z4z8"></script>
 <script>
   // ---- 关卡：跳进 CuSO4 池生成 Cu(OH)2 → 收集 → 放进钥匙 → 门开通关 ----
   const canvas = document.getElementById('game');
-  canvas.width = 1000;
-  canvas.height = 800;
+  // 高清 + 窗口自适应：逻辑尺寸=窗口（上限 1760×1120），缓冲 ×devicePixelRatio
+  Chezzle.fitCanvasToWindow(canvas);
+  window.addEventListener('resize', () => Chezzle.fitCanvasToWindow(canvas));
 
   const L = new Chezzle.LevelBuilder(canvas);
 

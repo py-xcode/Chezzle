@@ -179,8 +179,10 @@ Chezzle.Plugin.register('chapters', {
       // （之前 box 100%宽×100%高，画布 1100×700 被拉伸变形="试玩和实机比例对不上"）
       const P = 1100, H = 700;
       const sc = Math.min(wrap.clientWidth / P, (wrap.clientHeight - 8) / H);
+      const boxW = Math.max(1, Math.round(P * sc));
+      const boxH = Math.max(1, Math.round(H * sc));
       const box = document.createElement('div');
-      box.style.cssText = `position:relative;width:${Math.max(1, Math.round(P * sc))}px;height:${Math.max(1, Math.round(H * sc))}px;`;
+      box.style.cssText = `position:relative;width:${boxW}px;height:${boxH}px;`;
       holder.appendChild(box);
       wrap.appendChild(holder);
       const hint = document.createElement('div');
@@ -188,8 +190,7 @@ Chezzle.Plugin.register('chapters', {
       hint.style.cssText = 'position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:70;color:#6a7a96;font-size:11px;font-family:system-ui,sans-serif;';
       holder.appendChild(hint);
       const M = new Chezzle.Multiscene(box, {
-        width: 1100,
-        height: 700,
+        width: boxW, height: boxH, // 逻辑=盒尺寸（缓冲自动 ×dpr：编辑内试玩也高清）
         // 插件 cfg 注入 M（惰性函数——showtime/checkpoint 做场景匹配用）
         plugins: ed.getActivePlugins().map((p) => ({ ...p, cfg: { ...(p.cfg ?? {}), M: () => M } })),
       });
@@ -268,11 +269,11 @@ Chezzle.Plugin.register('chapters', {
       const startId = st.scenes.some((s) => s.id === st.start) ? st.start : scenes[0].id;
       lines.length = 0;
       lines.push("const canvas = document.getElementById('game');");
-      lines.push('canvas.width = 1100;');
-      lines.push('canvas.height = 700;');
+      lines.push('Chezzle.fitCanvasToWindow(canvas);'); // 高清+窗口自适应（缓冲 ×devicePixelRatio）
+      lines.push("window.addEventListener('resize', () => Chezzle.fitCanvasToWindow(canvas));");
       // 插件（含编辑器配置的 cfg：演出剧本/检查点等）；构造后再补 M 惰性引用
       lines.push(`const PLUGINS = ${ctx.safeJson(ed.getActivePlugins())};`);
-      lines.push('const M = new Chezzle.Multiscene(canvas, { width: 1100, height: 700, plugins: PLUGINS });');
+      lines.push('const M = new Chezzle.Multiscene(canvas, { plugins: PLUGINS });');
       lines.push('for (const p of PLUGINS) if (p.cfg && typeof p.cfg === "object") p.cfg.M = () => M;');
       const post = [];
       for (const s of scenes) {

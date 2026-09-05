@@ -12,7 +12,7 @@
 </head>
 <body>
 <canvas id="game"></canvas>
-<script src="../dist/chezzle.js?vmto82t6f"></script>
+<script src="../dist/chezzle.js?vmto8z4z8"></script>
 <script>
   // ==========================================================================
   // 演示关卡：从 ① 一路向右，每个区域演示一种化学/物理机制。
@@ -20,8 +20,9 @@
   // ⑧沉淀搭高 ⑨绳子 ⑩金属+酸产H2 / 消耗物质的开关 ⑪钥匙+通关口
   // ==========================================================================
   const canvas = document.getElementById('game');
-  canvas.width = 1100;
-  canvas.height = 700;
+  // 高清 + 窗口自适应：逻辑尺寸=窗口（上限 1760×1120），缓冲 ×devicePixelRatio
+  Chezzle.fitCanvasToWindow(canvas);
+  window.addEventListener('resize', () => Chezzle.fitCanvasToWindow(canvas));
 
   const L = new Chezzle.LevelBuilder(canvas, { worldW: 4050, worldH: 800 });
 

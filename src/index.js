@@ -57,6 +57,7 @@ export * from './physics/collision.js';
 export * from './physics/support.js';
 
 export * from './render/renderer.js';
+export * from './render/canvas.js';
 export * from './render/camera.js';
 export * from './render/color.js';
 export * from './render/gridrender.js';
