@@ -2670,6 +2670,10 @@ function saveState() {
     const data = {
       version: 2,
       levelId, // 关卡ID随存档保存：刷新/换电脑不丢
+      // ★ 世界宽高必须在这里存一份：顶层 state 是"当前场景"的编辑态，
+      //   多场景下快照(chapters)另有一份，但单场景（无章节插件）时只有这份
+      worldW: state.worldW,
+      worldH: state.worldH,
       plugins: state.plugins, // 插件引用清单（源码缓存另存 localStorage，刷新自动恢复）
       rx: state.customReactions,
       atmosphere: state.atmosphere, // 编辑器自带：关卡大气（多场景下随场景快照保存）
@@ -3039,6 +3043,8 @@ function saveJSON() {
   const data = {
     version: 2,
     levelId, // 关卡ID随 JSON 保存/加载
+    worldW: state.worldW, // ★ 世界宽高（顶层=当前场景；多场景下另有快照）
+    worldH: state.worldH,
     plugins: state.plugins, // 插件引用清单（加载 JSON 时自动从 plugin/ 目录或缓存加载；找不到=报错）
     rx: state.customReactions,
     atmosphere: state.atmosphere, // 编辑器自带：关卡大气
