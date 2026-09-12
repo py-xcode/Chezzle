@@ -9824,7 +9824,7 @@ exports.Dropper = Dropper;
 
   };
   __modules["src/level/click.js"] = function (module, exports, __require) {
-// ============================================================================
+﻿// ============================================================================
 // 场景点击管线（编辑器试玩 / 导出关卡 / Multiscene 共用同一套）：
 //  - 点击：右上「提示」按钮、右下物品栏选格（HUD）；
 //  - 按下（mousedown）：场景内可点击物体（onTap，如滴管）——滴管在玩家附近时
@@ -9855,7 +9855,7 @@ function screenToWorld(scene, canvas, sx, sy) {
  *  - 常规：让开左上角"返回选关"悬浮钮（report.js 注入，位于 10,10）；
  *  - 全屏：再让开 iOS 系统全屏关闭按钮（也挂在左上角）——report.js 的返回钮
  *    在全屏时同步下移到 52，这里留到 92。
- * 桌面（fine pointer）维持 10：关卡画布居中显示，左上角是页面留白。
+ * 桌面（fine pointer）：默认 10；关卡页注入"返回选关"悬浮钮时会声明避让量（见函数内注释）。
  */
 function hudTopOffset(scene) {
   const t = scene && scene._touchUI;
@@ -9863,7 +9863,12 @@ function hudTopOffset(scene) {
     const base = (t.insets && t.insets.top) || 0;
     return Math.max(isFullscreen() ? CFG.touch.hudTopFs : CFG.touch.hudTop, base + 10);
   }
-  return 10;
+  // 桌面端：画布自高清改造后由 fitCanvasToWindow **铺满窗口**，左上角不再有页面留白，
+  // 而关卡页会在左上角注入"返回选关"悬浮钮（levels/report.js）→ 会压住 HUD 左上卡片。
+  // 该页会把避让量写进 window.CHEZZLE_HUD_TOP_INSET，这里读它（没人声明就维持原来的 10）。
+  const g = (typeof window !== 'undefined' && Number.isFinite(window.CHEZZLE_HUD_TOP_INSET))
+    ? window.CHEZZLE_HUD_TOP_INSET : 0;
+  return Math.max(10, g);
 }
 
 /** 小屏紧凑视图？触屏小屏（含老机型无全屏：浏览器 chrome 占高，视口实际很小——
@@ -16845,4 +16850,4 @@ exports.Multiscene = Multiscene;
   };
   global.Chezzle = __require("src/index.js");
 })(typeof window !== 'undefined' ? window : globalThis);
-console.log('[Chezzle] 引擎构建 "vmtofuk9d"');
+console.log('[Chezzle] 引擎构建 "vmtyankdu"');

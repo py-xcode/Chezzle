@@ -45,6 +45,15 @@
     const touch = isTouchLike();
     const top = touch && isFs() ? 52 : 10;
     a.style.top = top + 'px';
+    applyInset(top);
+  }
+  /** 告诉游戏侧：左上角这块被悬浮钮占了，HUD 请往下让开。
+   *  画布自高清改造后由 fitCanvasToWindow 铺满窗口，左上角不再有页面留白，
+   *  桌面端若仍按默认的 top=10 排 HUD，悬浮钮就会压住 HUD 卡片（用户截图复现）。 */
+  function applyInset(top) {
+    const h = document.getElementById('czl-back');
+    const height = (h && h.offsetHeight) || 30;
+    window.CHEZZLE_HUD_TOP_INSET = top + height + 6;   // 引擎 hudTopOffset 读它
   }
   function backLink() {
     if (document.getElementById('czl-back')) return;
