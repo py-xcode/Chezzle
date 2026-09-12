@@ -7,25 +7,38 @@
 <style>
   :root { --gold: #e8b84b; --gold-l: #ffd76a; --cyan: #7fd8ff; --txt: #e8ecff; }
   * { box-sizing: border-box; margin: 0; }
-  html, body { height: 100%; }
+  html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
   body { display: flex; align-items: center; justify-content: center; overflow: hidden;
     background:
       radial-gradient(1100px 620px at 50% 12%, rgba(84,60,180,.34) 0%, transparent 60%),
       radial-gradient(1600px 1000px at 50% 110%, rgba(20,14,64,.9) 0%, #07051a 60%) #07051a;
     color: var(--txt); font: 15px "Segoe UI","Microsoft YaHei",sans-serif; }
-  .nebula { position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  /* 背景三层统一收进 #bg：鼠标微视差整层平移（≤4px，只动这一层，不影响前景/舞台） */
+  #bg { position: fixed; inset: 0; z-index: 0; pointer-events: none; will-change: transform; }
+  .nebula { position: absolute; inset: 0;
     background:
       radial-gradient(360px 240px at 16% 78%, rgba(232,184,75,.10), transparent 70%),
       radial-gradient(520px 320px at 86% 82%, rgba(127,216,255,.09), transparent 70%),
       radial-gradient(680px 420px at 50% -8%, rgba(199,139,255,.13), transparent 72%);
     animation: neb 18s ease-in-out infinite alternate; }
   @keyframes neb { from { transform: translateY(0); opacity: .8; } to { transform: translateY(-16px); opacity: 1; } }
-  #stars { position: fixed; inset: 0; z-index: 1; pointer-events: none; }
+  #stars { position: absolute; inset: 0; }
   .st { position: absolute; border-radius: 50%; background: #fff; animation: twinkle ease-in-out infinite; }
   @keyframes twinkle { 0%,100% { opacity: .12; transform: scale(.8); } 50% { opacity: .8; transform: scale(1); } }
-  .sigil { position: fixed; left: 50%; top: 42%; width: 820px; height: 820px; transform: translate(-50%,-50%);
-    z-index: 0; opacity: .1; pointer-events: none; animation: spin 120s linear infinite; }
+  .sigil { position: absolute; left: 50%; top: 42%; width: 820px; height: 820px; transform: translate(-50%,-50%);
+    opacity: .1; pointer-events: none; animation: spin 120s linear infinite; }
   @keyframes spin { to { transform: translate(-50%,-50%) rotate(360deg); } }
+  /* 偶发流星：6~15s 一颗斜掠而过（前景层，不参与微视差） */
+  #meteors { position: fixed; inset: 0; z-index: 1; pointer-events: none; }
+  .meteor { position: absolute; height: 2px; border-radius: 2px; opacity: 0;
+    background: linear-gradient(90deg, rgba(207,230,255,0) 0%, rgba(207,230,255,.8) 62%, #fff 100%);
+    filter: drop-shadow(0 0 6px rgba(160,210,255,.75));
+    animation: meteorFall 1.15s cubic-bezier(.36,.06,.74,.62) forwards; }
+  @keyframes meteorFall {
+    from { transform: translate3d(0,0,0) rotate(18deg); opacity: 0; }
+    14% { opacity: .85; }
+    to { transform: translate3d(var(--dx,44vw), var(--dy,14.3vw), 0) rotate(18deg); opacity: 0; }
+  }
 
   .hero { position: relative; z-index: 2; text-align: center; padding: 0 16px; width: 100%; max-width: 1200px; }
   /* —— MC 风方块字标题 —— */
@@ -60,21 +73,40 @@
   @media (prefers-reduced-motion: reduce) {
     .nebula, .st, .sigil, .title { animation: none !important; }
     .bar, .lt { animation: pop .4s ease forwards; }
-    .stage { display: none; } /* 关掉动画时舞台毫无内容，直接隐藏 */
+    .stage, #meteors { display: none; } /* 关掉动画时舞台/流星毫无内容，直接隐藏 */
+  }
+  /* —— 页面切换：进场从深色淡入；点按钮时先淡出再跳（目标页同样淡入 → 不再"啪"地切换）—— */
+  #wipe { position: fixed; inset: 0; z-index: 900; background: #07051a; opacity: 1;
+    pointer-events: none; transition: opacity .34s ease; }
+  #wipe.off { opacity: 0; }
+
+  /* —— 竖屏强制横屏：整页绕左上角顺时针转 90° ——
+     旋转后"局部坐标系"是 100vh 宽 × 100vw 高（手机上就是横屏版式）；
+     所有 position:fixed 元素在变换后的根元素里也按局部坐标定位，故舞台钉角照旧。
+     JS 侧用 vw()/vh()/localRect() 做同样的换算（见脚本开头）。 */
+  @media (orientation: portrait) {
+    html { position: absolute; top: 0; left: 100vw; width: 100vh; height: 100vw;
+      transform: rotate(90deg); transform-origin: left top; overflow: hidden; }
+    .title { width: min(680px, 86vh); }
+    .bar { width: min(560px, 82vh); }
   }
 </style>
 </head>
 <body>
-<div class="nebula" aria-hidden="true"></div>
-<div id="stars" aria-hidden="true"></div>
-<svg class="sigil" viewBox="0 0 900 900" aria-hidden="true">
-  <g fill="none" stroke="#c78bff">
-    <circle cx="450" cy="450" r="330" stroke-width="2"/>
-    <circle cx="450" cy="450" r="366" stroke-width="1" stroke-dasharray="30 22"/>
-    <path d="M450 84 L540 450 L450 816 L360 450 Z" stroke-width="1.5"/>
-    <path d="M84 450 L450 360 L816 450 L450 540 Z" stroke-width="1.5"/>
-  </g>
-</svg>
+<div id="bg" aria-hidden="true">
+  <div class="nebula"></div>
+  <div id="stars"></div>
+  <svg class="sigil" viewBox="0 0 900 900" aria-hidden="true">
+    <g fill="none" stroke="#c78bff">
+      <circle cx="450" cy="450" r="330" stroke-width="2"/>
+      <circle cx="450" cy="450" r="366" stroke-width="1" stroke-dasharray="30 22"/>
+      <path d="M450 84 L540 450 L450 816 L360 450 Z" stroke-width="1.5"/>
+      <path d="M84 450 L450 360 L816 450 L450 540 Z" stroke-width="1.5"/>
+    </g>
+  </svg>
+</div>
+<div id="meteors" aria-hidden="true"></div>
+<div id="wipe" aria-hidden="true"></div>
 
 <div class="hero">
   <!-- MC 风方块字：CHE 金 / ZZLE 青（白色主体 + 渐变描边 + 立体投影层，每字微歪） -->
@@ -147,6 +179,29 @@
 <script>
 const C = window.Chezzle;
 const REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// ============================================================================
+// 竖屏强制横屏的坐标换算
+// ----------------------------------------------------------------------------
+// CSS 在 orientation:portrait 时把整页绕左上角顺时针转 90°，屏幕坐标 (sx,sy) 与
+// 页面"局部坐标" (lx,ly) 的关系是：sx = innerWidth - ly，sy = lx。
+// 于是局部视口 = (innerHeight × innerWidth)，而 getBoundingClientRect() 返回的是
+// **屏幕坐标**，必须换算后再交给布局计算，否则横竖屏两套算法会打架。
+// ============================================================================
+const isRot = () => matchMedia('(orientation: portrait)').matches;
+const vw = () => (isRot() ? innerHeight : innerWidth);   // 局部视口宽
+const vh = () => (isRot() ? innerWidth : innerHeight);   // 局部视口高
+/** 元素矩形 → 局部坐标（rot 时把屏幕矩形转回去） */
+function localRect(el) {
+  const r = el.getBoundingClientRect();
+  if (!isRot()) return r;
+  return {
+    left: r.top, right: r.bottom, top: innerWidth - r.right, bottom: innerWidth - r.left,
+    width: r.height, height: r.width,
+  };
+}
+/** 指针坐标 → 局部坐标 */
+const localPtr = (e) => (isRot() ? { x: e.clientY, y: innerWidth - e.clientX } : { x: e.clientX, y: e.clientY });
 
 // ============================================================================
 // 舞台公共部分
@@ -251,7 +306,7 @@ const portalDemo = (function () {
   let L = fitStage(canvas, W, BASE_H, W, BASE_H, 1, 'left');
   let live = true;
   function layout() {
-    const st = computeStage(innerWidth, innerHeight, document.getElementById('btnAbout').getBoundingClientRect(), 'left');
+    const st = computeStage(vw(), vh(), localRect(document.getElementById('btnAbout')), 'left');
     if (!st) { live = false; canvas.style.display = 'none'; return; } // 窗口又矮又窄 → 不显示
     live = true;
     canvas.style.display = 'block';
@@ -267,6 +322,25 @@ const portalDemo = (function () {
   let acc = 0, last = performance.now();
   let px = p.x, py = p.y;   // 上一次物理步进前的位置（插值用）
   let rx = p.x, ry = p.y;   // 本帧渲染位置
+  const ripples = [];       // 穿门涟漪（入/出各一圈）
+  /** 穿门涟漪：扩散光环，颜色与门一致 */
+  function drawRipples(dt) {
+    if (!ripples.length) return;
+    ctx.save();
+    for (let i = ripples.length - 1; i >= 0; i--) {
+      const r = ripples[i];
+      r.t += dt;
+      const k = r.t / 0.55;
+      if (k >= 1) { ripples.splice(i, 1); continue; }
+      ctx.globalAlpha = (1 - k) * 0.7;
+      ctx.strokeStyle = '#c78bff';
+      ctx.lineWidth = 0.6 + 2.2 * (1 - k);
+      ctx.beginPath();
+      ctx.arc(r.x, r.y, 6 + k * 32, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
   (function loop(now) {
     requestAnimationFrame(loop);
     const dt = Math.min((now - last) / 1000, 0.1); last = now;
@@ -274,10 +348,19 @@ const portalDemo = (function () {
     acc += dt;
     let n = 0;
     while (acc >= TICK && n < MAX_CATCHUP) {
+      // 每刻重新声明"一直往右"：Scene 在页面失焦/隐藏时会清空 control
+      // （防键盘卡住，见 src/core/input.js）；只 add 一次的话，切标签页回来就永远丢了
+      // → 玩家从此不动（"切走再回来左边小人卡住"）。
+      scene.control.add('right');
       px = p.x; py = p.y;
       scene.step(TICK);
-      // 穿门会瞬移：跨度过大时不做插值（否则会看到方块"滑"过整张画布）
-      if (Math.abs(p.x - px) + Math.abs(p.y - py) > 80) { px = p.x; py = p.y; }
+      // 穿门会瞬移：跨度过大时不插值（否则会看到方块"滑"过整张画布），
+      // 同时在入口/出口各放一圈涟漪
+      if (Math.abs(p.x - px) + Math.abs(p.y - py) > 80) {
+        ripples.push({ x: px + 22.5, y: py + 22.5, t: 0 });
+        ripples.push({ x: p.x + 22.5, y: p.y + 22.5, t: 0 });
+        px = p.x; py = p.y;
+      }
       acc -= TICK; n++;
     }
     if (acc > TICK * MAX_CATCHUP) acc = 0; // 长时间卡顿后不补帧，避免快进
@@ -289,6 +372,7 @@ const portalDemo = (function () {
     p.x = rx; p.y = ry;               // 只改渲染用的坐标，物理状态不受影响
     drawObjects(ctx, scene);
     p.x = sx; p.y = sy;
+    drawRipples(dt);
   })(performance.now());
   return { layout };
 })();
@@ -317,10 +401,12 @@ const flameDemo = (function () {
   scene.addObject(p);
   // 三盏酒精灯 A / B / C（盐：KCl 紫 / NaCl 黄 / CuSO4 绿）
   const salts = [['KCl', 0.6], ['NaCl', 0.8], ['CuSO4', 0.5]];
+  const lamps = [];
   salts.forEach(([salt, m], i) => {
     const lamp = new C.Lamp({ x: 140 + i * 60, y: GROUND - 40, autoOn: true, id: 'lamp' + i });
     scene.addObject(lamp);
     lamp.addPrecipitate(salt, m);
+    lamps.push(lamp);
   });
   scene.status = 'running';
 
@@ -338,8 +424,8 @@ const flameDemo = (function () {
   let live = true;              // 窗口太小时舞台隐藏，帧循环空转
 
   function layout() {
-    const b = btn.getBoundingClientRect();
-    const st = computeStage(innerWidth, innerHeight, b, 'right');
+    const b = localRect(btn);
+    const st = computeStage(vw(), vh(), b, 'right');
     if (!st) { live = false; canvas.style.display = 'none'; return; } // 窗口又矮又窄 → 不显示
     live = true;
     canvas.style.display = 'block';
@@ -392,6 +478,50 @@ const flameDemo = (function () {
       return bez(HIT.x, HIT.y, cx, HIT.y - 85, AX[0], AY, k); // 先被弹起，再落回 A 灯
     }
     return { x: AX[0], y: AY };
+  }
+
+  // 灯焰余烬：从三盏灯的火苗尖上飘出的小颗粒，颜色 = 该灯的焰色（紫/黄/绿）
+  // —— 焰色反应的点睛，数量与透明度都压得很低，避免喧宾夺主
+  const embers = [];
+  let emberAcc = 0;
+  function stepEmbers(dt) {
+    emberAcc += dt;
+    while (emberAcc > 0.24) {
+      emberAcc -= 0.24;
+      if (embers.length > 54) break;
+      const lp = lamps[(Math.random() * lamps.length) | 0];
+      embers.push({
+        x: lp.x + lp.w / 2 + (Math.random() - 0.5) * lp.w * 0.6,
+        y: lp.y - 16 - Math.random() * 8,
+        vx: (Math.random() - 0.5) * 9,
+        vy: -(14 + Math.random() * 20),
+        r: 0.8 + Math.random() * 1.1,
+        t: 0,
+        life: 1.0 + Math.random() * 0.8,
+        c: lp.flameTintCur || '#ff9a4d',
+      });
+    }
+    for (let i = embers.length - 1; i >= 0; i--) {
+      const e2 = embers[i];
+      e2.t += dt;
+      if (e2.t >= e2.life) { embers.splice(i, 1); continue; }
+      e2.x += e2.vx * dt;
+      e2.y += e2.vy * dt;
+      e2.vy *= 1 - 0.85 * dt; // 越飘越慢
+    }
+  }
+  function drawEmbers() {
+    if (!embers.length) return;
+    ctx.save();
+    for (const e2 of embers) {
+      const k = e2.t / e2.life;
+      ctx.globalAlpha = (1 - k) * 0.7;
+      ctx.fillStyle = e2.c;
+      ctx.beginPath();
+      ctx.arc(e2.x, e2.y, e2.r * (1 - k * 0.45), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   // 撞击特效：撞点扩散的光环 + 火花（撞按钮与空撞都有）
@@ -455,27 +585,99 @@ const flameDemo = (function () {
 
     beginFrame(ctx, L);
     drawObjects(ctx, scene);
+    stepEmbers(dt);
+    drawEmbers();
     drawFx(dt);
   })(performance.now());
   return { layout };
 })();
 
-// 星夜
+// 星夜（位置用局部 px，竖屏强制横屏时也铺满）
 (function () {
   if (REDUCE) return;
   const box = document.getElementById('stars');
+  const place = () => {
+    for (const s of box.children) {
+      s.style.left = (Math.random() * vw()).toFixed(0) + 'px';
+      s.style.top = (Math.random() * vh()).toFixed(0) + 'px';
+    }
+  };
   for (let i = 0; i < 90; i++) {
     const s = document.createElement('i');
     s.className = 'st';
     const sz = 1 + Math.random() * 2.2;
     s.style.width = sz + 'px';
     s.style.height = sz + 'px';
-    s.style.left = (Math.random() * 100) + 'vw';
-    s.style.top = (Math.random() * 100) + 'vh';
+    s.style.left = (Math.random() * vw()).toFixed(0) + 'px';
+    s.style.top = (Math.random() * vh()).toFixed(0) + 'px';
     s.style.animationDuration = (2.4 + Math.random() * 5) + 's';
     s.style.animationDelay = (Math.random() * 5) + 's';
     s.style.filter = 'drop-shadow(0 0 3px rgba(200,220,255,.9))';
     box.appendChild(s);
+  }
+  addEventListener('orientationchange', () => setTimeout(place, 260));
+})();
+
+// 偶发流星：6~15s 一颗，斜掠而过（克制：同一时刻最多一颗）
+(function () {
+  if (REDUCE) return;
+  const box = document.getElementById('meteors');
+  function spawn() {
+    if (!box.childElementCount) {
+      const m = document.createElement('i');
+      m.className = 'meteor';
+      const W = vw();
+      m.style.left = (W * (0.08 + Math.random() * 0.62)).toFixed(0) + 'px';
+      m.style.top = (vh() * (0.02 + Math.random() * 0.30)).toFixed(0) + 'px';
+      m.style.width = (72 + Math.random() * 96).toFixed(0) + 'px';
+      // 斜 18° 的位移量：按局部宽度算，旋转坐标系下也一致
+      m.style.setProperty('--dx', (W * 0.44).toFixed(0) + 'px');
+      m.style.setProperty('--dy', (W * 0.143).toFixed(0) + 'px');
+      m.addEventListener('animationend', () => m.remove());
+      box.appendChild(m);
+    }
+    setTimeout(spawn, 6000 + Math.random() * 9000);
+  }
+  setTimeout(spawn, 2200 + Math.random() * 3500);
+})();
+
+// 鼠标微视差：背景三层整体平移 ≤4px（阻尼跟随；触屏/无 hover 设备不启用）// 只动 #bg 一层，前景按钮与两个舞台纹丝不动 → 有纵深但不晃眼
+(function () {
+  if (REDUCE || !matchMedia('(hover: hover)').matches) return;
+  const bg = document.getElementById('bg');
+  const AMP = 8; // 光标从中心到边缘的总位移（实际最多 ±4px）
+  let tx = 0, ty = 0, cx = 0, cy = 0, running = false;
+  addEventListener('mousemove', (e) => {
+    const p = localPtr(e);
+    tx = (p.x / vw() - 0.5) * -AMP;
+    ty = (p.y / vh() - 0.5) * -AMP;
+    if (!running) { running = true; requestAnimationFrame(tick); }
+  }, { passive: true });
+  function tick() {
+    cx += (tx - cx) * 0.08;
+    cy += (ty - cy) * 0.08;
+    bg.style.transform = `translate3d(${cx.toFixed(2)}px,${cy.toFixed(2)}px,0)`;
+    if (Math.abs(tx - cx) > 0.05 || Math.abs(ty - cy) > 0.05) requestAnimationFrame(tick);
+    else running = false;
+  }
+})();
+
+// 页面切换：进场淡入 + 离场淡出（选关/关于都是独立页面，用淡入淡出把它们接起来）
+(function pageTransitions() {
+  const wipe = document.getElementById('wipe');
+  const reduce = REDUCE;
+  // 进场
+  if (reduce) wipe.classList.add('off');
+  else requestAnimationFrame(() => requestAnimationFrame(() => wipe.classList.add('off')));
+  if (reduce) return;
+  for (const a of document.querySelectorAll('a.bar')) {
+    a.addEventListener('click', (e) => {
+      const href = a.getAttribute('href');
+      if (!href || a.target === '_blank') return;
+      e.preventDefault();
+      wipe.classList.remove('off');
+      setTimeout(() => { location.href = href; }, 300);
+    });
   }
 })();
 </script>
