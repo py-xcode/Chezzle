@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Chezzle 新手引导模组 · 教学演示</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { width: 1280px; height: 800px; overflow: hidden; background: #05070f; font-family: "Microsoft YaHei", "Segoe UI", sans-serif; }
+  /* 顶部字幕条 */
+  #cap { position: absolute; left: 0; top: 0; width: 100%; height: 64px; background: linear-gradient(#0c1128, #0a0e20);
+    border-bottom: 1px solid #233250; display: flex; align-items: center; padding: 0 24px; z-index: 50; }
+  #capText { color: #ffe9b8; font-size: 21px; font-weight: 700; letter-spacing: 1px; }
+  #capStep { color: #5a7aa6; font-size: 13px; margin-left: 14px; }
+  /* 左：真实编辑器 iframe（放大裁切到可用区） */
+  #edBox { position: absolute; left: 0; top: 64px; width: 828px; height: 736px; overflow: hidden; }
+  #ed { position: absolute; left: 0; top: 0; width: 1020px; height: 920px; border: 0; transform: scale(0.81); transform-origin: 0 0; background: #0b0e28; }
+  /* 右：真实游戏效果面板 */
+  #gameBox { position: absolute; left: 828px; top: 64px; width: 452px; height: 736px; border-left: 2px solid #233250; background: #070a18; }
+  #gameTitle { color: #7fe0ff; font-size: 13px; font-weight: 700; padding: 8px 12px; letter-spacing: 1px; }
+  #gameCv { display: block; margin: 0 12px; border: 1px solid #233250; border-radius: 8px; background: #0a0e24; }
+  #gameNote { color: #5a7aa6; font-size: 11px; padding: 8px 12px; line-height: 1.7; }
+  #gameNote b { color: #9fb2c8; }
+  /* 开场/结尾大标题层 */
+  #intro { position: absolute; inset: 64px 0 0 0; z-index: 40; background: radial-gradient(ellipse at 50% 35%, #10183a 0%, #05070f 70%);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 26px; }
+  #intro h1 { color: #fff6df; font-size: 56px; letter-spacing: 6px; text-shadow: 0 0 34px rgba(255,214,120,0.5), 0 3px 0 #000; }
+  #intro .sub { color: #7fe0ff; font-size: 22px; }
+  #intro .cards { display: flex; gap: 18px; margin-top: 8px; }
+  #intro .card { width: 250px; padding: 16px; border: 1px solid #2a3a5e; border-radius: 12px; background: rgba(16,24,58,0.8); }
+  #intro .card .ic { font-size: 30px; }
+  #intro .card .t { color: #ffe9b8; font-size: 17px; font-weight: 700; margin: 6px 0 4px; }
+  #intro .card .d { color: #9fb2c8; font-size: 12px; line-height: 1.6; }
+  #outro { position: absolute; inset: 64px 0 0 0; z-index: 40; background: radial-gradient(ellipse at 50% 40%, #0d1530 0%, #05070f 75%);
+    display: none; flex-direction: column; align-items: center; justify-content: center; gap: 18px; }
+  #outro h2 { color: #fff6df; font-size: 34px; text-shadow: 0 0 24px rgba(255,214,120,0.4); }
+  #outro li { color: #b9cde6; font-size: 17px; line-height: 2.1; list-style: none; }
+  #outro li b { color: #ffe9b8; }
+  /* 鼠标假象（演示光标） */
+  #cursor { position: absolute; z-index: 60; font-size: 26px; pointer-events: none; text-shadow: 0 2px 4px #000; transition: left .5s ease, top .5s ease; display: none; }
+</style>
+</head>
+<body>
+<div id="cap"><span id="capText">准备…</span><span id="capStep"></span></div>
+<div id="edBox"><iframe id="ed" src="leveleditor.html?vid=1"></iframe></div>
+<div id="gameBox">
+  <div id="gameTitle">▶ 真实效果（与试玩/导出完全一致）</div>
+  <canvas id="gameCv" width="428" height="560"></canvas>
+  <div id="gameNote">本页即教学脚本本体：编辑器操作为<b>真实 UI</b>，右侧为<b>真实引擎</b>逐帧模拟。<br>重录视频：<b>node tools/make-tutorial-video.mjs</b></div>
+</div>
+<div id="intro">
+  <h1>新手引导模组</h1>
+  <div class="sub">Chezzle 关卡三件套 · 全在编辑器里完成</div>
+  <div class="cards">
+    <div class="card"><div class="ic">📣</div><div class="t">大横幅</div><div class="d">屏幕中央大字，按秒数排期出现，自动淡入淡出，支持多行</div></div>
+    <div class="card"><div class="ic">🕐</div><div class="t">物品延迟出现</div><div class="d">任何物体的属性面板加一格「延迟出现(秒)」，到点才出现</div></div>
+    <div class="card"><div class="ic">🚹</div><div class="t">玩家延迟出现</div><div class="d">玩家同样吃这一格——没到点不判死、不出面板</div></div>
+  </div>
+</div>
+<div id="outro">
+  <h2>三行剧本，五分钟一关新手关</h2>
+  <ul>
+    <li>📦 模组文件：<b>plugin/tutorial.js</b>（新手引导）</li>
+    <li>🧩 编辑器「🧩 插件」页：加载 / <b>＋ 新建模块</b> / ✎ 改源码即重载</li>
+    <li>📣 横幅剧本面板排秒数 · 属性面板填「延迟出现(秒)」</li>
+    <li>▶ 试玩所见 = 导出所得 · API 详见 <b>docs/plugin-api.md</b></li>
+  </ul>
+</div>
+<div id="cursor">🖱️</div>
+<script src="../dist/chezzle.js?vmtybzjt9"></script>
+<script>
+/* ===========================================================================
+ * 教学演示页（视频录制源）——虚拟时钟驱动，所有"时间"来自 __adv(dt)：
+ * 录制器 tools/make-tutorial-video.mjs 每帧调 window.__adv(1/FPS) 推进剧本。
+ * 页面自身不依赖 rAF/setTimeout（无头环境不稳）。
+ * ========================================================================= */
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const C = window.Chezzle;
+  const FPS = 12;
+  let T = 0; // 演示时钟（秒）
+  let done = false;
+  const ev = []; // 剧本事件 [{at, fn, fired}]
+  const at = (t, fn) => ev.push({ at: t, fn, fired: false });
+  const cap = (txt, stepTxt = '') => { $('capText').textContent = txt; $('capStep').textContent = stepTxt; };
+  const cur = (x, y, show = true) => {
+    const c = $('cursor');
+    c.style.display = show ? '' : 'none';
+    c.style.left = x + 'px'; c.style.top = y + 'px';
+  };
+
+  // —— 编辑器（真实 iframe）后门：load 后拿它的 window（页面脚本全局作用域可 eval 触达）——
+  let ed = null, edDoc = null;
+  const evalEd = (code) => ed.eval(code);
+  $('ed').addEventListener('load', () => {
+    ed = $('ed').contentWindow;
+    edDoc = ed.document;
+    bootEditor();
+  });
+
+  // —— 右侧真实游戏 ——
+  const cv = $('gameCv');
+  const ctx = cv.getContext('2d');
+  let game = null; // { scene, rend, hud, L }
+  function buildGame(banners) {
+    const g = new C.LevelBuilder(cv, { worldW: 1100, worldH: 520 });
+    g.floor(-40, 460, 1180, 80);
+    g.floor(700, 380, 40, 80, { id: 'wall1' }); // 小台阶
+    const beaker = new C.Beaker({ x: 300, y: 396, w: 60, h: 64, id: 'bk1' });
+    beaker.appearDelay = 8;
+    g.add(beaker);
+    beaker.subBodies.forEach((sb, i) => { sb.id = 'bk1w' + i; });
+    const p = new C.Player({ x: 90, y: 380, mass: 30, id: 'pl1' });
+    p.appearDelay = 4;
+    g.add(p);
+    g.scene.tutorialBanners = banners;
+    const scene = g.build();
+    scene.status = 'running';
+    C.Plugin.inject(scene, [{ name: 'tutorial' }]);
+    const hud = g.hud;
+    return { scene, rend: g.renderer, hud };
+  }
+  function renderGame() {
+    if (!game) return;
+    const { scene, rend, hud } = game;
+    rend.frame(scene.objects, { hud, time: scene.time, scene, focus: scene.player });
+  }
+
+  // —— 编辑器预置：清档 → 摆一个迷你新手关（地板+玩家+烧杯），等录屏时再操作 ——
+  function bootEditor() {
+    try {
+      ed.localStorage.clear();
+    } catch (e) { /* 忽略 */ }
+    // 预摆关卡（eval 直达编辑器全局；与鼠标摆放心智一致，视频重点是模组部分）
+    ed.eval(`
+      state.placed = [];
+      var f = byType.floor.construct({ x: -40, y: 460, w: 1000, h: 80, id: 'f1' });
+      state.placed.push({ type: 'floor', obj: f });
+      var b = byType.beaker.construct({ x: 300, y: 396, w: 60, h: 64, id: 'bk1' });
+      state.placed.push({ type: 'beaker', obj: b });
+      var pl = byType.player.construct({ x: 90, y: 380, mass: 30, id: 'pl1' });
+      state.placed.push({ type: 'player', obj: pl });
+      state.selected = 2;
+      syncIdSeq(); buildRenderScene(); renderEdit(); refreshProps(); refreshExport(); saveState();
+    `);
+    window.__edReady = true;
+  }
+
+  /* =================                       剧本                       ================= */
+  // 段 1：开场（0~7s）——大横幅在右侧游戏里先来一次"标题横幅"
+  at(0.2, () => { cap('开场：先看效果', '1/9'); });
+  at(0.4, () => {
+    game = buildGame([{ at: 0.5, dur: 3.5, text: '新手引导模组\n三件套演示' }, { at: 9.5, dur: 2.5, text: '' }]);
+  });
+  // 段 2：7s 起进入编辑器操作
+  at(7.0, () => { $('intro').style.display = 'none'; cap('第 1 步 · 打开「🧩 插件」面板', '2/9'); cur(90, 12); });
+  at(8.2, () => { const b = edDoc.getElementById('btnPlugins'); if (b) b.click(); });
+  at(10.2, () => { cap('加载官方「新手引导」模组（平时可点「＋ 新建模块」直接写）', '2/9'); cur(60, 400); });
+  at(11.6, () => {
+    // 真实文件加载管线：把 tutorial.js 塞进隐藏 file input（与用户选文件同一 onchange）
+    fetch('../plugin/tutorial.js').then((r) => r.text()).then((src) => {
+      const dt = new DataTransfer();
+      dt.items.add(new File([src], 'tutorial.js', { type: 'text/javascript' }));
+      const fi = edDoc.getElementById('pluginFile');
+      fi.files = dt.files;
+      fi.dispatchEvent(new Event('change'));
+    });
+  });
+  at(13.6, () => { cap('面板出现「📣 横幅剧本」；所有物体的属性面板多出「延迟出现(秒)」', '3/9'); cur(400, 420); });
+  // 段 3：演示"新建模块/编辑模块"（14~26s）
+  at(14.6, () => { cap('不想用现成模组？「＋ 新建模块」三种模板直接写', '4/9'); cur(250, 100); });
+  at(15.8, () => { const b = edDoc.getElementById('btnNewMod'); if (b) b.click(); });
+  at(18.0, () => { const s = edDoc.getElementById('mmTpl'); if (s) { s.value = 'enhance'; s.dispatchEvent(new Event('change')); } });
+  at(20.5, () => { const s = edDoc.getElementById('mmTpl'); if (s) { s.value = 'component'; s.dispatchEvent(new Event('change')); } });
+  at(23.0, () => { cap('已加载的模组点「✎」直接看/改源码，保存即重载', '4/9'); const c = edDoc.getElementById('mmCancel'); if (c) c.click(); });
+  at(24.6, () => { const b = edDoc.querySelector('[data-edit="tutorial.js"]'); if (b) b.click(); });
+  at(28.2, () => { const c = edDoc.getElementById('mmCancel'); if (c) c.click(); });
+  // 段 4：横幅剧本（29~44s）
+  at(29.2, () => { cap('第 2 步 · 横幅剧本：＋ 加一条', '5/9'); cur(430, 480); });
+  at(30.4, () => { const b = edDoc.getElementById('tbAdd'); if (b) b.click(); });
+  const typeInto = (el, text, cps = 14) => { // 打字机效果（虚拟时钟驱动，逐字符派发 input 事件）
+    let i = 0;
+    while (i < text.length) {
+      i++;
+      at(31.0 + i / cps, () => { el.value = text.slice(0, i); el.dispatchEvent(new Event('input', { bubbles: true })); });
+    }
+  };
+  at(31.0, () => {
+    const panel = [...edDoc.querySelectorAll('.edPanel')].find((p) => p.textContent.includes('横幅剧本'));
+    const ta = panel.querySelector('.tb-text');
+    const atEl = panel.querySelector('.tb-at');
+    const durEl = panel.querySelector('.tb-dur');
+    atEl.value = '1'; atEl.dispatchEvent(new Event('input', { bubbles: true }));
+    durEl.value = '4'; durEl.dispatchEvent(new Event('input', { bubbles: true }));
+    window.__ta = ta;
+  });
+  at(31.2, () => { typeInto(window.__ta, '欢迎来到实验室', 10); });
+  at(33.6, () => { cap('内容支持多行；时间=游戏开始后第几秒', '5/9'); const panel = [...edDoc.querySelectorAll('.edPanel')].find((p) => p.textContent.includes('横幅剧本')); const ta = window.__ta; typeInto(ta, '欢迎来到实验室\n用 A/D 移动 · 空格跳', 12); });
+  at(37.6, () => { const b = edDoc.getElementById('tbAdd'); if (b) b.click(); });
+  at(38.2, () => {
+    cap('再加一条：第 12 秒夸一夸', '5/9');
+    const panel = [...edDoc.querySelectorAll('.edPanel')].find((p) => p.textContent.includes('横幅剧本'));
+    const rows = panel.querySelectorAll('.tb-row');
+    const r = rows[rows.length - 1];
+    const a = r.querySelector('.tb-at'); a.value = '12'; a.dispatchEvent(new Event('input', { bubbles: true }));
+    const d = r.querySelector('.tb-dur'); d.value = '3'; d.dispatchEvent(new Event('input', { bubbles: true }));
+    typeInto(r.querySelector('.tb-text'), '做得好！烧杯 8 秒时才出现', 12);
+  });
+  // 段 5：延迟出现（45~58s）
+  at(44.8, () => { cap('第 3 步 · 玩家延迟出现：选中玩家 → 属性面板填 4 秒', '6/9'); cur(620, 300); });
+  at(46.0, () => {
+    // 真实点选：eval 里选中原物并弹属性（与点选同一渲染路径）
+    evalEd(`state.selected = 2; refreshProps(); renderEdit();`);
+  });
+  at(47.4, () => {
+    const inp = [...edDoc.querySelectorAll('#props [data-k]')].find((e) => e.dataset.k === 'appearDelay');
+    if (inp) {
+      inp.focus();
+      inp.value = '4';
+      inp.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  });
+  at(50.6, () => { cap('烧杯同理：填 8 秒（杯壁会跟着一起藏/一起出来）', '7/9'); });
+  at(51.6, () => { evalEd(`state.selected = 1; refreshProps(); renderEdit();`); });
+  at(53.0, () => {
+    const inp = [...edDoc.querySelectorAll('#props [data-k]')].find((e) => e.dataset.k === 'appearDelay');
+    if (inp) { inp.focus(); inp.value = '8'; inp.dispatchEvent(new Event('change', { bubbles: true })); }
+  });
+  at(56.0, () => { cap('导出脚本自动生成：横幅剧本 + 两个延迟出现（右上导出框可查）', '8/9'); cur(300, 700); });
+  at(57.4, () => {
+    const box = edDoc.getElementById('export');
+    if (box) { box.style.height = '210px'; box.scrollTop = 100000; }
+  });
+  // 段 6：右侧游戏跑剧本（0~15s 游戏时钟）——与编辑器操作并行推进（游戏从 T=60 起播）
+  const GAME_T0 = 60.0;
+  let lastAdv = 0;
+  function runGameClock() {
+    if (!game) return;
+    const gt = Math.max(0, (T - GAME_T0));
+    const steps = Math.round(gt * 30);
+    while (lastAdv < steps) { lastAdv++; game.scene.step(1 / 30); }
+    renderGame();
+  }
+  at(GAME_T0 + 0.05, () => { cap('试玩！0.5 秒：大横幅淡入…（右侧真实引擎）', '9/9'); $('outro').style.display = 'none'; });
+  at(GAME_T0 + 3.2, () => { cap('横幅淡出消失；4 秒：玩家"啪"地出现', '9/9'); });
+  at(GAME_T0 + 5.0, () => { game.scene.control.add('right'); });
+  at(GAME_T0 + 6.6, () => { game.scene.control.delete('right'); game.scene.control.add('jump'); });
+  at(GAME_T0 + 7.0, () => { game.scene.control.delete('jump'); });
+  at(GAME_T0 + 7.3, () => { game.scene.control.add('right'); });
+  at(GAME_T0 + 8.4, () => { cap('8 秒：烧杯带着杯壁一起出现（第 2 条横幅也来了）', '9/9'); });
+  at(GAME_T0 + 12.6, () => { game.scene.control.delete('right'); });
+  // 段 7：结尾
+  at(GAME_T0 + 16.0, () => { $('outro').style.display = 'flex'; cap('搞定。这关的"剧本"全部由模组承载，随时可改', ''); cur(0, 0, false); });
+  at(GAME_T0 + 23.0, () => { done = true; window.__demoDone = true; });
+
+  /* =================                     时钟                      ================= */
+  window.__adv = (dt) => {
+    T += dt;
+    for (const e of ev) if (!e.fired && T >= e.at) { e.fired = true; try { e.fn(); } catch (err) { console.error('demo@' + e.at, err); } }
+    runGameClock();
+    if (game) renderGame();
+    return { T, done };
+  };
+  window.__demoDone = false;
+  // 初始帧先画一次（未 __adv 前的静态画面不空白）
+  cap('Chezzle · 新手引导模组教学', '录制中');
+})();
+</script>
+</body>
+</html>

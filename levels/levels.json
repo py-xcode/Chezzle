@@ -32,6 +32,9 @@
     ],
     "He": [
       { "id": "He-1", "name": "氦-4", "mass": 4, "file": "levels/level2-1.html", "requires": ["H-1"] }
+    ],
+    "Li": [
+      { "id": "Li-1", "name": "锂-7", "mass": 7, "file": "levels/level3-1.html", "requires": ["He-1"] }
     ]
   }
 }

@@ -1,8 +1,8 @@
 {
   "version": 2,
   "levelId": "tutorial",
-  "worldW": 1500,
-  "worldH": 1150,
+  "worldW": 3600,
+  "worldH": 800,
   "plugins": [
     {
       "file": "showtime.js",
@@ -25,127 +25,10 @@
   ],
   "rx": [],
   "atmosphere": {
-    "O2": 1600
+    "O2": 18
   },
-  "tips": [
-    {
-      "text": "观察到有一个压力提取器，肯定要从溶液中提取物质。\n注意到关卡最终通关的钥匙需要填充NaCl，\n而整个关卡只有NaOH和HCl反应能够得到NaCl，\n因此思路就明确了：玩家自身和HCl反应\n得到氯化钠，之后通过\n提取器提取出来备用！\n（注意反应的量哦，不要把自己反应完了）",
-      "mode": "and",
-      "items": [
-        {
-          "type": "pos",
-          "x": -55,
-          "y": 861,
-          "w": 1126,
-          "h": 308
-        },
-        {
-          "type": "inv",
-          "x": 0,
-          "y": 0,
-          "w": 200,
-          "h": 120,
-          "item": "NaCl",
-          "has": false
-        }
-      ]
-    },
-    {
-      "text": "我们肯定要往上走，怎么向上呢？\n看到Zn，想到Zn和HCl反应生成氢气，\n氢气提供向上的气泡柱把玩家托上去！\n因此，要把Zn推入池子，然后跳到气泡柱上，\n到达第二层！",
-      "mode": "and",
-      "items": [
-        {
-          "type": "pos",
-          "x": 45,
-          "y": 857,
-          "w": 917,
-          "h": 254
-        },
-        {
-          "type": "inv",
-          "x": 0,
-          "y": 0,
-          "w": 200,
-          "h": 120,
-          "item": "NaCl",
-          "has": true
-        }
-      ]
-    },
-    {
-      "text": "传送门激活需要Cu，如何获得？\n考虑玩家自身和CuSO4反应获得Cu(OH)2，\n之后在喷灯上，\nCu(OH)2->CuO->Cu。\n试着根据上述操作激活传送门！",
-      "mode": "and",
-      "items": [
-        {
-          "type": "pos",
-          "x": 2,
-          "y": 608,
-          "w": 452,
-          "h": 193
-        }
-      ]
-    },
-    {
-      "text": "通关点在上面，怎么上去？\n我们知道沉淀可以搭高！\n你手里有很多氢氧化铜沉淀了，\n可以直接搭高上去！",
-      "mode": "and",
-      "items": [
-        {
-          "type": "pos",
-          "x": 510,
-          "y": 364,
-          "w": 457,
-          "h": 205
-        }
-      ]
-    },
-    {
-      "text": "把氯化钠放入钥匙，然后走入门，你就通关啦！！",
-      "mode": "and",
-      "items": [
-        {
-          "type": "pos",
-          "x": 649,
-          "y": 173,
-          "w": 315,
-          "h": 186
-        },
-        {
-          "type": "inv",
-          "x": 0,
-          "y": 0,
-          "w": 200,
-          "h": 120,
-          "item": "NaCl",
-          "has": true
-        }
-      ]
-    },
-    {
-      "text": "你肯定忘了什么——没有通关所需NaCl？\nNaCl是在最下面，NaOH玩家自身和HCl制取的！\n你可以考虑重开一下哦！",
-      "mode": "and",
-      "items": [
-        {
-          "type": "pos",
-          "x": 651,
-          "y": 152,
-          "w": 318,
-          "h": 216
-        },
-        {
-          "type": "inv",
-          "x": 0,
-          "y": 0,
-          "w": 200,
-          "h": 120,
-          "op": ">",
-          "n": 1,
-          "item": "NaCl",
-          "has": false
-        }
-      ]
-    }
-  ],
-  "hideTouchGrab": false,
+  "tips": [],
+  "hideTouchGrab": true,
   "editorState": {
     "showtime": {
       "plays": [
@@ -723,6 +606,18 @@
           "w": 281,
           "h": 181,
           "scene": "crater"
+        },
+        {
+          "on": "at",
+          "act": [
+            {
+              "kind": "banner",
+              "text": "嘿！你好！",
+              "dur": 3
+            }
+          ],
+          "scene": "plain",
+          "at": 0
         }
       ]
     },
@@ -862,7 +757,8 @@
                   "text": "A / D 移动 · 空格跳跃\n移动端使用左下角圆盘移动\n先往右走走，感受一下脚步",
                   "id": "p_s0",
                   "appearDelay": 15.3,
-                  "appearFade": 0.5
+                  "appearFade": 0.5,
+                  "group": "g2141"
                 }
               },
               {
@@ -871,7 +767,8 @@
                   "x": 1800,
                   "y": 492,
                   "text": "这是「开关」，分成两类：\n①踩上就开——现在这种写了“压力”的（站上去试试）\n②需要化学物质才能开\n（这种会在开关上标注用于开启的物质）\n跳上去踩一下试试！",
-                  "id": "p_sw"
+                  "id": "p_sw",
+                  "group": "g2141"
                 }
               },
               {
@@ -888,7 +785,8 @@
                   "extinguishId": null,
                   "openId": null,
                   "id": "p_gate_sw",
-                  "precipitates": {}
+                  "precipitates": {},
+                  "group": "g2316"
                 }
               },
               {
@@ -908,7 +806,8 @@
                   "x": 1883,
                   "y": 620,
                   "text": "每个开关通常会对应一些变化\n——比如这里是墙壁消失！",
-                  "id": "p_gate_s"
+                  "id": "p_gate_s",
+                  "group": "g2141"
                 }
               },
               {
@@ -919,7 +818,8 @@
                   "text": "会动了？来段简单的小跑酷！",
                   "id": "sign1",
                   "appearDelay": 15.9,
-                  "appearFade": 0.5
+                  "appearFade": 0.5,
+                  "group": "g2141"
                 }
               },
               {
@@ -978,7 +878,8 @@
                   "x": 2179,
                   "y": 576,
                   "text": "走到这里传送至下一章节~",
-                  "id": "sign2"
+                  "id": "sign2",
+                  "group": "g2141"
                 }
               },
               {
@@ -1074,7 +975,8 @@
                   "x": 266,
                   "y": 413,
                   "text": "这个是【药品池】，里面可以装溶液，还可以有沉淀。\n物品可以进入药品池进行反应——当然，包括你！",
-                  "id": "c_s0"
+                  "id": "c_s0",
+                  "group": "g2141"
                 }
               },
               {
@@ -1083,7 +985,8 @@
                   "x": 263,
                   "y": 485,
                   "text": "试试自己跳进去反应一下\n——氢氧化钠和硫酸铜反应生成什么？",
-                  "id": "c_s1"
+                  "id": "c_s1",
+                  "group": "g2141"
                 }
               },
               {
@@ -1111,7 +1014,8 @@
                   "extinguishId": null,
                   "openId": null,
                   "id": "c_swCu",
-                  "precipitates": {}
+                  "precipitates": {},
+                  "group": "g2316"
                 }
               },
               {
@@ -1131,7 +1035,8 @@
                   "x": 1507,
                   "y": 332,
                   "text": "第二种「开关」：要化学物质才能开。\n它头顶写着要Cu(OH)₂。\n试试跳到开关上，然后用前面教方法放置沉淀来开启它！",
-                  "id": "c_sw_s"
+                  "id": "c_sw_s",
+                  "group": "g2141"
                 }
               },
               {
@@ -1140,7 +1045,8 @@
                   "x": 1519,
                   "y": 537,
                   "text": "塔 160px 高跳不上去？\n持续往脚下放沉淀把自己垫高！",
-                  "id": "c_tower_s"
+                  "id": "c_tower_s",
+                  "group": "g2141"
                 }
               },
               {
@@ -1160,7 +1066,8 @@
                   "x": 1881,
                   "y": 501,
                   "text": "「冰面」：滑！沉淀放上去会自己溜走——\n在这搭不了高（不信你试试！）",
-                  "id": "c_ice_s"
+                  "id": "c_ice_s",
+                  "group": "g2141"
                 }
               },
               {
@@ -1169,7 +1076,8 @@
                   "x": 474,
                   "y": 509,
                   "text": "有了沉淀，就可以收集！\n试着按下Q——或者移动端右下角的的\"拾取“。",
-                  "id": "sign1"
+                  "id": "sign1",
+                  "group": "g2141"
                 }
               },
               {
@@ -1178,7 +1086,8 @@
                   "x": 467,
                   "y": 571,
                   "text": "拾取之后的沉淀会进入你的物品栏，也在你的右下角。",
-                  "id": "sign2"
+                  "id": "sign2",
+                  "group": "g2141"
                 }
               },
               {
@@ -1198,7 +1107,8 @@
                   "x": 785,
                   "y": 474,
                   "text": "沉淀能捡起来，还能放回地上！\n放沉淀分两步：\n首先，点击下方的物品栏对应格子，来选中要放置的物品。\n然后，试着按下shift或移动端的“放置”键~",
-                  "id": "sign3"
+                  "id": "sign3",
+                  "group": "g2141"
                 }
               },
               {
@@ -1222,7 +1132,8 @@
                   "x": 1174,
                   "y": 548,
                   "text": "沉淀还可以放到药品池里——在池子附近放置沉淀试试看！\n自己别掉进去啦——这可是盐酸！",
-                  "id": "sign4"
+                  "id": "sign4",
+                  "group": "g2141"
                 }
               },
               {
@@ -1231,7 +1142,8 @@
                   "x": 2250,
                   "y": 449,
                   "text": "走到这里进入下一章！",
-                  "id": "sign5"
+                  "id": "sign5",
+                  "group": "g2141"
                 }
               }
             ]
@@ -1274,7 +1186,8 @@
                   "extinguishId": "d_l1",
                   "openId": null,
                   "id": "d_s1",
-                  "precipitates": {}
+                  "precipitates": {},
+                  "group": "g2316"
                 }
               },
               {
@@ -1293,7 +1206,8 @@
                   "x": 123,
                   "y": 509,
                   "text": "「灯」：可以提供“加热”的条件。\n有时候灯默认就是燃烧的，\n但是更多时候需要用开关点燃！\n你能点燃这个灯吗？",
-                  "id": "d_s0"
+                  "id": "d_s0",
+                  "group": "g2141"
                 }
               },
               {
@@ -1310,7 +1224,8 @@
                   "extinguishId": "d_l2",
                   "openId": null,
                   "id": "d_s2",
-                  "precipitates": {}
+                  "precipitates": {},
+                  "group": "g2316"
                 }
               },
               {
@@ -1339,7 +1254,8 @@
                   "extinguishId": "d_l3",
                   "openId": null,
                   "id": "d_s3",
-                  "precipitates": {}
+                  "precipitates": {},
+                  "group": "g2316"
                 }
               },
               {
@@ -1360,7 +1276,8 @@
                   "x": 604,
                   "y": 613,
                   "text": "多来几次——依次点亮这些灯！",
-                  "id": "d_note1"
+                  "id": "d_note1",
+                  "group": "g2141"
                 }
               },
               {
@@ -1387,7 +1304,8 @@
                   "extinguishId": "d_heat",
                   "openId": null,
                   "id": "d_heat_sw",
-                  "precipitates": {}
+                  "precipitates": {},
+                  "group": "g2316"
                 }
               },
               {
@@ -1396,7 +1314,8 @@
                   "x": 1027,
                   "y": 549,
                   "text": "把上一章节的 Cu(OH)₂ 放灯上加热：\n受热分解 → 黑色 CuO",
-                  "id": "d_note2"
+                  "id": "d_note2",
+                  "group": "g2141"
                 }
               },
               {
@@ -1413,7 +1332,8 @@
                   "extinguishId": null,
                   "openId": null,
                   "id": "d_swCuO",
-                  "precipitates": {}
+                  "precipitates": {},
+                  "group": "g2316"
                 }
               },
               {
@@ -1433,7 +1353,8 @@
                   "x": 1572,
                   "y": 576,
                   "text": "又见「化学开关」——它要 Cu。\n点物品栏选中 → 放下",
-                  "id": "d_s4"
+                  "id": "d_s4",
+                  "group": "g2141"
                 }
               },
               {
@@ -1453,7 +1374,8 @@
                   "x": 773,
                   "y": 520,
                   "text": "想一想，为什么这些火焰颜色不一样？",
-                  "id": "sign1"
+                  "id": "sign1",
+                  "group": "g2141"
                 }
               },
               {
@@ -1462,7 +1384,8 @@
                   "x": 1024,
                   "y": 478,
                   "text": "灯上可以放物质，和前面的放置方法是一样的\n——还记得怎么放置吗？",
-                  "id": "sign2"
+                  "id": "sign2",
+                  "group": "g2141"
                 }
               },
               {
@@ -1471,7 +1394,8 @@
                   "x": 1813,
                   "y": 522,
                   "text": "下一关！",
-                  "id": "sign3"
+                  "id": "sign3",
+                  "group": "g2141"
                 }
               },
               {
@@ -1484,7 +1408,8 @@
                   "id": "blastlamp1",
                   "precipitates": {
                     "C": 5
-                  }
+                  },
+                  "group": "g7328"
                 }
               },
               {
@@ -1493,7 +1418,8 @@
                   "x": 1362,
                   "y": 441,
                   "text": "还有——这个是“酒精喷灯”，\n它和酒精灯大致相同，\n但是它提供的是“高温”的条件。\n试着用它和碳把氧化铜还原成铜！",
-                  "id": "sign4"
+                  "id": "sign4",
+                  "group": "g2141"
                 }
               },
               {
@@ -1510,7 +1436,8 @@
                   "extinguishId": "blastlamp1",
                   "openId": null,
                   "id": "switch1",
-                  "precipitates": {}
+                  "precipitates": {},
+                  "group": "g2316"
                 }
               }
             ]
@@ -1780,7 +1707,8 @@
                   "x": 540,
                   "y": 517,
                   "text": "把 Na 推进池子：Na + H₂O → NaOH + H₂↑\n（加钠——BOOM！）",
-                  "id": "b_s1"
+                  "id": "b_s1",
+                  "group": "g2141"
                 }
               },
               {
@@ -1798,7 +1726,8 @@
                   "igniteId": null,
                   "extinguishId": null,
                   "openId": null,
-                  "id": "b_det"
+                  "id": "b_det",
+                  "group": "g7790"
                 }
               },
               {
@@ -1807,7 +1736,8 @@
                   "x": 906,
                   "y": 633,
                   "text": "爆炸会切断附近的绳子！\n（看：吊着的块\"哐\"地砸下来）",
-                  "id": "b_s3"
+                  "id": "b_s3",
+                  "group": "g2141"
                 }
               },
               {
@@ -1832,7 +1762,8 @@
                   "x": 1453,
                   "y": 519,
                   "text": "这个是「传送门」——\n我们将会在下一部分着重学它！\n先走进去试试！",
-                  "id": "b_s4"
+                  "id": "b_s4",
+                  "group": "g2141"
                 }
               },
               {
@@ -1903,7 +1834,8 @@
                   "x": 1217,
                   "y": 522,
                   "text": "还记得这个是什么吗？\n在这里，它用来开启后面的传送门！",
-                  "id": "sign1"
+                  "id": "sign1",
+                  "group": "g2141"
                 }
               }
             ]
@@ -2388,7 +2320,7 @@
                   "switchId": "switch5",
                   "group": "g5314",
                   "inventory": null,
-                  "clearInventory": false,
+                  "clearInventory": true,
                   "id": "portal10"
                 }
               }
@@ -2557,7 +2489,8 @@
                   "x": 248,
                   "y": 828,
                   "text": "最后——来段组合内容！",
-                  "id": "sign1"
+                  "id": "sign1",
+                  "group": "g2141"
                 }
               },
               {
@@ -2581,7 +2514,8 @@
                   "x": 245,
                   "y": 885,
                   "text": "试着自己解决这个小关卡，\n如果遇到问题可以点击提示按钮哦！",
-                  "id": "sign2"
+                  "id": "sign2",
+                  "group": "g2141"
                 }
               },
               {
@@ -2640,7 +2574,7 @@
                   "y": 734,
                   "w": 236,
                   "h": 73,
-                  "ice": false,
+                  "ice": true,
                   "id": "floor4"
                 }
               },
@@ -2669,7 +2603,8 @@
                   "id": "blastlamp1",
                   "precipitates": {
                     "C": 5
-                  }
+                  },
+                  "group": "g7328"
                 }
               },
               {
@@ -2686,7 +2621,8 @@
                   "extinguishId": null,
                   "openId": null,
                   "id": "switch1",
-                  "precipitates": {}
+                  "precipitates": {},
+                  "group": "g2316"
                 }
               },
               {
@@ -2755,7 +2691,8 @@
                   "extinguishId": null,
                   "openId": "door1",
                   "id": "key1",
-                  "precipitates": {}
+                  "precipitates": {},
+                  "group": "g8862"
                 }
               },
               {
@@ -2765,7 +2702,8 @@
                   "y": 247,
                   "w": 69,
                   "h": 111,
-                  "id": "door1"
+                  "id": "door1",
+                  "group": "g8862"
                 }
               },
               {
@@ -2774,7 +2712,8 @@
                   "x": 467,
                   "y": 221,
                   "text": "最后的最后——还有一个点没教哦！\nChezzle的通关方式很简单，\n需要你到达通关点，\n然后向右边的钥匙中，放入所需\n的通关物质\n然后旁边的大门就会打开，\n走进去就好啦！",
-                  "id": "sign3"
+                  "id": "sign3",
+                  "group": "g2141"
                 }
               },
               {
@@ -2783,7 +2722,8 @@
                   "x": 977,
                   "y": 271,
                   "text": "恭喜通关！！\n之后，你就需要自己通关后续的关卡了，\n祝你的化学之路一路顺畅！",
-                  "id": "sign4"
+                  "id": "sign4",
+                  "group": "g2141"
                 }
               },
               {
@@ -2792,14 +2732,15 @@
                   "x": 245,
                   "y": 964,
                   "text": "这里有一个好习惯：\n行动之前，先点击鸟瞰按钮，\n看清关卡全貌，构思通关路径！",
-                  "id": "sign5"
+                  "id": "sign5",
+                  "group": "g2141"
                 }
               }
             ]
           }
         }
       ],
-      "current": "crater",
+      "current": "temple",
       "start": "plain"
     }
   },
@@ -2807,10 +2748,10 @@
     {
       "type": "floor",
       "opts": {
-        "x": -2,
-        "y": 1052,
-        "w": 510,
-        "h": 113,
+        "x": 5,
+        "y": 652,
+        "w": 417,
+        "h": 161,
         "ice": false,
         "id": "floor1"
       }
@@ -2818,145 +2759,119 @@
     {
       "type": "portal",
       "opts": {
-        "x": 95,
-        "y": 982,
-        "w": 50,
+        "x": 57,
+        "y": 583,
+        "w": 44,
         "h": 64,
-        "color": "#bff42f",
-        "uses": 0,
-        "switchId": "switch5",
-        "group": "g5314",
+        "color": "#c78bff",
+        "uses": 1,
+        "switchId": null,
+        "group": "g1",
         "inventory": null,
-        "clearInventory": true,
+        "clearInventory": false,
         "id": "portal1"
       }
     },
     {
+      "type": "portal",
+      "opts": {
+        "x": 313,
+        "y": 582,
+        "w": 44,
+        "h": 64,
+        "color": "#099f13",
+        "uses": 0,
+        "switchId": null,
+        "group": "g2",
+        "inventory": null,
+        "clearInventory": false,
+        "id": "portal2"
+      }
+    },
+    {
       "type": "sign",
       "opts": {
-        "x": 248,
-        "y": 828,
-        "text": "最后——来段组合内容！",
+        "x": 124,
+        "y": 434,
+        "text": "我们来学习传送门！\n传送门有不同的颜色，\n每种相同颜色代表“一组”传送门，\n也就意味着你能够在颜色相同的传送门之间传送。",
         "id": "sign1"
       }
     },
     {
-      "type": "pool",
-      "opts": {
-        "x": 502,
-        "y": 1055,
-        "w": 228,
-        "h": 74,
-        "volume": 675,
-        "solutes": {
-          "HCl": 50
-        },
-        "gasHeight": 800,
-        "id": "pool1"
-      }
-    },
-    {
       "type": "sign",
       "opts": {
-        "x": 245,
-        "y": 885,
-        "text": "试着自己解决这个小关卡，\n如果遇到问题可以点击提示按钮哦！",
+        "x": 133,
+        "y": 537,
+        "text": "先看这个最朴素的传送门——\n就在你面前！\n它没有任何限制，\n你随时随地都可以走进去！",
         "id": "sign2"
       }
     },
     {
       "type": "floor",
       "opts": {
-        "x": 727,
-        "y": 1056,
-        "w": 264,
-        "h": 101,
+        "x": 370,
+        "y": 283,
+        "w": 374,
+        "h": 86,
         "ice": false,
         "id": "floor2"
       }
     },
     {
-      "type": "extractor",
+      "type": "portal",
       "opts": {
-        "x": 835,
-        "y": 1041,
-        "w": 50,
-        "h": 14,
-        "poolId": "pool1",
+        "x": 400,
+        "y": 216,
+        "w": 44,
+        "h": 64,
+        "color": "#099f13",
+        "uses": 0,
         "switchId": null,
-        "rate": 0.25,
-        "id": "extractor1"
+        "group": "g2",
+        "inventory": null,
+        "clearInventory": false,
+        "id": "portal3"
       }
     },
     {
-      "type": "block",
+      "type": "sign",
       "opts": {
-        "x": 734,
-        "y": 968,
-        "substance": "Zn",
-        "mass": 25.6,
-        "w": 80,
-        "h": 80,
-        "pushable": true,
-        "noLift": false,
-        "id": "block1"
+        "x": 325,
+        "y": 132,
+        "text": "如你所见，这两个门都是绿色的，\n因此你从下面到了这上面！",
+        "id": "sign3"
       }
     },
     {
-      "type": "floor",
+      "type": "sign",
       "opts": {
-        "x": 9,
-        "y": 733,
-        "w": 140,
-        "h": 78,
-        "ice": false,
-        "id": "floor3"
+        "x": 536,
+        "y": 65,
+        "text": "接下来来看这种需要开关的门：\n这种门的附近会有一个开关，\n只有开启了开关才能进去。\n在传送门被开关激活之前，它会显示成灰色！",
+        "id": "sign4"
       }
     },
     {
-      "type": "floor",
+      "type": "portal",
       "opts": {
-        "x": 302,
-        "y": 734,
-        "w": 236,
-        "h": 73,
-        "ice": false,
-        "id": "floor4"
-      }
-    },
-    {
-      "type": "pool",
-      "opts": {
-        "x": 144,
-        "y": 740,
-        "w": 162,
-        "h": 45,
-        "volume": 360,
-        "solutes": {
-          "CuSO4": 30
-        },
-        "gasHeight": 80,
-        "id": "pool2"
-      }
-    },
-    {
-      "type": "blastlamp",
-      "opts": {
-        "x": 327,
-        "y": 690,
-        "autoOn": true,
-        "highTemp": true,
-        "id": "blastlamp1",
-        "precipitates": {
-          "C": 5
-        }
+        "x": 668,
+        "y": 215,
+        "w": 44,
+        "h": 64,
+        "color": "#ffa047",
+        "uses": 0,
+        "switchId": "switch1",
+        "group": "g4",
+        "inventory": null,
+        "clearInventory": false,
+        "id": "portal4"
       }
     },
     {
       "type": "switch",
       "opts": {
-        "x": 101,
-        "y": 709,
+        "x": 580,
+        "y": 257,
         "mode": "chemical",
         "opening": "Cu",
         "and": null,
@@ -2970,109 +2885,335 @@
       }
     },
     {
-      "type": "portal",
+      "type": "deposit",
       "opts": {
-        "x": 30,
-        "y": 667,
-        "w": 44,
-        "h": 64,
-        "color": "#c08911",
-        "uses": 0,
-        "switchId": "switch1",
-        "group": "g9",
-        "inventory": null,
-        "clearInventory": false,
-        "id": "portal2"
+        "x": 490,
+        "y": 258,
+        "substance": "Cu",
+        "mass": 4,
+        "w": 60,
+        "h": 25,
+        "id": "deposit1"
       }
     },
     {
       "type": "floor",
       "opts": {
-        "x": 512,
-        "y": 549,
-        "w": 460,
-        "h": 32,
+        "x": 1249,
+        "y": 693,
+        "w": 549,
+        "h": 101,
+        "ice": false,
+        "id": "floor3"
+      }
+    },
+    {
+      "type": "portal",
+      "opts": {
+        "x": 1273,
+        "y": 630,
+        "w": 44,
+        "h": 64,
+        "color": "#ffa047",
+        "uses": 0,
+        "switchId": "switch1",
+        "group": "g4",
+        "inventory": null,
+        "clearInventory": false,
+        "id": "portal7"
+      }
+    },
+    {
+      "type": "sign",
+      "opts": {
+        "x": 536,
+        "y": 165,
+        "text": "试着用铜粉激活这个传送门！",
+        "id": "sign5"
+      }
+    },
+    {
+      "type": "sign",
+      "opts": {
+        "x": 1415,
+        "y": 422,
+        "text": "还有一种【有限传送门】，\n这种传送门只能被使用有限的次数！",
+        "id": "sign6"
+      }
+    },
+    {
+      "type": "sign",
+      "opts": {
+        "x": 1413,
+        "y": 487,
+        "text": "这类传送门可以被使用的剩余次数会标记\n在传送门上方——就像右边这样！",
+        "id": "sign7"
+      }
+    },
+    {
+      "type": "portal",
+      "opts": {
+        "x": 1645,
+        "y": 623,
+        "w": 44,
+        "h": 64,
+        "color": "#ff808c",
+        "uses": 1,
+        "switchId": null,
+        "group": "g5",
+        "inventory": null,
+        "clearInventory": false,
+        "id": "portal8"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 1607,
+        "y": 243,
+        "w": 207,
+        "h": 109,
+        "ice": false,
+        "id": "floor4"
+      }
+    },
+    {
+      "type": "portal",
+      "opts": {
+        "x": 1637,
+        "y": 177,
+        "w": 44,
+        "h": 64,
+        "color": "#ff808c",
+        "uses": 1,
+        "switchId": null,
+        "group": "g5",
+        "inventory": null,
+        "clearInventory": false,
+        "id": "portal9"
+      }
+    },
+    {
+      "type": "sign",
+      "opts": {
+        "x": 1594,
+        "y": 81,
+        "text": "看这个传送门消失了\n——因为它是一次性的！",
+        "id": "sign8"
+      }
+    },
+    {
+      "type": "pool",
+      "opts": {
+        "x": 1802,
+        "y": 246,
+        "w": 263,
+        "h": 94,
+        "volume": 925,
+        "solutes": {
+          "CuSO4": 20
+        },
+        "gasHeight": 80,
+        "id": "pool1"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 2058,
+        "y": 250,
+        "w": 864,
+        "h": 107,
         "ice": false,
         "id": "floor5"
       }
     },
     {
-      "type": "portal",
+      "type": "sign",
       "opts": {
-        "x": 529,
-        "y": 487,
-        "w": 44,
-        "h": 64,
-        "color": "#c08911",
-        "uses": 0,
-        "switchId": "switch1",
-        "group": "g9",
-        "inventory": null,
-        "clearInventory": false,
-        "id": "portal3"
+        "x": 1770,
+        "y": 45,
+        "text": "接下来，认识一下【提取器】！\n提取器可以从药品池中，提取出其中的溶质——\n就像蒸发结晶一样！",
+        "id": "sign9"
+      }
+    },
+    {
+      "type": "sign",
+      "opts": {
+        "x": 2049,
+        "y": 33,
+        "text": "提取器有两种。\n有的提取器直接站上去就好，\n这种叫做压力提取器，会有提示，就像这个。\n如果没有写“压力”，\n说明这个提取器会在\n其绑定的开关开启的情况下启动，\n通常就是离它比较近的开关。",
+        "id": "sign10"
+      }
+    },
+    {
+      "type": "player",
+      "opts": {
+        "x": 161,
+        "y": 411,
+        "substance": "NaOH",
+        "mass": 30,
+        "noLift": false,
+        "id": "player1"
+      }
+    },
+    {
+      "type": "extractor",
+      "opts": {
+        "x": 2067,
+        "y": 234,
+        "w": 50,
+        "h": 11,
+        "poolId": "pool1",
+        "switchId": null,
+        "rate": 0.25,
+        "id": "extractor2"
+      }
+    },
+    {
+      "type": "extractor",
+      "opts": {
+        "x": 2172,
+        "y": 232,
+        "w": 50,
+        "h": 11,
+        "poolId": "pool1",
+        "switchId": "switch2",
+        "rate": 0.25,
+        "id": "extractor3"
+      }
+    },
+    {
+      "type": "switch",
+      "opts": {
+        "x": 2237,
+        "y": 224,
+        "mode": "chemical",
+        "opening": "Na2SO4",
+        "and": null,
+        "deleteId": null,
+        "showId": null,
+        "igniteId": null,
+        "extinguishId": null,
+        "openId": null,
+        "id": "switch2",
+        "precipitates": {}
+      }
+    },
+    {
+      "type": "sign",
+      "opts": {
+        "x": 2318,
+        "y": 149,
+        "text": "试一试一套小连招：\n1.跳到池子中，得到氢氧化铜和硫酸钠，拾取氢氧化铜\n2.踩到左侧的提取器上尝试开启它\n3.用提取出的硫酸钠开启右侧开关，来开启右侧的提取器",
+        "id": "sign11"
+      }
+    },
+    {
+      "type": "switch",
+      "opts": {
+        "x": 2656,
+        "y": 227,
+        "mode": "chemical",
+        "opening": "Cu(OH)2",
+        "and": null,
+        "deleteId": "floor6",
+        "showId": null,
+        "igniteId": null,
+        "extinguishId": null,
+        "openId": null,
+        "id": "switch3",
+        "precipitates": {}
+      }
+    },
+    {
+      "type": "sign",
+      "opts": {
+        "x": 2646,
+        "y": 98,
+        "text": "最后，用氢氧化铜开启开关破除障壁！",
+        "id": "sign12"
       }
     },
     {
       "type": "floor",
       "opts": {
-        "x": 722,
-        "y": 360,
-        "w": 249,
-        "h": 56,
+        "x": 2872,
+        "y": -35,
+        "w": 36,
+        "h": 280,
         "ice": false,
         "id": "floor6"
       }
     },
     {
-      "type": "key",
+      "type": "floor",
       "opts": {
-        "x": 750,
-        "y": 332,
-        "opening": "NaCl",
+        "x": 2890,
+        "y": 460,
+        "w": 602,
+        "h": 90,
+        "ice": false,
+        "id": "floor7"
+      }
+    },
+    {
+      "type": "sign",
+      "opts": {
+        "x": 2960,
+        "y": 237,
+        "text": "最后，认识一下“连锁开关”！\n当你看到两个开关之间用&连接时候，\n就说明这两个开关只有同时开启了才能真正的开启所需要的东西。\n试着用提示所需的两样物质开启传送门！",
+        "id": "sign13"
+      }
+    },
+    {
+      "type": "switch",
+      "opts": {
+        "x": 2941,
+        "y": 431,
+        "mode": "chemical",
+        "opening": "Na2SO4",
+        "and": "switch5",
         "deleteId": null,
         "showId": null,
         "igniteId": null,
         "extinguishId": null,
-        "openId": "door1",
-        "id": "key1",
+        "openId": null,
+        "id": "switch4",
         "precipitates": {}
       }
     },
     {
-      "type": "door",
+      "type": "switch",
       "opts": {
-        "x": 837,
-        "y": 247,
-        "w": 69,
-        "h": 111,
-        "id": "door1"
+        "x": 3042,
+        "y": 430,
+        "mode": "chemical",
+        "opening": "Cu(OH)2",
+        "and": null,
+        "deleteId": null,
+        "showId": null,
+        "igniteId": null,
+        "extinguishId": null,
+        "openId": "portal10",
+        "id": "switch5",
+        "precipitates": {}
       }
     },
     {
-      "type": "sign",
+      "type": "portal",
       "opts": {
-        "x": 467,
-        "y": 221,
-        "text": "最后的最后——还有一个点没教哦！\nChezzle的通关方式很简单，\n需要你到达通关点，\n然后向右边的钥匙中，放入所需\n的通关物质\n然后旁边的大门就会打开，\n走进去就好啦！",
-        "id": "sign3"
-      }
-    },
-    {
-      "type": "sign",
-      "opts": {
-        "x": 977,
-        "y": 271,
-        "text": "恭喜通关！！\n之后，你就需要自己通关后续的关卡了，\n祝你的化学之路一路顺畅！",
-        "id": "sign4"
-      }
-    },
-    {
-      "type": "sign",
-      "opts": {
-        "x": 245,
-        "y": 964,
-        "text": "这里有一个好习惯：\n行动之前，先点击鸟瞰按钮，\n看清关卡全貌，构思通关路径！",
-        "id": "sign5"
+        "x": 3358,
+        "y": 386,
+        "w": 44,
+        "h": 64,
+        "color": "#bff42f",
+        "uses": 0,
+        "switchId": "switch5",
+        "group": "g5314",
+        "inventory": null,
+        "clearInventory": true,
+        "id": "portal10"
       }
     }
   ]
