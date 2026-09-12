@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh">
 <head>
 <meta charset="utf-8">
@@ -660,7 +660,9 @@ function refreshEnter() {
   } else if (s === 'empty') {
     setEnter('暂无', true, '这一同位素的关卡还没做');
   } else {
-    const need = unlockersOf(CFG, it.id).map((u) => NAME_OF.get(u) || u).join(' / ') || '上一关';
+    // ★ 这里要显示的是"本关的前置"（it.requires），不是"哪些关以本关为前置"
+    //   —— 用反了会写成「通关 氦-4 解锁 氕」（方向完全相反，用户截图复现）
+    const need = (it.requires || []).map((r) => NAME_OF.get(r) || r).join(' / ') || '前置关卡';
     setEnter(`通关 ${need} 解锁`, true, `先通关：${need}`);
   }
 }
@@ -811,7 +813,8 @@ function denyCard(b, e) {
   void b.offsetWidth;      // 重启动画
   b.classList.add('locked-shake');
   const locked = e.isotopes.filter((i) => i.file && !unlocked.has(i.id));
-  const need = [...new Set(locked.flatMap((i) => unlockersOf(CFG, i.id)))].map((u) => NAME_OF.get(u) || u);
+  // 同样取"这些锁定关卡的前置"，而不是反向的 unlockersOf
+  const need = [...new Set(locked.flatMap((i) => i.requires || []))].map((u) => NAME_OF.get(u) || u);
   toast(need.length ? `${e.name} 还没解锁 · 先通关 ${need.join(' / ')}` : `${e.name} 暂无`);
 }
 
