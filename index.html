@@ -43,6 +43,9 @@
   .hero { position: relative; z-index: 2; text-align: center; padding: 0 16px; width: 100%; max-width: 1200px; }
   /* —— MC 风方块字标题 —— */
   .title { width: min(680px, 86vw); display: block; margin: 0 auto; animation: bob 5.2s ease-in-out infinite; }
+  /* 版本号：与标题同宽、右对齐 → 正好落在 CHEZZLE 大字的右下角；淡灰、克制 */
+  .ver { width: min(680px, 86vw); margin: -4px auto 0; text-align: right;
+    color: #5a527e; font-size: 11px; letter-spacing: 2px; opacity: 0; animation: pop .8s ease 1.15s forwards; }
   @keyframes bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
   /* 字母淡入：只动 opacity（transform 会被 SVG 字母的定位属性占用，不能动画） */
   .title .lt { opacity: 0; animation: pop .5s ease forwards; }
@@ -146,6 +149,8 @@
       <path class="lt" style="animation-delay:.47s" transform="translate(420,0) rotate(-1.2 32 40)" d="M64 0 H0 V80 H64 V62 H16 V46 H60 V30 H16 V18 H64 Z" stroke="url(#gCyan)" stroke-width="9"/>
     </g>
   </svg>
+  <!-- 版本号：贴在 CHEZZLE 大字右下角（只这一行字，不加别的） -->
+  <div class="ver">alpha-0912</div>
 
   <a id="btnPlay" class="bar" href="select.html">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">

@@ -958,7 +958,7 @@ let wheelAcc = 0, wheelTimer = 0;
   box.addEventListener('pointerdown', (e) => {
     if (launching || e.target.closest('.arrow')) return;
     const p = localPtr(e);
-    down = true; dragged = true; moved = 0; id = e.pointerId;
+    down = true; dragged = false; moved = 0; id = e.pointerId;
     samples = [{ x: p.x, t: performance.now() }];
     dragging = true; stopCards();                  // 交给手指，缓动循环让位（防抖关键）
     // 以"当前实际位置"为拖拽原点，接手瞬间不跳（缓动途中按下也顺滑）
@@ -971,6 +971,7 @@ let wheelAcc = 0, wheelTimer = 0;
     samples.push({ x: p.x, t });
     if (samples.length > 24) samples.shift();
     if (Math.abs(moved) > 6) {
+      dragged = true;                // ★ 只有真的拖起来了才吞随后的 click；
       try { box.setPointerCapture(id); } catch (err) { /* 合成事件 / pointerId 已失效 */ }
       curX = posFrom(moved);   // 带阻尼地跟手
       moveCards();
