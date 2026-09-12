@@ -1,0 +1,53 @@
+{
+  "version": 2,
+  "_说明": [
+    "Chezzle 关卡表（可直接改这个文件，无需改代码）",
+    "tutorial  新手引导：始终可玩（requires 留空）",
+    "levels    元素符号 → 同位素关卡列表；每个同位素 = 独立一关",
+    "  id       关卡唯一 id（进度按它记录，改名会让旧进度失配）",
+    "  name     显示名（氕/氘/氚…）",
+    "  mass     质量数：同位素按它升序排，越重越难（星级=名次）",
+    "  file     关卡 html 路径；不填 = 该同位素还没做（UI 显示「暂无」）",
+    "  requires 前置关卡 id 列表：**全部通关后**才解锁本关；留空 = 一开始就能玩",
+    "           ★ 只写直接前置即可，不必把更上面的关卡也列上（H-1 已要求新手引导，",
+    "             He-1 只写 H-1 就够了——链条会自动传递）",
+    "rare      稀有元素（紫色 + 更高难度标识），可自行增删"
+  ],
+
+  "tutorial": {
+    "id": "tutorial",
+    "name": "新手引导",
+    "file": "levels/tutorial.html",
+    "requires": []
+  },
+
+  "rare": [
+    "He", "Ne", "Ar", "Kr", "Xe", "Rn", "Og",
+    "Sc", "Y", "Ru", "Rh", "Pd", "Ag", "Os", "Ir", "Pt", "Au",
+    "La", "Ce", "Pr", "Nd", "Pm", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu",
+    "Ac", "Th", "Pa", "U", "Np", "Pu", "Am", "Cm", "Bk", "Cf", "Es", "Fm", "Md", "No", "Lr"
+  ],
+
+  "levels": {
+    "H": [
+      { "id": "H-1", "name": "氕", "mass": 1, "file": "levels/level1-1.html", "requires": ["tutorial"] },
+      { "id": "H-2", "name": "氘", "mass": 2, "requires": ["H-1"] },
+      { "id": "H-3", "name": "氚", "mass": 3, "requires": ["H-2"] }
+    ],
+    "He": [
+      { "id": "He-1", "name": "氦-4", "mass": 4, "file": "levels/level2-1.html", "requires": ["H-1"] }
+    ],
+    "C": [
+      { "id": "C-1", "name": "碳-12", "mass": 12, "requires": ["H-1"] }
+    ],
+    "O": [
+      { "id": "O-1", "name": "氧-16", "mass": 16, "requires": ["C-1"] }
+    ],
+    "Fe": [
+      { "id": "Fe-1", "name": "铁-56", "mass": 56, "requires": ["O-1"] }
+    ],
+    "Cu": [
+      { "id": "Cu-1", "name": "铜-63", "mass": 63, "requires": ["Fe-1"] }
+    ]
+  }
+}

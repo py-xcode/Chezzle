@@ -16,15 +16,12 @@ const m = HTML.match(/\/\/ #region select-model[\s\S]*?\/\/ #endregion select-mo
 assert.ok(m, 'select.html 里应存在 #region select-model 段落');
 // ⚠ 直接从模型区取 bySym：元素事实表（含镧系/锕系两行）就在里面，避免测试再抄一份而漏掉 f 区
 const model = new Function(`${m[0]}
-  return { bySym, buildEntries, periodStats, periodOf, unlockedSet, unlockersOf, isotopeState, elementState, clampIndex, difficultyStars };`)();
-const { bySym: FACTS, buildEntries, periodStats, periodOf, unlockedSet, unlockersOf, isotopeState, elementState, clampIndex, difficultyStars } = model;
+  return { bySym, buildEntries, periodStats, periodOf, allLevels, unlockedSet, unlockersOf, isotopeState, elementState, clampIndex, difficultyStars };`)();
+const { bySym: FACTS, buildEntries, periodStats, periodOf, allLevels, unlockedSet, unlockersOf, isotopeState, elementState, clampIndex, difficultyStars } = model;
 
 /** 按浏览器的方式加载 levels.js（它写入 window.CHEZZLE_LEVELS） */
 function loadCfg() {
-  const src = readFileSync(join(ROOT, 'levels', 'levels.js'), 'utf8');
-  const window = {};
-  new Function('window', src)(window);
-  return window.CHEZZLE_LEVELS;
+  return JSON.parse(readFileSync(join(ROOT, 'levels', 'levels.json'), 'utf8'));
 }
 const CFG = loadCfg();
 const ENTRIES = buildEntries(CFG, FACTS);
@@ -81,15 +78,37 @@ test('buildEntries：同位素按质量数升序，且都带 id', () => {
   assert.equal(ENTRIES.find((e) => e.sym === 'Li').isotopes.length, 0);
 });
 
-test('unlockedSet：初始只有新手引导；通关后按 unlocks 图逐层展开', () => {
-  assert.deepEqual([...unlockedSet(CFG, new Set())], ['tutorial'], '未通关任何关时只有引导可玩');
+test('unlockedSet（前置关卡式）：requires 全部通关才解锁，链条自动传递', () => {
+  assert.deepEqual([...unlockedSet(CFG, new Set())], ['tutorial'], '未通关任何关时只有引导可玩（requires 为空）');
   const u1 = unlockedSet(CFG, new Set(['tutorial']));
-  assert.ok(u1.has('H-1') && !u1.has('H-2'), '通关引导 → 解锁 H-1（H-2 还需通关 H-1）');
+  assert.ok(u1.has('H-1') && !u1.has('H-2'), '通关引导 → H-1 解锁（H-2 还要求 H-1）');
+  assert.ok(!u1.has('He-1'), 'He-1 要求 H-1，未通关则锁定');
   const u2 = unlockedSet(CFG, new Set(['tutorial', 'H-1']));
-  assert.ok(u2.has('H-2') && u2.has('C-1'), '通关 H-1 → 解锁 H-2 与 C-1');
-  const uAll = unlockedSet(CFG, new Set(['tutorial', 'H-1', 'H-2', 'H-3', 'C-1', 'O-1', 'Fe-1']));
-  assert.ok(uAll.has('Cu-1'), '连锁解锁应一路展开');
-  assert.ok(!unlockedSet(CFG, new Set(['tutorial'])).has('O-1'), '跳级关不该被解锁');
+  assert.ok(u2.has('H-2') && u2.has('He-1') && u2.has('C-1'), '通关 H-1 → H-2 / He-1 / C-1 解锁');
+  assert.ok(!u2.has('O-1'), 'O-1 要求 C-1，不该被跳级解锁');
+  const uAll = unlockedSet(CFG, new Set(['tutorial', 'H-1', 'C-1', 'O-1', 'Fe-1']));
+  assert.ok(uAll.has('Cu-1'), '一条链走通后末端解锁');
+});
+
+test('前置关系配置：只写直接前置、无悬空 id、新手引导无前置', () => {
+  const all = allLevels(CFG);
+  const ids = new Set(all.map((l) => l.id));
+  assert.equal(CFG.tutorial.requires.length, 0, '新手引导不需要前置');
+  for (const lv of all) {
+    for (const r of lv.requires || []) {
+      assert.ok(ids.has(r), `${lv.id} 的前置 ${r} 不存在`);
+      assert.notEqual(r, lv.id, `${lv.id} 不能以自己为前置`);
+    }
+  }
+  // He-1 只写 H-1（不重复写 tutorial）——链条传递由 unlockedSet 负责
+  const he = all.find((l) => l.id === 'He-1');
+  assert.deepEqual(he.requires, ['H-1']);
+});
+
+test('unlockersOf：反向查"哪些关以它为前置"', () => {
+  assert.deepEqual(unlockersOf(CFG, 'tutorial'), ['H-1']);
+  assert.deepEqual(unlockersOf(CFG, 'H-1').sort(), ['C-1', 'H-2', 'He-1']);
+  assert.deepEqual(unlockersOf(CFG, 'Cu-1'), []);
 });
 
 test('isotopeState：未编写 / 未解锁 / 可挑战 / 已通关 四态', () => {
@@ -120,10 +139,16 @@ test('elementState：暗→未解锁→已解锁→已通关→金光（只看"�
   assert.equal(elementState(e, new Set(['X-1', 'X-2']), new Set(['X-1', 'X-2', 'X-3'])), 'gold');
 });
 
-test('unlockersOf / difficultyStars / clampIndex', () => {
-  assert.deepEqual(unlockersOf(CFG, 'H-1'), ['tutorial']);
-  assert.deepEqual(unlockersOf(CFG, 'Cu-1'), ['Fe-1']);
-  assert.deepEqual(unlockersOf(CFG, 'tutorial'), []);
+test('difficultyStars / clampIndex / 周期通关进度', () => {
+  // 周期条 = 通关进度：done/levels，全清才是满的
+  const st0 = periodStats(ENTRIES, new Set());
+  assert.deepEqual(st0.map((s) => [s.p, s.done, s.levels]), [[1, 0, 2], [2, 0, 0], [3, 0, 0], [4, 0, 0], [5, 0, 0], [6, 0, 0], [7, 0, 0]],
+    '没进度时所有周期条都应是空的（之前错画成"该周期有关卡的元素占比"，与进度无关）');
+  const st1 = periodStats(ENTRIES, new Set(['tutorial', 'H-1']));
+  assert.equal(st1[0].done, 1, '通关 H-1 后第 1 周期进度 1/2');
+  assert.equal(st1[0].levels, 2, '第 1 周期共 2 关（引导 + 氕）');
+  const stAll = periodStats(ENTRIES, new Set(['tutorial', 'H-1', 'He-1']));
+  assert.equal(stAll[0].done, stAll[0].levels, '全清后该周期条应满');
   const H = ENTRIES.find((e) => e.sym === 'H');
   assert.deepEqual(H.isotopes.map((i) => difficultyStars(H, i)), [1, 2, 3], '越重的同位素越难');
   assert.equal(clampIndex(-3, 6), 0);
@@ -131,15 +156,11 @@ test('unlockersOf / difficultyStars / clampIndex', () => {
   assert.equal(clampIndex(2, 6), 2);
 });
 
-test('配置完整性：解锁无悬空目标、关卡 id 唯一、引用的关卡文件都存在', () => {
+test('配置完整性：关卡 id 唯一、引用的关卡文件都存在', () => {
   const allIds = new Set();
   for (const e of ENTRIES) for (const it of e.isotopes) {
     assert.ok(!allIds.has(it.id), `关卡 id 重复：${it.id}`);
     allIds.add(it.id);
-  }
-  for (const [src, targets] of Object.entries(CFG.unlocks || {})) {
-    assert.ok(allIds.has(src), `unlocks 里的来源关不存在：${src}`);
-    for (const t of targets) assert.ok(allIds.has(t), `${src} 解锁了不存在的关卡：${t}`);
   }
   for (const e of ENTRIES) for (const it of e.isotopes) {
     if (!it.file) continue;

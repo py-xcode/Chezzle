@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh">
 <head>
 <meta charset="utf-8">
@@ -72,7 +72,8 @@
     filter: drop-shadow(0 0 8px rgba(127,216,255,.22));
     clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px); }
   #pbar { width: 92px; height: 5px; background: rgba(127,216,255,.16); overflow: hidden; }
-  #pfill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--cyan), #cfefff); transition: width .5s ease; }
+  #pbar { display: block; }
+  #pfill { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, var(--cyan), #cfefff); transition: width .5s ease; }
   .ghost { padding: 7px 12px; font-size: 11.5px; color: #7b8aa8; background: none; border: 1px solid transparent; cursor: pointer; }
   .ghost:hover { color: #ffb0b0; border-color: rgba(255,120,120,.35); }
 
@@ -84,7 +85,7 @@
   #ring circle, #ring path { stroke: rgb(var(--ar) var(--ag) var(--ab) / .55); }
   #ring .spin { transform-origin: 50% 50%; animation: spin 46s linear infinite; }
   #ring .spin2 { transform-origin: 50% 50%; animation: spin 78s linear infinite reverse; }
-  #track { position: absolute; inset: 0; }
+  #track { position: absolute; inset: 0; transition: opacity .2s ease; }
   .card { position: absolute; left: 50%; top: 50%; width: var(--card-w); height: var(--card-h);
     margin: 0; padding: 0; border: 0; background: none; cursor: pointer; color: var(--txt);
     transform-style: preserve-3d; will-change: transform, opacity; text-align: left; }
@@ -164,7 +165,8 @@
   }
   /* 头顶的筛选开关 */
   .seg { display: inline-flex; border: 1px solid var(--edge); overflow: hidden; }
-  .seg button { padding: 6px 11px; font-size: 11.5px; color: var(--dim); background: rgba(12,16,38,.7); border: 0; cursor: pointer; }
+  .seg button { padding: 6px 11px; font-size: 11.5px; color: var(--dim); background: rgba(12,16,38,.7); border: 0; cursor: pointer;
+    transition: background .3s ease, color .25s ease; }
   .seg button.on { color: #241a02; background: linear-gradient(180deg, #ffe9a8, #e8b84b); font-weight: bold; }
   .seg button:focus-visible { outline: 2px solid var(--cyan); outline-offset: -2px; }
 
@@ -366,7 +368,8 @@
 
 <script src="levels/levels.js"></script>
 <script>
-const CFG = window.CHEZZLE_LEVELS;
+const CFG_READY = window.CHEZZLE_LEVELS_READY || Promise.resolve(window.CHEZZLE_LEVELS || {});
+let CFG = window.CHEZZLE_LEVELS || {};
 const PROG_KEY = 'chezzle-progress-v1';
 
 // 竖屏强制横屏：CSS 把整页绕左上角顺时针转 90°，屏幕坐标 (sx,sy) 与页面局部坐标
@@ -411,7 +414,7 @@ const bySym = {
 };
 
 /** 走廊条目：新手引导 + **全部 118 位元素**（按原子序数）。
- *  没有配关卡的位元素也进走廊（"每个元素都轮得到"），只是状态为 st0（暗、暂无关卡）。
+ *  没有配关卡的位元素也进走廊（"每个元素都轮得到"），只是状态为 st0（暗、显示「暂无」）。
  *  @param {boolean} onlyPlayable 只保留"有已编写关卡"的元素（顶部筛选开关用） */
 function buildEntries(cfg, facts, onlyPlayable) {
   const out = [];
@@ -436,15 +439,19 @@ function buildEntries(cfg, facts, onlyPlayable) {
   }
   return out;
 }
-/** 每个周期里"元素数 / 有关卡的元素数"，供周期轨道画占比条 */
-function periodStats(entries) {
+/** 每个周期的**通关进度**：total = 该周期已编写关卡数，done = 其中已通关数。
+ *  条内填充 = done/total（没关卡的周期为 0）—— 这就是周期轨道上那根条的含义。 */
+function periodStats(entries, cleared) {
   const out = [];
   for (let p = 1; p <= 7; p++) {
     const list = entries.filter((e) => e.kind === 'element' && e.period === p);
     if (!list.length) continue;
+    const real = list.flatMap((e) => e.isotopes.filter((i) => i.file));
     out.push({
       p, total: list.length,
-      withLevel: list.filter((e) => e.hasLevel).length,
+      withLevel: real.length,
+      levels: real.length,
+      done: real.filter((i) => cleared && cleared.has(i.id)).length,
       first: entries.indexOf(list[0]),
     });
   }
@@ -452,25 +459,31 @@ function periodStats(entries) {
 }
 /** 索引 → 该索引所在周期的序号（元素卡才有，引导卡返回 0） */
 function periodOf(entry) { return entry && entry.kind === 'element' ? entry.period : 0; }
-/** 解锁闭包：tutorial 是根、始终可玩；其余关**通关后**才放出它解锁的下一批
- *  （levels.js 的约定：unlocks[X] = 通关 X 后解锁的关）。
- *  ★ 原实现漏了"是否已通关"的判断 → 从 tutorial 一路 BFS 把整张图全解锁了，
- *  上锁/解锁这套进度机制实际形同虚设（tests/selectmodel.test.js 抓出来的）。 */
-function unlockedSet(cfg, cleared) {
-  const set = new Set(['tutorial']);
-  const q = ['tutorial'];
-  while (q.length) {
-    const id = q.shift();
-    if (!cleared.has(id)) continue; // 没通关 → 不放出它解锁的关（自身仍可玩）
-    for (const nxt of (cfg.unlocks || {})[id] || []) if (!set.has(nxt)) { set.add(nxt); q.push(nxt); }
+
+/** 全部关卡（含新手引导）拍平：前置关系与解锁计算都基于它 */
+function allLevels(cfg) {
+  const out = [];
+  if (cfg.tutorial) out.push({ ...cfg.tutorial, sym: 'tutorial' });
+  for (const [sym, list] of Object.entries(cfg.levels || {})) {
+    for (const it of list || []) out.push({ ...it, sym });
   }
+  return out;
+}
+/** 解锁判定（前置关卡式）：requires 里的关**全部通关**才解锁；requires 留空 = 一开始就能玩。
+ *  ★ 只需写直接前置（链条自动传递）：H-1 已要求新手引导，He-1 只写 H-1 即可。
+ *  ★ 旧版是"通关 X → 解锁 X 的子节点"的反向表，且漏判"是否已通关"，会把整张图全解锁。 */
+function unlockedSet(cfg, cleared) {
+  const set = new Set();
+  for (const lv of allLevels(cfg)) {
+    const req = lv.requires || [];
+    if (req.length === 0 || req.every((r) => cleared.has(r))) set.add(lv.id);
+  }
+  if (cfg.tutorial) set.add(cfg.tutorial.id);  // 新手引导始终可玩
   return set;
 }
-/** 哪些关被"未通关"时会挡住这一关（用于提示"通关 X 解锁"） */
+/** 哪些关解锁了它（用于"通关 X 解锁"提示） */
 function unlockersOf(cfg, levelId) {
-  const out = [];
-  for (const [src, targets] of Object.entries(cfg.unlocks || {})) if (targets.includes(levelId)) out.push(src);
-  return out;
+  return allLevels(cfg).filter((lv) => (lv.requires || []).includes(levelId)).map((lv) => lv.id);
 }
 /** 同位素状态：'done' 已通关 / 'open' 已解锁可玩 / 'lock' 未解锁 / 'empty' 关卡未编写 */
 function isotopeState(it, unlocked, cleared) {
@@ -502,9 +515,9 @@ function loadProg() {
   catch (e) { return new Set(); }
 }
 let cleared = loadProg();
-let unlocked = unlockedSet(CFG || {}, cleared);
+let unlocked = new Set(['tutorial']);
 let onlyPlayable = false;                 // 顶部筛选：默认"全部元素"（每个元素都轮得到）
-let ENTRIES = buildEntries(CFG || {}, bySym, onlyPlayable);
+let ENTRIES = [];
 
 // 关卡 id → 人类可读名（用于"通关 X 解锁"提示）
 function buildNameMap() {
@@ -534,7 +547,7 @@ const GUIDE_ICON = `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
 
 function cardMeta(e) {
   if (e.kind === 'tutorial') return '新手引导 · 从零开始';
-  const tail = e.hasLevel ? '' : ' · 暂无关卡';
+  const tail = e.hasLevel ? '' : ' · 暂无';
   return `第 ${e.period} 周期 · 第 ${e.group} 族${tail}`;
 }
 /** 按当前筛选重建走廊（切换"全部/只看有关卡"时用） */
@@ -605,7 +618,7 @@ function renderIsotopes() {
     tip.className = 'chip empty';
     tip.disabled = true;
     tip.innerHTML = `<span class="row"><span class="iso"><b>—</b><span>${e.sym}</span></span>
-      <span class="nm">${e.name}</span><span class="stat">暂无关卡</span></span>`;
+      <span class="nm">${e.name}</span><span class="stat">暂无</span></span>`;
     isoBox.appendChild(tip);
     refreshEnter();
     return;
@@ -613,7 +626,7 @@ function renderIsotopes() {
   e.isotopes.forEach((it, i) => {
     const s = isotopeState(it, unlocked, cleared);
     const stars = e.kind === 'tutorial' ? '' : `<span class="stars">${'★'.repeat(difficultyStars(e, it))}</span>`;
-    const status = s === 'done' ? '已通关' : s === 'open' ? '可挑战' : s === 'empty' ? '未编写'
+    const status = s === 'done' ? '已通关' : s === 'open' ? '可挑战' : s === 'empty' ? '暂无'
       : '未解锁';
     const c = document.createElement('button');
     c.type = 'button';
@@ -638,14 +651,14 @@ function refreshEnter() {
   const e = ENTRIES[active];
   const it = e.isotopes[activeIso];
   if (!it) { // 该元素还没写任何关卡
-    setEnter('暂无关卡', true, `${e.name}（${e.sym}）的关卡还没做`);
+    setEnter('暂无', true, `${e.name}（${e.sym}）的关卡还没做`);
     return;
   }
   const s = isotopeState(it, unlocked, cleared);
   if (s === 'open' || s === 'done') {
     setEnter(s === 'done' ? '再玩一次' : '进入关卡', false, s === 'done' ? '这一关已通关，可以再挑战' : '');
   } else if (s === 'empty') {
-    setEnter('关卡未编写', true, '这一同位素的关卡还没做');
+    setEnter('暂无', true, '这一同位素的关卡还没做');
   } else {
     const need = unlockersOf(CFG, it.id).map((u) => NAME_OF.get(u) || u).join(' / ') || '上一关';
     setEnter(`通关 ${need} 解锁`, true, `先通关：${need}`);
@@ -735,19 +748,19 @@ function kickCards() { if (!rafId && !dragging) rafId = requestAnimationFrame(ti
 /** 停掉进行中的缓动（拖拽开始时调用） */
 function stopCards() { if (rafId) { cancelAnimationFrame(rafId); rafId = 0; } }
 
-/** 周期轨道：7 段，当前周期高亮；条内填充 = 该周期"有关卡的元素"占比 */
+/** 周期轨道：7 段，当前周期高亮；条内填充 = **该周期通关进度**（已通关关卡 / 已编写关卡） */
 function buildPeriods() {
   const box = $('periods');
   box.innerHTML = '';
-  const stats = periodStats(ENTRIES);
+  const stats = periodStats(ENTRIES, cleared);
   for (const st of stats) {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'per';
     b.dataset.p = st.p;
-    b.style.setProperty('--f', st.total ? `${Math.round(st.withLevel / st.total * 100)}%` : '0%');
+    b.style.setProperty('--f', st.levels ? `${Math.round(st.done / st.levels * 100)}%` : '0%');
     b.innerHTML = `<b>${st.p}</b><i></i>`;
-    b.title = `第 ${st.p} 周期 · ${st.total} 位元素，其中 ${st.withLevel} 位有关卡`;
+    b.title = `第 ${st.p} 周期 · ${st.total} 位元素 · 已编写关卡 ${st.levels} 关，已通关 ${st.done} 关`;
     b.setAttribute('aria-label', b.title);
     b.addEventListener('click', () => { if (!launching) setActive(st.first, true); });
     box.appendChild(b);
@@ -799,7 +812,7 @@ function denyCard(b, e) {
   b.classList.add('locked-shake');
   const locked = e.isotopes.filter((i) => i.file && !unlocked.has(i.id));
   const need = [...new Set(locked.flatMap((i) => unlockersOf(CFG, i.id)))].map((u) => NAME_OF.get(u) || u);
-  toast(need.length ? `${e.name} 还没解锁 · 先通关 ${need.join(' / ')}` : `${e.name} 暂无可玩关卡`);
+  toast(need.length ? `${e.name} 还没解锁 · 先通关 ${need.join(' / ')}` : `${e.name} 暂无`);
 }
 
 // ---- 进入关卡 ----
@@ -830,20 +843,27 @@ function leaveTo(href) {
 $('back').addEventListener('click', (e) => { e.preventDefault(); leaveTo('index.html'); });
 
 // ---- 显示范围筛选：全部元素 / 只看有关卡 ----
+/** 切换时先让走廊淡出 → 重建 → 再淡入（否则卡片是"啪"地换掉，没有过渡） */
 function applyFilter(playable) {
   if (playable === onlyPlayable) return;
   const keepSym = ENTRIES[active] ? ENTRIES[active].sym : 'tutorial';
   onlyPlayable = playable;
   $('fAll').classList.toggle('on', !playable);
   $('fPlay').classList.toggle('on', playable);
-  ENTRIES = buildEntries(CFG || {}, bySym, onlyPlayable);
-  NAME_OF = buildNameMap();
-  activeIso = 0;
-  buildCards();
-  buildPeriods();
-  const idx = ENTRIES.findIndex((e) => e.sym === keepSym);
-  lastPeriod = -1;
-  setActive(idx >= 0 ? idx : 0, true);
+  const swap = () => {
+    ENTRIES = buildEntries(CFG || {}, bySym, onlyPlayable);
+    NAME_OF = buildNameMap();
+    activeIso = 0;
+    lastPeriod = -1;
+    buildCards();
+    buildPeriods();
+    const idx = ENTRIES.findIndex((e) => e.sym === keepSym);
+    setActive(idx >= 0 ? idx : 0, true);
+    track.style.opacity = '1';
+  };
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) { swap(); return; }
+  track.style.opacity = '0';
+  setTimeout(swap, 190);
 }
 $('fAll').addEventListener('click', () => applyFilter(false));
 $('fPlay').addEventListener('click', () => applyFilter(true));
@@ -862,7 +882,7 @@ function jumpPlayable(dir) {
 /** 跳到上/下一个周期的首位元素 */
 function jumpPeriod(dir) {
   const cur = periodOf(ENTRIES[active]);
-  const stats = periodStats(ENTRIES);
+  const stats = periodStats(ENTRIES, cleared);
   if (!stats.length) return;
   if (cur === 0) { setActive(stats[0].first, true); return; } // 引导卡 → 第 1 周期
   const i = stats.findIndex((s) => s.p === cur);
@@ -985,7 +1005,7 @@ $('reset').addEventListener('click', () => {
   cleared = new Set();
   try { localStorage.setItem(PROG_KEY, JSON.stringify({ cleared: [] })); } catch (e) {}
   unlocked = unlockedSet(CFG || {}, cleared);
-  refreshCardStates(); renderIsotopes(); refreshProgress();
+  refreshCardStates(); renderIsotopes(); refreshProgress(); buildPeriods();
   toast('进度已清除');
 });
 
@@ -1043,19 +1063,32 @@ function toast(msg) {
 function markViewport() {
   const b = document.body;
   b.classList.toggle('rot', isRot());
-  b.classList.toggle('short', vh() < 430);   // 局部太矮 → 收紧版式（隐藏周期条/提示等）
+  b.classList.toggle('short', vh() < 430);   // 局部太矮 → 收紧版式（隐藏周期条等）
   b.classList.toggle('narrow', vw() < 700);
 }
 markViewport();
 addEventListener('resize', () => { markViewport(); layoutCards(); moveCards(true); });
 addEventListener('orientationchange', () => setTimeout(() => { markViewport(); layoutCards(); moveCards(true); }, 240));
-buildCards();                       // 先建卡（全部 118 位元素）
-buildPeriods();                     // 再建周期轨道
-setActive(0, true);
-refreshProgress();
-moveCards(true);
-// 进场：从深色淡入（#wipe 初始不透明）
-requestAnimationFrame(() => requestAnimationFrame(() => $('wipe').classList.add('off')));
+
+/** 关卡表来自 levels/levels.json（levels.js 负责读进来），所以要等它 ready 再建界面 */
+function boot(cfg) {
+  CFG = cfg || {};
+  unlocked = unlockedSet(CFG, cleared);
+  ENTRIES = buildEntries(CFG, bySym, onlyPlayable);
+  NAME_OF = buildNameMap();
+  buildCards();                     // 先建卡（全部 118 位元素）
+  buildPeriods();                   // 再建周期轨道（条内 = 该周期通关进度）
+  setActive(0, true);
+  refreshProgress();
+  moveCards(true);
+  // 进场：从深色淡入（#wipe 初始不透明）
+  requestAnimationFrame(() => requestAnimationFrame(() => $('wipe').classList.add('off')));
+}
+CFG_READY.then(boot).catch(() => {
+  $('ptext').textContent = '关卡表读取失败';
+  toast('读取 levels/levels.json 失败：请用 http 服务打开（如 python -m http.server）');
+  requestAnimationFrame(() => requestAnimationFrame(() => $('wipe').classList.add('off')));
+});
 </script>
 </body>
 </html>
