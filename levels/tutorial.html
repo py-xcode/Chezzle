@@ -11,8 +11,8 @@
 </head>
 <body>
 <canvas id="game"></canvas>
-<script src="../dist/chezzle.js?vmtyapntk"></script>
-<!-- 插件: 演出编排 v1.1（showtime.js） -->
+<script src="../dist/chezzle.js?vmtyazi71"></script>
+<!-- 插件: 演出编排 v1.0（showtime.js） -->
 <script>
 // ============================================================================
 // 演出编排（showtime）—— 声明式关卡演出模组
@@ -27,7 +27,7 @@
 // ----------------------------------------------------------------------------
 // 用法（关卡脚本）：
 //   const M = new Chezzle.Multiscene(container, {
-//     width: 1100, height: 700,
+//     width: 0, height: 0,
 //     plugins: [{
 //       name: 'showtime',
 //       cfg: {
@@ -54,7 +54,7 @@
 // @@chezzle-plugin
 // {
 //   "name": "演出编排",
-//   "version": "1.1",
+//   "version": "1.0",
 //   "api": 1,
 //   "description": "声明式关卡演出：enter/open/pos/win/at 触发器 × 横幅/震屏/彩焰烟花动作。cfg.plays=[{scene,on,ref?,at?,x?,y?,w?,h?,act:[{kind,...}]}]",
 //   "enhance": []
@@ -62,478 +62,35 @@
 // @@end
 
 Chezzle.Plugin.register('showtime', {
-  // 编辑器侧：剧本存 editorState.showtime.plays，经 pluginCfg 注入试玩/导出（HTML/JSON 通用）。
-  // 🎬 演出剧本面板 = 表单化编辑器（点「＋ 添加剧本」弹层编辑，不手拧 JSON）。
+  // 编辑器侧：剧本存 editorState.showtime.plays，经 pluginCfg 注入试玩/导出（HTML/JSON 通用）
   editor(ed) {
     const st = ed.state;
     st.plays = st.plays ?? [];
-
-    const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    const say = (s) => { const st2 = document.getElementById('status'); if (st2) st2.textContent = s; };
-
-    // ---- 弹层样式（一次性注入）----
-    if (!document.getElementById('shModCss')) {
-      const css = document.createElement('style');
-      css.id = 'shModCss';
-      css.textContent = `
-        #shModal { position: fixed; inset: 0; background: rgba(4,6,18,.72); z-index: 310; display: none; align-items: center; justify-content: center; }
-        #shModal .sh-box { width: min(1100px, 96vw); max-height: 94vh; display: flex; flex-direction: column; background: #0d1330; border: 1px solid #3a4178; border-radius: 12px; padding: 12px 16px; box-shadow: 0 12px 60px rgba(0,0,0,.6); }
-        #shModal .sh-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; }
-        #shModal h3 { margin: 0 0 8px; color: #7fe0ff; font-size: 14px; }
-        #shModal .sh-scroll { overflow-y: auto; flex: 1; min-height: 0; padding-right: 2px; }
-        #shModal .sh-row { display: flex; align-items: center; gap: 5px; margin: 6px 0; flex-wrap: wrap; }
-        #shModal .sh-row label { color: #9fb2c8; font-size: 11px; }
-        #shModal .sh-row input, #shModal .sh-row select, #shModal .sh-row textarea { background: #121a3e; color: #fff; border: 1px solid #3a4178; padding: 3px 5px; font-size: 12px; }
-        #shModal .sh-row input.num60 { width: 60px; }
-        #shModal .sh-act { background: #0e1432; border: 1px solid #232a55; border-radius: 6px; padding: 6px 8px; margin: 6px 0; }
-        #shModal .sh-act-head { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-        #shModal .sh-act-head button { background: #2a3060; color: #fff; border: 1px solid #3a4178; border-radius: 3px; cursor: pointer; font-size: 10px; padding: 1px 5px; }
-        #shModal .sh-act-head .sh-del { background: #5a2a2a; color: #ffd9d9; border-color: #7a3a3a; }
-        #shModal .sh-act .sh-act-title { color: #7fe0ff; font-size: 11px; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        #shModal .sh-foot { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
-        #shModal .sh-note { color: #6a7a96; font-size: 11px; }
-        /* 双栏工作台：左=剧本列表，右=编辑表单 */
-        #shModal .sh-top { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
-        #shModal .sh-top h3 { margin: 0; }
-        #shModal .sh-top .sh-count { flex: 1; color: #6a7a96; font-size: 11px; }
-        #shModal .sh-main { display: flex; gap: 14px; min-height: 0; flex: 1; }
-        #shModal .sh-list-pane { width: 320px; flex-shrink: 0; overflow-y: auto; max-height: 74vh; border-right: 1px solid #232a55; padding-right: 8px; }
-        #shModal .sh-filter { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; color: #9fb2c8; font-size: 11px; padding: 2px 0 6px; border-bottom: 1px solid #232a55; }
-        #shModal .sh-filter select { background: #121a3e; color: #fff; border: 1px solid #3a4178; padding: 2px 5px; font-size: 11px; flex: 1; }
-        #shModal .sh-form-pane { flex: 1; min-width: 0; overflow-y: auto; max-height: 74vh; }
-        #shModal .sh-list-pane .sh-item { cursor: pointer; border: 1px solid transparent; border-radius: 4px; padding: 5px 6px; margin-bottom: 2px; }
-        #shModal .sh-list-pane .sh-item:hover { background: #12183c; }
-        #shModal .sh-list-pane .sh-item.on { background: #1d2a55; border-color: #3a6aa0; }
-        #shModal .sh-list-pane .sh-item .sh-main-txt { display: block; }
-        #shModal .sh-list-pane .sh-item .sh-sub { color: #6a7a96; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .sh-item { display: flex; gap: 4px; align-items: center; padding: 4px 2px; border-top: 1px solid var(--edge, #232a55); font-size: 11px; }
-        .sh-item:first-child { border-top: none; }
-        .sh-item .sh-i { color: #6a7a96; flex-shrink: 0; }
-        .sh-item .sh-t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #9fe8ff; }
-        .sh-item button { background: #2a3060; color: #fff; border: 1px solid #3a4178; border-radius: 3px; cursor: pointer; font-size: 10px; padding: 1px 5px; flex-shrink: 0; }
-        .sh-item .sh-del { background: #5a2a2a; color: #ffd9d9; border-color: #7a3a3a; }
-      `;
-      document.head.appendChild(css);
-    }
-
-    // ---- 侧栏面板：一键打开「演出剧本书」（大弹窗双栏工作台） ----
     const panel = ed.addPanel({
       title: '🎬 演出剧本',
-      html: `<div style="color:#6a7a96;font-size:10px;margin-bottom:6px">一关的演出（开场横幅·开关喊话·区域传送·通关烟花）都在「剧本书」里编排</div>
-        <button class="btn" id="shOpen" style="width:100%">📖 打开演出剧本书</button>
-        <div style="color:#6a7a96;font-size:10px;margin-top:6px">当前 ${st.plays.length} 条 · 触发 × 动作（试玩/导出同款）</div>`,
+      html: `<div class="tip-note">JSON 数组。每条：{scene, on:'enter|open|pos|win|at', ref?, at?, x?, y?, w?, h?, act:[{kind:'banner'|'shake'|'fireworks'|'flash',...}]}
+      例：{"scene":"plain","on":"at","at":0.5,"act":[{"kind":"banner","text":"嘿！你好！","dur":2.2}]}</div>
+      <textarea id="shPlays" rows="14" style="width:100%;box-sizing:border-box;font:11px monospace"></textarea>
+      <button class="btn" id="shSave" style="margin-top:4px">保存剧本</button>`,
     });
-    // ---- 数据来源：场景下拉（chapters 插件的场景列表）/ 物体 id（画布上的 id） ----
-    const sceneIds = () => {
-      const sel = document.getElementById('chSceneSel');
-      const ids = sel ? [...sel.options].map((o) => o.value).filter(Boolean) : [];
-      return [...new Set(ids)];
-    };
-    const objIds = () => {
-      const gs = ed.getState;
-      const ids = (gs()?.placed ?? []).map((p) => p.obj?.id).filter(Boolean);
-      return [...new Set(ids)];
-    };
-    const KIND = { banner: '横幅', shake: '震屏', fireworks: '彩色烟花', flash: '白光闪', goto: '切场景' };
-    // 数据摘要函数（列表行/悬停提示共用）
-    const trigText = (p) => {
-      if (p.on === 'enter') return '进入场景';
-      if (p.on === 'open') return `开关「${p.ref ?? '?'}」开启`;
-      if (p.on === 'pos') return `走到 (${p.x ?? 0},${p.y ?? 0}) ${p.w ?? 0}×${p.h ?? 0}`;
-      if (p.on === 'win') return '通关';
-      if (p.on === 'at') return `T+${p.at ?? 0}s`;
-      return p.on ?? '?';
-    };
-    const sumText = (p) => (p.act ?? []).map((a) => {
-      if (a.kind === 'banner') return '横幅「' + String(a.text ?? '').split('\n')[0].slice(0, 10) + '」';
-      if (a.kind === 'goto') return '→' + (a.scene ?? '?');
-      if (a.kind === 'fireworks') return '烟花×' + (a.n ?? 12);
-      if (a.kind === 'shake') return '震屏×' + (a.n ?? 6);
-      if (a.kind === 'flash') return '白光';
-      return a.kind ?? '?';
-    }).join(' · ') || '（无动作）';
-    let curSel = -1; // 弹窗列表当前选中（高亮）
-    let autoTimer = null; // 自动保存防抖（编辑即保存，无草稿概念）
-    let filterScene = ''; // 左列表场景筛选（''=全部；场景=只看该场景 + 通用剧本）
-    let renderList = () => {}; // modal 块内赋值（首建时）；重载后重建
-
-    // ---- 编辑弹窗（大空间双栏：左=全部剧本列表，右=编辑表单）----
-    let modal = document.getElementById('shModal');
-    if (!modal) {
-      modal = document.createElement('div');
-      modal.id = 'shModal';
-      modal.innerHTML = `<div class="sh-box">
-        <div class="sh-top">
-          <h3 id="shTitle">🎬 演出剧本书</h3>
-          <span class="sh-count" id="shCount"></span>
-          <button class="btn" id="shAdd">＋ 新剧本</button>
-          <button class="btn" id="shCancel">关闭 (Esc)</button>
-        </div>
-        <div class="sh-main">
-          <div class="sh-list-pane">
-            <div class="sh-filter"><label>场景</label><select id="shFilter"><option value="">全部场景</option></select></div>
-            <div id="shList"></div>
-          </div>
-          <div class="sh-form-pane">
-            <div class="sh-row"><label>场景</label>
-              <input id="shScene" list="shSceneList" style="width:130px" placeholder="如 plain（留空=所有场景）">
-              <datalist id="shSceneList"></datalist>
-              <span class="sh-note">场景名来自章节插件顶部「场景」下拉</span></div>
-            <div class="sh-row"><label>触发</label><select id="shOn">
-              <option value="enter">进入场景(enter)</option>
-              <option value="open">开关开启(open)</option>
-              <option value="pos">走到区域(pos)</option>
-              <option value="win">通关(win)</option>
-              <option value="at">时间到点(at)</option>
-            </select><span id="shCond"></span></div>
-            <div class="sh-note">触发后播一次（相同触发不重复）。「走到区域」配合「切场景」= 指定位置传送（需开关可选：开关有效开启才触发）。</div>
-            <div id="shActs"></div>
-            <button class="btn" id="shAddAct" style="margin-top:4px">＋ 添加动作</button>
-            <div class="sh-note" style="margin-top:6px">动作：横幅=大屏幕字幕 · 震屏=抖一下相机 · 彩色烟花=特效爆炸串烧 · 白光闪=提醒 · 切场景=换世界（回头路/传送门用）</div>
-            <div class="sh-foot">
-              <button class="btn primary" id="shSave">💾 保存</button>
-              <span class="sh-note" id="shMsg"></span>
-            </div>
-          </div>
-        </div>
-      </div>`;
-      document.body.appendChild(modal);
-      // 关闭弹窗：先把正在编辑的"新剧本"落库（编辑即保存）——closeModal 在下方定义
-      document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && modal.style.display === 'flex') closeModal();
-      }, true);
-      // 触发类型切换 → 重渲染条件区（先收集当前输入，别把半填的丢了）
-      const onSel = modal.querySelector('#shOn');
-      const condBox = modal.querySelector('#shCond');
-      const readCond = () => {
-        const on = onSel.value;
-        const v = (id) => modal.querySelector('#' + id)?.value ?? '';
-        const n = (id) => { const s = v(id); return s.trim() === '' ? null : (+s || 0); };
-        const c = {};
-        if (on === 'open') { const r = v('shRef').trim(); if (r) c.ref = r; }
-        else if (on === 'pos') {
-          const x = n('shPx'), y = n('shPy'), w = n('shPw'), h = n('shPh');
-          if (x != null) c.x = x; if (y != null) c.y = y; if (w != null) c.w = w; if (h != null) c.h = h;
-          const r = v('shReq').trim(); if (r) c.require = r;
-        } else if (on === 'at') { const t = n('shAt'); if (t != null) c.at = t; }
-        return c;
-      };
-      const fillCond = (p) => {
-        const on = onSel.value;
-        if (on === 'open') condBox.innerHTML = `<label>开关</label><input id="shRef" list="shObjList" style="width:130px" placeholder="开关 id（如 sw1）" value="${esc(p.ref ?? '')}">`;
-        else if (on === 'pos') condBox.innerHTML = `
-          <label>x</label><input type="number" class="num60" id="shPx" value="${p.x ?? ''}">
-          <label>y</label><input type="number" class="num60" id="shPy" value="${p.y ?? ''}">
-          <label>宽</label><input type="number" class="num60" id="shPw" value="${p.w ?? ''}">
-          <label>高</label><input type="number" class="num60" id="shPh" value="${p.h ?? ''}">
-          <button class="sh-pick" style="background:#2a3060;color:#ffd76a;border:1px solid #3a4178;border-radius:3px;cursor:pointer;font-size:10px;padding:2px 7px" title="在画布上框出触发区域（自动填入 x/y/w/h）">🎯 画布框选</button>
-          <label>需开关</label><input id="shReq" list="shObjList" style="width:100px" placeholder="留空=无需" value="${esc(p.require ?? '')}">`;
-        else if (on === 'at') condBox.innerHTML = `<label>T+</label><input type="number" class="num60" id="shAt" step="0.1" value="${p.at ?? 0.5}"><label>秒</label>`;
-        else condBox.innerHTML = `<span style="color:#6a7a96;font-size:10px">无需条件</span>`;
-      };
-      onSel.addEventListener('change', () => {
-        Object.assign(currentPlay ?? {}, readCond()); // 保住切换前输入
-        fillCond(currentPlay ?? {});
-      });
-      // 动作行渲染
-      const actsBox = modal.querySelector('#shActs');
-      const actHTML = (a) => {
-        const kind = a.kind ?? 'banner';
-        const head = `<div class="sh-act-head">
-          <select class="sh-act-kind">
-            ${Object.entries(KIND).map(([k, l]) => `<option value="${k}" ${k === kind ? 'selected' : ''}>${l}(${k})</option>`).join('')}
-          </select>
-          <span class="sh-act-title" data-title></span>
-          <button class="sh-up" title="上移">↑</button>
-          <button class="sh-dn" title="下移">↓</button>
-          <button class="sh-del" title="删除动作">✕</button>
-        </div>`;
-        let body = '';
-        if (kind === 'banner') body = `<div class="sh-row" style="margin-top:4px"><textarea class="sh-bt" rows="2" style="width:100%;box-sizing:border-box" placeholder="横幅文字（可多行）">${esc(a.text ?? '')}</textarea></div>
-          <div class="sh-row"><label>显示</label><input type="number" class="num60 sh-bd" step="0.1" value="${a.dur ?? 3}"><label>秒</label></div>`;
-        else if (kind === 'shake') body = `<div class="sh-row"><label>强度</label><input type="number" class="num60 sh-sn" step="1" value="${a.n ?? 6}"></div>`;
-        else if (kind === 'fireworks') body = `<div class="sh-row"><label>发数</label><input type="number" class="num60 sh-fn" step="1" value="${a.n ?? 12}"><label>颜色</label><input class="sh-fc" style="width:170px" value="${esc((a.colors ?? []).join(','))}" placeholder="留空=默认色板（如 #ffd23f,#c78bff）"></div>`;
-        else if (kind === 'goto') body = `<div class="sh-row"><label>去场景</label><input class="sh-gs" list="shSceneList" style="width:110px" value="${esc(a.scene ?? '')}"><label>落点x</label><input type="number" class="num60 sh-gx" value="${a.spawn?.x ?? ''}"><label>y</label><input type="number" class="num60 sh-gy" value="${a.spawn?.y ?? ''}"><span class="sh-note">留空=场景默认出生点</span></div>`;
-        else body = `<div class="sh-row sh-note">白光闪：提醒注意当前；无参数</div>`;
-        return `<div class="sh-act">${head}<div class="sh-act-body">${body}</div></div>`;
-      };
-      const readAct = (row) => {
-        const kind = row.querySelector('.sh-act-kind').value;
-        const a = { kind };
-        if (kind === 'banner') {
-          const t = row.querySelector('.sh-bt').value;
-          if (t.trim()) a.text = t;
-          const d = parseFloat(row.querySelector('.sh-bd').value);
-          if (Number.isFinite(d)) a.dur = d;
-        } else if (kind === 'shake') {
-          const n = Math.round(parseFloat(row.querySelector('.sh-sn').value) || 0);
-          if (n > 0) a.n = n;
-        } else if (kind === 'fireworks') {
-          const n = Math.round(parseFloat(row.querySelector('.sh-fn').value) || 0);
-          if (n > 0) a.n = n;
-          const cs = row.querySelector('.sh-fc').value.split(',').map((s) => s.trim()).filter(Boolean);
-          if (cs.length) a.colors = cs;
-        } else if (kind === 'goto') {
-          const sc = row.querySelector('.sh-gs').value.trim();
-          if (sc) a.scene = sc;
-          const sx = row.querySelector('.sh-gx').value.trim();
-          const sy = row.querySelector('.sh-gy').value.trim();
-          const spawn = {};
-          if (sx !== '') spawn.x = +sx;
-          if (sy !== '') spawn.y = +sy;
-          if (Object.keys(spawn).length) a.spawn = spawn;
-        }
-        return a;
-      };
-      const walkTitle = (row) => {
-        const a = readAct(row);
-        row.querySelector('[data-title]').textContent = a ? Object.entries(a).map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' ') : '';
-      };
-      const refreshActTitles = () => { for (const r of actsBox.querySelectorAll('.sh-act')) walkTitle(r); };
-      // ★ 动作行交互全部走容器事件委托（重建行后无需重新绑定——之前 bindAct 绑定链
-      //   断在中间：切换类型后新行的 change 监听失效 → 输入框不切换）
-      actsBox.addEventListener('change', (e) => {
-        if (!e.target.classList?.contains('sh-act-kind')) return;
-        const row = e.target.closest('.sh-act');
-        if (!row) return;
-        // 整行重建（换类型=清参数）
-        const div = document.createElement('div');
-        div.innerHTML = actHTML({ kind: e.target.value });
-        row.replaceWith(div.firstChild);
-        walkTitle(div.firstChild);
-      });
-      actsBox.addEventListener('click', (e) => {
-        const row = e.target.closest('.sh-act');
-        if (!row) return;
-        const b = e.target.closest('button');
-        if (!b) return;
-        const parent = row.parentNode;
-        const idx = [...parent.children].indexOf(row);
-        if (b.classList.contains('sh-up') && idx > 0) parent.insertBefore(row, parent.children[idx - 1]);
-        else if (b.classList.contains('sh-dn') && idx < parent.children.length - 1) parent.insertBefore(row, parent.children[idx + 2]);
-        else if (b.classList.contains('sh-del')) row.remove();
-        refreshActTitles();
-      });
-      actsBox.addEventListener('input', (e) => {
-        const row = e.target.closest('.sh-act');
-        if (row) walkTitle(row);
-      });
-      modal.querySelector('#shAddAct').onclick = () => {
-        const div = document.createElement('div');
-        div.innerHTML = actHTML({ kind: 'banner', dur: 3 });
-        actsBox.appendChild(div.firstChild);
-        refreshActTitles();
-      };
-      // 保存/编辑数据
-      let currentPlay = null; // 编辑中的 play（条件区切换时暂存用）
-      // ---- 左列表：全剧本（点选编辑 / ↑↓排序 / ✕删除）+ 顶栏入口 ----
-      const listBox = modal.querySelector('#shList');
-      const countBox = modal.querySelector('#shCount');
-      const fSel = modal.querySelector('#shFilter');
-      renderList = () => {
-        // 场景筛选下拉同步：来源=剧本里出现的场景 + 章节插件场景列表；保留当前选择
-        {
-          const cur = fSel.value || filterScene || '';
-          const uniq = [...new Set(sceneIds().concat(st.plays.map((p) => p.scene).filter(Boolean)))];
-          const optsHtml = `<option value="">全部场景（${st.plays.length}）</option>` + uniq.map((s) =>
-            `<option value="${esc(s)}">${esc(s)}（${st.plays.filter((p) => p.scene === s || !p.scene).length}）</option>`).join('');
-          if (fSel.innerHTML !== optsHtml) { fSel.innerHTML = optsHtml; fSel.value = uniq.includes(cur) ? cur : ''; }
-        }
-        const items = st.plays.map((p, i) => ({ p, i })).filter(({ p }) => !filterScene || p.scene === filterScene || !p.scene);
-        countBox.textContent = `（${filterScene ? items.length + '/' : ''}${st.plays.length} 条）`;
-        if (!items.length) {
-          listBox.innerHTML = filterScene
-            ? '<div style="color:#6a7a96;font-size:11px;padding:8px 4px">该场景还没有剧本（通用剧本不设场景会自动归入）</div>'
-            : '<div style="color:#6a7a96;font-size:11px;padding:8px 4px">（还没有剧本——点右上「＋ 新剧本」）</div>';
-          return;
-        }
-        listBox.innerHTML = items.map(({ p, i }) => `
-          <div class="sh-item${i === curSel ? ' on' : ''}" data-i="${i}" title="场景 ${esc(p.scene ?? '（所有场景）')} · ${esc(trigText(p))}&#10;${esc(sumText(p))}">
-            <span class="sh-i">#${String(i + 1).padStart(2, '0')}</span>
-            <span style="flex:1;min-width:0">
-              <span class="sh-t" style="display:block">${esc(p.scene ?? '—')}｜${esc(trigText(p))}</span>
-              <span class="sh-sub">${esc(sumText(p))}</span>
-            </span>
-            <button data-up="${i}" title="上移" style="${filterScene ? 'display:none' : ''}">↑</button>
-            <button data-dn="${i}" title="下移" style="${filterScene ? 'display:none' : ''}">↓</button>
-            <button data-del="${i}" class="sh-del" title="删除（再点一次确认）">✕</button>
-          </div>`).join('');
-      };
-      fSel.addEventListener('change', () => { filterScene = fSel.value; renderList(); });
-      let armedDel = -1;
-      listBox.addEventListener('click', (e) => {
-        const row = e.target.closest('.sh-item');
-        if (!row) return;
-        const i = +row.dataset.i;
-        const b = e.target.closest('button');
-        if (b?.dataset.up !== undefined) return movePlay(i, -1);
-        if (b?.dataset.dn !== undefined) return movePlay(i, 1);
-        if (b?.dataset.del !== undefined) {
-          if (armedDel === i) {
-            armedDel = -1;
-            st.plays.splice(i, 1);
-            curSel = -1;
-            currentPlay = null; // 已删条目：别被 settleNew 误落库
-            ed.save(); renderList();
-            openEdit(-1); // 删完切到"新剧本"表单
-            say('已删除剧本 #' + (i + 1) + '（还剩 ' + st.plays.length + ' 条）');
-          } else {
-            armedDel = i;
-            setTimeout(() => { if (armedDel === i) armedDel = -1; }, 3000);
-            say('再点一次 ✕ 确认删除剧本 #' + (i + 1));
-          }
-          return;
-        }
-        openEdit(i); // 点行 = 载入右侧表单
-      });
-      const movePlay = (i, d) => {
-        const j = i + d;
-        if (j < 0 || j >= st.plays.length) return;
-        const [p] = st.plays.splice(i, 1);
-        st.plays.splice(j, 0, p);
-        curSel = j;
-        ed.save(); renderList(); openEdit(j);
-      };
-      modal.querySelector('#shAdd').onclick = () => openEdit(-1);
-      const openBtn = document.getElementById('shOpen');
-      if (openBtn) openBtn.onclick = () => openEdit(st.plays.length ? 0 : -1);
-      // pos 触发器：🎯 画布框选（收起弹窗 → 画布拖区域 → 回填 x/y/w/h）
-      condBox.addEventListener('click', (e) => {
-        if (!e.target.closest('.sh-pick')) return;
-        Object.assign(currentPlay ?? {}, readCond());
-        if (typeof ed.pickRect !== 'function') return say('当前编辑器不支持画布框选');
-        modal.style.display = 'none';
-        ed.pickRect((r) => {
-          modal.style.display = 'flex';
-          if (r) {
-            Object.assign(currentPlay ?? {}, r);
-            fillCond(currentPlay ?? {});
-            say(`已框选触发区域：(${r.x},${r.y}) ${r.w}×${r.h}px`); // 保存后写入剧本
-          }
-        });
-      });
-      const openEdit = (i) => {
-        settleNew(); // ★ 切走前：正在编辑的"新剧本"有内容就自动落库（编辑即保存）
-        if (curSel === i) return; // 点同一条：不动（别把正在编辑的表单重置了）
-        curSel = i;
-        modal.dataset.i = String(i); // ★ 保存目标（列表点选/新剧本/打开弹窗三路统一）
-        currentPlay = i >= 0 ? { ...(st.plays[i] ?? {}) } : { on: 'enter', act: [] };
-        modal.querySelector('#shTitle').textContent = i >= 0 ? `🎬 演出剧本书 · 编辑 #${i + 1}` : '🎬 演出剧本书 · 新剧本';
-        modal.querySelector('#shMsg').textContent = '';
-        renderList(); // 左列表高亮滚动到当前
-        modal.querySelector('#shScene').value = currentPlay.scene ?? '';
-        const onSel2 = modal.querySelector('#shOn');
-        onSel2.value = currentPlay.on ?? 'enter';
-        fillCond(currentPlay);
-        // 场景/物体 datalist
-        modal.querySelector('#shSceneList').innerHTML = sceneIds().map((s) => `<option value="${esc(s)}">`).join('');
-        modal.querySelector('#shObjList')?.remove();
-        const dl = document.createElement('datalist');
-        dl.id = 'shObjList';
-        dl.innerHTML = objIds().map((s) => `<option value="${esc(s)}">`).join('');
-        modal.appendChild(dl);
-        // 动作行
-        actsBox.innerHTML = '';
-        for (const a of currentPlay.act ?? []) {
-          const div = document.createElement('div');
-          div.innerHTML = actHTML(a);
-          actsBox.appendChild(div.firstChild);
-        }
-        for (const r of actsBox.querySelectorAll('.sh-act')) walkTitle(r); // 行交互走容器委托，只需刷标题
-        modal.style.display = 'flex';
-        modal.querySelector('#shScene').focus();
-      };
-      /** 读表单 = 当前编辑内容（自动保存与手动保存共用） */
-      const readForm = () => {
-        const p = { ...(currentPlay ?? {}) };
-        p.on = onSel.value; // 触发类型以表单为准（change 时 currentPlay 可能还是旧值）
-        Object.assign(p, readCond());
-        const sc = modal.querySelector('#shScene').value.trim();
-        if (sc) p.scene = sc; else delete p.scene;
-        const acts = [];
-        for (const row of actsBox.querySelectorAll('.sh-act')) {
-          const a = readAct(row);
-          if (a.kind === 'banner' && !a.text) continue;
-          if (a.kind === 'goto' && !a.scene) continue;
-          acts.push(a);
-        }
-        p.act = acts;
-        delete p._fired;
-        return p;
-      };
-      // ★ 编辑态判定基于 curSel（不能用 dataset.i：__openEdit 先改目标值，切换瞬间会误判）
-      const isNew = () => curSel === -1;
-      /** 自动保存（编辑即保存）：改动落库并记下保存印记（400ms 防抖） */
-      const autoSave = () => {
-        clearTimeout(autoTimer);
-        autoTimer = setTimeout(() => {
-          if (!currentPlay || curSel === -1) return; // 新剧本由 settleNew 在切换/关闭时落库
-          const p = readForm();
-          st.plays[+modal.dataset.i] = p;
-          currentPlay = p;
-          ed.save();
-          renderList(); // 刷新左栏摘要（但不打断编辑）
-        }, 400);
-      };
-      /** 新剧本收尾：有内容则自动入库（切换到别条/关闭弹窗时调用） */
-      const settleNew = () => {
-        if (curSel !== -1 || !currentPlay) return;
-        const p = readForm();
-        const has = p.act?.length > 0 || !!p.scene || (p.on && p.on !== 'enter') || Object.keys(p).some((k) => ['x', 'y', 'w', 'h', 'at', 'ref', 'require'].includes(k));
-        if (!has) return;
-        st.plays.push(p);
-        curSel = st.plays.length - 1;
-        modal.dataset.i = String(curSel);
+    const ta = panel.querySelector('#shPlays');
+    const say = (s) => { const st2 = ed.$ && ed.$('#status'); if (st2) st2.textContent = s; };
+    const render = () => { ta.value = JSON.stringify(st.plays, null, 1); };
+    panel.querySelector('#shSave').onclick = () => {
+      try {
+        const v = JSON.parse(ta.value || '[]');
+        if (!Array.isArray(v)) return say('剧本必须是 JSON 数组');
+        st.plays = v;
         ed.save();
-        renderList();
-        say('已自动保存新剧本 #' + (curSel + 1));
-      };
-      // ★ 表单变更 = 自动保存（场景/触发/条件/动作行；动作区行重建也含在内）
-      modal.querySelector('#shScene').addEventListener('input', autoSave);
-      onSel.addEventListener('change', autoSave);
-      condBox.addEventListener('input', autoSave);
-      actsBox.addEventListener('input', autoSave);
-      actsBox.addEventListener('change', autoSave);
-      modal.querySelector('#shSave').onclick = () => {
-        clearTimeout(autoTimer);
-        const p = readForm();
-        if (curSel === -1) { // 新剧本：保存即入库（与 settleNew 同路径，但显式提示）
-          const has = p.act?.length > 0 || !!p.scene || (p.on && p.on !== 'enter');
-          if (!has) { say('新剧本还没有内容（先填场景/触发/动作）'); return; }
-          st.plays.push(p);
-          curSel = st.plays.length - 1;
-          modal.dataset.i = String(curSel);
-        } else {
-          st.plays[+modal.dataset.i] = p;
-          currentPlay = p;
-        }
-        ed.save();
-        renderList(); // ★ 保存后不关窗：继续编辑/切换
-        const sc = modal.querySelector('#shScene').value.trim();
-        say((sc ? `已保存剧本（场景${sc} · ${trigText(p)}）` : '已保存剧本') + (p.act.length ? '' : '（该条暂无有效动作）'));
-      };
-      // ★ 关闭弹窗：先把新剧本落库（编辑即保存的收尾）
-      const closeModal = () => { settleNew(); modal.style.display = 'none'; };
-      modal.querySelector('#shCancel').onclick = closeModal;
-      // openEdit 需要 modal.dataset.i（编辑目标）——放进 modal 上的入口
-      Object.defineProperty(modal, '__openEdit', { value: (i) => { modal.dataset.i = String(i); openEdit(i); } });
-      window.__shOpen = (i) => modal.__openEdit(i); // 测试/调试后门
-    }
-
-    const openEdit = (i) => {
-      if (!modal || !modal.parentNode) return say('演出剧本面板未就绪');
-      modal.__openEdit(i);
+        render();
+        say('剧本已保存 ' + v.length + ' 条');
+      } catch (e) {
+        say('剧本 JSON 解析失败：' + e.message);
+      }
     };
-
-    // 旧版本会误存 _fired（运行态污染，见 run 注释）：加载/读档后统一消毒，面板数据保持干净
-    const scrub = () => { for (const p of st.plays) if (p && typeof p === 'object') delete p._fired; };
-    renderList();
-    scrub();
-    ed.onStateLoaded(() => { scrub(); renderList(); });
-    // 出口再剥一次：即使数据被别处污染，运行时也绝不拿到 _fired
-    ed.pluginCfg(() => ({ plays: st.plays.map((p) => { const c = { ...p }; delete c._fired; return c; }) }));
-    // 卸载/重载清理：移除弹层与样式
-    return () => { document.getElementById('shModal')?.remove(); document.getElementById('shModCss')?.remove(); };
+    render();
+    ed.onStateLoaded(() => render());
+    ed.pluginCfg(() => ({ plays: st.plays }));
   },
 
   run(scene, api, cfg) {
@@ -564,13 +121,7 @@ Chezzle.Plugin.register('showtime', {
           // 场景切换：pos 触发用它（"出口到达"——墙删后玩家走进门后区域即传送；
           // 传送门/回头路同理）。单场景关卡无 M：忽略。
           if (M && a.scene && typeof M.switchTo === 'function') {
-            try {
-              M.switchTo(a.scene, a.spawn ? { spawn: a.spawn } : undefined);
-            } catch (e) {
-              // 不静默：传送目标异常（场景名写错/未构建）时控制台/提示明确可见
-              if (typeof console !== 'undefined') console.error(`[showtime] goto→${a.scene} 失败：`, e);
-              try { scene.tip = `⚠ 传送失败：目标场景「${a.scene}」不存在或未构建`; } catch (e2) { /* 忽略 */ }
-            }
+            M.switchTo(a.scene, a.spawn ? { spawn: a.spawn } : undefined);
           }
         });
       }
@@ -597,11 +148,7 @@ Chezzle.Plugin.register('showtime', {
     }
 
     // ---- 触发器 ----
-    // ★ 一次性标记用局部 Set（fired），**绝不写回 play 对象**——cfg.plays 与编辑器面板
-    //   数据是同一引用，写 p._fired 会把运行态污染回编辑器/JSON（"改过关卡后横幅全
-    //   消失"的根因：上次试玩把 _fired:true 存进了剧本，再玩直接跳过）。
-    const fired = new Set();
-    const fireOnce = (p) => { if (fired.has(p)) return; fired.add(p); doActions(p.act); };
+    const fireOnce = (p) => { if (p._fired) return; p._fired = true; doActions(p.act); };
 
     // ① enter：Multiscene switchTo 会 fire('enter')
     for (const p of plays) {
@@ -617,7 +164,7 @@ Chezzle.Plugin.register('showtime', {
     const openWatch = () => {
       for (const p of openRefs) {
         const sw = scene.byId[p.ref];
-        if (!sw || fired.has(p)) continue;
+        if (!sw || p._fired) continue;
         const eff = typeof sw.effectiveOpen === 'function' ? sw.effectiveOpen(scene) : !!sw.open;
         if (eff && !sw._shLast) fireOnce(p);
         sw._shLast = eff;
@@ -630,7 +177,7 @@ Chezzle.Plugin.register('showtime', {
     for (const p of plays) {
       if (p.on !== 'pos' || !(Number.isFinite(p.x) && Number.isFinite(p.w))) continue;
       const check = () => {
-        if (fired.has(p)) return;
+        if (p._fired) return;
         let ok = true;
         if (p.require) {
           const sw = scene.byId[p.require];
@@ -834,18 +381,10 @@ Chezzle.Plugin.register('checkpoint', {
 // }
 // @@end
 
-/** 编辑器提示数据（{text, mode, items}）→ 引擎场景提示（{text, when:{mode, items}}）——
- *  试玩注入用；导出走 ed.sceneDsl（内部同规格转换）。 */
-const toSceneTips = (tips) => (Array.isArray(tips) ? tips : [])
-  .map((t) => (t && typeof t.text === 'string'
-    ? { text: t.text, when: { mode: t.mode === 'any' ? 'any' : 'and', items: (Array.isArray(t.items) ? t.items : []).filter((c) => c && c.type) } }
-    : null))
-  .filter(Boolean);
-
 Chezzle.Plugin.register('chapters', {
   editor(ed) {
     const st = ed.state;
-    st.scenes = st.scenes ?? []; // [{ id, snap }]；snap = { worldW, worldH, rx, atm, tips, hideTouchGrab, objects }
+    st.scenes = st.scenes ?? []; // [{ id, snap }]；snap = { worldW, worldH, rx, atm, objects }
     st.current = st.current ?? null;
     st.start = st.start ?? null; // 初始场景 id
 
@@ -873,10 +412,9 @@ Chezzle.Plugin.register('chapters', {
     const addScene = () => {
       saveCurrent();
       const id = nextId();
-      const blank = { worldW: 3000, worldH: 800, rx: [], atm: {}, tips: [], hideTouchGrab: false, objects: [] };
-      st.scenes.push({ id, snap: { ...blank } });
+      st.scenes.push({ id, snap: { worldW: 3000, worldH: 800, rx: [], atm: {}, objects: [] } });
       st.current = id;
-      ed.applySnapshot({ ...blank });
+      ed.applySnapshot({ worldW: 3000, worldH: 800, rx: [], atm: {}, objects: [] });
       refresh();
     };
     let armDel = -1;
@@ -951,11 +489,6 @@ Chezzle.Plugin.register('chapters', {
     applyPlayUi(false); // 初始（编辑器态）
     ed.onPlayState(applyPlayUi);
 
-    // ★ 顶层画布对象变更 → 当前场景快照回写（ed.snapshot() 读顶层 state）。
-    //   否则多场景里改属性只进顶层 state，刷新/切场景/试玩都从旧快照还原
-    //   （用户"修改传送门开关属性不保存"的根因）。
-    ed.onSceneSync(() => saveCurrent());
-
     // 初始化：空则登记当前画布为场景 a
     if (st.scenes.length === 0) {
       st.scenes.push({ id: 'a', snap: ed.snapshot() });
@@ -963,23 +496,10 @@ Chezzle.Plugin.register('chapters', {
     } else if (!st.scenes.some((s) => s.id === st.current)) {
       st.current = st.scenes[0].id;
     }
-    // ★★ 初始场景缺省 = 第一个
+    // ★ 初始场景缺省 = 第一个
     if (!st.start || !st.scenes.some((s) => s.id === st.start)) st.start = st.scenes[0].id;
     refresh();
     ed.onStateLoaded(() => refresh());
-
-    // 场景入口点（开关「切到场景」的落点兜底）：摆放玩家 → 最宽地板中心上方 → 世界中央。
-    // 旧版用世界正中央——场景中央常常无地板，玩家直接掉虚空（用户反馈"传送到虚空"）。
-    const entryPoint = (t) => {
-      const pp = (t.snap.objects ?? []).find((o) => o.type === 'player');
-      if (pp) return { x: Math.round(pp.opts.x ?? 0), y: Math.round((pp.opts.y ?? 0) + 10) };
-      const floors = (t.snap.objects ?? [])
-        .filter((o) => o.type === 'floor' && (o.opts?.w ?? 0) > 60)
-        .sort((a, b) => (b.opts?.w ?? 0) - (a.opts?.w ?? 0));
-      const f = floors[0];
-      if (f) return { x: Math.round((f.opts.x ?? 0) + (f.opts.w ?? 0) / 2), y: Math.round((f.opts.y ?? 0) - 40) };
-      return { x: Math.round((t.snap.worldW ?? 3000) / 2), y: Math.round((t.snap.worldH ?? 800) / 2) };
-    };
 
     // ---- 试玩接管（current=仅当前场景；all=整关从初始场景开始；单场景不接管） ----
     function buildAndPlay(scenesGo, startId) {
@@ -990,14 +510,8 @@ Chezzle.Plugin.register('chapters', {
       wrap.style.position = 'relative';
       const holder = document.createElement('div');
       holder.style.cssText = 'position:absolute;inset:0;z-index:60;background:#0b0e28;display:flex;align-items:center;justify-content:center;';
-      // 试玩窗口 = 导出实机视口（1100×700）等比缩放进画布区——比例/视野与实机一致
-      // （之前 box 100%宽×100%高，画布 1100×700 被拉伸变形="试玩和实机比例对不上"）
-      const P = 1100, H = 700;
-      const sc = Math.min(wrap.clientWidth / P, (wrap.clientHeight - 8) / H);
-      const boxW = Math.max(1, Math.round(P * sc));
-      const boxH = Math.max(1, Math.round(H * sc));
       const box = document.createElement('div');
-      box.style.cssText = `position:relative;width:${boxW}px;height:${boxH}px;`;
+      box.style.cssText = 'position:relative;width:100%;max-width:1100px;height:calc(100% - 8px);';
       holder.appendChild(box);
       wrap.appendChild(holder);
       const hint = document.createElement('div');
@@ -1005,27 +519,16 @@ Chezzle.Plugin.register('chapters', {
       hint.style.cssText = 'position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:70;color:#6a7a96;font-size:11px;font-family:system-ui,sans-serif;';
       holder.appendChild(hint);
       const M = new Chezzle.Multiscene(box, {
-        width: boxW, height: boxH, // 逻辑=盒尺寸（缓冲自动 ×dpr：编辑内试玩也高清）
+        width: 1100,
+        height: 700,
         // 插件 cfg 注入 M（惰性函数——showtime/checkpoint 做场景匹配用）
         plugins: ed.getActivePlugins().map((p) => ({ ...p, cfg: { ...(p.cfg ?? {}), M: () => M } })),
       });
       for (const s of scenesGo) {
-        const b = M.scene(s.id, { worldW: s.snap.worldW, worldH: s.snap.worldH, hideTouchGrab: !!s.snap.hideTouchGrab });
-        // 条件提示（多场景每场景独立清单；与导出 sceneDsl 同规格）
-        const tps = toSceneTips(s.snap.tips);
-        if (tps.length) b.tips(tps);
-        let hasPlayer = false;
+        const b = M.scene(s.id, { worldW: s.snap.worldW, worldH: s.snap.worldH });
         for (const p of ed.objectsFrom(s.snap)) {
           if (p.type === 'rope') continue;
           if (p.obj) b.add(p.obj);
-          if (p.type === 'player') hasPlayer = true;
-        }
-        // ★ 无摆放玩家的场景 → 注入默认玩家（放入口点：地板中心上方）。
-        //   否则 temple 等"无玩家关卡"启动/传送进后 scene.player=null，相机无焦点、
-        //   永远看不到玩家（用户 level(24) 复现：temple 直接启动没有玩家出现）
-        if (!hasPlayer && s.snap.objects != null) {
-          const ep = entryPoint(s);
-          b.add(new Chezzle.Player({ x: ep.x, y: ep.y, substance: 'NaOH', mass: 30, id: 'auto_player' }));
         }
         for (const rxc of s.snap.rx ?? []) {
           const rule = Chezzle.parseReactionStr(rxc);
@@ -1033,24 +536,26 @@ Chezzle.Plugin.register('chapters', {
         }
       }
       M.buildAll();
-      // 绳子 + 大气预设（buildAll 后；rope 必须用编辑器 API 接线——直接 add 未接线
-      // 的预览对象会得到一条"不吊任何东西"的绳子，用户 level(23) 复现）
+      // 绳子 + 大气预设（buildAll 后）
       for (const s of scenesGo) {
         const sc = M.byName(s.id);
         if (!sc) continue;
-        ed.wireRopes(sc, s.snap);
-        // 大气 preset（整组独占：设置过的按值、没设置的=没有；空=保持默认）
-        sc.atmosphere.preset(s.snap.atm ?? {});
+        for (const p of ed.objectsFrom(s.snap)) {
+          if (p.type === 'rope' && p.obj) sc.addObject(p.obj);
+        }
+        for (const [gid, mass] of Object.entries(s.snap.atm ?? {})) {
+          if (Number.isFinite(mass) && mass > 0) sc.atmosphere.setGas(gid, mass);
+        }
       }
-      // 开关「切到场景」→ switchTo（落点 = 目标场景入口点：摆放玩家/地板中心）
+      // 开关「切到场景」→ switchTo（目标场景玩家位置=入口）
       for (const s of scenesGo) {
         for (const p of ed.objectsFrom(s.snap)) {
           if (p.type !== 'switch' || !p.obj.sceneTo || !p.obj.id) continue;
           const target = scenesGo.find((t) => t.id === p.obj.sceneTo);
           if (!target) continue;
-          const spawn = entryPoint(target);
+          let spawn = { x: Math.round((target.snap.worldW ?? 3000) / 2), y: Math.round((target.snap.worldH ?? 800) / 2) };
           const pp = (target.snap.objects ?? []).find((o) => o.type === 'player');
-          if (pp) spawn.y = Math.round(pp.opts.y ?? 0);
+          if (pp) spawn = { x: Math.round(pp.opts.x ?? 0), y: Math.round((pp.opts.y ?? 0) + 10) };
           M.byId(s.id, p.obj.id)?.onOpen(() => M.switchTo(target.id, { spawn }));
         }
       }
@@ -1060,7 +565,7 @@ Chezzle.Plugin.register('chapters', {
     }
 
     ed.onPlay(() => {
-      saveCurrent();
+      saveCurrent(); // 当前编辑内容先进快照（试玩/导出永远基于最新场景）
       const scenes = st.scenes.filter((s) => s.snap);
       if (scenes.length <= 1) return null; // 单场景：编辑器默认试玩
       const startId = st.scenes.some((s) => s.id === st.start) ? st.start : scenes[0].id;
@@ -1069,13 +574,9 @@ Chezzle.Plugin.register('chapters', {
 
     ed.onPlay(() => {
       saveCurrent();
-      const scenes = st.scenes.filter((s) => s.snap);
-      if (scenes.length <= 1) return null;
       const s = st.scenes.find((x) => x.id === st.current);
       if (!s?.snap) return null;
-      // ★ 构建全部场景、从当前场景开始（= 快速跳到当前场景玩，跨场景剧本 goto 仍可用）——
-      //   只构建当前场景会让传送剧本报"场景不存在或未构建"（用户 canyon 传送点排查到的问题）
-      return buildAndPlay(scenes, s.id);
+      return buildAndPlay([s], s.id);
     }, 'current');
 
     // ---- 导出钩子：多场景 → Multiscene + 开关接线 + 大气预设 + 初始场景 ----
@@ -1087,22 +588,24 @@ Chezzle.Plugin.register('chapters', {
       const startId = st.scenes.some((s) => s.id === st.start) ? st.start : scenes[0].id;
       lines.length = 0;
       lines.push("const canvas = document.getElementById('game');");
-      lines.push('Chezzle.fitCanvasToWindow(canvas);'); // 高清+窗口自适应（缓冲 ×devicePixelRatio）
-      lines.push("window.addEventListener('resize', () => Chezzle.fitCanvasToWindow(canvas));");
+      lines.push('canvas.width = 1100;');
+      lines.push('canvas.height = 700;');
       // 插件（含编辑器配置的 cfg：演出剧本/检查点等）；构造后再补 M 惰性引用
       lines.push(`const PLUGINS = ${ctx.safeJson(ed.getActivePlugins())};`);
-      lines.push('const M = new Chezzle.Multiscene(canvas, { plugins: PLUGINS });');
+      lines.push('const M = new Chezzle.Multiscene(canvas, { width: 0, height: 0, plugins: PLUGINS });');
       lines.push('for (const p of PLUGINS) if (p.cfg && typeof p.cfg === "object") p.cfg.M = () => M;');
       const post = [];
       for (const s of scenes) {
-        const d = ed.sceneDsl(s.snap, s.id, true); // ensurePlayer：无玩家场景注入默认玩家（否则启动无玩家/无焦点）
+        const d = ed.sceneDsl(s.snap, s.id);
         lines.push(...d.chain);
         post.push(...d.post);
         for (const p of d.placed) {
           if (p.type !== 'switch' || !p.obj.sceneTo || !p.obj.id) continue;
           const target = scenes.find((t) => t.id === p.obj.sceneTo);
           if (!target) continue;
-          const spawn = entryPoint(target);
+          let spawn = { x: Math.round((target.snap.worldW ?? 3000) / 2), y: Math.round((target.snap.worldH ?? 800) / 2) };
+          const pp = (target.snap.objects ?? []).find((o) => o.type === 'player');
+          if (pp) spawn = { x: Math.round(pp.opts.x ?? 0), y: Math.round((pp.opts.y ?? 0) + 10) };
           lines.push(`// 🚪 ${s.id}.${p.obj.id} → ${target.id}`);
           lines.push(`M.byId(${q(s.id)}, ${q(p.obj.id)})?.onOpen(() => M.switchTo(${q(target.id)}, { spawn: { x: ${spawn.x}, y: ${spawn.y} } }));`);
         }
@@ -1124,10 +627,10 @@ Chezzle.Plugin.register('chapters', {
 <script src="report.js"></script>
 <script>
 const canvas = document.getElementById('game');
-Chezzle.fitCanvasToWindow(canvas);
-window.addEventListener('resize', () => Chezzle.fitCanvasToWindow(canvas));
-const PLUGINS = [{"name":"showtime","cfg":{"plays":[{"scene":"crater","on":"pos","at":0.5,"act":[{"kind":"banner","text":"小测验——自己解决小关卡！\n先鸟瞰看全貌，遇到问题看提示！","dur":2.2}],"x":50,"y":896,"w":292,"h":174},{"scene":"plain","on":"at","at":3,"act":[{"kind":"banner","text":"欢迎来到 Chezzle！","dur":2.2}]},{"scene":"plain","on":"at","at":5.6,"act":[{"kind":"banner","text":"在Chezzle，你就是一团化学物质\n比如现在是一块 50 克的氢氧化钠","dur":3}]},{"scene":"plain","on":"at","at":9,"act":[{"kind":"banner","text":"每个关都要：跋山涉水，保全自己（别让自己被反应完了）\n收集通关要用的物质，放入“钥匙”，走进传送门就能通关啦","dur":3.2}]},{"scene":"plain","on":"at","at":12.6,"act":[{"kind":"banner","text":"如果你不小心把自己反应完了——嘿嘿，一切重来吧","dur":2.6}]},{"scene":"plain","on":"at","at":15.6,"act":[{"kind":"banner","text":"电脑端 A / D 移动 · 空格跳跃\n移动端通过左下角半圆盘移动","dur":2.8}]},{"scene":"plain","on":"pos","x":1850,"y":480,"w":350,"h":320,"act":[{"kind":"banner","text":"这是「开关」，分两种：\n①踩上就开（站上去试试！）\n②要化学物质才开\n踩上去试试！","dur":3.6}]},{"scene":"plain","on":"open","ref":"p_gate_sw","act":[{"kind":"shake","n":5},{"kind":"banner","text":"闸门开了——向右走进入下一关！","dur":2.4}]},{"scene":"canyon","on":"pos","x":80,"y":520,"w":400,"h":380,"act":[{"kind":"banner","text":"认识一下——这个是药品池！\n跳进去看看会发生什么！","dur":3.4}]},{"scene":"canyon","on":"pos","x":241,"y":561,"w":182,"h":138,"act":[{"kind":"banner","text":"有沉淀——试试收集！","dur":3.2}]},{"scene":"canyon","on":"pos","x":1842,"y":430,"w":334,"h":356,"act":[{"kind":"banner","text":"「冰面」：滑！沉淀放上去会自己溜走——\n在这别想搭高，不信你试试！","dur":3.6}]},{"scene":"plateau","on":"pos","x":40,"y":480,"w":360,"h":320,"act":[{"kind":"banner","text":"新道具——酒精灯！","dur":3.6}]},{"scene":"plateau","on":"pos","x":866,"y":589,"w":155,"h":131,"act":[{"kind":"banner","text":"试试实际运用！","dur":3.4}]},{"scene":"plateau","on":"pos","x":677,"y":586,"w":255,"h":122,"act":[{"kind":"banner","text":"「焰色反应」：粉末放灯上 → 火焰变色！","dur":3.4}]},{"scene":"plateau","on":"open","ref":"d_swCuO","act":[{"kind":"shake","n":5},{"kind":"banner","text":"“烤”出来的 CuO 打开了开关——前进！","dur":2.4}]},{"scene":"well","on":"pos","x":260,"y":660,"w":460,"h":240,"act":[{"kind":"banner","text":"把 Zn 推进盐酸池：Zn + 2HCl → ZnCl₂ + H₂↑\n（产氢！看气泡柱）","dur":3.6}]},{"scene":"well","on":"open","ref":"w_det","act":[{"kind":"shake","n":6},{"kind":"banner","text":"🧪 测验①通过！氢气达标，出口解锁","dur":2.8},{"kind":"fireworks","n":4}]},{"scene":"basin","on":"pos","x":80,"y":480,"w":340,"h":320,"act":[{"kind":"banner","text":"加钠！！","dur":3.6}]},{"scene":"basin","on":"open","ref":"b_det","act":[{"kind":"shake","n":14},{"kind":"banner","text":"轰！\n（看！爆炸还会切断绳子——右边，吊着的块砸下来了）","dur":4.6},{"kind":"fireworks","n":6}]},{"scene":"basin","on":"pos","x":1640,"y":440,"w":380,"h":360,"act":[{"kind":"banner","text":"这个是传送门","dur":3.4}]},{"scene":"plain","on":"pos","x":2130,"y":400,"w":110,"h":340,"act":[{"kind":"goto","scene":"canyon","spawn":{"x":120,"y":808}}]},{"scene":"canyon","on":"pos","x":2220,"y":370,"w":169,"h":333,"act":[{"kind":"goto","scene":"plateau"},{"kind":"fireworks","n":4}]},{"scene":"plateau","on":"pos","x":1806,"y":468,"w":169,"h":290,"act":[{"kind":"goto","scene":"well","spawn":{"x":120,"y":628}}]},{"scene":"well","on":"pos","x":1140,"y":540,"w":120,"h":200,"require":"w_det","act":[{"kind":"goto","scene":"basin","spawn":{"x":120,"y":608}}]},{"on":"pos","act":[{"kind":"banner","text":"搭高时间到！\n你可以向脚下放置沉淀来搭高！","dur":3}],"x":1416,"y":497,"w":117,"h":154,"scene":"canyon"},{"on":"pos","act":[{"kind":"banner","text":"真棒！","dur":3}],"x":1545,"y":543,"w":150,"h":200,"scene":"plain"},{"scene":"canyon","on":"open","ref":"c_swCu","act":[{"kind":"shake","n":5},{"kind":"banner","text":"真棒！继续前进！","dur":2.4},{"kind":"fireworks","n":4}]},{"on":"pos","act":[{"kind":"banner","text":"来段跑酷！","dur":3},{"kind":"fireworks","n":4}],"x":609,"y":515,"w":185,"h":195,"scene":"plain"},{"on":"pos","act":[{"kind":"banner","text":"沉淀能收集，还能放置！","dur":3}],"x":657,"y":495,"w":463,"h":172,"scene":"canyon"},{"on":"pos","act":[{"kind":"banner","text":"沉淀还能放到药品池里！","dur":3}],"x":1062,"y":552,"w":184,"h":138,"scene":"canyon"},{"on":"pos","act":[{"kind":"banner","text":"百米深坑，如何能过？","dur":3}],"x":-84,"y":582,"w":170,"h":157,"scene":"well"},{"on":"pos","scene":"basin","act":[{"kind":"banner","text":"这个是传送门，它可以把你带到别的地方！","dur":3.4}]},{"on":"enter","scene":"temple","act":[{"kind":"banner","text":"欢迎来到传送门的世界！\n传送门是游戏中的重要道具，\n因此我们要用整个章节学它！","dur":2.2},{"kind":"fireworks","n":2}]},{"on":"pos","act":[{"kind":"banner","text":"知识点1——开关传送门！","dur":3}],"x":410,"y":155,"w":386,"h":174,"scene":"temple"},{"on":"pos","act":[{"kind":"banner","text":"知识点2——有限传送门！","dur":3}],"x":1247,"y":480,"w":360,"h":243,"scene":"temple"},{"on":"pos","act":[{"kind":"banner","text":"还有——认识一下——提取器！","dur":3}],"x":1723,"y":84,"w":322,"h":239,"scene":"temple"},{"on":"pos","act":[{"kind":"banner","text":"要通关了！！","dur":3},{"kind":"fireworks","n":12}],"x":708,"y":202,"w":281,"h":181,"scene":"crater"},{"on":"at","act":[{"kind":"banner","text":"嘿！你好！","dur":3}],"scene":"plain","at":0}]}},{"name":"checkpoint","cfg":{"spawns":[{"scene":"plain","id":"c1","x":0,"y":0,"w":700,"h":800,"sx":140,"sy":700},{"scene":"canyon","id":"c2","x":-60,"y":0,"w":900,"h":1000,"sx":120,"sy":900},{"scene":"plateau","id":"c3","x":-60,"y":0,"w":800,"h":800,"sx":120,"sy":700},{"scene":"well","id":"c4","x":0,"y":0,"w":1200,"h":715,"sx":150,"sy":700},{"scene":"well","id":"c4b","x":0,"y":715,"w":1200,"h":200,"sx":460,"sy":820},{"scene":"basin","id":"c5","x":0,"y":0,"w":900,"h":800,"sx":120,"sy":700},{"scene":"temple","id":"c6","x":0,"y":0,"w":900,"h":800,"sx":120,"sy":700},{"scene":"crater","id":"c7","x":0,"y":0,"w":1200,"h":1200,"sx":140,"sy":1040}],"texts":["复活！化学家从不回头看爆炸","没事，NaOH 还有很多（30 克而已）","刚才那是教学的一部分（才怪）","重来一次！这回先看路标"]}},{"name":"chapters"}];
-const M = new Chezzle.Multiscene(canvas, { plugins: PLUGINS });
+canvas.width = 1100;
+canvas.height = 700;
+const PLUGINS = [{"name":"showtime","cfg":{"plays":[{"scene":"crater","on":"pos","at":0.5,"act":[{"kind":"banner","text":"小测验——自己解决小关卡！\n先鸟瞰看全貌，遇到问题看提示！","dur":2.2}],"x":50,"y":896,"w":292,"h":174},{"scene":"plain","on":"at","at":3,"act":[{"kind":"banner","text":"欢迎来到 Chezzle！","dur":2.2}]},{"scene":"plain","on":"at","at":5.6,"act":[{"kind":"banner","text":"在Chezzle，你就是一团化学物质\n比如现在是一块 50 克的氢氧化钠","dur":3}]},{"scene":"plain","on":"at","at":9,"act":[{"kind":"banner","text":"每个关都要：跋山涉水，保全自己（别让自己被反应完了）\n收集通关要用的物质，放入“钥匙”，走进传送门就能通关啦","dur":3.2}]},{"scene":"plain","on":"at","at":12.6,"act":[{"kind":"banner","text":"如果你不小心把自己反应完了——嘿嘿，一切重来吧","dur":2.6}]},{"scene":"plain","on":"at","at":15.6,"act":[{"kind":"banner","text":"电脑端 A / D 移动 · 空格跳跃\n移动端通过左下角半圆盘移动","dur":2.8}]},{"scene":"plain","on":"pos","x":1850,"y":480,"w":350,"h":320,"act":[{"kind":"banner","text":"这是「开关」，分两种：\n①踩上就开（站上去试试！）\n②要化学物质才开\n踩上去试试！","dur":3.6}]},{"scene":"plain","on":"open","ref":"p_gate_sw","act":[{"kind":"shake","n":5},{"kind":"banner","text":"闸门开了——向右走进入下一关！","dur":2.4}]},{"scene":"canyon","on":"pos","x":80,"y":520,"w":400,"h":380,"act":[{"kind":"banner","text":"认识一下——这个是药品池！\n跳进去看看会发生什么！","dur":3.4}]},{"scene":"canyon","on":"pos","x":241,"y":561,"w":182,"h":138,"act":[{"kind":"banner","text":"有沉淀——试试收集！","dur":3.2}]},{"scene":"canyon","on":"pos","x":1842,"y":430,"w":334,"h":356,"act":[{"kind":"banner","text":"「冰面」：滑！沉淀放上去会自己溜走——\n在这别想搭高，不信你试试！","dur":3.6}]},{"scene":"plateau","on":"pos","x":40,"y":480,"w":360,"h":320,"act":[{"kind":"banner","text":"新道具——酒精灯！","dur":3.6}]},{"scene":"plateau","on":"pos","x":866,"y":589,"w":155,"h":131,"act":[{"kind":"banner","text":"试试实际运用！","dur":3.4}]},{"scene":"plateau","on":"pos","x":677,"y":586,"w":255,"h":122,"act":[{"kind":"banner","text":"「焰色反应」：粉末放灯上 → 火焰变色！","dur":3.4}]},{"scene":"plateau","on":"open","ref":"d_swCuO","act":[{"kind":"shake","n":5},{"kind":"banner","text":"“烤”出来的 CuO 打开了开关——前进！","dur":2.4}]},{"scene":"well","on":"pos","x":260,"y":660,"w":460,"h":240,"act":[{"kind":"banner","text":"把 Zn 推进盐酸池：Zn + 2HCl → ZnCl₂ + H₂↑\n（产氢！看气泡柱）","dur":3.6}]},{"scene":"well","on":"open","ref":"w_det","act":[{"kind":"shake","n":6},{"kind":"banner","text":"🧪 测验①通过！氢气达标，出口解锁","dur":2.8},{"kind":"fireworks","n":4}]},{"scene":"basin","on":"pos","x":80,"y":480,"w":340,"h":320,"act":[{"kind":"banner","text":"加钠！！","dur":3.6}]},{"scene":"basin","on":"open","ref":"b_det","act":[{"kind":"shake","n":14},{"kind":"banner","text":"轰！\n（看！爆炸还会切断绳子——右边，吊着的块砸下来了）","dur":4.6},{"kind":"fireworks","n":6}]},{"scene":"basin","on":"pos","x":1640,"y":440,"w":380,"h":360,"act":[{"kind":"banner","text":"这个是传送门","dur":3.4}]},{"scene":"plain","on":"pos","x":2130,"y":400,"w":110,"h":340,"act":[{"kind":"goto","scene":"canyon","spawn":{"x":120,"y":808}}]},{"scene":"canyon","on":"pos","x":2220,"y":370,"w":169,"h":333,"act":[{"kind":"goto","scene":"plateau"},{"kind":"fireworks","n":4}]},{"scene":"plateau","on":"pos","x":1806,"y":468,"w":169,"h":290,"act":[{"kind":"goto","scene":"well","spawn":{"x":120,"y":628}}]},{"scene":"well","on":"pos","x":1140,"y":540,"w":120,"h":200,"require":"w_det","act":[{"kind":"goto","scene":"basin","spawn":{"x":120,"y":608}}]},{"on":"pos","act":[{"kind":"banner","text":"搭高时间到！\n你可以向脚下放置沉淀来搭高！","dur":3}],"x":1416,"y":497,"w":117,"h":154,"scene":"canyon"},{"on":"pos","act":[{"kind":"banner","text":"真棒！","dur":3}],"x":1545,"y":543,"w":150,"h":200,"scene":"plain"},{"scene":"canyon","on":"open","ref":"c_swCu","act":[{"kind":"shake","n":5},{"kind":"banner","text":"真棒！继续前进！","dur":2.4},{"kind":"fireworks","n":4}]},{"on":"pos","act":[{"kind":"banner","text":"来段跑酷！","dur":3},{"kind":"fireworks","n":4}],"x":609,"y":515,"w":185,"h":195,"scene":"plain"},{"on":"pos","act":[{"kind":"banner","text":"沉淀能收集，还能放置！","dur":3}],"x":657,"y":495,"w":463,"h":172,"scene":"canyon"},{"on":"pos","act":[{"kind":"banner","text":"沉淀还能放到药品池里！","dur":3}],"x":1062,"y":552,"w":184,"h":138,"scene":"canyon"},{"on":"pos","act":[{"kind":"banner","text":"百米深坑，如何能过？","dur":3}],"x":-84,"y":582,"w":170,"h":157,"scene":"well"},{"on":"pos","scene":"basin","act":[{"kind":"banner","text":"这个是传送门，它可以把你带到别的地方！","dur":3.4}]},{"on":"enter","scene":"temple","act":[{"kind":"banner","text":"欢迎来到传送门的世界！\n传送门是游戏中的重要道具，\n因此我们要用整个章节学它！","dur":2.2},{"kind":"fireworks","n":2}]},{"on":"pos","act":[{"kind":"banner","text":"知识点1——开关传送门！","dur":3}],"x":410,"y":155,"w":386,"h":174,"scene":"temple","_fired":true},{"on":"pos","act":[{"kind":"banner","text":"知识点2——有限传送门！","dur":3}],"x":1247,"y":480,"w":360,"h":243,"scene":"temple","_fired":true},{"on":"pos","act":[{"kind":"banner","text":"还有——认识一下——提取器！","dur":3}],"x":1723,"y":84,"w":322,"h":239,"scene":"temple","_fired":true},{"on":"pos","act":[{"kind":"banner","text":"要通关了！！","dur":3},{"kind":"fireworks","n":12}],"x":708,"y":202,"w":281,"h":181,"scene":"crater"}]}},{"name":"checkpoint","cfg":{"spawns":[{"scene":"plain","id":"c1","x":0,"y":0,"w":700,"h":800,"sx":140,"sy":700},{"scene":"canyon","id":"c2","x":-60,"y":0,"w":900,"h":1000,"sx":120,"sy":900},{"scene":"plateau","id":"c3","x":-60,"y":0,"w":800,"h":800,"sx":120,"sy":700},{"scene":"well","id":"c4","x":0,"y":0,"w":1200,"h":715,"sx":150,"sy":700},{"scene":"well","id":"c4b","x":0,"y":715,"w":1200,"h":200,"sx":460,"sy":820},{"scene":"basin","id":"c5","x":0,"y":0,"w":900,"h":800,"sx":120,"sy":700},{"scene":"temple","id":"c6","x":0,"y":0,"w":900,"h":800,"sx":120,"sy":700},{"scene":"crater","id":"c7","x":0,"y":0,"w":1200,"h":1200,"sx":140,"sy":1040}],"texts":["复活！化学家从不回头看爆炸","没事，NaOH 还有很多（30 克而已）","刚才那是教学的一部分（才怪）","重来一次！这回先看路标"]}},{"name":"chapters"}];
+const M = new Chezzle.Multiscene(canvas, { width: 0, height: 0, plugins: PLUGINS });
 for (const p of PLUGINS) if (p.cfg && typeof p.cfg === "object") p.cfg.M = () => M;
 M.scene("plain", { worldW: 3000, worldH: 800 })
   .floor(-103, 700, 547, 130, { id: 'p_floor' })
@@ -1276,7 +779,7 @@ M.scene("crater", { worldW: 1500, worldH: 1150 })
   .extractor(835, 1041, { w: 50, h: 14, poolId: 'pool1', rate: 0.25, id: 'extractor1' })
   .block(734, 968, { substance: 'Zn', w: 80, h: 80, id: 'block1' })
   .floor(9, 733, 140, 78, { id: 'floor3' })
-  .floor(302, 734, 236, 73, { id: 'floor4' })
+  .floor(302, 734, 236, 73, { ice: true, id: 'floor4' })
   .pool(144, 740, 162, 45, { volume: 360, solutes: {"CuSO4":30}, id: 'pool2' })
   .blastlamp(327, 690, { autoOn: true, highTemp: true, id: 'blastlamp1' })
   .switch(101, 709, { mode: 'chemical', opening: 'Cu', id: 'switch1' })
@@ -1289,7 +792,6 @@ M.scene("crater", { worldW: 1500, worldH: 1150 })
   .sign(467, 221, '最后的最后——还有一个点没教哦！\nChezzle的通关方式很简单，\n需要你到达通关点，\n然后向右边的钥匙中，放入所需\n的通关物质\n然后旁边的大门就会打开，\n走进去就好啦！', { id: 'sign3' })
   .sign(977, 271, '恭喜通关！！\n之后，你就需要自己通关后续的关卡了，\n祝你的化学之路一路顺畅！', { id: 'sign4' })
   .sign(245, 964, '这里有一个好习惯：\n行动之前，先点击鸟瞰按钮，\n看清关卡全貌，构思通关路径！', { id: 'sign5' })
-  .player(253, 1012, { substance: 'NaOH', mass: 30, id: 'auto_player' })
   .tips([
     { text: "观察到有一个压力提取器，肯定要从溶液中提取物质。\n注意到关卡最终通关的钥匙需要填充NaCl，\n而整个关卡只有NaOH和HCl反应能够得到NaCl，\n因此思路就明确了：玩家自身和HCl反应\n得到氯化钠，之后通过\n提取器提取出来备用！\n（注意反应的量哦，不要把自己反应完了）", when: {"mode":"and","items":[{"type":"pos","x":-55,"y":861,"w":1126,"h":308},{"type":"inv","x":0,"y":0,"w":200,"h":120,"item":"NaCl","has":false}]}},
     { text: "我们肯定要往上走，怎么向上呢？\n看到Zn，想到Zn和HCl反应生成氢气，\n氢气提供向上的气泡柱把玩家托上去！\n因此，要把Zn推入池子，然后跳到气泡柱上，\n到达第二层！", when: {"mode":"and","items":[{"type":"pos","x":45,"y":857,"w":917,"h":254},{"type":"inv","x":0,"y":0,"w":200,"h":120,"item":"NaCl","has":true}]}},
