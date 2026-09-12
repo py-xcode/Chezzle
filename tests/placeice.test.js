@@ -219,3 +219,26 @@ test('烧杯等可携带容器不吸附（吸进去会乱，用户定案）', ()
   assert.ok(scene.particles.length >= 1, '地面正常生成颗粒');
   assert.equal(beaker.precipitates.get('NaCl') ?? 0, 0, '烧杯没被投入');
 });
+
+test('吸附半径：可站上去的台子(灯/开关)收紧到 60，药品池保持 120', () => {
+  const scene = new Scene({ worldW: 1500, worldH: 800 });
+  scene.addObject(new Floor({ x: 0, y: 700, w: 1400, h: 100 }));
+  const sw = new Switch({ x: 400, y: 678, w: 40, h: 22, mode: 'pressure', id: 'swR' });
+  const pool = new Pool({ x: 900, y: 660, w: 120, h: 40, id: 'poolR' });
+  scene.addObject(sw); scene.addObject(pool);
+  const standAtDx = (target, dx) => {
+    const r = target.innerRect();
+    const p = new Player({ x: 0, y: 0, substance: 'NaOH', mass: 8 });
+    p.x = r.x - dx - p.w / 2;          // 玩家中心落在目标左缘外侧 dx 处
+    p.y = r.y + r.h - p.h;             // 与目标同层（站在地面上）
+    scene.addObject(p);
+    return p;
+  };
+  // 开关（可站上去）：贴身 60 内才吸
+  assert.equal(scene.snapNearFeet(standAtDx(sw, 58)), sw, '开关 58px 应吸附');
+  assert.equal(scene.snapNearFeet(standAtDx(sw, 72)), null, '开关 72px 不该吸附（旧半径 120 会误吸）');
+  // 药品池（站不上去）：保持宽一些
+  assert.equal(scene.snapNearFeet(standAtDx(pool, 58)), pool, '池子 58px 吸附');
+  assert.equal(scene.snapNearFeet(standAtDx(pool, 112)), pool, '池子 112px 仍应吸附（放宽保留）');
+  assert.equal(scene.snapNearFeet(standAtDx(pool, 132)), null, '池子 132px 不吸附');
+});

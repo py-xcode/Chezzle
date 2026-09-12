@@ -1160,19 +1160,25 @@ export class Scene {
     return null;
   }
 
-  /** 放置吸附：玩家站在目标附近（水平贴身 ≤120px）放置 → 自动投进去。
+  /** 放置吸附：玩家站在目标附近放置 → 自动投进去。
    *  吸附目标：药品池（isPool）、开关（isSwitch）、酒精灯/喷灯（isLamp，含宽炉条）。
-   *  烧杯/集气瓶等**可携带**容器不吸（吸进去会乱——用户定案只吸固定台子）。 */
+   *  烧杯/集气瓶等**可携带**容器不吸（吸进去会乱——用户定案只吸固定台子）。
+   *  ★ 吸附半径分两类（用户反馈"吸附范围太大，尤其能站上去的"）：
+   *    - 能站上去放的固定台（酒精灯/喷灯/开关）：贴身才吸（60px ≈ 玩家宽 + 一点余量）；
+   *    - 药品池这类站不上去的：留宽一点（120px），方便站在池边往里投。 */
   snapNearFeet(player) {
+    const R_STAND = 60;   // 灯 / 开关等"可以站上去"的台子
+    const R_POOL = 120;   // 药品池（站不上去，放宽）
     const cx = player.x + player.w / 2;
     const cy = player.y + player.h / 2;
     let best = null;
     let bestD = Infinity;
     for (const c of this.containers) {
       if (!(c.isPool || c.isSwitch || c.isLamp)) continue;
+      const R = c.isPool ? R_POOL : R_STAND;
       const r = c.innerRect();
       const dx = cx < r.x ? r.x - cx : (cx > r.x + r.w ? cx - (r.x + r.w) : 0);
-      if (dx > 120) continue; // 水平贴身判定（"附近"放宽到 120px）
+      if (dx > R) continue; // 水平贴身判定（半径按台子类型区分）
       if (!(cy < r.y + r.h && player.bottom > r.y - 50)) continue; // 垂直同层（站在旁的地面上）
       if (dx < bestD) { bestD = dx; best = c; }
     }

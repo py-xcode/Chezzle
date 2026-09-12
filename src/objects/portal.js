@@ -268,26 +268,8 @@ export class Portal extends Obj {
       ctx.fill();
     }
     ctx.restore();
-    // 顶部小标记（组色圆点）；组号标签（同组 = 配对/共享预算，玩家一眼看到归属）
-    ctx.fillStyle = col;
-    ctx.shadowColor = active ? this.color : 'transparent';
-    ctx.shadowBlur = active ? 8 : 0;
-    ctx.beginPath();
-    ctx.arc(cx, this.y - 5, 3, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    if (this.group) {
-      const kg = screenTextScale(ctx, 10, 11); // 组号保底（与路牌同档、上限 1.15）
-      ctx.font = `bold ${Math.round(10 * kg * 10) / 10}px monospace`;
-      ctx.textAlign = 'center';
-      ctx.fillStyle = active ? '#e8e0ff' : '#9fb2c8';
-      ctx.strokeStyle = 'rgba(10,14,30,0.9)';
-      ctx.lineWidth = 3;
-      const t2 = `组${this.group}`;
-      ctx.strokeText(t2, cx, this.y - 12 * kg);
-      ctx.fillText(t2, cx, this.y - 12 * kg);
-      ctx.textAlign = 'left';
-    }
+    // 顶部不再显示分组（组色圆点 + 「组N」标签都按用户要求去掉）：
+    // 门的配对关系由颜色本身表达；剩余次数徽标照旧显示。
     // n次门：顶部显示剩余次数（无限次数不显示）——大号数字 + 深色底板（任何背景下可读）
     if (Number.isFinite(this.usesLeft)) {
       ctx.shadowBlur = 0;

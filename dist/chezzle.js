@@ -1356,19 +1356,25 @@ class Scene {
     return null;
   }
 
-  /** 放置吸附：玩家站在目标附近（水平贴身 ≤120px）放置 → 自动投进去。
+  /** 放置吸附：玩家站在目标附近放置 → 自动投进去。
    *  吸附目标：药品池（isPool）、开关（isSwitch）、酒精灯/喷灯（isLamp，含宽炉条）。
-   *  烧杯/集气瓶等**可携带**容器不吸（吸进去会乱——用户定案只吸固定台子）。 */
+   *  烧杯/集气瓶等**可携带**容器不吸（吸进去会乱——用户定案只吸固定台子）。
+   *  ★ 吸附半径分两类（用户反馈"吸附范围太大，尤其能站上去的"）：
+   *    - 能站上去放的固定台（酒精灯/喷灯/开关）：贴身才吸（60px ≈ 玩家宽 + 一点余量）；
+   *    - 药品池这类站不上去的：留宽一点（120px），方便站在池边往里投。 */
   snapNearFeet(player) {
+    const R_STAND = 60;   // 灯 / 开关等"可以站上去"的台子
+    const R_POOL = 120;   // 药品池（站不上去，放宽）
     const cx = player.x + player.w / 2;
     const cy = player.y + player.h / 2;
     let best = null;
     let bestD = Infinity;
     for (const c of this.containers) {
       if (!(c.isPool || c.isSwitch || c.isLamp)) continue;
+      const R = c.isPool ? R_POOL : R_STAND;
       const r = c.innerRect();
       const dx = cx < r.x ? r.x - cx : (cx > r.x + r.w ? cx - (r.x + r.w) : 0);
-      if (dx > 120) continue; // 水平贴身判定（"附近"放宽到 120px）
+      if (dx > R) continue; // 水平贴身判定（半径按台子类型区分）
       if (!(cy < r.y + r.h && player.bottom > r.y - 50)) continue; // 垂直同层（站在旁的地面上）
       if (dx < bestD) { bestD = dx; best = c; }
     }
@@ -8243,26 +8249,8 @@ class Portal extends Obj {
       ctx.fill();
     }
     ctx.restore();
-    // 顶部小标记（组色圆点）；组号标签（同组 = 配对/共享预算，玩家一眼看到归属）
-    ctx.fillStyle = col;
-    ctx.shadowColor = active ? this.color : 'transparent';
-    ctx.shadowBlur = active ? 8 : 0;
-    ctx.beginPath();
-    ctx.arc(cx, this.y - 5, 3, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    if (this.group) {
-      const kg = screenTextScale(ctx, 10, 11); // 组号保底（与路牌同档、上限 1.15）
-      ctx.font = `bold ${Math.round(10 * kg * 10) / 10}px monospace`;
-      ctx.textAlign = 'center';
-      ctx.fillStyle = active ? '#e8e0ff' : '#9fb2c8';
-      ctx.strokeStyle = 'rgba(10,14,30,0.9)';
-      ctx.lineWidth = 3;
-      const t2 = `组${this.group}`;
-      ctx.strokeText(t2, cx, this.y - 12 * kg);
-      ctx.fillText(t2, cx, this.y - 12 * kg);
-      ctx.textAlign = 'left';
-    }
+    // 顶部不再显示分组（组色圆点 + 「组N」标签都按用户要求去掉）：
+    // 门的配对关系由颜色本身表达；剩余次数徽标照旧显示。
     // n次门：顶部显示剩余次数（无限次数不显示）——大号数字 + 深色底板（任何背景下可读）
     if (Number.isFinite(this.usesLeft)) {
       ctx.shadowBlur = 0;
@@ -16850,4 +16838,4 @@ exports.Multiscene = Multiscene;
   };
   global.Chezzle = __require("src/index.js");
 })(typeof window !== 'undefined' ? window : globalThis);
-console.log('[Chezzle] 引擎构建 "vmtyankdu"');
+console.log('[Chezzle] 引擎构建 "vmtyapntk"');
