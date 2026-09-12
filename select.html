@@ -574,10 +574,10 @@ function buildCards() {
       ${e.rare ? '<span class="badge">稀有</span>' : ''}`;
     b.addEventListener('click', () => {
       if (launching) return;
-      // 单击就进入（用户要求：不要"先选中、再点一次"的双击感）：
-      // 先把选中切到这张卡，再走进入逻辑；不可玩的会给出抖动 + 提示，不会静默。
-      if (i !== active) setActive(i, true);
-      tryEnter();
+      // 只有卡片**已经停在最中间**时，单击才进入；否则单击只是把它滑到中间
+      // （用户要求：避免误点侧边卡就直接进关；用 curX 判断实际停位，而不是只看 active）
+      if (Math.abs(curX - i) < 0.15) { tryEnter(); return; }
+      setActive(i, true);
     });
     track.appendChild(b);
     return b;
