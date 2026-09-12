@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 // 场景点击管线（编辑器试玩 / 导出关卡 / Multiscene 共用同一套）：
 //  - 点击：右上「提示」按钮、右下物品栏选格（HUD）；
 //  - 按下（mousedown）：场景内可点击物体（onTap，如滴管）——滴管在玩家附近时
@@ -37,9 +37,21 @@ export function hudTopOffset(scene) {
     const base = (t.insets && t.insets.top) || 0;
     return Math.max(isFullscreen() ? CFG.touch.hudTopFs : CFG.touch.hudTop, base + 10);
   }
-  // 桌面端：画布自高清改造后由 fitCanvasToWindow **铺满窗口**，左上角不再有页面留白，
-  // 而关卡页会在左上角注入"返回选关"悬浮钮（levels/report.js）→ 会压住 HUD 左上卡片。
-  // 该页会把避让量写进 window.CHEZZLE_HUD_TOP_INSET，这里读它（没人声明就维持原来的 10）。
+  // 桌面端：关卡页左上角有"返回选关"悬浮钮（levels/report.js 注入）。画布自高清改造后
+  // 铺满窗口，该钮会压住 HUD 左上卡片 → 这里**直接量它的实际底边**（比让页面声明避让量更
+  // 可靠：全屏时按钮下移到 52 也能自动跟随）。量不到再退回页面声明的全局值。
+  try {
+    if (typeof document !== 'undefined') {
+      const el = document.getElementById('czl-back');
+      if (el) {
+        const rb = el.getBoundingClientRect();
+        const cv = document.querySelector('canvas');
+        const ctop = cv ? cv.getBoundingClientRect().top : 0;
+        const inset = Math.ceil(rb.bottom - ctop + 6);
+        if (Number.isFinite(inset) && inset > 10) return inset;
+      }
+    }
+  } catch (e) { /* 量不到就退回兜底 */ }
   const g = (typeof window !== 'undefined' && Number.isFinite(window.CHEZZLE_HUD_TOP_INSET))
     ? window.CHEZZLE_HUD_TOP_INSET : 0;
   return Math.max(10, g);

@@ -574,9 +574,10 @@ function buildCards() {
       ${e.rare ? '<span class="badge">稀有</span>' : ''}`;
     b.addEventListener('click', () => {
       if (launching) return;
-      if (i === active) { tryEnter(); return; }   // 点当前卡 = 进入
-      if (!cardPlayable(e)) { denyCard(b, e); return; }
-      setActive(i, true);
+      // 单击就进入（用户要求：不要"先选中、再点一次"的双击感）：
+      // 先把选中切到这张卡，再走进入逻辑；不可玩的会给出抖动 + 提示，不会静默。
+      if (i !== active) setActive(i, true);
+      tryEnter();
     });
     track.appendChild(b);
     return b;
