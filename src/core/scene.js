@@ -1231,7 +1231,14 @@ export class Scene {
   _fireStatusOnce() {
     if (this.status === this._firedStatus) return;
     this._firedStatus = this.status;
-    if (this.status === 'win') this.fire('win');
+    if (this.status === 'win') {
+      this.fire('win');
+      // 再直接喊一声页面钩子：关卡页忘写 bind / 事件被覆盖时也能记录进度与弹浮层
+      try {
+        const r = typeof window !== 'undefined' ? window.ChezzleReport : null;
+        if (r && typeof r.onWin === 'function') r.onWin(this);
+      } catch (e) { /* 页面钩子出错不影响游戏 */ }
+    }
     else if (this.status === 'died') this.fire('died');
   }
 

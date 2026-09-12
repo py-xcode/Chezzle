@@ -12,6 +12,22 @@
   // 关卡文件位于 levels/ 下，选关/主页在上级目录
   const BASE = location.pathname.includes('/levels/') ? '../' : '';
 
+  // 场景 → 关卡 id（bind 时登记）；未登记时按"当前文件名"到 levels.json 反查，
+  // 这样即使关卡页忘了写 ChezzleReport.bind(...) 也能记录进度。
+  const ID_OF = new WeakMap();
+  let idCache = null;
+  async function resolveIdByFile() {
+    if (idCache !== null) return idCache;
+    try {
+      const cfg = await (await fetch(BASE + 'levels/levels.json', { cache: 'no-cache' })).json();
+      const here = location.pathname.split('/').pop();
+      const all = [...(cfg.tutorial ? [cfg.tutorial] : []), ...Object.values(cfg.levels || {}).flat()];
+      const hit = all.find((l) => l.file && l.file.split('/').pop() === here);
+      idCache = hit ? hit.id : '';
+    } catch (e) { idCache = ''; }
+    return idCache;
+  }
+
   function load() {
     try {
       const p = JSON.parse(localStorage.getItem(KEY) || '{"cleared":[]}');
@@ -100,17 +116,36 @@
       save(p);
     },
 
-    /** 监听通关：记录进度 + 弹出浮层（只留「返回选关」） */
+    /** 监听通关：记录进度 + 弹出浮层（面板下方是「返回选关」按钮，带进出场动画） */
     bind(scene, id) {
       if (!scene || typeof scene.on !== 'function') return;
-      scene.on('win', () => {
-        ChezzleReport.record(id);
-        ChezzleReport.overlay(id);
-      });
+      ID_OF.set(scene, id);                    // 记下来，onWin 的兜底路径要用
+      const fire = () => ChezzleReport.onWin(scene, id);
+      scene.on('win', fire);
+      // ★ 兜底轮询：万一把 win 事件吞了（旧内核 / 脚本直接改 status / 事件被覆盖），
+      //   状态轮询也能补上记录与浮层（record / overlay 都是幂等的）
+      let n = 0;
+      const timer = setInterval(() => {
+        if (scene.status === 'win') { clearInterval(timer); fire(); }
+        else if (++n > 7200) clearInterval(timer);
+      }, 250);
+    },
+
+    /** 通关统一入口：记录 + 浮层。场景没显式 bind 过也能用（引擎会直接调它，见 scene.js），
+     *  此时按"当前文件名"到 levels.json 反查关卡 id。 */
+    async onWin(scene, explicitId) {
+      const id = explicitId || ID_OF.get(scene) || await resolveIdByFile() || '';
+      let total = 0;
+      try {
+        if (id) ChezzleReport.record(id);
+        total = load().cleared.length;
+        console.log('[ChezzleReport] 通关记录 → id=' + (id || '(未识别)') + '，累计 ' + total + ' 关，key=' + KEY);
+      } catch (e) { console.warn('[ChezzleReport] 记录失败：' + e.message); }
+      ChezzleReport.overlay(id, total);
     },
 
     /** 通关浮层（游戏风格面板；不污染画布，纯 DOM） */
-    overlay(id) {
+    overlay(id, total) {
       if (document.getElementById('czl-win')) return;
       const d = document.createElement('div');
       d.id = 'czl-win';
@@ -134,7 +169,9 @@
           </svg>
           <div style="font:bold 24px 'Segoe UI','Microsoft YaHei',sans-serif;color:#ffd76a;text-shadow:0 0 14px rgba(255,215,106,.6)">${title}</div>
           <div style="margin:8px 0 20px;color:#9fb2c8;font-size:13px">
-            关卡进度已保存 · 选关页该同位素会变亮
+            关卡进度已保存：<b style="color:#ffd76a">${id || '未识别关卡 id'}</b> · 累计 ${total ?? 0} 关
+            <br><span style="font-size:11.5px;color:#7f8db0">若这里显示"未识别"，请把该关卡文件里
+            ChezzleReport.bind(scene, '关卡id') 补上</span>
           </div>
           <div style="display:flex;justify-content:center">
             <button class="czl-btn" data-act="select" style="cursor:pointer;padding:11px 40px;border:0;font-weight:bold;font-size:15px;

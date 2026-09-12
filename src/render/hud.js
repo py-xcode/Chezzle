@@ -1488,13 +1488,17 @@ export class Hud {
     ctx.stroke();
     ctx.restore();
     // 图标符文
-    ctx.fillStyle = c;
-    ctx.font = '34px serif';
+    ctx.save();
     ctx.textAlign = 'center';
-    ctx.fillText(win ? '✦' : '✧', cx, cy + 12);
+    ctx.textBaseline = 'middle';           // ★ 用 middle 基线居中：默认 alphabetic 基线会让
+    ctx.fillStyle = c;                     //   "✦ + 通关！"整体看着偏上/偏歪（用户反馈）
+    ctx.font = '32px serif';
+    ctx.fillText(win ? '✦' : '✧', cx, cy + 4);
     ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 34px "Segoe UI", sans-serif';
-    ctx.fillText(win ? '通关！' : '死亡', cx, cy + 58);
+    ctx.font = 'bold 34px "Segoe UI", "Microsoft YaHei", sans-serif';
+    ctx.fillText(win ? '通关！' : '死亡', cx, cy + 52);
+    ctx.restore();
+    ctx.textAlign = 'center';
     // 死亡原因（搞笑文案；死亡时由 scene 一次性定案，避免每帧随机闪烁；通关不显示）
     if (!win) {
       ctx.fillStyle = '#ffd9a0';
