@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh">
 <head>
 <meta charset="utf-8">
@@ -519,10 +519,10 @@ let unlocked = new Set(['tutorial']);
 let onlyPlayable = false;                 // 顶部筛选：默认"全部元素"（每个元素都轮得到）
 let ENTRIES = [];
 
-// 关卡 id → 人类可读名（用于"通关 X 解锁"提示）
+// 关卡 id → 提示用的名字（"通关 X 解锁"里的 X）：只写关卡名，不带元素名
 function buildNameMap() {
   const m = new Map();
-  for (const e of ENTRIES) for (const it of e.isotopes) m.set(it.id, e.kind === 'tutorial' ? e.name : `${e.name} · ${it.name}`);
+  for (const e of ENTRIES) for (const it of e.isotopes) m.set(it.id, e.kind === 'tutorial' ? e.name : it.name);
   return m;
 }
 let NAME_OF = buildNameMap();
