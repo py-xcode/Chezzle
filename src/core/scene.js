@@ -479,6 +479,7 @@ export class Scene {
 
     // 7. 状态判定
     this.checkStatus();
+    this._fireStatusOnce();   // 状态变为 win/died → 补发事件（关卡页据此记录进度、弹浮层）
 
     // 8. 清空边缘触发
     this.pressed.clear();
@@ -1222,7 +1223,16 @@ export class Scene {
   setStatus(s) {
     if (this.status === s) return;
     this.status = s;
-    this.fire(s === 'win' ? 'win' : 'died');
+  }
+
+  /** 状态推进后补发一次事件（win/died 各只发一次）。
+   *  放在 step 里轮询而不是只靠 setStatus：关卡脚本/对象直接改 scene.status 的情况
+   *  也能被捕捉到——之前"通关不记录、不弹浮层"就是因为事件没发出去。 */
+  _fireStatusOnce() {
+    if (this.status === this._firedStatus) return;
+    this._firedStatus = this.status;
+    if (this.status === 'win') this.fire('win');
+    else if (this.status === 'died') this.fire('died');
   }
 
   restart() {

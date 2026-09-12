@@ -100,7 +100,7 @@
       save(p);
     },
 
-    /** 监听通关：记录 + 弹出浮层（返回选关 / 再玩一次） */
+    /** 监听通关：记录进度 + 弹出浮层（只留「返回选关」） */
     bind(scene, id) {
       if (!scene || typeof scene.on !== 'function') return;
       scene.on('win', () => {
@@ -133,25 +133,33 @@
               stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
           <div style="font:bold 24px 'Segoe UI','Microsoft YaHei',sans-serif;color:#ffd76a;text-shadow:0 0 14px rgba(255,215,106,.6)">${title}</div>
-          <div style="margin:8px 0 18px;color:#9fb2c8;font-size:13px">
-            关卡进度已保存，同位素格变得更亮了
+          <div style="margin:8px 0 20px;color:#9fb2c8;font-size:13px">
+            关卡进度已保存 · 选关页该同位素会变亮
           </div>
-          <div style="display:flex;gap:10px;justify-content:center">
-            <button class="czl-btn" data-act="select" style="cursor:pointer;padding:9px 22px;border:0;font-weight:bold;font-size:14px;
-              background:linear-gradient(180deg,#ffd76a,#e8b84b);color:#2a2000;letter-spacing:1px;
-              filter:drop-shadow(0 0 14px rgba(232,184,75,.5));
-              clip-path:polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px)">返回选关</button>
-            <button class="czl-btn" data-act="again" style="cursor:pointer;padding:9px 22px;border:1px solid #3a4178;font-size:14px;
-              background:#1c2350;color:#dfe8f2;
-              clip-path:polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px)">再玩一次</button>
+          <div style="display:flex;justify-content:center">
+            <button class="czl-btn" data-act="select" style="cursor:pointer;padding:11px 40px;border:0;font-weight:bold;font-size:15px;
+              background:linear-gradient(180deg,#ffd76a,#e8b84b);color:#2a2000;letter-spacing:3px;
+              filter:drop-shadow(0 0 16px rgba(232,184,75,.55));
+              clip-path:polygon(10px 0, calc(100% - 10px) 0, 100% 10px, 100% calc(100% - 10px), calc(100% - 10px) 100%, 10px 100%, 0 calc(100% - 10px), 0 10px)">返回选关</button>
           </div>
-          <div style="margin-top:12px;color:#6a7a96;font-size:11px">选关页：元素周期表 · 同位素全通关整格发光</div>
         </div>`;
       document.body.appendChild(d);
-      d.querySelector('[data-act="select"]').addEventListener('click', () => {
-        location.href = BASE + 'select.html';
-      });
-      d.querySelector('[data-act="again"]').addEventListener('click', () => location.reload());
+      // 进场动画：遮罩淡入 + 面板上浮放大（尊重 prefers-reduced-motion）
+      const panel = d.firstElementChild;
+      if (!matchMedia('(prefers-reduced-motion: reduce)').matches && panel.animate) {
+        d.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: 'ease-out' });
+        panel.animate(
+          [{ opacity: 0, transform: 'translateY(22px) scale(.94)' }, { opacity: 1, transform: 'none' }],
+          { duration: 380, easing: 'cubic-bezier(.2,.9,.3,1.25)', delay: 60 },
+        );
+      }
+      const go = (href) => {
+        if (!matchMedia('(prefers-reduced-motion: reduce)').matches && d.animate) {
+          d.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 220, easing: 'ease-in' });
+          setTimeout(() => { location.href = href; }, 200);
+        } else location.href = href;
+      };
+      d.querySelector('[data-act="select"]').addEventListener('click', () => go(BASE + 'select.html'));
     },
   };
 })();

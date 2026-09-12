@@ -1501,10 +1501,14 @@ export class Hud {
       ctx.font = 'bold 15px "Segoe UI", "Microsoft YaHei", sans-serif';
       ctx.fillText(scene.deathQuip ?? deathQuip(scene.deathCause, scene.player && scene.player.substance), cx, cy + 84);
     }
-    ctx.fillStyle = '#e8d8b0';
-    ctx.font = '15px "Segoe UI", sans-serif';
-    const touch = scene._touchUI && scene._touchUI.enabled();
-    ctx.fillText(touch ? '轻触屏幕重新开始' : '按 R 重开', cx, cy + (win ? 90 : 110));
+    // 通关时不再提示"重开"（用户要求）：浮层由关卡页注入的按钮负责"返回选关"；
+    // 死亡仍保留重开提示（那是玩家最需要的）。
+    if (!win) {
+      ctx.fillStyle = '#e8d8b0';
+      ctx.font = '15px "Segoe UI", sans-serif';
+      const touch = scene._touchUI && scene._touchUI.enabled();
+      ctx.fillText(touch ? '轻触屏幕重新开始' : '按 R 重开', cx, cy + 110);
+    }
     ctx.textAlign = 'left';
     ctx.restore();
   }

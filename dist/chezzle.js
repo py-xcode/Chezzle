@@ -675,6 +675,7 @@ class Scene {
 
     // 7. 状态判定
     this.checkStatus();
+    this._fireStatusOnce();   // 状态变为 win/died → 补发事件（关卡页据此记录进度、弹浮层）
 
     // 8. 清空边缘触发
     this.pressed.clear();
@@ -1418,7 +1419,16 @@ class Scene {
   setStatus(s) {
     if (this.status === s) return;
     this.status = s;
-    this.fire(s === 'win' ? 'win' : 'died');
+  }
+
+  /** 状态推进后补发一次事件（win/died 各只发一次）。
+   *  放在 step 里轮询而不是只靠 setStatus：关卡脚本/对象直接改 scene.status 的情况
+   *  也能被捕捉到——之前"通关不记录、不弹浮层"就是因为事件没发出去。 */
+  _fireStatusOnce() {
+    if (this.status === this._firedStatus) return;
+    this._firedStatus = this.status;
+    if (this.status === 'win') this.fire('win');
+    else if (this.status === 'died') this.fire('died');
   }
 
   restart() {
@@ -12238,10 +12248,14 @@ class Hud {
       ctx.font = 'bold 15px "Segoe UI", "Microsoft YaHei", sans-serif';
       ctx.fillText(scene.deathQuip ?? deathQuip(scene.deathCause, scene.player && scene.player.substance), cx, cy + 84);
     }
-    ctx.fillStyle = '#e8d8b0';
-    ctx.font = '15px "Segoe UI", sans-serif';
-    const touch = scene._touchUI && scene._touchUI.enabled();
-    ctx.fillText(touch ? '轻触屏幕重新开始' : '按 R 重开', cx, cy + (win ? 90 : 110));
+    // 通关时不再提示"重开"（用户要求）：浮层由关卡页注入的按钮负责"返回选关"；
+    // 死亡仍保留重开提示（那是玩家最需要的）。
+    if (!win) {
+      ctx.fillStyle = '#e8d8b0';
+      ctx.font = '15px "Segoe UI", sans-serif';
+      const touch = scene._touchUI && scene._touchUI.enabled();
+      ctx.fillText(touch ? '轻触屏幕重新开始' : '按 R 重开', cx, cy + 110);
+    }
     ctx.textAlign = 'left';
     ctx.restore();
   }
@@ -16838,4 +16852,4 @@ exports.Multiscene = Multiscene;
   };
   global.Chezzle = __require("src/index.js");
 })(typeof window !== 'undefined' ? window : globalThis);
-console.log('[Chezzle] 引擎构建 "vmtyapntk"');
+console.log('[Chezzle] 引擎构建 "vmtyasrlj"');
