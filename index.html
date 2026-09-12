@@ -50,21 +50,17 @@
   #btnPlay:hover { transform: translateY(-2px); filter: drop-shadow(0 0 26px rgba(255,215,106,.75)) drop-shadow(0 14px 24px rgba(0,0,0,.5)); }
   #btnAbout:hover { transform: translateY(-2px); filter: drop-shadow(0 0 22px rgba(127,216,255,.5)) drop-shadow(0 14px 24px rgba(0,0,0,.5)); }
   .bar:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
-  .foot { margin-top: 24px; color: #5a527e; font-size: 12px; letter-spacing: 3px; opacity: 0;
-    animation: pop .8s ease 1.05s forwards; }
-  .foot b { color: var(--gold); font-weight: 600; }
 
-  /* —— 两个小动画（半透明，无边框无标题；不拦截鼠标——真实按钮照常可点）—— */
-  .stage { position: fixed; bottom: 14px; z-index: 3; }
-  .stage canvas { display: block; opacity: .85; pointer-events: none; }
+  /* —— 两个小动画：钉死在左下 / 右下角；无边框、无底色（画布只清屏不填色），
+        完全融入星空背景；不拦截鼠标（真实按钮照常可点）—— */
+  .stage { position: fixed; bottom: 14px; z-index: 3; line-height: 0; }
+  .stage canvas { display: block; pointer-events: none; }
   #stageL { left: 14px; }
   #stageR { right: 14px; }
-  @media (max-width: 1000px) {
-    .stage { position: relative; margin: 14px auto 0; }
-  }
   @media (prefers-reduced-motion: reduce) {
     .nebula, .st, .sigil, .title { animation: none !important; }
-    .bar, .lt, .foot { animation: pop .4s ease forwards; }
+    .bar, .lt { animation: pop .4s ease forwards; }
+    .stage { display: none; } /* 关掉动画时舞台毫无内容，直接隐藏 */
   }
 </style>
 </head>
@@ -134,16 +130,15 @@
     </svg>
     关于
   </a>
-
-  <div class="foot">CHE <b>+</b> ZZLE · 走进周期表，解一道化学题</div>
 </div>
 
-<!-- 左下：传送门（A 高 B 低） -->
+<!-- 左下：传送门（A 高台门 / B 地面门，无限循环） -->
 <div class="stage" id="stageL">
-  <canvas id="cvL" width="380" height="300"></canvas>
+  <canvas id="cvL" width="380" height="330"></canvas>
 </div>
 
-<!-- 右下：焰色反应（A/B/C 三灯，玩家跳灯 → 反弹回 A） -->
+<!-- 右下：焰色反应（A/B/C 三灯，玩家跳灯 → 平推撞"关于"按钮右缘 → 反弹回 A） -->
+<!-- 注：窗口不够宽时（见 computeStage）自动退化为"只在右下角自娱自乐"，绝不压到按钮 -->
 <div class="stage" id="stageR">
   <canvas id="cvR" width="430" height="330"></canvas>
 </div>
@@ -151,165 +146,323 @@
 <script src="dist/chezzle.js?vmtofuk9d"></script>
 <script>
 const C = window.Chezzle;
-const TICK = 1 / 30;
+const REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// ============================================================================
+// 舞台公共部分
+// ----------------------------------------------------------------------------
+// 1) 高清：缓冲 = 逻辑(CSS px) × dpr，CSS 尺寸 = 逻辑 px（dpr>1 的设备不再被拉伸糊掉）
+// 2) 坐标：内容坐标系固定 380/430 × 330；地面线两侧都在 y=276（同一条水平线）；
+//    画布比内容大时，内容贴画布**底部**对齐 → 多出来的部分全是"空气"，
+//    右侧舞台靠它把玩家送到页面真实"关于"按钮右缘（画布透明且不拦截鼠标）
+// ============================================================================
+const BASE_H = 330;   // 两侧内容高度一致 → 钉在同一个 bottom 上，地面天然对齐
+const GROUND = 276;   // 内容坐标里的地面上沿
+const GAP = 14;       // 画布离视口边缘的距离（左下 / 右下角）
+
+/** 设定画布尺寸与内容变换：w/h = 逻辑尺寸（CSS px），内容按 s 等比缩放后
+ *  贴左下（align='left'）或右下（align='right'），纵向一律贴底。 */
+function fitStage(canvas, baseW, baseH, w, h, s, align) {
+  const dpr = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  canvas.width = Math.max(1, Math.round(w * dpr));
+  canvas.height = Math.max(1, Math.round(h * dpr));
+  canvas._dpr = dpr; // 引擎内文字保底换算读这个（screenTextScale）
+  return { dpr, w, h, s, ox: align === 'right' ? w - baseW * s : 0, oy: h - baseH * s };
+}
+
+// #region stage-geometry —— 纯函数（tests/homestage.test.js 会原样提取复算，勿改签名）
+/**
+ * 算出一个舞台的尺寸与缩放，保证**舞台里的任何东西都不会压到"关于"按钮上**。
+ * 两条互斥的安全约束，取能给出更大舞台的那条：
+ *   ① 内容横向完全落在按钮外侧（右舞台在右、左舞台在左）
+ *   ② 内容纵向完全落在按钮下缘之下
+ * 只有约束①成立时，右侧舞台才开启"撞击按钮"彩蛋（方块从右侧平推撞按钮右缘，
+ * 全程在按钮右侧 → x 方向永不重叠，数学上不可能穿模）。
+ * 两条都放不下（窗口又矮又窄）→ 返回 null，调用方直接隐藏舞台。
+ * @param {number} vw 视口宽 @param {number} vh 视口高
+ * @param {{left:number,right:number,top:number,bottom:number}} b "关于"按钮矩形
+ * @param {'left'|'right'} kind 舞台方位
+ */
+function computeStage(vw, vh, b, kind) {
+  const CW = kind === 'right' ? 430 : 380;
+  const right = vw - GAP, bottom = vh - GAP;
+  const clearS = kind === 'right'
+    ? (right - b.right - 8) / CW        // 内容整体在按钮右侧
+    : (b.left - 8 - GAP) / CW;          // 内容整体在按钮左侧
+  const belowS = (vh - 24 - b.bottom) / BASE_H; // 内容整体在按钮下缘之下
+  const capW = Math.min(1, (vw * 0.62) / CW);
+  const capH = (vh - 2 * GAP) / BASE_H;         // 内容整体放得进视口高度
+  const sClear = Math.min(capW, clearS, capH);
+  const sBelow = Math.min(capW, belowS, capH);
+  let s, gag = false;
+  if (sClear >= 0.30) { s = sClear; gag = kind === 'right'; } // ①
+  else if (sBelow >= 0.30) { s = sBelow; }                    // ②
+  else return null;
+  const contentW = CW * s, contentH = BASE_H * s;
+  return {
+    s, contentW, contentH, gag,
+    contentLeft: kind === 'right' ? right - contentW : GAP, // 内容贴角
+    contentTop: bottom - contentH,
+    right, bottom,
+  };
+}
+// #endregion stage-geometry
+
+
+/** 每帧开头：按物理分辨率清屏（**不填底色** → 与页面星空背景完全融合），
+ *  然后切到内容坐标系，之后所有对象都按内容坐标绘制。 */
+function beginFrame(ctx, L) {
+  ctx.setTransform(L.dpr, 0, 0, L.dpr, 0, 0);
+  ctx.clearRect(0, 0, L.w, L.h);
+  ctx.setTransform(L.dpr * L.s, 0, 0, L.dpr * L.s, L.dpr * L.ox, L.dpr * L.oy);
+}
+
+function drawObjects(ctx, scene) {
+  for (const o of scene.objects) {
+    if (!o.render) continue;
+    try { o.render(ctx, { scene, time: scene.time }); } catch (e) { /* 单个对象出错不影响整幕 */ }
+  }
+}
 
 // ============================================================================
 // 左下：传送门舞台 —— 真实物理：A=高处门（高台顶），B=地面门。
 // 玩家从 B 左侧起步，一直往右：进 B → 引擎传到 A（高台顶）→ 出 A 继续向右 →
 // 走出高台边缘掉下来 → 落到 B 门前 → 再进 B → 再传 A…（无限循环）
+// 物理按固定 1/60 步进 + 渲染插值：60Hz 屏幕上不再"每两步才动一次"（顿挫感来源）
 // ============================================================================
-(function portalDemo() {
-  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+const portalDemo = (function () {
+  if (REDUCE) return null;
   const canvas = document.getElementById('cvL');
   const ctx = canvas.getContext('2d');
-  const scene = new C.Scene({ worldW: 380, worldH: 300 });
-  scene.addObject(new C.Floor({ x: -40, y: 280, w: 460, h: 40 })); // 地面
-  scene.addObject(new C.Floor({ x: -40, y: 140, w: 160, h: 30 })); // 高台（顶 y=140，右缘 x=120）
-  const pa = new C.Portal({ x: 32, y: 76, w: 46, h: 64, color: '#c78bff', id: 'pa' });  // A：高处门（高台顶左侧）
-  const pb = new C.Portal({ x: 170, y: 208, w: 60, h: 72, color: '#c78bff', id: 'pb' }); // B：地面门
+  const W = 380;
+  const scene = new C.Scene({ worldW: W, worldH: BASE_H });
+  scene.addObject(new C.Floor({ x: -40, y: GROUND, w: 460, h: 40 }));          // 地面
+  scene.addObject(new C.Floor({ x: -40, y: GROUND - 140, w: 160, h: 30 }));    // 高台
+  const pa = new C.Portal({ x: 32, y: GROUND - 204, w: 46, h: 64, color: '#c78bff', id: 'pa' });  // A：高台顶
+  const pb = new C.Portal({ x: 170, y: GROUND - 72, w: 60, h: 72, color: '#c78bff', id: 'pb' });  // B：地面上
   scene.addObject(pa); scene.addObject(pb);
-  const p = new C.Player({ x: 140, y: 235, substance: 'NaOH', mass: 8, moveSpeed: 120, id: 'walk' }); // 起点：B 左侧（慢速）
+  const p = new C.Player({ x: 140, y: GROUND - 45, substance: 'NaOH', mass: 8, moveSpeed: 120, id: 'walk' });
   scene.addObject(p);
   scene.status = 'running';
-  scene.control.add('right'); // 一直往右：进 B → 传 A → 出 A 掉下 → 落 B 前 → 再进 B…
+  scene.control.add('right'); // 一直往右
+
+  let L = fitStage(canvas, W, BASE_H, W, BASE_H, 1, 'left');
+  let live = true;
+  function layout() {
+    const st = computeStage(innerWidth, innerHeight, document.getElementById('btnAbout').getBoundingClientRect(), 'left');
+    if (!st) { live = false; canvas.style.display = 'none'; return; } // 窗口又矮又窄 → 不显示
+    live = true;
+    canvas.style.display = 'block';
+    L = fitStage(canvas, W, BASE_H, Math.round(st.contentW), Math.round(st.contentH), st.s, 'left');
+  }
+  layout();
+  addEventListener('resize', layout);
+  addEventListener('orientationchange', layout);
+  addEventListener('load', layout);
+
+  const TICK = 1 / 60;
+  const MAX_CATCHUP = 6;
   let acc = 0, last = performance.now();
+  let px = p.x, py = p.y;   // 上一次物理步进前的位置（插值用）
+  let rx = p.x, ry = p.y;   // 本帧渲染位置
   (function loop(now) {
     requestAnimationFrame(loop);
-    acc += Math.min((now - last) / 1000, 0.1); last = now;
+    const dt = Math.min((now - last) / 1000, 0.1); last = now;
+    if (!live) return;
+    acc += dt;
     let n = 0;
-    while (acc >= TICK && n < 8) { scene.step(TICK); acc -= TICK; n++; }
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, 380, 300);
-    ctx.fillStyle = 'rgba(8,6,24,0.30)';
-    ctx.fillRect(0, 0, 380, 300);
-    for (const o of scene.objects) {
-      if (o.render) { try { o.render(ctx, { scene, time: scene.time }); } catch (e) {} }
+    while (acc >= TICK && n < MAX_CATCHUP) {
+      px = p.x; py = p.y;
+      scene.step(TICK);
+      // 穿门会瞬移：跨度过大时不做插值（否则会看到方块"滑"过整张画布）
+      if (Math.abs(p.x - px) + Math.abs(p.y - py) > 80) { px = p.x; py = p.y; }
+      acc -= TICK; n++;
     }
+    if (acc > TICK * MAX_CATCHUP) acc = 0; // 长时间卡顿后不补帧，避免快进
+    const a = Math.min(1, acc / TICK);
+    rx = px + (p.x - px) * a; ry = py + (p.y - py) * a;
+
+    beginFrame(ctx, L);
+    const sx = p.x, sy = p.y;
+    p.x = rx; p.y = ry;               // 只改渲染用的坐标，物理状态不受影响
+    drawObjects(ctx, scene);
+    p.x = sx; p.y = sy;
   })(performance.now());
+  return { layout };
 })();
 
 // ============================================================================
-// 右下：焰色舞台 —— 只有地板 / 玩家 / 三盏酒精灯（A B C，各配一种盐的焰色）
+// 右下：焰色舞台 —— 地板 / 玩家 / 三盏酒精灯（A B C，各配一种盐的焰色）
 // 玩家流程：A 左侧 → 跳到 A 上（停）→ 跳到 B 上（停）→ 跳到 C 上（停）→
-// 向左大跳，顶到页面真实"关于"按钮的右边 → 反弹，恰好落回 A 上 → 循环
+// 向左斜升后拉平，平推撞上页面真实"关于"按钮的**右缘** → 按钮被顶得向左弹一下
+// → 反弹落回 A。方块全程在按钮右侧（x 方向永不重叠）→ 不可能穿模
+// ----------------------------------------------------------------------------
+// 位置全部由解析式给出，渲染直接用（不取整）→ 亚像素平滑；
+// 画布尺寸只在 load / resize 时重算（不再定时读 DOM）→ 不再有"微小瞬移"
 // ============================================================================
-(function flameDemo() {
-  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+const flameDemo = (function () {
+  if (REDUCE) return null;
   const canvas = document.getElementById('cvR');
   const ctx = canvas.getContext('2d');
-  const W = 430, H = 330;
-  const scene = new C.Scene({ worldW: W, worldH: H });
-  scene.addObject(new C.Floor({ x: -20, y: 276, w: 480, h: 30 }));
+  const CW = 430, PW = 45;
+  const btn = document.getElementById('btnAbout');
+
+  const scene = new C.Scene({ worldW: CW, worldH: BASE_H });
+  scene.addObject(new C.Floor({ x: -20, y: GROUND, w: 480, h: 40 }));
   // 玩家（NaOH，小方块）——先加入（绘制在灯后层）
-  const p = new C.Player({ x: 70, y: 231, substance: 'NaOH', mass: 8, id: 'hero' });
+  const p = new C.Player({ x: 70, y: GROUND - PW, substance: 'NaOH', mass: 8, id: 'hero' });
   p.gravity = 0; // 脚本动画：不参与重力
   scene.addObject(p);
   // 三盏酒精灯 A / B / C（盐：KCl 紫 / NaCl 黄 / CuSO4 绿）
   const salts = [['KCl', 0.6], ['NaCl', 0.8], ['CuSO4', 0.5]];
   salts.forEach(([salt, m], i) => {
-    const lamp = new C.Lamp({ x: 140 + i * 60, y: 236, autoOn: true, id: 'lamp' + i });
+    const lamp = new C.Lamp({ x: 140 + i * 60, y: GROUND - 40, autoOn: true, id: 'lamp' + i });
     scene.addObject(lamp);
     lamp.addPrecipitate(salt, m);
   });
   scene.status = 'running';
 
   // 悬停点（玩家左缘 x）：A=137.5 B=197.5 C=257.5（灯中心 - 22.5）
-  // y=185 → 玩家 bottom=230，脚贴在灯顶(236)上方 6px（站火焰上缘，不悬空）
+  // AY：玩家 bottom 贴在灯顶(236)上方 6px（站火焰上缘，不悬空）
   const AX = [137.5, 197.5, 257.5];
-  const AY = 185;
-  // 撞点 = 页面真实"关于"按钮的**右下角**（换算到画布坐标；随布局实时读取并缓存）
-  const HIT = { x: 200, y: 8 };
-  function computeHit() {
-    try {
-      const c = canvas.getBoundingClientRect();
-      const b = document.getElementById('btnAbout').getBoundingClientRect();
-      HIT.x = Math.max(8, b.right - c.left);          // 按钮右缘（画布坐标）
-      HIT.y = Math.max(8, b.bottom - c.top - 45);     // 玩家顶部贴按钮底缘（顶到右下角）
-    } catch (e) { /* 保持默认 */ }
-  }
-  computeHit();
-  window.addEventListener('resize', () => { computeHit(); });
-  setInterval(computeHit, 400); // 布局变化（按钮入场/换行）也兜底
+  const AY = (GROUND - 40) - PW - 6;
 
-  // 把画布摆到"关于"按钮右下角附近：按钮右下角伸进画布 x≈198、y≈52
-  // —— 玩家一跳就顶到真实按钮，不再隔着几百像素飞出画面反弹
-  function placeStage() {
-    if (innerWidth < 1000) return; // 窄屏走 CSS 流式布局
-    try {
-      const b = document.getElementById('btnAbout').getBoundingClientRect();
-      const s = document.getElementById('stageR');
-      s.style.left = (b.right - 198) + 'px';
-      s.style.right = 'auto';
-      s.style.top = (b.bottom - 52) + 'px';
-      s.style.bottom = 'auto';
-    } catch (e) {}
-  }
-  placeStage();
-  window.addEventListener('resize', placeStage);
-  setInterval(placeStage, 400);
-  setTimeout(placeStage, 900); // 按钮入场动画结束后再对齐一次
+  // —— 画布尺寸/缩放：由 computeStage 统一决定（保证舞台压不到"关于"按钮上）——
+  // 彩蛋模式：画布左侧多留一条透明"空气带"，方块平推撞按钮右缘（圆环特效也不会被切）；
+  // 装饰模式：按钮就贴在内容左前方，此时不做撞击彩蛋，方块只在内容内起跳。
+  let L = { dpr: 1, w: CW, h: BASE_H, s: 1, ox: 0, oy: 0 };
+  let HIT = { x: 60, y: 20 };   // 撞点（方块左上角的目标位置，内容坐标）
+  let onBtn = false;            // 是否真的撞在按钮上（false → 只做空撞特效）
+  let live = true;              // 窗口太小时舞台隐藏，帧循环空转
 
-  const CYCLE = 5.8;
+  function layout() {
+    const b = btn.getBoundingClientRect();
+    const st = computeStage(innerWidth, innerHeight, b, 'right');
+    if (!st) { live = false; canvas.style.display = 'none'; return; } // 窗口又矮又窄 → 不显示
+    live = true;
+    canvas.style.display = 'block';
+    if (st.gag) {
+      // 彩蛋模式：方块左缘停在按钮右缘（+2px 视觉缝隙）、与按钮垂直居中。
+      // 全程方块都在按钮右侧 → x 方向永不重叠 → 数学上不可能穿模
+      HIT = {
+        x: (b.right + 2 - st.contentLeft) / st.s,
+        y: ((b.top + b.bottom) / 2 - st.contentTop) / st.s - PW / 2,
+      };
+      onBtn = true;
+    } else {
+      // 装饰模式（按钮就在内容左前方）：不做撞击彩蛋，只在内容里向左上起跳
+      HIT = { x: 40, y: Math.max(AY - 150, (b.bottom + 8 - st.contentTop) / st.s) };
+      onBtn = false;
+    }
+    // 空气带：只有彩蛋模式需要（让方块能一路飞到按钮右缘）；上方留出反弹弧顶空间
+    const airW = st.gag ? Math.round(st.contentLeft - b.right + PW * st.s + 8) : 0;
+    const w = Math.round(airW + st.contentW);
+    const h = Math.round(Math.max(st.contentH, st.contentH + st.s * Math.max(0, 60 - HIT.y) + 12));
+    L = fitStage(canvas, CW, BASE_H, w, h, st.s, 'right');
+  }
+  layout();
+  addEventListener('resize', layout);
+  addEventListener('orientationchange', layout);
+  addEventListener('load', layout);
+
+  const CYCLE = 6.0;
   function bez(x0, y0, cx, cy, x1, y1, k) {
     const u = 1 - k;
     return { x: u * u * x0 + 2 * u * k * cx + k * k * x1, y: u * u * y0 + 2 * u * k * cy + k * k * y1 };
   }
-  // 相位：停A → 跳B → 停B → 跳C → 停C → 大跳撞"关于"按钮右下角 → 反弹落回 A
+  // 相位：停A → 跳B → 停B → 跳C → 停C → 大跳撞"关于"按钮右缘 → 反弹落回 A
+  // 大跳控制点：末端切线取水平（cy = HIT.y）→ 方块"斜升后拉平、平推撞上去"，
+  // 撞击瞬间不带有向下分量，也就不会先压到按钮上沿
   function pose(t) {
-    if (t < 0.8) return { x: AX[0], y: AY, vx: 0, vy: 0 };
-    if (t < 1.4) { const b = bez(AX[0], AY, 197.5, 138, AX[1], AY, (t - 0.8) / 0.6); return { ...b, vx: 220, vy: -240 }; }
-    if (t < 2.2) return { x: AX[1], y: AY, vx: 0, vy: 0 };
-    if (t < 2.8) { const b = bez(AX[1], AY, 237.5, 138, AX[2], AY, (t - 2.2) / 0.6); return { ...b, vx: 220, vy: -240 }; }
-    if (t < 3.6) return { x: AX[2], y: AY, vx: 0, vy: 0 };
-    if (t < 4.5) { const b = bez(AX[2], AY, 218, 30, HIT.x, HIT.y, (t - 3.6) / 0.9); return { ...b, vx: -140, vy: -540 }; }
-    if (t < 5.5) { const b = bez(HIT.x, HIT.y, 150, 90, AX[0], AY, (t - 4.5) / 1.0); return { ...b, vx: 190, vy: 430 }; }
-    return { x: AX[0], y: AY, vx: 0, vy: 0 };
+    if (t < 0.8) return { x: AX[0], y: AY };
+    if (t < 1.4) return bez(AX[0], AY, 197.5, 138, AX[1], AY, (t - 0.8) / 0.6);
+    if (t < 2.2) return { x: AX[1], y: AY };
+    if (t < 2.8) return bez(AX[1], AY, 237.5, 138, AX[2], AY, (t - 2.2) / 0.6);
+    if (t < 3.6) return { x: AX[2], y: AY };
+    if (t < 4.5) {
+      const k = (t - 3.6) / 0.9;
+      const cx = AX[2] + (HIT.x - AX[2]) * 0.45;
+      return bez(AX[2], AY, cx, HIT.y, HIT.x, HIT.y, k);
+    }
+    if (t < 5.6) {
+      const k = (t - 4.5) / 1.1;
+      const cx = HIT.x + (AX[0] - HIT.x) * 0.42;
+      return bez(HIT.x, HIT.y, cx, HIT.y - 85, AX[0], AY, k); // 先被弹起，再落回 A 灯
+    }
+    return { x: AX[0], y: AY };
   }
 
+  // 撞击特效：撞点扩散的光环 + 火花（撞按钮与空撞都有）
+  let fx = null;
+  function impact() {
+    fx = { t: 0, x: HIT.x, y: HIT.y + PW / 2 }; // 撞点 = 方块左缘中点
+    if (!onBtn) return;                        // 没撞到按钮 → 只留特效
+    const el = btn;
+    if (el && typeof el.animate === 'function') {
+      // 从右侧撞上来 → 按钮被顶得向左弹（方向物理正确，且是**远离方块**的方向）
+      el.animate([
+        { transform: 'translateX(0)' },
+        { transform: 'translateX(-7px)' },
+        { transform: 'translateX(2px)' },
+        { transform: 'translateX(0)' },
+      ], { duration: 360, easing: 'ease-out' });
+    }
+  }
+  function drawFx(dt) {
+    if (!fx) return;
+    fx.t += dt;
+    const k = fx.t / 0.5;
+    if (k >= 1) { fx = null; return; }
+    ctx.save();
+    ctx.globalAlpha = 1 - k;
+    ctx.strokeStyle = '#ffe9b0';
+    ctx.lineWidth = 0.6 + 2.2 * (1 - k);
+    ctx.beginPath();
+    ctx.arc(fx.x, fx.y, 4 + k * 26, 0, Math.PI * 2);
+    ctx.stroke();
+    for (let i = 0; i < 7; i++) {
+      const a = Math.PI + (i / 6) * Math.PI; // 上半圈飞溅
+      const rr = 6 + k * 34;
+      ctx.fillStyle = i % 2 ? '#ffd76a' : '#7fd8ff';
+      ctx.beginPath();
+      ctx.arc(fx.x + Math.cos(a) * rr, fx.y + Math.sin(a) * rr * 0.7, 0.5 + 1.8 * (1 - k), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  const TICK = 1 / 60;
   let acc = 0, last = performance.now(), cycleT = 0, bumped = false;
   (function loop(now) {
     requestAnimationFrame(loop);
     const dt = Math.min((now - last) / 1000, 0.1); last = now;
+    if (!live) return;
     cycleT = (cycleT + dt) % CYCLE;
     const pos = pose(cycleT);
-    p.vel.x = pos.vx; p.vel.y = pos.vy;
-    scene.control.clear(); scene.pressed.clear();
+    p.x = pos.x; p.y = pos.y; // 亚像素：不取整（取整会在慢速段产生 1px 抖动）
+    p.vel.x = 0; p.vel.y = 0;
     acc += dt;
-    while (acc >= TICK) { scene.step(TICK); acc -= TICK; } // 灯（焰色检测）更新
-    p.x = Math.round(pos.x);
-    p.y = Math.round(pos.y);
-    p.vel.x = pos.vx; p.vel.y = pos.vy;
+    let n = 0;
+    while (acc >= TICK && n < 6) { scene.step(TICK); acc -= TICK; n++; }
+    p.x = pos.x; p.y = pos.y; // 物理步进可能动过位置 → 拉回脚本轨迹
 
-    // 顶到真实"关于"按钮的瞬间：按钮被撞得抖一下
-    if (cycleT >= 4.42 && cycleT < 4.5) {
-      if (!bumped) {
-        bumped = true;
-        const btn = document.getElementById('btnAbout');
-        if (btn && typeof btn.animate === 'function') {
-          btn.animate(
-            [{ transform: 'translateY(0)' }, { transform: 'translateY(4px)' },
-             { transform: 'translateY(-2px)' }, { transform: 'translateY(0)' }],
-            { duration: 320, easing: 'ease-out' },
-          );
-        }
-      }
-    } else if (cycleT >= 4.55 || cycleT < 4.42) {
-      bumped = false;
-    }
+    // 顶到按钮的瞬间（大跳落点 t=4.5）
+    if (cycleT >= 4.48 && cycleT < 4.58) {
+      if (!bumped) { bumped = true; impact(); }
+    } else bumped = false;
 
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, W, H);
-    ctx.fillStyle = 'rgba(8,6,24,0.30)';
-    ctx.fillRect(0, 0, W, H);
-    for (const o of scene.objects) {
-      if (o.render) { try { o.render(ctx, { scene, time: scene.time }); } catch (e) {} }
-    }
+    beginFrame(ctx, L);
+    drawObjects(ctx, scene);
+    drawFx(dt);
   })(performance.now());
+  return { layout };
 })();
 
 // 星夜
 (function () {
-  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  if (REDUCE) return;
   const box = document.getElementById('stars');
   for (let i = 0; i < 90; i++) {
     const s = document.createElement('i');
