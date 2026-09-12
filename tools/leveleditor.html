@@ -190,11 +190,11 @@
   </div>
 </div>
 <datalist id="substances"></datalist>
-<script src="../dist/chezzle.js?vmtof2gvh"></script>
+<script src="../dist/chezzle.js?vmtybh73w"></script>
 <script>
 // ============================================================================
 // Chezzle 可视化关卡编辑器
-// 复用 dist/chezzle.js?vmtof2gvh 的全局 Chezzle：对象类、Scene、渲染、物理循环。
+// 复用 dist/chezzle.js?vmtybh73w 的全局 Chezzle：对象类、Scene、渲染、物理循环。
 // 编辑模式：自建 transform 渲染已摆放物体；试玩模式：重建 Scene 跑物理+化学。
 // ============================================================================
 const C = Chezzle;
@@ -2452,7 +2452,7 @@ function dslLine(item) {
       const extra = fmtOpts({ hidden: HID, id: o.id });
       return `.sign(${pos}, '${t}'${extra ? `, ${extra}` : ''})`;
     }
-    case 'portal': return `.portal(${pos}, ${fmtOpts({ w: o.w, h: o.h, color: o.color, uses: Number.isFinite(o.uses) ? o.uses : undefined, switchId: o.switchId || undefined, group: o.group || undefined, hidden: HID, id: o.id })})`;
+    case 'portal': return `.portal(${pos}, ${fmtOpts({ w: o.w, h: o.h, color: o.color, uses: Number.isFinite(o.uses) ? o.uses : undefined, switchId: o.switchId || undefined, group: o.group || undefined, inventory: o.inventory || undefined, clearInventory: o.clearInventory ? true : undefined, hidden: HID, id: o.id })})`;
     case 'gasdetector': return `.gasdetector(${pos}, ${fmtOpts({ gas: o.gas, threshold: o.threshold, opening: o.opening, and: o.and, deleteId: o.deleteId || undefined, showId: o.showId || undefined, igniteId: o.igniteId || undefined, extinguishId: o.extinguishId || undefined, openId: o.openId || undefined, hidden: HID, id: o.id })})`;
     case 'extractor': return `.extractor(${pos}, ${fmtOpts({ w: o.w, h: o.h, poolId: o.poolId, switchId: o.switchId, rate: o.rate, hidden: HID, id: o.id })})`;
     case 'beaker': {
@@ -2638,7 +2638,7 @@ function exportHTML() {
 </head>
 <body>
 <canvas id="game"></canvas>
-<script src="../dist/chezzle.js?vmtof2gvh"><\/script>
+<script src="../dist/chezzle.js?vmtybh73w"><\/script>
 ${pluginTags()}
 <script src="report.js"><\/script>
 <script>

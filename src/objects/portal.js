@@ -109,12 +109,19 @@ export class Portal extends Obj {
     return o.color === this.color; // 旧版本数据：无组号 → 按颜色配对（迁移前的兼容）
   }
 
-  /** 是否可传送：绑定开关时要求开关有效开启（支持"&"联锁）；开关不存在视为关闭 */
+  /** 是否可传送：绑定开关时要求开关有效开启（支持"&"联锁）。
+   *  ★ 组级激活记忆：同组任一门"开过"→ 全组都算开启。
+   *    跨场景配对时对侧场景未必有同名开关（或那个开关不在本场景），
+   *    否则会出现"这边开着、传送过去却显示成未开启的灰色"（用户反馈）。
+   *    组号缺省（旧数据按颜色配对）时用颜色当组键，与配对逻辑保持一致。 */
   _isActive(scene) {
     if (!this.switchId) return true;
+    Portal._groupOn ||= new Set();
+    const key = this.group ? 'g:' + this.group : 'c:' + this.color;
     const sw = scene.byId[this.switchId];
-    if (!sw) return false;
-    return typeof sw.effectiveOpen === 'function' ? sw.effectiveOpen(scene) : sw.open;
+    const on = sw ? (typeof sw.effectiveOpen === 'function' ? !!sw.effectiveOpen(scene) : !!sw.open) : false;
+    if (on) Portal._groupOn.add(key);
+    return on || Portal._groupOn.has(key);
   }
 
   /**
