@@ -1,7 +1,31 @@
+# ============================================================================
+# Chezzle .gitignore
+# 注意：.gitignore 只支持"整行注释"，行内 # 会被当成模式的一部分，别写在行尾。
+# ============================================================================
+
+# ---- 依赖 / 编辑器 ----
 node_modules/
-*.log
 .idea/
 .vscode/
-tools/_*
-_dbg_*.mjs
+
+# ---- 临时与调试产物 ----
+*.log
 *.tmp
+_dbg_*.mjs
+
+# 临时探针脚本 / E2E 页面 / 截图（tools/_e2e_*、_repro*、_jitter、_chrome_tmp、_*.png 等）
+tools/_*
+
+# ---- 运行期与编辑器导出（不入库）----
+
+# 游戏运行期日志
+/log.json
+
+# 编辑器"另存"按次生成的副本；正本保留 level.json
+/level (*).json
+
+# tools/make-level-json.mjs 的中间产物
+levels/tutorial-edit.json
+
+# ---- 教程视频的中间产物 ----
+docs/video/
