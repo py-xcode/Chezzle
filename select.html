@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh">
 <head>
 <meta charset="utf-8">
@@ -64,7 +64,7 @@
   .back:hover { filter: drop-shadow(0 0 10px rgba(232,184,75,.45)); color: var(--gold-l); transform: translateY(-1px); }
   .back:focus-visible, .ghost:focus-visible, .card:focus-visible, .chip:focus-visible, .enter:focus-visible {
     outline: 2px solid var(--cyan); outline-offset: 3px; }
-  h1 { font-size: 20px; color: var(--gold-l); letter-spacing: 2px; text-shadow: 0 0 14px rgba(232,184,75,.45); }
+  h1 { font-size: 30px; color: var(--gold-l); letter-spacing: 6px; text-shadow: 0 0 18px rgba(232,184,75,.5); }
   h1 small { display: block; margin-top: 3px; font-size: 11.5px; font-weight: normal; letter-spacing: 1px; color: var(--dim); }
   .hspace { margin-left: auto; }
   #progress { display: flex; align-items: center; gap: 10px; padding: 7px 14px; font-size: 12.5px; color: var(--cyan);
@@ -238,7 +238,7 @@
   @media (max-width: 760px) {
     :root { --card-w: 74vw; --card-h: 210px; }
     header { padding: 12px 14px 4px; gap: 10px; }
-    h1 { font-size: 16px; } h1 small { display: none; }
+    h1 { font-size: 22px; letter-spacing: 4px; }
     #progress { padding: 6px 10px; font-size: 11.5px; } #pbar { width: 54px; }
     .arrow { width: 36px; height: 62px; }
     #prev { left: 6px; } #next { right: 6px; }
@@ -287,7 +287,7 @@
     #ring { width: min(78vw, 78vh); height: min(78vw, 78vh); }
     #corridor { max-height: min(58vw, 460px); }
     header { padding: 11px 14px 3px; gap: 10px; }
-    h1 { font-size: 16px; } h1 small { display: none; }
+    h1 { font-size: 22px; letter-spacing: 4px; }
     #periods { padding: 0 14px 2px; }
     .per { padding: 3px 6px 4px; } .per b { font-size: 11px; }
     footer { padding: 2px 14px 12px; gap: 9px; }
@@ -319,7 +319,7 @@
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M15 5l-7 7 7 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       主页
     </a>
-    <h1>选关 · 元素回廊<small>一位元素 = 一道关卡；同位素 = 同一元素的难度变体</small></h1>
+    <h1>选关</h1>
     <div class="hspace"></div>
     <div class="seg" role="group" aria-label="显示范围">
       <button id="fAll" class="on" type="button">全部元素</button>
@@ -1073,6 +1073,19 @@ markViewport();
 addEventListener('resize', () => { markViewport(); layoutCards(); moveCards(true); });
 addEventListener('orientationchange', () => setTimeout(() => { markViewport(); layoutCards(); moveCards(true); }, 240));
 
+/** 开场应该停在哪张元素卡：
+ *  ① 第一个"已解锁且有文件、尚未通关"的关卡所在元素（下一个该打的）
+ *  ② 全通关 → 最后一个已通关的元素卡（走廊顺序即原子序数，取最靠后的那张）
+ *  ③ 都没有（无进度且首关未解锁）→ 留在最开头 */
+function autoTarget() {
+  const idx = ENTRIES.findIndex((e) => e.isotopes.some((it) => it.file && unlocked.has(it.id) && !cleared.has(it.id)));
+  if (idx >= 0) return idx;
+  for (let i = ENTRIES.length - 1; i >= 0; i--) {
+    if (ENTRIES[i].isotopes.some((it) => it.file && cleared.has(it.id))) return i;
+  }
+  return 0;
+}
+
 /** 关卡表来自 levels/levels.json（levels.js 负责读进来），所以要等它 ready 再建界面 */
 function boot(cfg) {
   CFG = cfg || {};
@@ -1081,9 +1094,12 @@ function boot(cfg) {
   NAME_OF = buildNameMap();
   buildCards();                     // 先建卡（全部 118 位元素）
   buildPeriods();                   // 再建周期轨道（条内 = 该周期通关进度）
-  setActive(0, true);
+  setActive(0, true);          // 先停在最开头（新手引导）
   refreshProgress();
   moveCards(true);
+  // 开场动画：稍等进场淡入，再自动划过走廊到"下一个该打的关卡"
+  const target = autoTarget();
+  if (target > 0) setTimeout(() => setActive(target, true), matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 520);
   // 进场：从深色淡入（#wipe 初始不透明）
   requestAnimationFrame(() => requestAnimationFrame(() => $('wipe').classList.add('off')));
 }
