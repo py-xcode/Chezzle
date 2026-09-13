@@ -16,6 +16,13 @@ _dbg_*.mjs
 # 临时探针脚本 / E2E 页面 / 截图（tools/_e2e_*、_repro*、_jitter、_chrome_tmp、_*.png 等）
 tools/_*
 
+# 本地限速测试服务器（模拟 Cloudflare 的限速/延迟/缓存头，自己用，不入库）
+tools/dev_server.py
+
+# 运行期 Python 缓存
+__pycache__/
+*.pyc
+
 # ---- 运行期与编辑器导出（不入库）----
 
 # 游戏运行期日志

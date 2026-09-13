@@ -840,7 +840,10 @@ const flameDemo = (function () {
     const setFrac = (v) => { partial += v - frac; frac = v; };
     return fetch(url, { priority: 'low' })
       .then((res) => {
-        const len = Math.max(1, Number(res.headers.get('content-length')) || 60000);
+        // ★ 有 gzip/brotli 时 content-length 是**压缩后**的字节数，而 body 读出来是解压后的，
+        //   直接相除会瞬间冲满 → 按文本资源常见的 ~4 倍压缩比折算（Cloudflare 上就是这么发的）
+        const enc = res.headers.get('content-encoding');
+        const len = Math.max(1, (Number(res.headers.get('content-length')) || 60000) * (enc ? 4 : 1));
         if (!res.body || typeof res.body.getReader !== 'function') {
           return res.arrayBuffer().then((buf) => { bytes += buf.byteLength; });   // 老内核：整块算
         }
