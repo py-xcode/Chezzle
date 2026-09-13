@@ -290,11 +290,17 @@ export class Scene {
 
   /** 大横幅：屏幕中央大字（MC 标题式），淡入淡出。
    *  text 支持 \n 多行；dur 秒为总时长（含淡入淡出）。关卡脚本/插件随时可调用，
-   *  后显示的横幅顶掉前一个（同一时刻屏幕上只有一条大横幅）。 */
+   *  后显示的横幅顶掉前一个（同一时刻屏幕上只有一条大横幅）。
+   *  ★ 同时记下**真实时钟**起点 wall：横幅是屏幕空间 UI，寿命应按真实秒算 ——
+   *    手机上严重掉帧时游戏时钟（tick 累积）会比真实时间慢，横幅就会拖长然后"啪"地
+   *    整条消失（用户复现"淡出没生效"）。HUD 优先用 wall 计算年龄，无 wall 时退回游戏时钟。 */
   showBanner(text, dur = 4) {
     const t = String(text ?? '');
     if (!t.trim()) return null;
-    this.banner = { text: t, t: this.time, dur: Math.max(0.6, Number(dur) || 4) };
+    this.banner = {
+      text: t, t: this.time, dur: Math.max(0.6, Number(dur) || 4),
+      wall: (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0,
+    };
     this.fire('banner', this.banner);
     return this.banner;
   }

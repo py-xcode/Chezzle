@@ -16,15 +16,58 @@
   // 这样即使关卡页忘了写 ChezzleReport.bind(...) 也能记录进度。
   const ID_OF = new WeakMap();
   let idCache = null;
+  let idWhy = '';
+  /** 页面级 id：只要本页出现过 `ChezzleReport.bind(某个场景, '关卡id')`（哪怕那个场景
+   *  句柄是 undefined / 传错），也把 id 记在**页面**上。多场景关卡里"在某条支线通关"
+   *  时，bind 只登记了起始场景 → 以前会退化成"未识别"（用户 Pages 上复现）。 */
+  let pageId = '';
+  /** 关卡文件名规范化（关键！）：Cloudflare Pages / Netlify 等托管默认开 **clean URL**，
+   *  `/levels/tutorial.html` 会被 301 成 `/levels/tutorial`（扩展名被剥掉），甚至变成目录形式
+   *  `/levels/tutorial/`。旧代码直接拿 `location.pathname` 的最后一段和 levels.json 里的
+   *  `"tutorial.html"` 比 → 永远不相等 → 部署后通关提示"未识别关卡 id · 累计 0 关"，
+   *  而本地（python -m http.server 保留 .html）一切正常 —— 用户复现的就是这个。
+   *  这里两边都：去皮解编码 → 去扩展名 → 去尾斜杠 → 统一小写，再比。 */
+  const normName = (p) => {
+    const raw = String(p || '').split('?')[0].split('#')[0].replace(/\/+$/, '');
+    const seg = raw.split('/');
+    const last = (seg[seg.length - 1] || seg[seg.length - 2] || '').trim();
+    let dec = last;
+    try { dec = decodeURIComponent(last); } catch (e) { /* 原样 */ }
+    return dec.replace(/\.html?$/i, '').toLowerCase();
+  };
+  /** 本页文件名（规范化，用于比对） */
+  const here = () => normName(location.pathname);
+  /** 本页文件名（原始，用于提示信息里显示） */
+  const hereRaw = () => {
+    const raw = String(location.pathname || '').replace(/\/+$/, '').split('/');
+    const last = raw[raw.length - 1] || raw[raw.length - 2] || '';
+    try { return decodeURIComponent(last) || location.pathname; } catch (e) { return last || location.pathname; }
+  };
+  /** 按当前文件名到 levels.json 反查关卡 id；返回 '' 表示没找到，idWhy 说明原因 */
   async function resolveIdByFile() {
     if (idCache !== null) return idCache;
-    try {
-      const cfg = await (await fetch(BASE + 'levels/levels.json', { cache: 'no-cache' })).json();
-      const here = location.pathname.split('/').pop();
-      const all = [...(cfg.tutorial ? [cfg.tutorial] : []), ...Object.values(cfg.levels || {}).flat()];
-      const hit = all.find((l) => l.file && l.file.split('/').pop() === here);
-      idCache = hit ? hit.id : '';
-    } catch (e) { idCache = ''; }
+    const file = here();
+    // 关卡页在 levels/ 下，json 与它同级；两套相对路径都试（部署到子目录/自定义域也稳）
+    const urls = [BASE + 'levels/levels.json', 'levels.json', '../levels/levels.json'];
+    let cfg = null, lastErr = '';
+    for (const u of urls) {
+      try {
+        const r = await fetch(u, { cache: 'no-cache' });
+        if (!r.ok) { lastErr = u + ' → HTTP ' + r.status; continue; }
+        cfg = await r.json();
+        break;
+      } catch (e) { lastErr = u + ' → ' + e.message; }
+    }
+    if (!cfg) {
+      idCache = '';
+      idWhy = '读不到关卡表（' + lastErr + '）';
+      return idCache;
+    }
+    const all = [...(cfg.tutorial ? [cfg.tutorial] : []), ...Object.values(cfg.levels || {}).flat()];
+    const hit = all.find((l) => l && l.file && normName(l.file) === file);
+    idCache = hit ? hit.id : '';
+    idWhy = hit ? '' : '关卡表里没有文件名为「' + hereRaw() + '」的关卡（本级地址 ' + location.pathname +
+      '；levels.json 里的 file 是 ' + all.filter((l) => l && l.file).map((l) => l.file).join(' / ') + '）';
     return idCache;
   }
 
@@ -118,9 +161,12 @@
 
     /** 监听通关：记录进度 + 弹出浮层（面板下方是「返回选关」按钮，带进出场动画） */
     bind(scene, id) {
+      // ★ 先记"页面级 id"再做场景校验：多场景关卡里 bind 只给了起始场景，
+      //   在别的场景通关时 ID_OF 查不到 → 以前会整个退化成"未识别"。
+      if (id) pageId = id;
       if (!scene || typeof scene.on !== 'function') return;
-      ID_OF.set(scene, id);                    // 记下来，onWin 的兜底路径要用
-      const fire = () => ChezzleReport.onWin(scene, id);
+      ID_OF.set(scene, id || pageId);           // 记下来，onWin 的兜底路径要用
+      const fire = () => ChezzleReport.onWin(scene, id || pageId);
       scene.on('win', fire);
       // ★ 兜底轮询：万一把 win 事件吞了（旧内核 / 脚本直接改 status / 事件被覆盖），
       //   状态轮询也能补上记录与浮层（record / overlay 都是幂等的）
@@ -131,21 +177,26 @@
       }, 250);
     },
 
+    /** 显式声明"本页是哪个关卡"（多场景关卡/自动导出用；比按文件名反查可靠） */
+    setLevelId(id) { if (id) pageId = String(id); return pageId; },
+    getLevelId() { return pageId; },
+
     /** 通关统一入口：记录 + 浮层。场景没显式 bind 过也能用（引擎会直接调它，见 scene.js），
-     *  此时按"当前文件名"到 levels.json 反查关卡 id。 */
+     *  此时按"页面级 id → 当前文件名反查 levels.json"的顺序兜底。 */
     async onWin(scene, explicitId) {
-      const id = explicitId || ID_OF.get(scene) || await resolveIdByFile() || '';
+      const id = explicitId || ID_OF.get(scene) || pageId || await resolveIdByFile() || '';
       let total = 0;
       try {
         if (id) ChezzleReport.record(id);
         total = load().cleared.length;
-        console.log('[ChezzleReport] 通关记录 → id=' + (id || '(未识别)') + '，累计 ' + total + ' 关，key=' + KEY);
+        console.log('[ChezzleReport] 通关记录 → id=' + (id || '(未识别)') + '，累计 ' + total + ' 关，key=' + KEY +
+          (id ? '' : '；原因：' + idWhy));
       } catch (e) { console.warn('[ChezzleReport] 记录失败：' + e.message); }
-      ChezzleReport.overlay(id, total);
+      ChezzleReport.overlay(id, total, id ? '' : idWhy);
     },
 
-    /** 通关浮层（游戏风格面板；不污染画布，纯 DOM） */
-    overlay(id, total) {
+    /** 通关浮层（游戏风格面板；不污染画布，纯 DOM）。why = 未识别 id 时的具体原因 */
+    overlay(id, total, why) {
       if (document.getElementById('czl-win')) return;
       const d = document.createElement('div');
       d.id = 'czl-win';
@@ -170,8 +221,11 @@
           <div style="font:bold 24px 'Segoe UI','Microsoft YaHei',sans-serif;color:#ffd76a;text-shadow:0 0 14px rgba(255,215,106,.6)">${title}</div>
           <div style="margin:8px 0 20px;color:#9fb2c8;font-size:13px">
             关卡进度已保存：<b style="color:#ffd76a">${id || '未识别关卡 id'}</b> · 累计 ${total ?? 0} 关
-            <br><span style="font-size:11.5px;color:#7f8db0">若这里显示"未识别"，请把该关卡文件里
-            ChezzleReport.bind(scene, '关卡id') 补上</span>
+            <br><span style="font-size:11.5px;color:#7f8db0">${id
+              ? '进度按关卡 id 记录；改 id 请同步改 levels/levels.json'
+              : '没认出本页是哪个关卡' + (why ? '：' + why : '') +
+                '<br>修法（二选一）：① 本关卡脚本里加 ChezzleReport.bind(scene, \'关卡id\')；' +
+                '② 在 levels/levels.json 里把该关的 file 写成 ' + hereRaw() + '（.html 可省）'}</span>
           </div>
           <div style="display:flex;justify-content:center">
             <button class="czl-btn" data-act="select" style="cursor:pointer;padding:11px 40px;border:0;font-weight:bold;font-size:15px;

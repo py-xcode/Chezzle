@@ -55,8 +55,11 @@
   }
 
   /* ---------- 页面骨架：上栏 / 回廊 / 下栏 ---------- */
+  /* ★ 页眉/周期条/页脚一律 flex: 0 0 auto（不参与压缩）：只有走廊是可伸缩项。
+     否则窗口一矮，flex 会把页眉/页脚压扁而**内容溢出**它们的盒子 → 卡片再压上来，
+     就成了"卡片和上方周期条重合"（用户手机截图）。 */
   #app { position: relative; z-index: 2; height: 100%; display: flex; flex-direction: column; justify-content: center; }
-  header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 16px 20px 6px; }
+  header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; flex: 0 0 auto; padding: 16px 20px 6px; }
   .back { display: inline-flex; align-items: center; gap: 7px; padding: 9px 16px; border: 1px solid var(--edge);
     background: linear-gradient(180deg, #232a5c, #12163a); color: var(--txt); cursor: pointer;
     transition: filter .2s, transform .2s, color .2s;
@@ -81,34 +84,67 @@
   /* max-height 卡住走廊高度：高屏上不至于把卡片和下方同位素条拉得太远 */
   #corridor { position: relative; flex: 1 1 auto; min-height: 0; max-height: 460px; perspective: 1300px; }
   #ring { position: absolute; left: 50%; top: 50%; width: min(560px, 78vmin); height: min(560px, 78vmin);
-    transform: translate(-50%,-50%); opacity: .42; transition: opacity .5s ease; }
+    transform: translate(-50%,-50%); opacity: .42; transition: opacity .5s ease;
+    /* ★ 纯装饰，绝不能吃点击：SVG 的圆弧**描边**本身就是命中区域，而法阵比走廊高、会横穿页眉。
+       实测"全部元素/只看有关卡"只有部分位置点得动 —— 用户复现的"必须点偏上才点得到"，
+       一半原因在这里，另一半是卡片溢出走廊（见 fitDeck）。 */
+    pointer-events: none; }
   #ring circle, #ring path { stroke: rgb(var(--ar) var(--ag) var(--ab) / .55); }
   #ring .spin { transform-origin: 50% 50%; animation: spin 46s linear infinite; }
   #ring .spin2 { transform-origin: 50% 50%; animation: spin 78s linear infinite reverse; }
-  #track { position: absolute; inset: 0; transition: opacity .2s ease; }
-  .card { position: absolute; left: 50%; top: 50%; width: var(--card-w); height: var(--card-h);
+  #track { position: absolute; inset: 0; transition: opacity .2s ease;
+    /* ★ 卡片裁在走廊这条带子里：即使尺寸量算有偏差（页脚换行、字体度量差异），
+       卡片也绝不会盖住上方周期条/下方同位素条——顺带连"透明死区抢点击"一起杜绝。
+       发射过场时卡片要放大 1.28 倍，那一瞬间放开裁剪。 */
+    overflow: hidden; }
+  body.launch #track { overflow: visible; }
+  /* ★ 卡片尺寸（--card-w/--card-h）由 fitDeck() 按**实测走廊高度**写死：卡片比走廊高时
+     会上下溢出到页眉/页脚，而卡片是 <button>（整块盒子都吃点击）→ 顶部"全部元素/
+     只看有关卡"开关与同位素条的上下半截被透明死区盖住（用户复现：必须点偏上才点得到）。
+     ★ 这里不再对每张卡写 will-change：119 张卡各占一个合成层 = 手机滑动掉帧 + 发热的主因；
+     走廊外的卡片会被窗口化 display:none（见 setWindow），真正参与合成的只有 8 张左右。 */
+  .card { position: absolute; left: 50%; top: var(--card-top, 50%); width: var(--card-w); height: var(--card-h);
     margin: 0; padding: 0; border: 0; background: none; cursor: pointer; color: var(--txt);
-    transform-style: preserve-3d; will-change: transform, opacity; text-align: left; }
+    text-align: left; }
+  /* ★ 不要再写 transform-style: preserve-3d：卡里没有任何 3D 子元素（底板只是 skewX），
+     但它会让**每个子元素各自进入 3D 渲染上下文** → 一张卡变成 5 个合成层，
+     9 张可见卡 = 45 层。老机器（iPhone 8 Plus / A11）在滑动时就是被这个拖垮的。 */
+  /* 卡片内容整体包一层：悬浮的"呼吸"上下浮动交给 CSS 动画（合成器线程，不占主线程）——
+     ★ 原先是每帧在 moveCards() 里用 sin(时间) 算的，而 moveCards 只在**缓动/拖拽**时才跑
+     → 停住后浮动就冻住，点一下空白又跳一帧，看起来像"点一下动一帧"（用户复现）。 */
+  .card .inner { position: absolute; inset: 0; display: block; }
+  .card.active .inner { animation: cardBob 3.4s ease-in-out infinite; }
+  @keyframes cardBob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
   /* 斜切底板（Phigros 式斜牌），文字保持正立 → 好看且中文可读 */
   .card .plate { position: absolute; inset: 0; transform: skewX(-9deg); border: 1px solid rgba(var(--c), .5);
     background: linear-gradient(140deg, rgba(var(--c), .16), rgba(10,10,32,.86) 58%, rgba(8,8,24,.9));
-    filter: drop-shadow(0 10px 26px rgba(0,0,0,.5)); transition: border-color .25s, filter .25s, background .25s;
+    transition: border-color .25s, filter .25s, background .25s;
     clip-path: polygon(18px 0, 100% 0, calc(100% - 18px) 100%, 0 100%); }
-  .card .body { position: absolute; inset: 0; padding: 20px 24px; display: flex; flex-direction: column; }
+  /* drop-shadow 滤镜只给"当前卡"（视觉焦点本来就在它身上）：119 张卡各带一个滤镜
+     会让每帧都要重新做一次模糊，是滑动掉帧的另一个大头 */
+  .card.active .plate { filter: drop-shadow(0 10px 26px rgba(0,0,0,.5)); }
+  .card .body { position: absolute; inset: 0; display: flex; flex-direction: column;
+    padding: clamp(10px, calc(var(--card-h) * 0.08), 20px) clamp(14px, calc(var(--card-h) * 0.10), 24px); }
   /* No.X 往左探出底板一点（斜牌左上角本来就留了白），做"编号破框"的层次 */
-  .card .cnum { font: 12px ui-monospace, Consolas, monospace; letter-spacing: 1px; color: rgba(var(--c), .9);
-    margin-left: -18px; }
-  .card .csym { font: bold clamp(44px, 7.2vmin, 74px)/1 "Segoe UI",sans-serif; letter-spacing: 2px; color: #fff;
+  .card .cnum { font-family: ui-monospace, Consolas, monospace; font-size: clamp(10px, calc(var(--card-h) * 0.05), 12px);
+    letter-spacing: 1px; color: rgba(var(--c), .9); margin-left: -18px; }
+  /* 字号跟着卡片高度走（卡片在矮屏上会被压扁，写死字号会溢出） */
+  .card .csym { font-weight: bold; font-size: clamp(30px, calc(var(--card-h) * 0.30), 74px); line-height: 1;
+    font-family: "Segoe UI",sans-serif; letter-spacing: 2px; color: #fff;
     text-shadow: 0 0 22px rgba(var(--c), .55); margin-top: 2px; margin-left: 15px;
     display: flex; align-items: center; }
+  /* 低档设备：只有当前卡的符号保留发光（22px 模糊的文字阴影在 WebKit 上很贵，
+     9 张卡各来一次 = 每帧都在重绘大块文字） */
+  body.low .card:not(.active) .csym { text-shadow: none; }
   /* 引导卡用内联 SVG 代替 ⚗ 字符：那是个冷僻码位，多数系统缺字形会显示成豆腐块 */
   .card .csym svg { width: .92em; height: .92em; }
-  .card .cname { font-size: 15px; letter-spacing: 3px; color: #dfe8f2; margin-top: 2px; margin-left: 15px; }
-  .card .cmeta { margin-top: auto; font-size: 11.5px; letter-spacing: 1px; color: var(--dim); }
+  .card .cname { font-size: clamp(12px, calc(var(--card-h) * 0.062), 15px); letter-spacing: 3px; color: #dfe8f2; margin-top: 2px; margin-left: 15px; }
+  .card .cmeta { margin-top: auto; font-size: clamp(10px, calc(var(--card-h) * 0.048), 11.5px); letter-spacing: 1px; color: var(--dim); }
   .card .cpips { display: flex; gap: 5px; margin-top: 8px; }
   .card .cpips i { width: 16px; height: 4px; background: rgba(255,255,255,.16); }
-  .card .cpips i.on { background: rgba(var(--c), .95); filter: drop-shadow(0 0 6px rgba(var(--c), .8)); }
-  .card .cpips i.done { background: var(--gold-l); filter: drop-shadow(0 0 6px rgba(255,215,106,.8)); }
+  /* 每颗小方块各带一个滤镜 = 一张卡最多 5 个滤镜，119 张卡就是几百个 → 换成更亮的底色 */
+  .card .cpips i.on { background: rgba(var(--c), 1); box-shadow: 0 0 5px rgba(var(--c), .75); }
+  .card .cpips i.done { background: var(--gold-l); box-shadow: 0 0 5px rgba(255,215,106,.75); }
   .card .tick { position: absolute; right: 26px; top: 20px; width: 22px; height: 22px; opacity: 0; }
   .card .badge { position: absolute; right: 26px; bottom: 18px; padding: 2px 9px; font-size: 10.5px; letter-spacing: 1px;
     border: 1px solid rgba(var(--c), .8); color: rgb(var(--c)); background: rgba(8,10,28,.7); }
@@ -118,6 +154,13 @@
   .card.st2 { --c: 150,232,176; }
   .card.st3 { --c: 150,232,176; } .card.st3 .plate { background: linear-gradient(140deg, rgba(var(--c),.3), rgba(10,10,32,.85) 60%); }
   .card.gold { --c: 255,215,106; } .card.gold .plate { border-color: var(--gold-l); animation: goldPulse 2.6s ease-in-out infinite; }
+  /* 低档设备：金色呼吸（每帧重做 drop-shadow 滤镜）与矢量法阵旋转都停掉 */
+  body.low .card.gold .plate { animation: none; filter: none; border-color: var(--gold-l); }
+  body.low #ring .spin, body.low #ring .spin2 { animation: none; }
+  /* ★ 低档设备：换元素时的"背景洗色"不再做 transition —— 全屏三层 radial-gradient 的
+     逐帧重绘在手机上非常贵（iPhone 8 Plus 上 900ms ≈ 55 次全屏重绘），而它只是背景色调。
+     直接换色，肉眼几乎无感，滑动立刻顺一截。 */
+  body.low .wash { transition: none; }
   /* 稀有关卡元素 = 紫色（与"已解锁=绿 / 已通关更亮 / 金光=全清"这套状态色区分开） */
   .card.rare.st2, .card.rare.st3 { --c: 199,139,255; }
   .card.rare .plate { box-shadow: inset 0 0 40px rgba(199,139,255,.12); }
@@ -139,7 +182,7 @@
   #prev { left: max(10px, calc(50% - 520px)); } #next { right: max(10px, calc(50% - 520px)); }
 
   /* ---------- 周期轨道：1..7 周期条，当前周期高亮；点一下跳到该周期首个元素 ---------- */
-  #periods { display: flex; gap: 6px; padding: 0 20px 2px; }
+  #periods { display: flex; gap: 6px; flex: 0 0 auto; padding: 0 20px 2px; }
   .per { flex: 1 1 0; min-width: 0; padding: 4px 7px 5px; cursor: pointer; text-align: left;
     border: 1px solid rgba(120,130,190,.22); background: rgba(12,16,38,.6); color: var(--dim);
     transition: border-color .2s, background .2s, color .2s, transform .2s;
@@ -171,7 +214,7 @@
   .seg button:focus-visible { outline: 2px solid var(--cyan); outline-offset: -2px; }
 
   /* ---------- 下栏：同位素条 + 进入按钮 ---------- */
-  footer { padding: 4px 20px 22px; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  footer { flex: 0 0 auto; padding: 4px 20px 22px; display: flex; flex-direction: column; align-items: center; gap: 12px; }
   /* 同位素条：撑满整行再居中（否则 flex 收缩会把 chip 压扁、文字互相重叠） */
   #isotopes { display: flex; align-items: stretch; justify-content: center; gap: 9px; flex-wrap: wrap;
     width: 100%; min-height: 54px; }
@@ -234,34 +277,32 @@
     pointer-events: none; transition: opacity .34s ease; }
   #wipe.off { opacity: 0; }
 
-  /* ---------- 响应式：手机上卡片占满一屏宽、按钮全宽 ---------- */
+  /* ---------- 响应式：手机上按钮全宽；卡片尺寸交给 fitDeck() 精算（这里只留兜底） ---------- */
   @media (max-width: 760px) {
-    :root { --card-w: 74vw; --card-h: 210px; }
     header { padding: 12px 14px 4px; gap: 10px; }
     h1 { font-size: 22px; letter-spacing: 4px; }
     #progress { padding: 6px 10px; font-size: 11.5px; } #pbar { width: 54px; }
     .arrow { width: 36px; height: 62px; }
     #prev { left: 6px; } #next { right: 6px; }
-    .card .csym { font-size: clamp(40px, 13vw, 64px); }
-    .card .body { padding: 16px 20px; }
     footer { padding: 2px 14px 16px; gap: 10px; }
     .enter { width: 100%; max-width: 420px; justify-content: center; letter-spacing: 4px; }
     .chip { padding: 7px 11px; gap: 8px; }
   }
   @media (max-height: 560px) {
-    :root { --card-h: 168px; }
-    .card .csym { font-size: clamp(34px, 9vmin, 54px); }
     #ring { width: min(420px, 70vmin); height: min(420px, 70vmin); }
     #corridor { max-height: none; }
-    .card, #ring, .arrow { top: 44%; }
+    /* ★ 只挪法阵与箭头：卡片的位置由 fitDeck() 按走廊实测高度写 --card-top 精确居中。
+       这里若也写 .card { top: 44% }，卡片会被顶出走廊上沿 7px（实测 538×522：
+       卡片 245 高、走廊 263 高，44% 让卡片顶到 y=123 而走廊从 130 开始）→ 压住周期条。 */
+    #ring, .arrow { top: 44%; }
   }
   /* ★ 媒体查询看到的是**物理**视口，旋转后就不等于版式空间了；
-     所以"局部空间太矮/太窄"的情况由 JS 打 body 类名来收紧版式（旋转与否都适用） */
-  body.short { --card-h: min(50vw, 200px); }
+     所以"局部空间太矮/太窄"的情况由 JS 打 body 类名来收紧版式（旋转与否都适用）。
+     ★ 卡片的宽高/字号一律由 fitDeck() 按实测走廊高度写死（含 --card-h 派生字号），
+     这里不再逐个覆盖字号——否则矮屏上字号比卡片还高，内容溢出卡片。 */
   body.short #periods { display: none; }
   body.short h1 small { display: none; }
   body.short #corridor { max-height: none; }
-  body.short .card .csym { font-size: clamp(30px, 11vw, 52px); }
   body.short #ring { width: min(70vh, 70vw); height: min(70vh, 70vw); }
   body.short header { padding: 9px 14px 2px; gap: 9px; }
   body.short #progress { padding: 5px 9px; font-size: 11px; }
@@ -270,20 +311,17 @@
   body.short .chip { padding: 6px 10px; gap: 7px; }
   body.short .enter { font-size: 15px; letter-spacing: 3px; padding: 11px 30px; }
   @media (prefers-reduced-motion: reduce) {
-    #stars .st, .sigil, #meteors, .card.gold .plate, #ring .spin, #ring .spin2 { animation: none !important; }
+    #stars .st, .sigil, #meteors, .card.gold .plate, #ring .spin, #ring .spin2, .card.active .inner { animation: none !important; }
     body.launch #flash { animation: none; }
     .card, .wash, #pfill, .chip, .enter { transition: none; }
   }
-  /* —— 竖屏强制横屏：整页绕左上角顺时针转 90°（局部坐标系 = 100vh × 100vw）——
-     旋转后 vw/vh 仍指物理视口，所以这里把"按宽度算"的尺寸改成按 vh 算；
-     短屏规则（本来用 max-height 判断）在竖屏下命中不了，故在下面显式补一份。
-     JS 侧用 vw()/vh()/localRect()/localPtr() 做同样的换算。 */
+  /* —— 竖屏强制横屏：整页绕左上角顺时针转 90°（局部坐标系 = innerHeight × innerWidth）——
+     旋转后 vw/vh 仍指物理视口，所以这里把"按宽度算"的尺寸改成按 vh 算。
+     ★ 容器尺寸的**准确值**由 applyRotSize() 按 innerWidth/innerHeight 写死 px：
+       iOS 的 100vh 是"地址栏收起后"的大视口，比 innerHeight 大一截，两边会打架。 */
   @media (orientation: portrait) {
     html { position: absolute; top: 0; left: 100vw; width: 100vh; height: 100vw;
       transform: rotate(90deg); transform-origin: left top; overflow: hidden; }
-    /* 旋转后：vw = 版式空间的**高度**，vh = 版式空间的**宽度** */
-    :root { --card-w: min(74vh, 460px); --card-h: min(50vw, 250px); }
-    .card .csym { font-size: clamp(32px, 12vw, 64px); }
     #ring { width: min(78vw, 78vh); height: min(78vw, 78vh); }
     #corridor { max-height: min(58vw, 460px); }
     header { padding: 11px 14px 3px; gap: 10px; }
@@ -379,6 +417,34 @@ const isRot = () => matchMedia('(orientation: portrait)').matches;
 const vw = () => (isRot() ? innerHeight : innerWidth);
 const vh = () => (isRot() ? innerWidth : innerHeight);
 const localPtr = (e) => (isRot() ? { x: e.clientY, y: innerWidth - e.clientX } : { x: e.clientX, y: e.clientY });
+
+// —— 性能档位（低档 = 触屏 / 小屏设备）——
+// 手机滑动掉帧与发热的大头是"每帧重新合成/重绘"的装饰：119 张卡片各占一个合成层、
+// 每张卡带 blur/drop-shadow 滤镜、矢量法阵旋转、金色呼吸滤镜、80 颗闪烁星星。
+// 低档逐个降级（去掉滤镜与图层、停掉无谓动画），同时把参与合成的卡片窗口化。
+const REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const COARSE = matchMedia('(pointer: coarse)').matches || !matchMedia('(hover: hover)').matches;
+const LOW = !REDUCE && (COARSE || Math.min(innerWidth, innerHeight) < 620);
+
+/** 竖屏旋转容器的尺寸：由 JS 按 innerWidth/innerHeight 写死 px，不再依赖 CSS 的 100vh。
+ *  iOS 上 100vh 是"地址栏收起后"的大视口，比 innerHeight 大一截 → 与 JS 的 vw()/vh()
+ *  换算打架，页面下缘会被地址栏压住。两边用同一组数字就不会错位。 */
+const ROT_PROPS = ['position', 'top', 'left', 'width', 'height', 'transform', 'transformOrigin', 'overflow'];
+function applyRotSize() {
+  const h = document.documentElement;
+  if (isRot()) {
+    h.style.position = 'absolute';
+    h.style.top = '0';
+    h.style.left = innerWidth + 'px';
+    h.style.width = innerHeight + 'px';
+    h.style.height = innerWidth + 'px';
+    h.style.transformOrigin = 'left top';
+    h.style.transform = 'rotate(90deg)';
+    h.style.overflow = 'hidden';
+  } else {
+    for (const k of ROT_PROPS) h.style[k] = '';
+  }
+}
 
 // #region select-model —— 纯函数 + 元素事实表（tests/selectmodel.test.js 会原样提取复算，勿改签名）
 // 元素事实：[族, 周期, 序数, 符号, 中文名]。f 区（镧系/锕系）单独放 FOOT，合并后正好 118 位。
@@ -535,9 +601,28 @@ const prevBtn = $('prev'), nextBtn = $('next');
 let active = 0;        // 当前元素下标
 let activeIso = 0;     // 当前同位素下标
 let curX = 0;          // 走廊当前位置（以"卡片数"为单位的浮点值，rAF 缓动趋近 active）
-let step = 330;        // 卡片间距（px，实测）
+let step = 330;        // 卡片间距（px，由 fitDeck 定尺寸后算出）
+let cardW = 320;       // 卡片宽（px，fitDeck 实测走廊高度后写死）
 let launching = false;
 let cards = [];        // 当前走廊里的卡片 DOM（筛选后会重建）
+
+/** 卡片尺寸按**实测走廊高度**算，保证卡片永远装得进走廊。
+ *  为什么必须这样：卡片是绝对定位的 <button>，比走廊高时会上下溢出到页眉/页脚，
+ *  而按钮整块盒子都吃点击（透明区域也算）→ 顶部"全部元素 / 只看有关卡"开关和同位素条
+ *  会各有半截被透明死区盖住，表现为"必须点偏上的位置才点得到"（用户手机复现）。
+ *  字号在 CSS 里由 --card-h 派生，矮屏上自动缩小，不会溢出卡片。 */
+function fitDeck() {
+  const box = $('corridor');
+  const hRoom = Math.max(96, box.clientHeight - 18);          // 走廊可用高度（留足余量给浮动动画）
+  const wRoom = Math.min(460, Math.max(190, vw() * 0.66));    // 版式宽度的 66%
+  const h = Math.min(248, hRoom);
+  cardW = Math.round(Math.max(190, Math.min(h * 1.29, wRoom)));
+  document.body.style.setProperty('--card-w', cardW + 'px');
+  document.body.style.setProperty('--card-h', Math.round(h) + 'px');
+  // 竖直居中由 JS 写死（CSS 那边不再用 top: 50%/44% 挪卡片）：
+  // 高度按实测走廊算，位置也按实测走廊算，两者永远自洽。
+  document.body.style.setProperty('--card-top', Math.round(box.clientHeight / 2) + 'px');
+}
 
 // ---- 建卡 ----
 const GUIDE_ICON = `<svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -560,18 +645,20 @@ function buildCards() {
     b.setAttribute('role', 'option');
     b.dataset.i = i;
     b.innerHTML = `
-      <span class="plate"></span>
-      <span class="body">
-        <span class="cnum">${e.kind === 'tutorial' ? 'GUIDE' : 'No.' + e.n}</span>
-        <span class="csym" style="color:#fff">${e.kind === 'tutorial' ? GUIDE_ICON : e.sym}</span>
-        <span class="cname">${e.name}</span>
-        <span class="cmeta">${cardMeta(e)}</span>
-        <span class="cpips"></span>
-      </span>
-      <svg class="tick" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M5 12.5l4.4 4.4L19 7.5" stroke="#ffd76a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-      ${e.rare ? '<span class="badge">稀有</span>' : ''}`;
+      <span class="inner">
+        <span class="plate"></span>
+        <span class="body">
+          <span class="cnum">${e.kind === 'tutorial' ? 'GUIDE' : 'No.' + e.n}</span>
+          <span class="csym" style="color:#fff">${e.kind === 'tutorial' ? GUIDE_ICON : e.sym}</span>
+          <span class="cname">${e.name}</span>
+          <span class="cmeta">${cardMeta(e)}</span>
+          <span class="cpips"></span>
+        </span>
+        <svg class="tick" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M5 12.5l4.4 4.4L19 7.5" stroke="#ffd76a" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        ${e.rare ? '<span class="badge">稀有</span>' : ''}
+      </span>`;
     b.addEventListener('click', () => {
       if (launching) return;
       // 只有卡片**已经停在最中间**时，单击才进入；否则单击只是把它滑到中间
@@ -582,6 +669,7 @@ function buildCards() {
     track.appendChild(b);
     return b;
   });
+  winLo = winHi = -1;      // 重建了卡片 → 窗口化状态作废
   refreshCardStates();
   layoutCards();
   moveCards(true);
@@ -591,18 +679,26 @@ function buildCards() {
 function cardPlayable(e) {
   return e.isotopes.some((it) => it.file && unlocked.has(it.id));
 }
+/** ★ 119 张卡的状态刷新：**只碰真正变了的卡**。
+ *  旧写法每次 setActive（每翻一张卡）就对 119 张卡写 className + 重解析 pips 的 innerHTML
+ *  + 两次 setAttribute ≈ 500 次 DOM 变更 —— iPhone 8 Plus 上每次翻卡都会"顿一下"。 */
 function refreshCardStates() {
   ENTRIES.forEach((e, i) => {
     const st = elementState(e, unlocked, cleared);
     const b = cards[i];
-    b.className = `card ${st}${e.rare ? ' rare' : ''}${i === active ? ' active' : ''}`;
-    const pips = b.querySelector('.cpips');
-    pips.innerHTML = e.isotopes.map((it) => {
+    if (!b) return;
+    const cls = `card ${st}${e.rare ? ' rare' : ''}${i === active ? ' active' : ''}`;
+    if (b._cls !== cls) { b._cls = cls; b.className = cls; }
+    const pipsEl = b.querySelector('.cpips');
+    const pips = e.isotopes.map((it) => {
       const s = isotopeState(it, unlocked, cleared);
       return `<i class="${s === 'done' ? 'done' : s === 'empty' ? '' : 'on'}"></i>`;
     }).join('');
-    b.setAttribute('aria-label', `${e.name}${e.kind === 'tutorial' ? '' : '（' + e.sym + '）'}：${e.isotopes.length} 个同位素关卡`);
-    b.setAttribute('aria-selected', i === active ? 'true' : 'false');
+    if (pipsEl._h !== pips) { pipsEl._h = pips; pipsEl.innerHTML = pips; }
+    const label = `${e.name}${e.kind === 'tutorial' ? '' : '（' + e.sym + '）'}：${e.isotopes.length} 个同位素关卡`;
+    if (b._al !== label) { b._al = label; b.setAttribute('aria-label', label); }
+    const sel = i === active ? 'true' : 'false';
+    if (b._as !== sel) { b._as = sel; b.setAttribute('aria-selected', sel); }
   });
   prevBtn.disabled = active === 0;
   nextBtn.disabled = active === ENTRIES.length - 1;
@@ -688,29 +784,64 @@ function setEnter(txt, disabled, title) {
 }
 
 // ---- 走廊位移：缓动 + 逐卡透视/缩放 ----
+// ★ 窗口化：只让"当前卡 ±4 张"参与布局与合成，其余 display:none。
+//   119 张绝对定位卡片同时存在（每张带滤镜、每张一个合成层）是手机滑动掉帧的首要原因；
+//   窗口外只改一次 style.display（窗口移动时才发生），拖拽时每帧只需处理 ~9 张卡。
+/** 值没变就不写 style：拖拽时每帧对 ~9 张卡写 5 个属性，即使值相同也会让引擎
+ *  重新解析/失效样式（老机器上就是"每帧卡一下"）。写之前先比对缓存。 */
+function sset(el, prop, val) {
+  const c = el._ss || (el._ss = {});
+  if (c[prop] === val) return;
+  c[prop] = val;
+  el.style[prop] = val;
+}
+let winLo = -1, winHi = -1;
+function setWindow(lo, hi) {
+  if (lo === winLo && hi === winHi) return;
+  const n = cards.length;
+  if (winLo < 0) {
+    for (const b of cards) sset(b, 'display', 'none');      // 首次：先全部收起
+  } else {
+    for (let i = winLo; i <= winHi; i++) {
+      if ((i < lo || i > hi) && cards[i]) sset(cards[i], 'display', 'none');
+    }
+  }
+  for (let i = lo; i <= hi; i++) if (cards[i]) sset(cards[i], 'display', '');
+  winLo = lo; winHi = hi;
+}
 function layoutCards() {
-  const cw = cards[0] ? cards[0].offsetWidth : 300;
-  step = cw + Math.max(18, cw * 0.09);
+  step = cardW + Math.max(18, cardW * 0.09);   // 间距由 fitDeck 定的卡宽算出（不读 DOM，窗口外卡片没有宽度）
   moveCards(true);
 }
 function moveCards(instant) {
-  const t = performance.now() / 1000;
-  cards.forEach((b, i) => {
+  const n = cards.length;
+  // 低档设备少留一张：每张卡是一层按 dpr 栅格化的纹理（8 Plus 上 316×245 CSS ≈ 948×735 设备像素），
+  // 9 层 → 7 层能明显减轻老机器的图层内存压力；窗口外本来就是重度缩小+淡出的，看不出差别。
+  const span = LOW ? 3 : 4;
+  const lo = Math.max(0, Math.floor(curX) - span);
+  const hi = Math.min(n - 1, Math.ceil(curX) + span);
+  setWindow(lo, hi);
+  const pe = launching ? 'none' : 'auto';
+  for (let i = lo; i <= hi; i++) {
+    const b = cards[i];
+    if (!b) continue;
     const d = i - curX;
     const ad = Math.abs(d);
-    if (ad > 3.1) { b.style.opacity = '0'; b.style.pointerEvents = 'none'; return; }
     const scale = Math.max(0.62, 1 - ad * 0.17);
     const rotY = Math.max(-26, Math.min(26, -d * 20));
-    const bob = ad < 0.35 ? Math.sin(t * 1.5 + i) * 2.2 * (1 - ad / 0.35) : 0;
+    // 上下浮动交给 CSS 动画（.card.active .inner）——见 CSS 注释：写在这里会"卡住不动，
+    // 点一下才跳一帧"（用户复现）。这里只做位移/旋转/缩放/透明度。
     const x = d * step;
-    b.style.transform =
-      `translate(-50%,-50%) translate3d(${x.toFixed(2)}px, ${bob.toFixed(2)}px, ${(-ad * 60).toFixed(1)}px)` +
-      ` rotateY(${rotY.toFixed(2)}deg) scale(${scale.toFixed(3)})`;
-    b.style.opacity = String(Math.max(0, 1 - ad * 0.3));
-    b.style.zIndex = String(Math.round(100 - ad * 10));
-    b.style.pointerEvents = launching ? 'none' : 'auto';
-    b.style.filter = ad < 0.5 ? 'none' : `blur(${Math.min(2.4, (ad - 0.5) * 1.6).toFixed(2)}px)`;
-  });
+    sset(b, 'transform',
+      `translate(-50%,-50%) translate3d(${x.toFixed(2)}px, 0px, ${(-ad * 60).toFixed(1)}px)` +
+      ` rotateY(${rotY.toFixed(2)}deg) scale(${scale.toFixed(3)})`);
+    sset(b, 'opacity', String(Math.max(0, 1 - ad * 0.3)));
+    sset(b, 'zIndex', String(Math.round(100 - ad * 10)));
+    // pointer-events 不是合成属性：每帧重写会触发样式失效，值没变就别碰
+    sset(b, 'pointerEvents', pe);
+    // blur 只给"侧后方"的卡片，低档设备完全不做（每帧重新模糊是最贵的一步）
+    sset(b, 'filter', LOW || ad < 0.5 ? 'none' : `blur(${Math.min(2.4, (ad - 0.5) * 1.6).toFixed(2)}px)`);
+  }
   // 主题色随选中元素过渡：只在"跨过一整张卡"时改一次，别每帧都写
   // （每帧写会不停打断 CSS transition，反而变成抖动/硬切）
   const idx = Math.round(clampIndex(Math.round(curX), ENTRIES.length));
@@ -861,6 +992,7 @@ function applyFilter(playable) {
     lastPeriod = -1;
     buildCards();
     buildPeriods();
+    fitDeck();                       // 卡片条数变了 → 页脚高度可能变 → 重新量走廊
     const idx = ENTRIES.findIndex((e) => e.sym === keepSym);
     setActive(idx >= 0 ? idx : 0, true);
     track.style.opacity = '1';
@@ -1028,7 +1160,8 @@ function toast(msg) {
 (function stars() {
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
   const box = $('stars');
-  for (let i = 0; i < 80; i++) {
+  const N = LOW ? 24 : 80;
+  for (let i = 0; i < N; i++) {
     const s = document.createElement('i');
     s.className = 'st';
     const sz = 1 + Math.random() * 2;
@@ -1064,16 +1197,32 @@ function toast(msg) {
 })();
 
 // ---- 启动 ----
-/** 把"局部视口"特征打到 body 类名上：媒体查询只认物理视口，旋转后就对不上了 */
+/** 把"局部视口"特征打到 body 类名上：媒体查询只认物理视口，旋转后就对不上了。
+ *  顺带在这里同步旋转容器尺寸与卡片尺寸（都要按视口实测算，纯 CSS 做不到）。 */
 function markViewport() {
   const b = document.body;
   b.classList.toggle('rot', isRot());
   b.classList.toggle('short', vh() < 430);   // 局部太矮 → 收紧版式（隐藏周期条等）
   b.classList.toggle('narrow', vw() < 700);
+  b.classList.toggle('low', LOW);            // 低档：停滤镜/停图层（见 CSS body.low）
+  applyRotSize();
+  fitDeck();
 }
 markViewport();
-addEventListener('resize', () => { markViewport(); layoutCards(); moveCards(true); });
-addEventListener('orientationchange', () => setTimeout(() => { markViewport(); layoutCards(); moveCards(true); }, 240));
+// 视口变化统一入口：rAF 合并（iOS 地址栏收起时会连发很多次 resize）
+let vpPending = false;
+function onViewport() {
+  if (vpPending) return;
+  vpPending = true;
+  requestAnimationFrame(() => {
+    vpPending = false;
+    markViewport();
+    layoutCards();
+  });
+}
+addEventListener('resize', onViewport);
+addEventListener('orientationchange', () => setTimeout(onViewport, 200));
+if (window.visualViewport) visualViewport.addEventListener('resize', onViewport);
 
 /** 开场应该停在哪张元素卡：
  *  ① 第一个"已解锁且有文件、尚未通关"的关卡所在元素（下一个该打的）
@@ -1098,7 +1247,11 @@ function boot(cfg) {
   buildPeriods();                   // 再建周期轨道（条内 = 该周期通关进度）
   setActive(0, true);          // 先停在最开头（新手引导）
   refreshProgress();
+  fitDeck();                        // ★ 页脚内容（同位素条/按钮）定下来后再量走廊高度，卡片尺寸才准
+  layoutCards();
   moveCards(true);
+  // 再量一次：字体度量/换行在首帧后才稳定（手机 Safari 上曾出现"晚一帧才换行"→ 卡片压到周期条）
+  requestAnimationFrame(() => { fitDeck(); layoutCards(); });
   // 开场动画：稍等进场淡入，再自动划过走廊到"下一个该打的关卡"
   const target = autoTarget();
   if (target > 0) setTimeout(() => setActive(target, true), matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 520);

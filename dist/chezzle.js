@@ -486,11 +486,17 @@ class Scene {
 
   /** 大横幅：屏幕中央大字（MC 标题式），淡入淡出。
    *  text 支持 \n 多行；dur 秒为总时长（含淡入淡出）。关卡脚本/插件随时可调用，
-   *  后显示的横幅顶掉前一个（同一时刻屏幕上只有一条大横幅）。 */
+   *  后显示的横幅顶掉前一个（同一时刻屏幕上只有一条大横幅）。
+   *  ★ 同时记下**真实时钟**起点 wall：横幅是屏幕空间 UI，寿命应按真实秒算 ——
+   *    手机上严重掉帧时游戏时钟（tick 累积）会比真实时间慢，横幅就会拖长然后"啪"地
+   *    整条消失（用户复现"淡出没生效"）。HUD 优先用 wall 计算年龄，无 wall 时退回游戏时钟。 */
   showBanner(text, dur = 4) {
     const t = String(text ?? '');
     if (!t.trim()) return null;
-    this.banner = { text: t, t: this.time, dur: Math.max(0.6, Number(dur) || 4) };
+    this.banner = {
+      text: t, t: this.time, dur: Math.max(0.6, Number(dur) || 4),
+      wall: (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0,
+    };
     this.fire('banner', this.banner);
     return this.banner;
   }
@@ -7924,10 +7930,29 @@ exports.renderFormula = renderFormula;
 // 与 tools/leveleditor.html 编辑器已用的 dpr 方案同构。
 // ============================================================================
 
-/** 设备像素密度（钳制 1..3：4K 双缩放等极端值不再无脑放大，保护 fillrate） */
+/** 低档设备判定（触屏 / 无 hover / 小屏）：据此降低渲染开销。
+ *  纯 Node（测试）环境返回 false。 */
+function lowTier() {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+  try {
+    if (window.matchMedia('(pointer: coarse)').matches) return true;
+    if (!window.matchMedia('(hover: hover)').matches) return true;
+    const w = window.innerWidth || 9999;
+    const h = window.innerHeight || 9999;
+    return Math.min(w, h) < 620;
+  } catch (e) {
+    return false;
+  }
+}
+
+/** 设备像素密度（钳制 1..3；低档设备钳到 2 —— 见下）。
+ *  ★ dpr=3 时缓冲面积是 2x 的 2.25 倍：逻辑 1760×1120 的画布在 dpr=3 下是
+ *    5280×3360 ≈ 17.7M 像素，每帧清屏 + 重绘全部内容，手机 GPU 直接被填满
+ *    → 发烫、掉帧（用户手机实测）。手机上 2x 与 3x 肉眼几乎无差别。 */
 function canvasDpr() {
   if (typeof window === 'undefined' || !window.devicePixelRatio) return 1;
-  return Math.max(1, Math.min(3, Math.round(window.devicePixelRatio * 100) / 100));
+  const cap = lowTier() ? 2 : 3;
+  return Math.max(1, Math.min(cap, Math.round(window.devicePixelRatio * 100) / 100));
 }
 
 /** 画布逻辑尺寸（CSS px）读取：HUD/标签/触控等"屏幕空间"UI 以逻辑像素布局与
@@ -7985,6 +8010,7 @@ function fitCanvasToWindow(canvas, { maxW = MAX_VIEW_W, maxH = MAX_VIEW_H, pad =
   return { w: lw, h: lh };
 }
 
+exports.lowTier = lowTier;
 exports.canvasDpr = canvasDpr;
 exports.canvasLW = canvasLW;
 exports.canvasLH = canvasLH;
@@ -11309,14 +11335,23 @@ class Hud {
   }
 
   /** 大横幅（MC 标题式：屏幕中央大字，淡入淡出+轻微下落定格）。
-   *  数据来自 scene.showBanner(text, dur)：{ text, t, dur }，超时自然淡出消失。 */
+   *  数据来自 scene.showBanner(text, dur)：{ text, t, dur }，超时自然淡出消失。
+   *  ★ 两处抗掉帧加固（手机端"淡出看不见"的两个成因）：
+   *    ① 年龄优先按**真实时钟**算：掉帧时游戏时钟比真实时间慢，横幅会拖长再整条消失；
+   *    ② 单帧 alpha 不许从亮直接掉到 0（3~5fps 时淡出只剩 1 帧 = 看起来是硬切）。 */
   bigBanner(ctx, scene, W, H, time) {
     const b = scene.banner;
-    if (!b) return;
-    const age = time - b.t;
+    if (!b) { this._bannerA = null; this._bannerKey = null; return; }
+    const useWall = b.wall > 0 && typeof performance !== 'undefined' && performance.now;
+    const age = useWall ? (performance.now() - b.wall) / 1000 : time - b.t;
     const fade = Math.min(0.5, b.dur / 3); // 淡入/淡出各自时长（横幅很短时自动收窄）
-    const a = bannerEnvelope(age, b.dur);
-    if (a <= 0) return;
+    let a = bannerEnvelope(age, b.dur);
+    // 换了一条横幅 → 重置平滑状态（否则新横幅的淡入会被上一条的残值抬起来）
+    const key = b.wall || b.t;
+    if (this._bannerKey !== key) { this._bannerKey = key; this._bannerA = null; }
+    if (this._bannerA != null && a < this._bannerA) a = Math.max(a, this._bannerA - 0.34);
+    this._bannerA = a > 0 ? a : null;
+    if (a <= 0.02) return;
     const lines = String(b.text).split('\n').map((s) => s.trim()).filter((s) => s);
     if (!lines.length) return;
     ctx.save();
@@ -16882,4 +16917,4 @@ exports.Multiscene = Multiscene;
   };
   global.Chezzle = __require("src/index.js");
 })(typeof window !== 'undefined' ? window : globalThis);
-console.log('[Chezzle] 引擎构建 "vmtybzjt9"');
+console.log('[Chezzle] 引擎构建 "vmtz3hibk"');

@@ -12,10 +12,29 @@
 // 与 tools/leveleditor.html 编辑器已用的 dpr 方案同构。
 // ============================================================================
 
-/** 设备像素密度（钳制 1..3：4K 双缩放等极端值不再无脑放大，保护 fillrate） */
+/** 低档设备判定（触屏 / 无 hover / 小屏）：据此降低渲染开销。
+ *  纯 Node（测试）环境返回 false。 */
+export function lowTier() {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+  try {
+    if (window.matchMedia('(pointer: coarse)').matches) return true;
+    if (!window.matchMedia('(hover: hover)').matches) return true;
+    const w = window.innerWidth || 9999;
+    const h = window.innerHeight || 9999;
+    return Math.min(w, h) < 620;
+  } catch (e) {
+    return false;
+  }
+}
+
+/** 设备像素密度（钳制 1..3；低档设备钳到 2 —— 见下）。
+ *  ★ dpr=3 时缓冲面积是 2x 的 2.25 倍：逻辑 1760×1120 的画布在 dpr=3 下是
+ *    5280×3360 ≈ 17.7M 像素，每帧清屏 + 重绘全部内容，手机 GPU 直接被填满
+ *    → 发烫、掉帧（用户手机实测）。手机上 2x 与 3x 肉眼几乎无差别。 */
 export function canvasDpr() {
   if (typeof window === 'undefined' || !window.devicePixelRatio) return 1;
-  return Math.max(1, Math.min(3, Math.round(window.devicePixelRatio * 100) / 100));
+  const cap = lowTier() ? 2 : 3;
+  return Math.max(1, Math.min(cap, Math.round(window.devicePixelRatio * 100) / 100));
 }
 
 /** 画布逻辑尺寸（CSS px）读取：HUD/标签/触控等"屏幕空间"UI 以逻辑像素布局与

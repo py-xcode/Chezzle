@@ -536,14 +536,23 @@ export class Hud {
   }
 
   /** 大横幅（MC 标题式：屏幕中央大字，淡入淡出+轻微下落定格）。
-   *  数据来自 scene.showBanner(text, dur)：{ text, t, dur }，超时自然淡出消失。 */
+   *  数据来自 scene.showBanner(text, dur)：{ text, t, dur }，超时自然淡出消失。
+   *  ★ 两处抗掉帧加固（手机端"淡出看不见"的两个成因）：
+   *    ① 年龄优先按**真实时钟**算：掉帧时游戏时钟比真实时间慢，横幅会拖长再整条消失；
+   *    ② 单帧 alpha 不许从亮直接掉到 0（3~5fps 时淡出只剩 1 帧 = 看起来是硬切）。 */
   bigBanner(ctx, scene, W, H, time) {
     const b = scene.banner;
-    if (!b) return;
-    const age = time - b.t;
+    if (!b) { this._bannerA = null; this._bannerKey = null; return; }
+    const useWall = b.wall > 0 && typeof performance !== 'undefined' && performance.now;
+    const age = useWall ? (performance.now() - b.wall) / 1000 : time - b.t;
     const fade = Math.min(0.5, b.dur / 3); // 淡入/淡出各自时长（横幅很短时自动收窄）
-    const a = bannerEnvelope(age, b.dur);
-    if (a <= 0) return;
+    let a = bannerEnvelope(age, b.dur);
+    // 换了一条横幅 → 重置平滑状态（否则新横幅的淡入会被上一条的残值抬起来）
+    const key = b.wall || b.t;
+    if (this._bannerKey !== key) { this._bannerKey = key; this._bannerA = null; }
+    if (this._bannerA != null && a < this._bannerA) a = Math.max(a, this._bannerA - 0.34);
+    this._bannerA = a > 0 ? a : null;
+    if (a <= 0.02) return;
     const lines = String(b.text).split('\n').map((s) => s.trim()).filter((s) => s);
     if (!lines.length) return;
     ctx.save();

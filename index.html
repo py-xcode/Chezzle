@@ -40,11 +40,19 @@
     to { transform: translate3d(var(--dx,44vw), var(--dy,14.3vw), 0) rotate(18deg); opacity: 0; }
   }
 
-  .hero { position: relative; z-index: 2; text-align: center; padding: 0 16px; width: 100%; max-width: 1200px; }
-  /* —— MC 风方块字标题 —— */
-  .title { width: min(680px, 86vw); display: block; margin: 0 auto; animation: bob 5.2s ease-in-out infinite; }
+  /* —— 版式高度预算 ——
+     hero 总高 = 标题高(宽 × 132/492) + 其余固定部分(--hero-fix)。
+     标题宽度除了受宽度限制，还要按**可用高度反算**：手机横屏只有 ~290~390px 高，
+     只按 86vw 算的话标题会把"关于"按钮顶出屏幕（实测 vh=292 时按钮下沿在 319）。
+     短屏先把"其余部分"收紧（按钮更紧凑），再把标题按高度反算 → 整页一定落在视口内。
+     ★ 手机（短屏/窄屏）另给 --title-max 上限：680px 铺满 844 宽的 80%，两边只剩 80px，
+       观感偏挤；收到 560px（≈66%）后左右留白翻倍，标题也更"立得住"。 */
+  :root { --hero-fix: 166px; --title-max: 680px;
+    --title-w: min(var(--title-max), 86vw, max(200px, calc((100vh - var(--hero-fix) - 26px) * 3.727))); }
+  /* MC 风方块字标题 */
+  .title { width: var(--title-w); display: block; margin: 0 auto; animation: bob 5.2s ease-in-out infinite; }
   /* 版本号：与标题同宽、右对齐 → 正好落在 CHEZZLE 大字的右下角；淡灰、克制 */
-  .ver { width: min(680px, 86vw); margin: -4px auto 0; text-align: right;
+  .ver { width: var(--title-w); margin: -4px auto 0; text-align: right;
     color: #5a527e; font-size: 11px; letter-spacing: 2px; opacity: 0; animation: pop .8s ease 1.15s forwards; }
   @keyframes bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
   /* 字母淡入：只动 opacity（transform 会被 SVG 字母的定位属性占用，不能动画） */
@@ -66,10 +74,21 @@
   #btnPlay:hover { transform: translateY(-2px); filter: drop-shadow(0 0 26px rgba(255,215,106,.75)) drop-shadow(0 14px 24px rgba(0,0,0,.5)); }
   #btnAbout:hover { transform: translateY(-2px); filter: drop-shadow(0 0 22px rgba(127,216,255,.5)) drop-shadow(0 14px 24px rgba(0,0,0,.5)); }
   .bar:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+  /* 短屏（手机横屏，可见高度常常只有 290~400px）：按钮与标题一起收窄。
+     ★ 收窄不只是"好看"：角落两个小舞台要求按钮两侧各留 ~137px（右侧舞台内容 430×s + 8px 缝）。
+       8 Plus 横屏可用宽 736，按钮 559 宽时两侧只剩 88px → 舞台算出来 <0.30 被收起，
+       于是"动画都没了"。收到 58vw（≈427）后两侧各 154px → 舞台回到 0.31~0.35。
+       64vw/58vw 同时兜住更窄的屏（可用宽 568 时标题 364、按钮 329，不会又被撑满）。 */
+  @media (max-height: 470px) {
+    :root { --hero-fix: 132px; --title-max: min(470px, 64vw); }
+    .bar { width: min(560px, 58vw); padding: 10px 16px; font-size: 15px; letter-spacing: 6px; }
+    #btnPlay { margin-top: 18px; } #btnAbout { margin-top: 12px; }
+  }
 
   /* —— 两个小动画：钉死在左下 / 右下角；无边框、无底色（画布只清屏不填色），
-        完全融入星空背景；不拦截鼠标（真实按钮照常可点）—— */
-  .stage { position: fixed; bottom: 14px; z-index: 3; line-height: 0; }
+        完全融入星空背景；整块外壳都不拦截鼠标——画布本身够大（含让方块飞行的透明"空气带"），
+        外壳若吃点击就会在按钮两端形成看不见的死区（实测：点按钮偏两端没反应）—— */
+  .stage { position: fixed; bottom: 14px; z-index: 3; line-height: 0; pointer-events: none; }
   .stage canvas { display: block; pointer-events: none; }
   #stageL { left: 14px; }
   #stageR { right: 14px; }
@@ -78,20 +97,36 @@
     .bar, .lt { animation: pop .4s ease forwards; }
     .stage, #meteors { display: none; } /* 关掉动画时舞台/流星毫无内容，直接隐藏 */
   }
+  /* —— 低性能档（触屏 / 小屏，由 JS 打 body.low）——
+     手机发热与掉帧的大头不是画布，而是"每帧都在重新合成/重绘"的装饰层：
+     全屏星云动画、90 颗带 drop-shadow 滤镜的星星、820px 矢量法阵旋转、流星滤镜。
+     低档把它们降级成静态/无滤镜版本，视觉几乎不变，GPU 占用降到零头。 */
+  body.low .nebula { animation: none; }
+  body.low .sigil { animation: none; opacity: .07; }
+  body.low .meteor { filter: none; }
+  body.low .bar { transition: none; }
   /* —— 页面切换：进场从深色淡入；点按钮时先淡出再跳（目标页同样淡入 → 不再"啪"地切换）—— */
   #wipe { position: fixed; inset: 0; z-index: 900; background: #07051a; opacity: 1;
     pointer-events: none; transition: opacity .34s ease; }
   #wipe.off { opacity: 0; }
 
   /* —— 竖屏强制横屏：整页绕左上角顺时针转 90° ——
-     旋转后"局部坐标系"是 100vh 宽 × 100vw 高（手机上就是横屏版式）；
+     旋转后"局部坐标系"是 innerHeight 宽 × innerWidth 高（手机上就是横屏版式）；
      所有 position:fixed 元素在变换后的根元素里也按局部坐标定位，故舞台钉角照旧。
-     JS 侧用 vw()/vh()/localRect() 做同样的换算（见脚本开头）。 */
+     ★ 尺寸不再用 CSS 的 100vh：iOS 的 100vh 是"地址栏收起后"的大视口，比 JS 的
+       innerHeight 大一截 → 版式与 JS 换算打架，页面下缘会被地址栏压住。
+       这里只留一份兜底，真正的 px 由 applyRotSize() 按 innerWidth/innerHeight 写死。 */
   @media (orientation: portrait) {
     html { position: absolute; top: 0; left: 100vw; width: 100vh; height: 100vw;
       transform: rotate(90deg); transform-origin: left top; overflow: hidden; }
-    .title { width: min(680px, 86vh); }
+    /* 旋转后 vh = 版式空间的宽度、vw = 版式空间的高度 */
+    :root { --title-w: min(var(--title-max), 86vh, max(200px, calc((100vw - var(--hero-fix) - 26px) * 3.727))); }
     .bar { width: min(560px, 82vh); }
+  }
+  @media (orientation: portrait) and (max-width: 470px) {
+    :root { --hero-fix: 132px; --title-max: min(470px, 64vh); }
+    .bar { width: min(560px, 58vh); padding: 10px 16px; font-size: 15px; letter-spacing: 6px; }
+    #btnPlay { margin-top: 18px; } #btnAbout { margin-top: 12px; }
   }
 </style>
 </head>
@@ -180,10 +215,17 @@
   <canvas id="cvR" width="430" height="330"></canvas>
 </div>
 
-<script src="dist/chezzle.js?vmtybzjt9"></script>
+<script src="dist/chezzle.js?vmtz3hibk"></script>
 <script>
 const C = window.Chezzle;
 const REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches;
+// —— 性能档位（低档 = 触屏/小屏设备）——
+// 手机发热掉帧的大头不是画布，而是"每帧都在重新合成/重绘"的装饰层：全屏星云动画、
+// 90 颗带 drop-shadow 滤镜的闪烁星星、820px 矢量法阵旋转、流星滤镜、dpr=3 的清屏。
+// 低档把这些降级成静态/无滤镜版本（视觉几乎不变），GPU 占用降到零头。
+const COARSE = matchMedia('(pointer: coarse)').matches || !matchMedia('(hover: hover)').matches;
+const LOW = !REDUCE && (COARSE || Math.min(innerWidth, innerHeight) < 620);
+if (LOW) document.body.classList.add('low');
 
 // ============================================================================
 // 竖屏强制横屏的坐标换算
@@ -208,6 +250,43 @@ function localRect(el) {
 /** 指针坐标 → 局部坐标 */
 const localPtr = (e) => (isRot() ? { x: e.clientY, y: innerWidth - e.clientX } : { x: e.clientX, y: e.clientY });
 
+/** 竖屏旋转容器的尺寸：由 JS 按 innerWidth/innerHeight 写死 px，不再依赖 CSS 的 100vh。
+ *  iOS 上 100vh 是"地址栏收起后"的大视口，比 innerHeight 大一截 → 与 JS 的 vw()/vh()
+ *  换算打架，页面下缘会被地址栏压住（用户手机复现）。两边用同一组数字就不会错位。 */
+const ROT_PROPS = ['position', 'top', 'left', 'width', 'height', 'transform', 'transformOrigin', 'overflow'];
+function applyRotSize() {
+  const h = document.documentElement;
+  if (isRot()) {
+    h.style.position = 'absolute';
+    h.style.top = '0';
+    h.style.left = innerWidth + 'px';
+    h.style.width = innerHeight + 'px';
+    h.style.height = innerWidth + 'px';
+    h.style.transformOrigin = 'left top';
+    h.style.transform = 'rotate(90deg)';
+    h.style.overflow = 'hidden';
+  } else {
+    for (const k of ROT_PROPS) h.style[k] = '';
+  }
+}
+/** 视口变化的统一入口：先同步旋转容器尺寸，再让各舞台重新布局（rAF 合并，避免高频抖动） */
+const viewportHooks = [];
+let vpPending = false;
+function onViewport() {
+  if (vpPending) return;
+  vpPending = true;
+  requestAnimationFrame(() => {
+    vpPending = false;
+    applyRotSize();
+    for (const f of viewportHooks) f();
+  });
+}
+function hookViewport(f) { viewportHooks.push(f); f(); }
+applyRotSize();   // 先按当前视口把旋转容器定死，后面各舞台的布局才算得准
+addEventListener('resize', onViewport);
+addEventListener('orientationchange', () => setTimeout(onViewport, 200));
+if (window.visualViewport) visualViewport.addEventListener('resize', onViewport);
+
 // ============================================================================
 // 舞台公共部分
 // ----------------------------------------------------------------------------
@@ -223,7 +302,9 @@ const GAP = 14;       // 画布离视口边缘的距离（左下 / 右下角）
 /** 设定画布尺寸与内容变换：w/h = 逻辑尺寸（CSS px），内容按 s 等比缩放后
  *  贴左下（align='left'）或右下（align='right'），纵向一律贴底。 */
 function fitStage(canvas, baseW, baseH, w, h, s, align) {
-  const dpr = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
+  // 低档（手机）把 dpr 压到 2：dpr=3 时每帧清屏/重绘的像素量是 2.25 倍，
+  // 而 2x 在手机屏上已经看不出差别（这是发热最直接的一刀）
+  const dpr = Math.min(LOW ? 2 : 3, Math.max(1, window.devicePixelRatio || 1));
   canvas.style.width = w + 'px';
   canvas.style.height = h + 'px';
   canvas.width = Math.max(1, Math.round(w * dpr));
@@ -257,8 +338,10 @@ function computeStage(vw, vh, b, kind) {
   const sClear = Math.min(capW, clearS, capH);
   const sBelow = Math.min(capW, belowS, capH);
   let s, gag = false;
-  if (sClear >= 0.30) { s = sClear; gag = kind === 'right'; } // ①
-  else if (sBelow >= 0.30) { s = sBelow; }                    // ②
+  // ★ 最小可用缩放 0.26：旧值 0.30 在手机上会把两个舞台都判死（8 Plus 横屏右侧只能到 0.27），
+  //   结果"动画全没了"。0.26 时内容约 112×86 逻辑 px，手机 dpr2 下画布仅 224×172，开销可忽略。
+  if (sClear >= 0.26) { s = sClear; gag = kind === 'right'; } // ①
+  else if (sBelow >= 0.26) { s = sBelow; }                    // ②
   else return null;
   const contentW = CW * s, contentH = BASE_H * s;
   return {
@@ -269,6 +352,24 @@ function computeStage(vw, vh, b, kind) {
   };
 }
 // #endregion stage-geometry
+
+/** 两个舞台一起决策：**要么都显示、要么都收起**。
+ *  手机上常出现"左边一个 120px 缩略图、右边什么都没有"的不对称画面；
+ *  而且短屏时舞台本身也挤不下（内容会压到按钮区域），干脆走干净的纯版式。
+ *  结果按"视口 + 按钮矩形"做键缓存：同一帧里两个舞台各问一次不会重复计算。 */
+const stageCache = { key: '', v: null };
+function stageLayout() {
+  const b = localRect(document.getElementById('btnAbout'));
+  const key = [vw(), vh(), b.left, b.top, b.right, b.bottom].map((n) => Math.round(n)).join(',');
+  if (stageCache.key === key) return stageCache.v;
+  const L = computeStage(vw(), vh(), b, 'left');
+  const R = computeStage(vw(), vh(), b, 'right');
+  const both = L && R;
+  const v = { b, L: both ? L : null, R: both ? R : null };
+  stageCache.key = key;
+  stageCache.v = v;
+  return v;
+}
 
 
 /** 每帧开头：按物理分辨率清屏（**不填底色** → 与页面星空背景完全融合），
@@ -308,19 +409,17 @@ const portalDemo = (function () {
   scene.status = 'running';
   scene.control.add('right'); // 一直往右
 
-  let L = fitStage(canvas, W, BASE_H, W, BASE_H, 1, 'left');
+  let L = { dpr: 1, w: W, h: BASE_H, s: 1, ox: 0, oy: 0 };
   let live = true;
+  canvas.style.display = 'none';   // 布局算完之前先别露面（免得闪一下"原始尺寸"的画布）
   function layout() {
-    const st = computeStage(vw(), vh(), localRect(document.getElementById('btnAbout')), 'left');
-    if (!st) { live = false; canvas.style.display = 'none'; return; } // 窗口又矮又窄 → 不显示
+    const st = stageLayout().L;    // 两个舞台同进同退（见 stageLayout）
+    if (!st) { live = false; canvas.style.display = 'none'; return; } // 放不下 → 收起
     live = true;
     canvas.style.display = 'block';
     L = fitStage(canvas, W, BASE_H, Math.round(st.contentW), Math.round(st.contentH), st.s, 'left');
   }
-  layout();
-  addEventListener('resize', layout);
-  addEventListener('orientationchange', layout);
-  addEventListener('load', layout);
+  hookViewport(layout);
 
   const TICK = 1 / 60;
   const MAX_CATCHUP = 6;
@@ -427,11 +526,13 @@ const flameDemo = (function () {
   let HIT = { x: 60, y: 20 };   // 撞点（方块左上角的目标位置，内容坐标）
   let onBtn = false;            // 是否真的撞在按钮上（false → 只做空撞特效）
   let live = true;              // 窗口太小时舞台隐藏，帧循环空转
+  canvas.style.display = 'none';   // 布局算完之前先别露面
 
   function layout() {
-    const b = localRect(btn);
-    const st = computeStage(vw(), vh(), b, 'right');
-    if (!st) { live = false; canvas.style.display = 'none'; return; } // 窗口又矮又窄 → 不显示
+    const sl = stageLayout();
+    const b = sl.b;
+    const st = sl.R;               // 两个舞台同进同退（见 stageLayout）
+    if (!st) { live = false; canvas.style.display = 'none'; return; } // 放不下 → 收起
     live = true;
     canvas.style.display = 'block';
     if (st.gag) {
@@ -453,10 +554,7 @@ const flameDemo = (function () {
     const h = Math.round(Math.max(st.contentH, st.contentH + st.s * Math.max(0, 60 - HIT.y) + 12));
     L = fitStage(canvas, CW, BASE_H, w, h, st.s, 'right');
   }
-  layout();
-  addEventListener('resize', layout);
-  addEventListener('orientationchange', layout);
-  addEventListener('load', layout);
+  hookViewport(layout);
 
   const CYCLE = 6.0;
   function bez(x0, y0, cx, cy, x1, y1, k) {
@@ -598,6 +696,8 @@ const flameDemo = (function () {
 })();
 
 // 星夜（位置用局部 px，竖屏强制横屏时也铺满）
+// 低档：只留 26 颗、且**不加 drop-shadow 滤镜**——滤镜会让每颗星星各占一个
+// 需要重新模糊的合成层，90 颗 × 每帧闪烁 = 手机 GPU 的主要开销之一
 (function () {
   if (REDUCE) return;
   const box = document.getElementById('stars');
@@ -607,7 +707,8 @@ const flameDemo = (function () {
       s.style.top = (Math.random() * vh()).toFixed(0) + 'px';
     }
   };
-  for (let i = 0; i < 90; i++) {
+  const N = LOW ? 26 : 90;
+  for (let i = 0; i < N; i++) {
     const s = document.createElement('i');
     s.className = 'st';
     const sz = 1 + Math.random() * 2.2;
@@ -617,13 +718,13 @@ const flameDemo = (function () {
     s.style.top = (Math.random() * vh()).toFixed(0) + 'px';
     s.style.animationDuration = (2.4 + Math.random() * 5) + 's';
     s.style.animationDelay = (Math.random() * 5) + 's';
-    s.style.filter = 'drop-shadow(0 0 3px rgba(200,220,255,.9))';
+    if (!LOW) s.style.filter = 'drop-shadow(0 0 3px rgba(200,220,255,.9))';
     box.appendChild(s);
   }
   addEventListener('orientationchange', () => setTimeout(place, 260));
 })();
 
-// 偶发流星：6~15s 一颗，斜掠而过（克制：同一时刻最多一颗）
+// 偶发流星：6~15s 一颗（低档更稀：12~21s，且不带滤镜，见 body.low .meteor）
 (function () {
   if (REDUCE) return;
   const box = document.getElementById('meteors');
@@ -641,7 +742,7 @@ const flameDemo = (function () {
       m.addEventListener('animationend', () => m.remove());
       box.appendChild(m);
     }
-    setTimeout(spawn, 6000 + Math.random() * 9000);
+    setTimeout(spawn, (LOW ? 11000 : 6000) + Math.random() * 9000);
   }
   setTimeout(spawn, 2200 + Math.random() * 3500);
 })();

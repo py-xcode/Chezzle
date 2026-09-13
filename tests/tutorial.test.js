@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { Scene } from '../src/core/scene.js';
 import { Plugins } from '../src/level/plugins.js';
-import { bannerEnvelope } from '../src/render/hud.js';
+import { bannerEnvelope, Hud } from '../src/render/hud.js';
 import { Player } from '../src/objects/player.js';
 import { Floor } from '../src/objects/floor.js';
 import { Beaker } from '../src/objects/beaker.js';
@@ -51,6 +51,43 @@ test('bannerEnvelope：淡入→全亮→淡出，越界为 0', () => {
   // 短横幅：fade 收窄为 dur/3，中段仍有全亮
   assert.equal(bannerEnvelope(0.3, 0.6), 1);
   assert.ok(bannerEnvelope(0.05, 0.6) < 0.3, '0.6s 横幅淡入仅 0.2s');
+});
+
+test('大横幅：年龄走真实时钟；掉帧时淡出分多帧（不会一帧硬切）', () => {
+  // 手机端"淡出没生效"的两个成因：① 游戏时钟在掉帧时比真实时间慢，横幅拖长后整条消失；
+  // ② 3~5fps 时 0.5s 淡出只剩 1 帧。这里用假时钟 + 极低帧率把两条都钉住。
+  const realNow = performance.now;
+  let now = 100000;
+  performance.now = () => now;
+  try {
+    const s = makeScene();
+    s.showBanner('掉帧淡出', 2);
+    const hud = new Hud(s);
+    const seen = [];
+    const ctx = {
+      canvas: { width: 800, height: 600 },
+      globalAlpha: 1, font: '', textAlign: '', lineJoin: '', lineWidth: 1,
+      strokeStyle: '', fillStyle: '', shadowColor: '', shadowBlur: 0,
+      save() {}, restore() {},
+      measureText: (t) => ({ width: String(t).length * 24 }),
+      strokeText() { seen.push(this.globalAlpha); },
+      fillText() { seen.push(this.globalAlpha); },
+    };
+    const draw = () => { seen.length = 0; hud.bigBanner(ctx, s, 800, 600, s.time); return seen.length ? Math.max(...seen) : 0; };
+    now += 1500;                       // age=1.5s：淡出刚要开始 → 全亮
+    assert.equal(draw(), 1, '中段全亮（游戏时钟仍是 0，说明用的是真实时钟）');
+    now += 900;                        // age=2.4s：理论已归零
+    const a2 = draw();
+    assert.ok(a2 > 0.6 && a2 < 1, `一帧内不许从亮直接掉到 0（实得 ${a2}）`);
+    now += 250;
+    const a3 = draw();
+    assert.ok(a3 > 0 && a3 < a2, `继续衰减（实得 ${a3}）`);
+    now += 250;
+    assert.equal(draw(), 0, '三帧内衰减到 0，淡出始终看得见');
+    assert.equal(s.time, 0, '全程没推进游戏时钟');
+  } finally {
+    performance.now = realNow;
+  }
 });
 
 test('模组排期：tutorialBanners 按秒数触发 showBanner；cfg.banners 兜底；空文本跳过', () => {
