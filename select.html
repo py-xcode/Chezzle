@@ -17,6 +17,12 @@
     --card-w: 320px; --card-h: 248px;
     transition: --ar .6s ease, --ag .6s ease, --ab .6s ease;  /* 换色动画落在这里 */
   }
+  /* ★★ 手机端卡顿的真凶：上面这条自定义属性 transition。
+     注册成 <number> 的 --ar 一旦变化，浏览器会**连续 0.6 秒、每帧**重算依赖它的样式，
+     而 .wash 是满屏三层 radial-gradient（8 Plus 上 2.7M 设备像素/帧 × 36 帧 ≈ 1 亿像素重绘），
+     所以"翻卡时越来越卡，停下后 0.6 秒突然又流畅"——用户描述的这个特征完全对上。
+     低档设备直接改成瞬时换色：每次跨卡只重绘 1 帧，肉眼几乎无差。 */
+  html.low { transition: none; }
   * { box-sizing: border-box; margin: 0; }
   /* ★ 关掉浏览器自己的手势：卡片是绝对定位、会撑出可视区，若不禁止原生平移，
      手机上滑动时整个页面会跟着被拖走（用户截图复现）；顺手关掉长按菜单/选中。
@@ -842,10 +848,8 @@ function moveCards(instant) {
     // blur 只给"侧后方"的卡片，低档设备完全不做（每帧重新模糊是最贵的一步）
     sset(b, 'filter', LOW || ad < 0.5 ? 'none' : `blur(${Math.min(2.4, (ad - 0.5) * 1.6).toFixed(2)}px)`);
   }
-  // 主题色随选中元素过渡：只在"跨过一整张卡"时改一次，别每帧都写
-  // （每帧写会不停打断 CSS transition，反而变成抖动/硬切）
-  const idx = Math.round(clampIndex(Math.round(curX), ENTRIES.length));
-  if (idx !== lastAccentIdx) { lastAccentIdx = idx; setAccent(accentOf(ENTRIES[idx] || ENTRIES[0])); }
+  // 主题色**只在卡片落位时**改（见 setActive）：拖拽途中每越过一张卡就换色，会让满屏
+  // 背景在手指还没松开时就开始重绘——正是"翻的时候越来越卡"的观感来源。
 }
 let lastAccentIdx = -1;
 /** 写进 --ar/--ag/--ab（已用 @property 注册成 <number>）→ 由 CSS transition 平滑插值 */
@@ -935,6 +939,11 @@ function setActive(i, focusIso) {
   layoutCards();
   kickCards();
   refreshPeriods();
+  // 主题色只在落位时换一次（拖拽途中不换）→ 满屏背景每翻一张卡只重绘 1~36 帧，而不是每帧
+  if (lastAccentIdx !== active) {
+    lastAccentIdx = active;
+    setAccent(accentOf(ENTRIES[active] || ENTRIES[0]));
+  }
   const p = periodOf(e);
   if (p !== prevP) flashPeriod(p); else lastPeriod = p;
   document.title = `Chezzle · 选关 · ${e.kind === 'tutorial' ? e.name : e.name + ' ' + e.sym}`;
@@ -1205,6 +1214,7 @@ function markViewport() {
   b.classList.toggle('short', vh() < 430);   // 局部太矮 → 收紧版式（隐藏周期条等）
   b.classList.toggle('narrow', vw() < 700);
   b.classList.toggle('low', LOW);            // 低档：停滤镜/停图层（见 CSS body.low）
+  document.documentElement.classList.toggle('low', LOW);   // 还要打在 <html> 上：关掉 --ar 过渡（满屏重绘风暴）
   applyRotSize();
   fitDeck();
 }

@@ -75,13 +75,14 @@
   #btnAbout:hover { transform: translateY(-2px); filter: drop-shadow(0 0 22px rgba(127,216,255,.5)) drop-shadow(0 14px 24px rgba(0,0,0,.5)); }
   .bar:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
   /* 短屏（手机横屏，可见高度常常只有 290~400px）：按钮与标题一起收窄。
-     ★ 收窄不只是"好看"：角落两个小舞台要求按钮两侧各留 ~137px（右侧舞台内容 430×s + 8px 缝）。
-       8 Plus 横屏可用宽 736，按钮 559 宽时两侧只剩 88px → 舞台算出来 <0.30 被收起，
-       于是"动画都没了"。收到 58vw（≈427）后两侧各 154px → 舞台回到 0.31~0.35。
-       64vw/58vw 同时兜住更窄的屏（可用宽 568 时标题 364、按钮 329，不会又被撑满）。 */
+     ★ 按钮宽度直接决定角落两个小舞台能长多大（舞台只能待在按钮两侧的空档里）：
+       8 Plus 可用宽 736 时 —— 按钮 82vw(604) → 舞台 0.20（放不下，直接消失）
+                              58vw(427) → 舞台 ~0.31（133px，偏小）
+                              50vw(368) → 舞台 ~0.38~0.43（162px，明显有存在感）
+       所以用户觉得"动画太小"时，收按钮就是唯一的杠杆（用户建议改按钮大小，正是这里）。 */
   @media (max-height: 470px) {
     :root { --hero-fix: 132px; --title-max: min(470px, 64vw); }
-    .bar { width: min(560px, 58vw); padding: 10px 16px; font-size: 15px; letter-spacing: 6px; }
+    .bar { width: min(560px, 50vw); padding: 10px 16px; font-size: 15px; letter-spacing: 6px; }
     #btnPlay { margin-top: 18px; } #btnAbout { margin-top: 12px; }
   }
 
@@ -125,7 +126,7 @@
   }
   @media (orientation: portrait) and (max-width: 470px) {
     :root { --hero-fix: 132px; --title-max: min(470px, 64vh); }
-    .bar { width: min(560px, 58vh); padding: 10px 16px; font-size: 15px; letter-spacing: 6px; }
+    .bar { width: min(560px, 50vh); padding: 10px 16px; font-size: 15px; letter-spacing: 6px; }
     #btnPlay { margin-top: 18px; } #btnAbout { margin-top: 12px; }
   }
 </style>
