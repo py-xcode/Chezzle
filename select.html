@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- 空图标：避免浏览器为 /favicon.ico 白跑一次跨国请求 -->
+<link rel="icon" href="data:,">
 <title>Chezzle · 选关 · 元素回廊</title>
 <style>
   /* ★ 主题色用三个数值自定义属性承载并注册成 <number>：这样它们**可以被 transition 插值**，
@@ -604,6 +606,18 @@ const $ = (id) => document.getElementById(id);
 const track = $('track'), isoBox = $('isotopes'), enterBtn = $('enter'), enterText = $('enterText');
 const prevBtn = $('prev'), nextBtn = $('next');
 
+// ---- 预取（配合根目录 _headers 的缓存策略）----
+// 选关页是"点进关卡"前的最后一站：趁玩家在走廊里滑动，把他当前选中元素的关卡页先抓下来，
+// 真按「进入关卡」时就不必再等一次跨国往返（关卡页 30~90KB，本身还内嵌关卡数据与插件）。
+if (!window.__czlWarmed) {
+  window.__czlWarmed = new Set();
+}
+function warmLevel(file) {
+  if (!file || window.__czlWarmed.has(file)) return;
+  window.__czlWarmed.add(file);
+  try { fetch(file, { priority: 'low' }).catch(() => {}); } catch (e) { /* 忽略 */ }
+}
+
 let active = 0;        // 当前元素下标
 let activeIso = 0;     // 当前同位素下标
 let curX = 0;          // 走廊当前位置（以"卡片数"为单位的浮点值，rAF 缓动趋近 active）
@@ -944,6 +958,7 @@ function setActive(i, focusIso) {
     lastAccentIdx = active;
     setAccent(accentOf(ENTRIES[active] || ENTRIES[0]));
   }
+  for (const it of e.isotopes) warmLevel(it.file);   // 预取本元素的关卡页（见 warmLevel 注释）
   const p = periodOf(e);
   if (p !== prevP) flashPeriod(p); else lastPeriod = p;
   document.title = `Chezzle · 选关 · ${e.kind === 'tutorial' ? e.name : e.name + ' ' + e.sym}`;

@@ -1,0 +1,38 @@
+# Chezzle · Cloudflare Pages 缓存策略（Pages 自动读取仓库根目录的此文件）
+# ----------------------------------------------------------------------------
+# 为什么需要：Pages 默认给 HTML 发 `cache-control: public, max-age=0, must-revalidate`，
+# 等于"每次导航都得回源问一次"。国内访问 Cloudflare 的 RTT 很大 → 点按钮就白屏等一次跨国往返。
+# 这里把 HTML 改成"可短暂缓存 + 后台偷偷更新"：
+#   max-age                这段时间内导航 0 请求，直接用本地副本
+#   stale-while-revalidate 过期后**先秒开旧副本**，同时后台回源更新 → 之后每次进入都是瞬开，
+#                          更新在"再下一次进入"时生效（要立刻生效就在后台 Purge cache 或强刷）
+# 引擎包 URL 带 ?v=<构建号>，URL 一变就是新资源 → 可以放心长期强缓存。
+#
+# ★ 规则之间**互不重叠**（每条路径只被一条规则命中），所以不依赖 Cloudflare 对
+#   "多规则命中同一响应头"的取舍顺序，行为可预期。
+
+# 引擎包：URL 带构建号，内容与版本号一一对应
+/dist/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# 关卡页 + 关卡表 + levels/report.js（都在 /levels/ 下，统一给同一份策略）
+/levels/*
+  Cache-Control: public, max-age=60, stale-while-revalidate=604800
+
+# 选关页（Cloudflare 的 clean URL 会把 .html 剥掉，两种写法都写上）
+/select.html
+  Cache-Control: public, max-age=60, stale-while-revalidate=604800
+/select
+  Cache-Control: public, max-age=60, stale-while-revalidate=604800
+
+# 关于页
+/about.html
+  Cache-Control: public, max-age=600, stale-while-revalidate=604800
+/about
+  Cache-Control: public, max-age=600, stale-while-revalidate=604800
+
+# 首页（/ 与 /index.html 是同一份文件）
+/
+  Cache-Control: public, max-age=60, stale-while-revalidate=604800
+/index.html
+  Cache-Control: public, max-age=60, stale-while-revalidate=604800

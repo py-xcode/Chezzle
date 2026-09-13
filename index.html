@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- 空图标：浏览器默认会去要 /favicon.ico（Cloudflare 上白跑一次跨国请求 + 404）-->
+<link rel="icon" href="data:,">
 <title>Chezzle · 化学 × 解谜</title>
 <style>
   :root { --gold: #e8b84b; --gold-l: #ffd76a; --cyan: #7fd8ff; --txt: #e8ecff; }
@@ -111,6 +113,20 @@
     pointer-events: none; transition: opacity .34s ease; }
   #wipe.off { opacity: 0; }
 
+  /* —— 资源缓存进度（底部居中，细窄一条；不拦点击、不抢戏）——
+     主页空闲时把选关页/关卡表/关卡页先抓进本地缓存（Cloudflare 国内 RTT 大），
+     这里把进度如实显示出来。全部命中缓存时它连出现都不会出现（250ms 内就结束了）。 */
+  #pre { position: fixed; left: 50%; bottom: 7px; transform: translateX(-50%); z-index: 4;
+    display: flex; align-items: center; gap: 8px; pointer-events: none;
+    font: 11px ui-monospace, Consolas, monospace; letter-spacing: 1px; color: #6f7d9e;
+    opacity: 0; transition: opacity .35s ease; }
+  #pre.on { opacity: 1; }
+  #pre.done { color: #8fd6a6; }
+  #preBar { display: block; width: 92px; height: 3px; background: rgba(127,216,255,.15); overflow: hidden; }
+  #preFill { display: block; width: 0%; height: 100%;
+    background: linear-gradient(90deg, #4f9fd8, #cfefff); transition: width .22s ease; }
+  @media (prefers-reduced-motion: reduce) { #pre, #preFill { transition: none; } }
+
   /* —— 竖屏强制横屏：整页绕左上角顺时针转 90° ——
      旋转后"局部坐标系"是 innerHeight 宽 × innerWidth 高（手机上就是横屏版式）；
      所有 position:fixed 元素在变换后的根元素里也按局部坐标定位，故舞台钉角照旧。
@@ -146,6 +162,17 @@
 </div>
 <div id="meteors" aria-hidden="true"></div>
 <div id="wipe" aria-hidden="true"></div>
+<!-- 资源缓存进度：主页空闲时先抓选关/关卡资源，这里显示进度（见页脚 prefetch 脚本） -->
+<div id="pre" role="status" aria-live="polite">
+  <span id="preText">准备缓存…</span>
+  <span id="preBar"><i id="preFill"></i></span>
+</div>
+
+<!-- 预取提示：解析阶段就告诉浏览器"下一页大概率是这两个"，配合页脚脚本里的 fetch 预热
+     （Cloudflare 在国内 RTT 大，先把选关页/关卡表抓进本地缓存，点按钮时才不干等） -->
+<link rel="prefetch" href="select.html">
+<link rel="prefetch" href="about.html">
+<link rel="prefetch" href="levels/levels.json">
 
 <div class="hero">
   <!-- MC 风方块字：CHE 金 / ZZLE 青（白色主体 + 渐变描边 + 立体投影层，每字微歪） -->
@@ -186,7 +213,7 @@
     </g>
   </svg>
   <!-- 版本号：贴在 CHEZZLE 大字右下角（只这一行字，不加别的） -->
-  <div class="ver">alpha-0912</div>
+  <div class="ver">alpha-0913</div>
 
   <a id="btnPlay" class="bar" href="select.html">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -767,6 +794,93 @@ const flameDemo = (function () {
     if (Math.abs(tx - cx) > 0.05 || Math.abs(ty - cy) > 0.05) requestAnimationFrame(tick);
     else running = false;
   }
+})();
+
+// 预取（用户要求）：Cloudflare 在国内 RTT 大，"点按钮 → 白屏等待"很伤体验。
+// 趁玩家在主页停留时（load 之后的空闲时段、低优先级）把下一步要用的东西抓进本地缓存：
+//   ① 关卡表 levels/levels.json（顺带挑出 1~2 个"最可能马上要打"的关卡页）
+//   ② 两个按钮的目标页 select.html / about.html + 关卡页共用的 levels/report.js
+// 配合仓库根目录的 _headers（HTML 允许短暂缓存 + stale-while-revalidate），
+// 点进选关/关卡时直接命中缓存，不再等一次跨国往返；没命中也只是照旧走网络，无副作用。
+// 底部那条细进度条（#pre）如实显示进度：全部命中缓存时 250ms 内就结束，根本不会露面。
+(function prefetch() {
+  const box = document.getElementById('pre');
+  const fill = document.getElementById('preFill');
+  const txt = document.getElementById('preText');
+  let total = 0, done = 0, bytes = 0, partial = 0, lastPct = 0, finished = false;
+  let showTimer = 0;
+  window.__preDebug = () => ({ total, done, partial: Math.round(partial * 100) / 100, bytes, lastPct, finished });
+
+  const paint = () => {
+    if (!box || !fill || !txt) return;
+    // ★ partial 里已经含"完成项 = 1.0"，不能再加 done（否则重复计数 → 分母 5 项却算出 120%）
+    //   分母是"清单条数"，所以必须先把清单定下来再开始抓；没真正结束前最多显示 97%
+    const raw = Math.round((partial / Math.max(1, total)) * 100);
+    const pct = finished ? 100 : Math.min(97, Math.max(lastPct, raw));
+    lastPct = pct;
+    fill.style.width = pct + '%';
+    txt.textContent = finished ? '缓存就绪 ✓'
+      : `缓存中 ${pct}% · ${Math.max(1, Math.round(bytes / 1024))}KB`;
+  };
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(showTimer);
+    paint();
+    if (box) box.classList.add('done');
+    setTimeout(() => { if (box) box.classList.remove('on'); }, 1400);   // 报个"就绪"再悄悄退场
+  };
+
+  /** 抓一个资源：按 content-length 做**字节级**部分进度，进度条才走得顺。
+   *  每条的贡献 = min(1, 本条已收字节 / 本条总字节)；完成后固定记 1（分母 = 条数）。 */
+  const warm = (url) => {
+    total++;
+    paint();
+    let frac = 0;                                  // 本条已贡献的进度（0..1）
+    const setFrac = (v) => { partial += v - frac; frac = v; };
+    return fetch(url, { priority: 'low' })
+      .then((res) => {
+        const len = Math.max(1, Number(res.headers.get('content-length')) || 60000);
+        if (!res.body || typeof res.body.getReader !== 'function') {
+          return res.arrayBuffer().then((buf) => { bytes += buf.byteLength; });   // 老内核：整块算
+        }
+        const reader = res.body.getReader();
+        let got = 0;
+        const pump = () => reader.read().then((r) => {
+          if (r.done) return;
+          got += r.value.byteLength;
+          bytes += r.value.byteLength;
+          setFrac(Math.min(0.98, got / len));       // 留 0.02 给"收尾"，避免提前到 100%
+          paint();
+          return pump();
+        });
+        return pump();
+      })
+      .catch(() => { /* 抓不到就算了，照旧走网络 */ })
+      .then(() => { setFrac(1); done++; paint(); });
+  };
+
+  addEventListener('load', () => {
+    const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 900));
+    idle(async () => {
+      // 真正开始前先在 250ms 后准备露脸：全部命中缓存时它来不及出现
+      showTimer = setTimeout(() => { if (box && !finished) box.classList.add('on'); }, 250);
+      // ① 先拿关卡表：它只用来决定"抓哪几关"，不计入进度（分母要先固定，见 paint）
+      let list = ['select.html', 'about.html', 'levels/report.js'];
+      try {
+        const cfg = await (await fetch('levels/levels.json')).json();
+        let cleared = new Set();
+        try { cleared = new Set(JSON.parse(localStorage.getItem('chezzle-progress-v1') || '{}').cleared || []); } catch (e) { /* 忽略 */ }
+        const all = [...(cfg.tutorial ? [cfg.tutorial] : []), ...Object.values(cfg.levels || {}).flat()]
+          .filter((l) => l && l.file);
+        const next = all.filter((l) => !cleared.has(l.id));       // 优先"下一个还没通关的"
+        list = list.concat([...next, ...all].slice(0, 2).map((l) => l.file));
+      } catch (e) { /* 关卡表拿不到：只抓保底那几个 */ }
+      // ② 清单已定 → 分母固定 → 开始抓（进度条从 0 稳稳走到 100%）
+      await Promise.all(list.map(warm));
+      finish();
+    });
+  });
 })();
 
 // 页面切换：进场淡入 + 离场淡出（选关/关于都是独立页面，用淡入淡出把它们接起来）
