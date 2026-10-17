@@ -36,6 +36,7 @@ export class Scene {
     this.statics = [];
     this.containers = [];
     this.lamps = [];
+    this.gasTubes = []; // 导气管（输入端产气 → 输出端；见 objects/gastube.js）
     this.doors = [];
     this.portals = [];
     this.particles = [];
@@ -80,6 +81,7 @@ export class Scene {
     this._events = {};
     this._emitCtx = null;
     this._plumeSeq = 0;
+    this._tubeBusy = false; // 导气管输送中（输出端吸收再产气时不再被管道截留，防环）
     this._pressTap = null; // 按住的目标（长按持续执行 onTap，如滴管连续滴）
     this._pressTapT = 0; // 距上次触发的时间
     this._pressCand = null; // 按下候选（拖动 vs 点击滴液判定）
@@ -336,6 +338,7 @@ export class Scene {
     else if (obj.physicsKind === 'dynamic') this.dynamics.push(obj);
     if (obj instanceof Container) this.containers.push(obj);
     if (obj.isLamp) this.lamps.push(obj);
+    if (obj.isGasTube) this.gasTubes.push(obj);
     if (obj.isDoor) this.doors.push(obj);
     if (obj instanceof Portal) this.portals.push(obj);
     if (obj instanceof Particle) this.particles.push(obj);
@@ -366,7 +369,7 @@ export class Scene {
    *  延迟出现/开关隐藏的物体必须**物理也不计算**：半空摆的玩家隐身时不能坠地。 */
   _deindex(obj) {
     const arrays = [this.objects, this.dynamics, this.statics, this.particles,
-      this.containers, this.lamps, this.doors, this.portals, this.hidden];
+      this.containers, this.lamps, this.gasTubes, this.doors, this.portals, this.hidden];
     for (const arr of arrays) {
       const i = arr.indexOf(obj);
       if (i >= 0) arr.splice(i, 1);
@@ -903,14 +906,90 @@ export class Scene {
   onGas(id, mass, ctx) {
     // 记录"反应产生的气体"（气体探测器只检测这个，不检测预置大气气体）
     this._reactGas[id] = (this._reactGas[id] ?? 0) + mass;
+    // 导气管截留：输入端罩住范围内产出的气体 → 全部经管道鼓入输出端
+    // （输入端不冒气泡柱、气体不进大气）。_tubeBusy：输送途中输出端吸收本身
+    // 再产气（如 NO2 溶水放 NO）时走正常管线，不再被管道截留（防 A→B→A 环）。
+    if (!this._tubeBusy) {
+      const tube = this._gasTubeForEmission();
+      if (tube) {
+        this._tubeBusy = true;
+        try {
+          this._routeTubeGas(tube, id, mass, ctx);
+        } finally {
+          this._tubeBusy = false;
+        }
+        return mass; // 全部截留（引擎按返回值扣掉输入端的吸收/大气份额）
+      }
+    }
+    return this._gasPlume(id, mass, { origin: ctx ? { kind: 'reaction', text: ctx.lastRxText ?? '' } : null });
+  }
+
+  /** 导气管采集：本次产气来源在输入端罩住范围内 → 该管道截留全部气体 */
+  _gasTubeForEmission() {
+    if (!this.gasTubes.length) return null;
+    const emit = this._emitCtx;
+    if (!emit) return null;
+    for (const tube of this.gasTubes) if (tube.captures(this, emit)) return tube;
+    return null;
+  }
+
+  /**
+   * 导气管输送：输入端截留的气体全部按"主动鼓入"管线送进输出端药品池
+   * （碱吸收 → 水溶解，与集气瓶通气同一条管线；之后溶液内的反应照常进行）。
+   * 输出端吸收不完的多余气体才在管口生成气泡柱并进入大气——输入端永远不冒柱。
+   */
+  _routeTubeGas(tube, id, mass, ctx) {
+    const g = tube.geometry(this);
+    if (!g) return;
+    const dt = ctx && ctx.dt > 0 ? ctx.dt : this.dt;
+    const cause = this.atmosphere._cause; // 产气反应（下面的吸收会盖章别的原因，留作气体变化溯源）
+    tube.noteFlow(id); // 管内颜色/管口气泡（吸收不完也照样"有气体通过"）
+    const saved = this._emitCtx;
+    this._emitCtx = { obj: null, container: g.outPool, player: this.player, point: g.mouth, spread: 14 };
+    try {
+      const env = this.makeEnv(g.outPool);
+      const outCtx = this.chem._ctxOf(g.outPool.solutionMat, g.outPool.solutionMat, dt, env);
+      const leftover = this.chem._emitGas(id, mass, outCtx, {
+        forceDissolve: true, // 主动鼓入（同集气瓶通气）
+        skipOnGas: true, // 吸收阶段不冒气泡柱：只有"没反应完的多余气体"才冒柱
+        deferAtmosphere: true, // 多余部分交回本方法（先在管口冒柱、再入大气）
+      });
+      if (leftover > 1e-9) {
+        const captured = this._gasPlume(id, leftover, {
+          bubbleDir: -1, // 管口多余气体：冒柱（液下气泡上浮）
+          width: 56, // 管口冒出的气柱比"池面反应柱"窄（像一股气流从管口升起）
+          source: tube, // 柱归属该管道（多根同种气体的管子各冒各的柱，不合并）
+          origin: cause ? { kind: 'reaction', text: cause } : null,
+        });
+        const rest = leftover - captured;
+        if (rest > 1e-9) {
+          this.atmosphere._cause = cause;
+          this.atmosphere.add(id, rest);
+        }
+      }
+    } finally {
+      this._emitCtx = saved;
+    }
+  }
+
+  /**
+   * 产气视觉：气泡柱 + 气泡 + 集气瓶截留。返回"已截留质量"（按住 C 用集气瓶收集）。
+   * opts.bubbleDir：气泡方向（默认随气体轻重——输出端鼓入池内传 -1，池内气泡一律上浮）。
+   * opts.width：气泡柱宽度（默认按反应面/容器宽推算；导气管管口用窄柱像"一股气"）。
+   * opts.source：气泡柱归属（默认=产气源对象；导气管传自己，多根同气体管各冒各的柱）。
+   * opts.origin：气泡柱来源（调试悬停显示的方程式）。
+   */
+  _gasPlume(id, mass, opts = {}) {
     const point = this._emitCtx ? this._emitCtx.point : { x: this.worldW / 2, y: this.worldH / 2 };
     const sub = getSubstance(id);
     const dir = sub.mm < 29 ? -1 : 1;
+    const bubbleDir = opts.bubbleDir ?? dir;
     // 气流强度随产气量增强（基础 > 重力，使小反应也有明显上浮/下沉）
     const accel = Math.max(1300, 1100 + mass * 130);
     const maxSpeed = Math.min(300, 150 + mass * 18);
     const emit = this._emitCtx ?? {};
     const srcObj = emit.obj ?? null;
+    const plumeKey = opts.source ?? srcObj; // 柱归属（同归属+同方向+同气体才共柱）
     // 柱的位置=**反应暴露面外包**（合并成一条稳定大柱：覆盖整个反应面，不再每条
     // 小柱四处跳——用户反馈"零零散散"）；微观点位（气泡/标签/产物）仍按热点走。
     const eb = srcObj ? this._exposedBounds(srcObj) : null;
@@ -918,7 +997,7 @@ export class Scene {
     let plume = null;
     for (const o of this.objects) {
       // 同一产气源、同方向、同气体共柱（源变（被溶窄等）时柱自然跟随；不同源各显各的）
-      if (o instanceof GasColumn && o.life > 0 && o.dir === dir && o.gasId === id && o.source === srcObj) {
+      if (o instanceof GasColumn && o.life > 0 && o.dir === dir && o.gasId === id && o.source === plumeKey) {
         plume = o;
         break;
       }
@@ -929,12 +1008,12 @@ export class Scene {
       const gh = ghSrc && ghSrc.gasHeight ? ghSrc.gasHeight : 80;
       // 柱宽 = 反应面（暴露面）宽 × 0.6（36~130px）——覆盖反应面但不过分宽大
       const faceW = eb ? eb.x1 - eb.x0 : (srcObj?.w ?? emit.container?.w ?? 48) * 0.6;
-      const w = Math.max(36, Math.min(130, faceW * 0.6));
+      const w = Math.max(36, Math.min(130, opts.width ?? faceW * 0.6));
       plume = new GasColumn({
         x: center.x - w / 2, y: point.y - gh, w, h: gh,
         dir, accel, maxSpeed, life: 2.5, gasId: id,
-        source: srcObj, // 产气源（自身不被自己的气流托起）
-        origin: ctx ? { kind: 'reaction', text: ctx.lastRxText ?? '' } : null, // 来源方程式（调试悬停显示）
+        source: plumeKey, // 产气源（自身不被自己的气流托起；导气管=该管道）
+        origin: opts.origin ?? null, // 来源方程式（调试悬停显示；由调用方盖章）
         id: `plume${++this._plumeSeq}`,
       });
       this.addObject(plume);
@@ -946,7 +1025,7 @@ export class Scene {
     // 否则旧柱停在原地，形成"空中旧柱 + 液面新柱"的双柱悬空（用户反馈）
     const gh = (srcObj && srcObj.gasHeight) || (emit.container && emit.container.gasHeight) || 80;
     const faceW = eb ? eb.x1 - eb.x0 : (srcObj?.w ?? emit.container?.w ?? 48) * 0.6;
-    const w = Math.max(36, Math.min(130, faceW * 0.6));
+    const w = Math.max(36, Math.min(130, opts.width ?? faceW * 0.6));
     plume.x = center.x - w / 2;
     plume.y = point.y - gh;
     plume.w = w;
@@ -955,8 +1034,8 @@ export class Scene {
     const n = Math.max(1, Math.min(6, Math.round(mass * 1.2)));
     for (let i = 0; i < n; i++) {
       const x = point.x + (Math.random() - 0.5) * 22;
-      const y = point.y + (dir < 0 ? -(3 + i * 4) : 3 + i * 4);
-      this.addObject(new Bubble({ x, y, dir }));
+      const y = point.y + (bubbleDir < 0 ? -(3 + i * 4) : 3 + i * 4);
+      this.addObject(new Bubble({ x, y, dir: bubbleDir }));
     }
     // 集气瓶截留：按住 C 且背包选中集气瓶时，**距离玩家最近的一处气泡柱**产生的
     // 气体不进大气，直接装入集气瓶（按产气速度收集，5g 封顶；瓶满后恢复正常管线）。

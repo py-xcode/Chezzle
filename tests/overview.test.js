@@ -41,6 +41,7 @@ test('鸟瞰相机：整关适配、平移钳制、缩放锚点保持', () => {
   const cam = new Camera({ viewW: 1000, viewH: 800, worldW: 3000, worldH: 800 });
   // 初始视图 = fit 整关（3000×800 → 800×400 画布：scale = min(800/3000, 400/800) ≈ 0.2667）
   cam.enterOverview();
+  cam.tickOverviewAnim(10); // 跳过进出动画（动画由主循环每帧推进）
   const v0 = cam.compute(800, 400, null);
   approx(v0.scale, 800 / 3000, 'fit scale = 宽度比');
   assert.ok(v0.ox >= 0 && v0.ox <= 3000 - 800 / v0.scale, '视窗在世界内');
@@ -90,6 +91,8 @@ test('setOverview：切换状态、清空 control/pressed、相机进出台账�
   assert.equal(scene.setOverview(true), true);
   assert.equal(scene.overview, true);
   assert.equal(scene.camera.overview, true, '相机进入鸟瞰');
+  scene.camera.tickOverviewAnim(10); // 进入动画完成（实际由主循环逐帧推进）
+  assert.equal(scene.camera.overviewMix, 1, '进入动画完成');
   assert.equal(scene.control.size, 0, '持续输入清空');
   assert.equal(scene.pressed.size, 0, '边缘输入清空');
   assert.equal(scene._pressTap, null, '长按目标清空');
@@ -103,7 +106,10 @@ test('setOverview：切换状态、清空 control/pressed、相机进出台账�
   assert.equal(scene.toggleOverview(), false, 'toggle 退出');
   assert.equal(scene.overview, false);
   assert.equal(scene.camera.overview, false);
-  assert.equal(scene.camera._ov, null, '退出清视图');
+  // 退出有 ~360ms 的镜头/ HUD 动画：保留鸟瞰视图插值回去，动画结束才释放
+  scene.camera.tickOverviewAnim(10);
+  assert.equal(scene.camera.overviewMix, 0, '退出动画完成');
+  assert.equal(scene.camera._ov, null, '退出动画结束后清视图');
   assert.ok(Number.isFinite(p.x), '玩家不受影响');
 });
 
@@ -149,6 +155,7 @@ test('鸟瞰：screenToWorld 走鸟瞰视图（与 compute 同一变换）', () 
   const scene = flatScene();
   const canvas = fakeCanvas(800, 400);
   scene.setOverview(true);
+  scene.camera.tickOverviewAnim(10); // 进入动画完成
   scene.camera.panOverview(120, 60, 800, 400);
   const v = scene.camera.compute(800, 400, null);
   const w = screenToWorld(scene, canvas, 300, 200);
@@ -211,11 +218,12 @@ test('padTop：玩家爬高时视角继续上移（探出世界顶），玩家�
   const pcyOn = 100 * mOn.scale + mOn.offsetY;
   const pcy0 = 100 * m0.scale + m0.offsetY;
   assert.ok(pcyOn > pcy0, `玩家离开屏幕顶缘：${pcyOn.toFixed(0)} > 钉顶 ${pcy0.toFixed(0)}`);
-  // 桌面同样跟进（世界高=视口高 800 时旧相机完全不动，玩家贴顶被卡片挡）
+  // 桌面同样跟进（视口高=世界高 800 时旧相机完全不动，玩家贴顶被卡片挡）
   const camD = mk();
-  const d = camD.compute(1100, 700, focusTop);
+  const d = camD.compute(1000, 800, focusTop);
   assert.ok(d.oy < 0, `桌面也探出世界顶：oy=${d.oy}`);
-  const dFloor = camD.compute(1100, 700, { x: 1400, y: 600, w: 60, h: 90 });
+  // 整关可见（设计视口 1000×800）时桌面相机不动
+  const dFloor = camD.compute(1000, 800, { x: 1400, y: 600, w: 60, h: 90 });
   assert.ok(dFloor.oy === 0, '地面时桌面相机不动（整关可见）');
 });
 

@@ -15,6 +15,11 @@ export class Lamp extends Container {
     // 灯/喷灯是干燥加热台：内部不应有液体水（否则 CaO+H2O、Na+H2O 等在灯上凭空发生，
     // 且 CaCO3 分解出的 CaO 会被灯水消耗掉）。water=0 由 …rest 之后显式覆盖保证。
     super({ x, y, w, h, solid: true, physicsKind: 'static', water: 0, volume: 0, ...rest });
+    // ★ 可自动上台阶高度：灯默认高 40（远超全局 autoStepMax=14），物块被推过来时会被灯侧面
+    //   挡住。而"推物块越灯"必须是**玩家和物块一起上台阶**：物块被抬到灯顶后高度差 > 玩家
+    //   身高，玩家若不跟着上去就和物块脱开了，物块只能孤零零骑在灯上推不走。所以灯按自身
+    //   高度给上限（留 4px 余量）；夹到 48 只为挡住手写 DSL 里夸张的巨灯变成斜坡。
+    this.stepMax = Math.min(48, h + 4);
     this.lit = autoOn;
     this.flameLevel = this.lit ? 1 : 0; // 火焰淡入淡出（0..1）
     this.range = range;

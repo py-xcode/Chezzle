@@ -55,7 +55,15 @@ export function canvasTransformDpr(canvas) {
 /** 设定画布：w/h = 逻辑尺寸（CSS px）；缓冲 = w×h×dpr，CSS 尺寸 = w×h。
  *  尺寸没变则不重设缓冲（重设会清空画布，避免无谓闪烁——同编辑器 ensureCanvasSize）。 */
 export function setupCanvasSize(canvas, w, h) {
-  const dpr = canvasDpr();
+  let dpr = canvasDpr();
+  // 大屏（2K/4K）铺满时，物理缓冲 = w×h×dpr² 很容易超过 1000 万像素：
+  // 桌面 GPU 画 2D 还行，Retina 5K 会到 3000 万+（每帧清屏都很贵）。
+  // 按**面积**再压一次 dpr（逻辑尺寸不变 → 布局/坐标完全不受影响，只是缓冲变少）。
+  const MAX_BUF_PX = 11e6;
+  if (w > 0 && h > 0) {
+    const px = w * h * dpr * dpr;
+    if (px > MAX_BUF_PX) dpr = Math.max(1, Math.round(Math.sqrt(MAX_BUF_PX / (w * h)) * 100) / 100);
+  }
   const bw = Math.max(1, Math.round(w * dpr));
   const bh = Math.max(1, Math.round(h * dpr));
   if (canvas.width !== bw) canvas.width = bw;
@@ -70,10 +78,27 @@ export function setupCanvasSize(canvas, w, h) {
   return canvas;
 }
 
-/** 窗口自适应视口上限（逻辑 px）≈ 原参考视口 1100×700 的 1.6 倍：
- *  超大窗口（4K/超宽屏 dpr=1）不再无脑放大——世界内容会变成 2.7 倍怪大。 */
-export const MAX_VIEW_W = 1760;
-export const MAX_VIEW_H = 1120;
+/** 窗口自适应视口上限（逻辑 px）：桌面大屏也铺满（4K 以内）。
+ *  ★ 世界物体"放大到什么程度"由 CFG.camera.desktopScaleMax 限制，所以这里可以放心
+ *    把画布铺满窗口——多出来的视野装更多关卡内容，而不是把一切等比放大。 */
+export const MAX_VIEW_W = 3840;
+export const MAX_VIEW_H = 2160;
+
+/** 桌面端 HUD/文字放大系数（随窗口尺寸，1~1.6）。
+ *  "游戏内容不一定要更大，但文字必须看得清"：HUD 与画布内 UI 比世界物体多放大一档；
+ *  移动端已有自己的紧凑/放大逻辑 → 返回 1。 */
+export function uiScaleOf(canvas) {
+  const W = canvasLW(canvas);
+  const H = canvasLH(canvas);
+  if (!(W > 0 && H > 0)) return 1;
+  if (typeof window !== 'undefined' && window.matchMedia) {
+    try {
+      if (window.matchMedia('(pointer: coarse)').matches) return 1; // 触屏：走原有移动端布局
+    } catch (e) { /* 老内核 */ }
+  }
+  const base = Math.min(W / 1280, H / 720);
+  return Math.max(1, Math.min(1.6, Math.round(base * 100) / 100));
+}
 
 /** 逻辑尺寸 = 窗口可用尺寸（扣 pad）但不超过上限；返回 {w,h}（由 setupCanvasSize 应用）。
  *  无 window（Node 测试）→ 直接使用上限值。 */

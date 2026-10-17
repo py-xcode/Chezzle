@@ -4,6 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Chezzle · 关于</title>
+<script>
+/* 站点外壳（SPA）内嵌模式：?spa=1。直接打开 /about 时回到外壳的关于路由。 */
+(function () {
+  var spa = /[?&]spa=1/.test(location.search);
+  window.__CZ_SPA_PAGE = spa;
+  if (!spa) location.replace('./#/about');
+})();
+</script>
 <style>
   :root { --gold: #e8b84b; --gold-l: #ffd76a; --cyan: #7fd8ff; --panel: #141a40; --edge: #2b3047; --txt: #dfe8f2; --dim: #9fb2c8; }
   * { box-sizing: border-box; margin: 0; }
@@ -43,10 +51,73 @@
     color: #ffe9b0; margin-top: 10px; font-size: 13.5px; }
   .foot { text-align: center; color: #55617f; font-size: 12px; margin-top: 26px; }
   a { color: var(--cyan); }
+
+  /* ===== 入场：深色幕布自动淡出（纯 CSS，不依赖脚本） ===== */
+  #veil { position: fixed; inset: 0; z-index: 899; background: #090720; pointer-events: none;
+    animation: veilOut .55s ease-out .02s both; }
+  @keyframes veilOut { to { opacity: 0; visibility: hidden; } }
+  /* 开场扫光（与主页/选关同源） */
+  #introSweep { position: fixed; inset: 0; z-index: 60; pointer-events: none; overflow: hidden; }
+  #introSweep i { position: absolute; left: -30%; top: -25%; width: 20%; height: 150%; opacity: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.05) 40%, rgba(255,215,106,.15) 50%, rgba(255,255,255,.05) 60%, transparent);
+    transform: skewX(-18deg); animation: introSweep 1s cubic-bezier(.3,.7,.2,1) .18s both; }
+  @keyframes introSweep {
+    0% { opacity: 0; transform: translateX(0) skewX(-18deg); }
+    12% { opacity: 1; }
+    100% { opacity: 0; transform: translateX(680%) skewX(-18deg); }
+  }
+  /* 背景：缓慢旋转的平行四边形法阵（与选关页元素环同一套语言，纯装饰） */
+  #sigil { position: fixed; left: 50%; top: 46%; width: min(880px, 120vmin); height: min(880px, 120vmin);
+    transform: translate(-50%,-50%) rotate(0deg); opacity: .07; pointer-events: none; z-index: 0;
+    animation: sigilSpin 96s linear infinite; }
+  @keyframes sigilSpin { to { transform: translate(-50%,-50%) rotate(360deg); } }
+  #sigil path, #sigil circle { fill: none; stroke: #e8b84b; }
+  /* 顶部滚动进度：细金线 */
+  #sbar { position: fixed; top: 0; left: 0; right: 0; height: 2px; z-index: 70; pointer-events: none;
+    background: rgba(255,255,255,.05); }
+  #sbar i { display: block; height: 100%; width: 0;
+    background: linear-gradient(90deg, #e8b84b, #ffd76a);
+    box-shadow: 0 0 10px rgba(232,184,75,.6); transition: width .12s linear; }
+  /* 卡片滚动渐显（滚到眼前时才浮上来，不提前把动画演完） */
+  .card { opacity: 0; transform: translateY(18px);
+    transition: opacity .6s ease, transform .65s cubic-bezier(.2,.8,.3,1); }
+  .card.in { opacity: 1; transform: none; }
+  header { opacity: 0; transform: translateY(-12px); transition: opacity .5s ease, transform .55s cubic-bezier(.2,.8,.3,1); }
+  header.in { opacity: 1; transform: none; }
+  .foot { opacity: 0; transition: opacity .6s ease; }
+  .foot.in { opacity: 1; }
+  /* 离场：斜切面板扫入（与主页/选关同一套转场） */
+  #wipe { position: fixed; inset: 0; z-index: 900; pointer-events: none; overflow: hidden; visibility: hidden; }
+  #wipe.on { visibility: visible; }
+  #wipe i { position: absolute; top: -12%; bottom: -12%; left: 0; width: 132%;
+    transform: translateX(112%) skewX(-14deg);
+    background: linear-gradient(96deg, rgba(232,184,75,.16) 0%, #090720 24%, #090720 100%);
+    box-shadow: 0 0 70px rgba(232,184,75,.35); }
+  #wipe.on i { transition: transform .42s cubic-bezier(.66,0,.24,1); transform: translateX(-6%) skewX(-14deg); }
+  #wipe i:before { content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 2px;
+    background: #fff; opacity: .9; box-shadow: 0 0 20px rgba(232,184,75,.95); }
+  @media (prefers-reduced-motion: reduce) {
+    #veil { animation: none; opacity: 0; visibility: hidden; }
+    #introSweep, #sigil { display: none; }
+    #wipe.on i { transition: none; }
+    .card, header, .foot { opacity: 1; transform: none; transition: none; }
+  }
 </style>
 </head>
 <body>
+<div id="veil" aria-hidden="true"></div>
+<div id="introSweep" aria-hidden="true"><i></i></div>
+<div id="sbar" aria-hidden="true"><i></i></div>
+<div id="wipe" aria-hidden="true"><i></i></div>
 <div id="stars" aria-hidden="true"></div>
+<svg id="sigil" viewBox="0 0 600 600" aria-hidden="true">
+  <g stroke-width="1.4">
+    <path d="M300 40 L576 300 L300 560 L24 300 Z"/>
+    <path d="M300 120 L496 300 L300 480 L104 300 Z"/>
+    <circle cx="300" cy="300" r="228" stroke-dasharray="24 26"/>
+    <circle cx="300" cy="300" r="186"/>
+  </g>
+</svg>
 <div class="wrap">
 <header>
   <a class="back" href="index.html" aria-label="返回主页">← 主页</a>
@@ -115,19 +186,93 @@
 </div>
 <script>
 (function () {
-  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // ---- 星野（纯装饰；低档少画几颗） ----
   const box = document.getElementById('stars');
-  for (let i = 0; i < 60; i++) {
-    const s = document.createElement('i');
-    s.className = 'st';
-    const sz = 1 + Math.random() * 2;
-    s.style.width = sz + 'px';
-    s.style.height = sz + 'px';
-    s.style.left = (Math.random() * 100) + 'vw';
-    s.style.top = (Math.random() * 100) + 'vh';
-    s.style.animationDuration = (2.6 + Math.random() * 5) + 's';
-    s.style.animationDelay = (Math.random() * 5) + 's';
-    box.appendChild(s);
+  if (!REDUCE && box) {
+    const N = (matchMedia('(pointer: coarse)').matches || Math.min(innerWidth, innerHeight) < 620) ? 22 : 60;
+    for (let i = 0; i < N; i++) {
+      const s = document.createElement('i');
+      s.className = 'st';
+      const sz = 1 + Math.random() * 2;
+      s.style.width = sz + 'px';
+      s.style.height = sz + 'px';
+      s.style.left = (Math.random() * 100) + 'vw';
+      s.style.top = (Math.random() * 100) + 'vh';
+      s.style.animationDuration = (2.6 + Math.random() * 5) + 's';
+      s.style.animationDelay = (Math.random() * 5) + 's';
+      box.appendChild(s);
+    }
+  }
+  // ---- 滚动渐显：滚到眼前的卡片才浮上来（不提前把入场动画演完） ----
+  const items = [document.querySelector('header'), ...document.querySelectorAll('.card'), document.querySelector('.foot')].filter(Boolean);
+  if (REDUCE || !('IntersectionObserver' in window)) {
+    for (const el of items) el.classList.add('in');
+  } else {
+    const io = new IntersectionObserver((entries) => {
+      const list = entries.filter((e) => e.isIntersecting)
+        .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+      list.forEach((e, i) => {
+        const el = e.target;
+        el.style.transitionDelay = (i * 70) + 'ms';   // 同屏多张卡错峰浮入
+        el.classList.add('in');
+        io.unobserve(el);
+      });
+    }, { rootMargin: '0px 0px -6% 0px', threshold: 0.01 });
+    for (const el of items) io.observe(el);
+  }
+  // ---- 顶部滚动进度（细金线） ----
+  const sfill = document.querySelector('#sbar i');
+  let sPending = false;
+  function onScroll() {
+    if (sPending || !sfill) return;
+    sPending = true;
+    requestAnimationFrame(() => {
+      sPending = false;
+      const max = Math.max(1, document.documentElement.scrollHeight - innerHeight);
+      sfill.style.width = Math.min(100, Math.max(0, (scrollY / max) * 100)).toFixed(2) + '%';
+    });
+  }
+  addEventListener('scroll', onScroll, { passive: true });
+  addEventListener('resize', onScroll);
+  onScroll();
+  // ---- 离场转场：主页/去选关按钮 ----
+  // SPA 外壳内嵌时：不跳页，发消息让外壳做同文档转场（页面本身仍是独立可直链的）
+  const SPASHELL = window.__CZ_SPA_PAGE === true && window.parent !== window;
+  document.addEventListener('click', (e) => {
+    const a = e.target && e.target.closest ? e.target.closest('a.back') : null;
+    if (!a || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || a.target === '_blank') return;
+    const href = a.getAttribute('href');
+    if (!href) return;
+    e.preventDefault();
+    if (SPASHELL) {
+      try {
+        parent.postMessage({ type: /select/i.test(href) ? 'cz:select' : 'cz:home' }, '*');
+      } catch (err) { /* 忽略 */ }
+      return;
+    }
+    if (REDUCE) { location.href = href; return; }
+    const w = document.getElementById('wipe');
+    if (!w) { location.href = href; return; }
+    w.classList.add('on');
+    setTimeout(() => { location.href = href; }, 400);
+  });
+  // ---- 通知外壳：关于页已就绪（可以揭开 iframe） ----
+  if (SPASHELL) {
+    requestAnimationFrame(() => {
+      try { parent.postMessage({ type: 'cz:page-ready' }, '*'); } catch (err) { /* 忽略 */ }
+    });
+    // 外壳再次展示关于页时：重播卡片入场
+    addEventListener('message', (ev) => {
+      const d = ev.data;
+      if (!d || d.type !== 'cz:enter') return;
+      for (const el of items) {
+        el.classList.remove('in');
+        el.style.transitionDelay = '';
+      }
+      void document.body.offsetWidth;
+      requestAnimationFrame(() => { for (const el of items) el.classList.add('in'); });
+    });
   }
 })();
 </script>

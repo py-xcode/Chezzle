@@ -38,7 +38,7 @@ Chezzle.Plugin.register('lampDelay', {
       // 隐藏 = 移出活动索引（保留 byId 登记：scene.reveal 依赖它）
       const idx = [
         scene.objects, scene.dynamics, scene.statics, scene.particles,
-        scene.containers, scene.lamps, scene.doors, scene.portals,
+        scene.containers, scene.lamps, scene.gasTubes, scene.doors, scene.portals,
       ];
       for (const arr of idx) {
         const i = arr.indexOf(obj);

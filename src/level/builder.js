@@ -26,6 +26,7 @@ import { Sign } from '../objects/sign.js';
 import { Portal } from '../objects/portal.js';
 import { GasDetector } from '../objects/gasdetector.js';
 import { Extractor } from '../objects/extractor.js';
+import { GasTube } from '../objects/gastube.js';
 import { Dropper } from '../objects/dropper.js';
 import { GasBottle } from '../objects/gasbottle.js';
 import { bindSceneClick } from './click.js';
@@ -109,6 +110,11 @@ export class LevelBuilder {
 
   extractor(x, y, opts = {}) {
     return this.add(new Extractor({ x, y, ...opts }));
+  }
+
+  /** 导气管（连接两个药品池：输入端罩内产气 → 输出端鼓入；单向、无碰撞箱） */
+  gastube(x, y, opts = {}) {
+    return this.add(new GasTube({ x, y, ...opts }));
   }
 
   dropper(x, y, opts = {}) {

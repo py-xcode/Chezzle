@@ -431,11 +431,48 @@ export const FLAME_COLORS = {
   'Mg2+': '#d8ffe8', // 白绿
 };
 
-/** 物质的焰色：优先物质自带 flameColor（单质），否则按阳离子查表 */
+/** 元素级焰色表：由 FLAME_COLORS 的阳离子键派生（Na+ → Na），供**没有离子表**的
+ *  化合物按化学式里的元素判色。
+ *  ★ 排除铁：铁没有焰色反应（Fe 单质 → null）。FLAME_COLORS 里的 Fe2+/Fe3+ 是
+ *    "铁盐溶液焰色"的游戏简化，只从离子表走，不下沉到元素级——否则 Fe、Fe3O4
+ *    这类无离子表的铁物质会凭空得到橙金色火焰。 */
+const FLAME_ELEMENTS = (() => {
+  const out = {};
+  for (const [ion, color] of Object.entries(FLAME_COLORS)) {
+    const el = ion.replace(/\d*\+$/, '');
+    if (el === 'Fe') continue;
+    if (!(el in out)) out[el] = color; // 同元素多价态取首个（低价）
+  }
+  return out;
+})();
+
+/** 化学式里出现的元素符号（忽略系数、数字、括号、结晶水点）。
+ *  ★ 元素符号后面不能再跟小写字母——化学式里符号之后只可能是数字/括号/下一个元素
+ *    或结束。否则 "Litmus"（石蕊，非化学式）会被切出 "Li" 而误判成锂焰紫红色。 */
+function elementsIn(id) {
+  const str = String(id);
+  const out = [];
+  const re = /[A-Z][a-z]?/g;
+  let m;
+  while ((m = re.exec(str))) {
+    if (/[a-z]/.test(str[m.index + m[0].length] ?? '')) continue;
+    out.push(m[0]);
+  }
+  return out;
+}
+
+/** 物质的焰色：优先物质自带 flameColor（单质），其次按阳离子查表；
+ *  没有离子表的**化合物**（过氧化钠 Na2O2、铜绿 Cu2(OH)2CO3、氮化镁 Mg3N2…）按
+ *  化学式里的元素判色——焰色反应本质是**元素**的性质，缺这一步时这些物质上了灯
+ *  也不变色（Na2O 上灯变黄、它氧化成 Na2O2 后反而没颜色了）。
+ *  单质（kind:'metal'）不走元素兜底：金属的焰色由自带 flameColor 显式声明
+ *  （Na/K/Li 有，Fe/Cu/Zn/Mg 无），免得顺手改掉这几种金属的既有表现。 */
 export function flameColorOf(id) {
   const s = getSubstance(id);
   if (s.flameColor) return s.flameColor;
   if (s.ions) return FLAME_COLORS[s.ions.cat] ?? null;
+  if (s.kind === 'metal') return null;
+  for (const el of elementsIn(s.id ?? id)) if (FLAME_ELEMENTS[el]) return FLAME_ELEMENTS[el];
   return null;
 }
 

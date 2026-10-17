@@ -8,16 +8,26 @@
 #                          更新在"再下一次进入"时生效（要立刻生效就在后台 Purge cache 或强刷）
 # 引擎包 URL 带 ?v=<构建号>，URL 一变就是新资源 → 可以放心长期强缓存。
 #
-# ★ 规则之间**互不重叠**（每条路径只被一条规则命中），所以不依赖 Cloudflare 对
-#   "多规则命中同一响应头"的取舍顺序，行为可预期。
+# ★ 规则尽量不重叠；唯一的例外是 levels/levels.json（见下面注释）：它必须刷新即生效，
+#   所以在 /levels/* 之后单独用 no-store 覆盖，不参与 HTML 的"短暂缓存 + 后台更新"策略。
 
 # 引擎包：URL 带构建号，内容与版本号一一对应
 /dist/*
   Cache-Control: public, max-age=31536000, immutable
 
-# 关卡页 + 关卡表 + levels/report.js（都在 /levels/ 下，统一给同一份策略）
+# 偏好设置脚本：URL 带构建号（build.mjs 自动加 ?v=），同引擎包可长期缓存
+/prefs.js
+  Cache-Control: public, max-age=31536000, immutable
+
+# 关卡页 + levels/report.js（都在 /levels/ 下，统一给同一份策略）
 /levels/*
   Cache-Control: public, max-age=60, stale-while-revalidate=604800
+
+# ★ 关卡表单独不缓存：改 levels.json（tips / debugUnlockAll / 关卡登记）要**刷新即生效**，
+#   不能被 60s + SWR 的旧副本挡住（2KB 的小文件，每次回源无所谓）。
+#   放在 /levels/* 之后：Cloudflare Pages 里更靠后的规则覆盖前面的同名头。
+/levels/levels.json
+  Cache-Control: no-store, max-age=0
 
 # 选关页（Cloudflare 的 clean URL 会把 .html 剥掉，两种写法都写上）
 /select.html

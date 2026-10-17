@@ -36,3 +36,12 @@ levels/tutorial-edit.json
 
 # ---- 教程视频的中间产物 ----
 docs/video/
+
+# 中秋活动页与相关素材（节日专用，暂不入库）
+zhongqiu.html
+zhongqiu-select.html
+tools/zhongqiu-skin.html
+tools/make-zhongqiu-select.mjs
+
+# 协作规则（会话用，不入库）
+AGENTS.md

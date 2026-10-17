@@ -291,9 +291,10 @@ test('场景触点：点击胶头滴一滴；长按玻璃段拖动滴管位置',
   scene.addObject(dr);
   run(scene, 40); // 落地 + 注册
   const ui = new TouchUI(canvas, () => ({ scene, hud: null }));
-  // 世界→屏幕：scale=390/800，offsetX=(844-487.5)/2
-  const sx = (wx) => wx * (H / 800) + (W - 1000 * (H / 800)) / 2;
-  const sy = (wy) => wy * (H / 800);
+  // 世界→屏幕：直接用相机的窗口换算（视窗随画布宽高比变化，scale 不再是 H/800）
+  const cam = scene.camera.compute(W, H, scene.player ?? null);
+  const sx = (wx) => wx * cam.scale + cam.offsetX;
+  const sy = (wy) => wy * cam.scale + cam.offsetY;
   // ① 点击胶头（快速抬起 <0.5s）= 滴一滴
   const bx = sx(dr.x + dr.w / 2);
   const by = sy(dr.y + 4); // 胶头区（world y ≤ dr.y+12）
@@ -326,8 +327,9 @@ test('锁定滴管：玻璃段按下拖动无效（位置不变）；胶头点�
   run(scene, 40);
   assert.equal(dr.isDraggable, false, '锁定的滴管不可拖动');
   const ui = new TouchUI(canvas, () => ({ scene, hud: null }));
-  const sx = (wx) => wx * (H / 800) + (W - 1000 * (H / 800)) / 2;
-  const sy = (wy) => wy * (H / 800);
+  const cam2 = scene.camera.compute(W, H, scene.player ?? null);
+  const sx = (wx) => wx * cam2.scale + cam2.offsetX;
+  const sy = (wy) => wy * cam2.scale + cam2.offsetY;
   // 玻璃段：按下 → 拖 300px → 抬起：位置不动、不滴
   const gx = sx(dr.x + dr.w / 2);
   const gy = sy(dr.y + 24);
@@ -361,14 +363,17 @@ test('死亡状态：轻触屏幕 = 重开（restart）', () => {
 // ---- 9. 移动端相机视野 ---------------------------------------------------------
 test('相机 mobileViewH：横屏放大视野、竖屏保持桌面逻辑', () => {
   const cam = new Camera({ viewW: 1000, viewH: 800, worldW: 1500, worldH: 800 });
+  // 桌面：视窗按画布宽高比展开（844×390 → 视高 462）→ 铺满画布、元素明显更大
   const desk = cam.compute(844, 390, null);
-  assert.ok(Math.abs(desk.scale - 0.4875) < 1e-9, `桌面 scale=${desk.scale}`);
+  assert.ok(Math.abs(desk.scale - 390 / (1000 / (844 / 390))) < 1e-9, `桌面 scale=${desk.scale}`);
+  assert.ok(desk.scale > 0.5, `桌面铺满（旧行为 0.4875）：${desk.scale}`);
   cam.mobileViewH = CFG.touch.viewH;
   const mob = cam.compute(844, 390, null);
   assert.ok(mob.scale > 0.6, `移动端 scale=${mob.scale}（应明显放大）`);
-  // 竖屏：不放大（沿用桌面逻辑）
+  // 竖屏：不套用 mobileViewH（沿用桌面逻辑——视野由画布宽高比决定）
   const port = cam.compute(390, 844, null);
-  assert.ok(port.scale < mob.scale, `竖屏 scale=${port.scale}`);
+  const port2 = new Camera({ viewW: 1000, viewH: 800, worldW: 1500, worldH: 800 }).compute(390, 844, null);
+  assert.ok(Math.abs(port.scale - port2.scale) < 1e-9, `竖屏 scale=${port.scale}（应与桌面一致）`);
 });
 
 // ---- 10. TouchUI 竖屏判定 ------------------------------------------------------

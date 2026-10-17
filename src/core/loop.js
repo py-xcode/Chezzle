@@ -41,6 +41,9 @@ export function startLoop(scene, renderer, opts = {}) {
           }
           if (acc >= TICK) acc = 0; // 追不上就丢帧
         }
+        // 鸟瞰进出动画：镜头混合与 HUD 交叉淡入淡出共用同一进度
+        // （鸟瞰时模拟暂停，但这段动画照常推进）
+        if (S.camera && typeof S.camera.tickOverviewAnim === 'function') S.camera.tickOverviewAnim(dt);
         const R = active.renderer ?? renderer;
         R.frame(S.objects, { hud: active.hud ?? opts.hud, time: S.time, scene: S, focus: S.player ?? S.cameraFocus ?? null });
       }

@@ -20,6 +20,10 @@ export class Switch extends Container {
   } = {}) {
     // 开关是干式机构（存放"开启物质"），内部不应有液体水（否则放进去的盐会被溶解掉、开关失效）
     super({ x, y, w, h, solid: true, physicsKind: 'static', water: 0, volume: 0, ...rest });
+    // ★ 可自动上台阶高度：开关本来就是"踩上去 / 把物块推上去"的小设备，
+    //   默认 22px 高于全局 autoStepMax(14) → 玩家和物块都上不去（用户实测）。
+    //   这里按自身高度给上限（留 4px 余量，并夹到 26 以免高开关被当成斜坡）。
+    this.stepMax = Math.min(26, h + 4);
     this.opening = opening; // 开启物质 id
     this.consumeRate = consumeRate; // g/s（0 = 不消耗）
     this.mode = mode;

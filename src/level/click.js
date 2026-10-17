@@ -12,7 +12,7 @@
 
 import { CFG } from '../core/config.js';
 import { toggleFullscreen, fullscreenSupported, isFullscreen } from '../core/fullscreen.js';
-import { canvasLW, canvasLH } from '../render/canvas.js';
+import { canvasLW, canvasLH, uiScaleOf } from '../render/canvas.js';
 
 /** 屏幕坐标 → 世界坐标（与 Renderer.frame 同口径：跟随玩家/聚焦内容；鸟瞰时走鸟瞰视图）。
  *  输入/输出均为**逻辑像素**（canvas 缓冲 ×dpr，UI/命中统一逻辑系）。 */
@@ -30,12 +30,14 @@ export function screenToWorld(scene, canvas, sx, sy) {
  *  - 全屏：再让开 iOS 系统全屏关闭按钮（也挂在左上角）——report.js 的返回钮
  *    在全屏时同步下移到 52，这里留到 92。
  * 桌面（fine pointer）：默认 10；关卡页注入"返回选关"悬浮钮时会声明避让量（见函数内注释）。
+ *  uiK：桌面大屏 HUD 放大系数（见 canvas.js uiScaleOf）——返回值换算到 HUD 坐标空间。
  */
-export function hudTopOffset(scene) {
+export function hudTopOffset(scene, uiK = 1) {
   const t = scene && scene._touchUI;
+  const k = uiK > 0 ? uiK : 1;
   if (t && typeof t.enabled === 'function' && t.enabled()) {
     const base = (t.insets && t.insets.top) || 0;
-    return Math.max(isFullscreen() ? CFG.touch.hudTopFs : CFG.touch.hudTop, base + 10);
+    return Math.max(isFullscreen() ? CFG.touch.hudTopFs : CFG.touch.hudTop, base + 10) / k;
   }
   // 桌面端：关卡页左上角有"返回选关"悬浮钮（levels/report.js 注入）。画布自高清改造后
   // 铺满窗口，该钮会压住 HUD 左上卡片 → 这里**直接量它的实际底边**（比让页面声明避让量更
@@ -48,13 +50,13 @@ export function hudTopOffset(scene) {
         const cv = document.querySelector('canvas');
         const ctop = cv ? cv.getBoundingClientRect().top : 0;
         const inset = Math.ceil(rb.bottom - ctop + 6);
-        if (Number.isFinite(inset) && inset > 10) return inset;
+        if (Number.isFinite(inset) && inset > 10) return inset / k;
       }
     }
   } catch (e) { /* 量不到就退回兜底 */ }
   const g = (typeof window !== 'undefined' && Number.isFinite(window.CHEZZLE_HUD_TOP_INSET))
     ? window.CHEZZLE_HUD_TOP_INSET : 0;
-  return Math.max(10, g);
+  return Math.max(10, g) / k;
 }
 
 /** 小屏紧凑视图？触屏小屏（含老机型无全屏：浏览器 chrome 占高，视口实际很小——
@@ -64,16 +66,29 @@ export function compactView(W, H) {
   return W < 500 || H < 460;
 }
 
-/** 紧凑系数（非紧凑=1；紧凑=0.72 基准） */
+/** 极窄视口（无全屏的手机横屏：iOS Safari 不支持元素全屏，可用高度常常只剩 250~330px）
+ *  → 比 compactView 再狠一档：HUD 卡片/按钮/物品栏/摇杆全部再缩一圈，
+ *  否则"本就不够的屏幕"会被界面吃掉一大半（用户截图：文字互相压叠）。 */
+export function tinyView(W, H) {
+  return H < 380 || W < 560;
+}
+
+/** 紧凑系数（非紧凑=1；紧凑=0.72；极窄=0.58） */
 export function compactK(W, H) {
+  if (tinyView(W, H)) return 0.58;
   return compactView(W, H) ? 0.72 : 1;
 }
 
-/** 触屏端的安全区 insets；桌面/未启用 → 全 0（刘海横屏时 left/right 才有值） */
-export function touchInsetsOf(scene) {
+/** 触屏端的安全区 insets；桌面/未启用 → 全 0（刘海横屏时 left/right 才有值）。
+ *  uiK：桌面 HUD 放大系数（把 CSS px 换算到 HUD 坐标空间；触屏恒 1）。 */
+export function touchInsetsOf(scene, uiK = 1) {
   const t = scene && scene._touchUI;
-  if (t && typeof t.enabled === 'function' && t.enabled()) return t.insets || {};
-  return {};
+  const k = uiK > 0 ? uiK : 1;
+  const ins = (t && typeof t.enabled === 'function' && t.enabled()) ? (t.insets || {}) : {};
+  if (k === 1) return ins;
+  const out = {};
+  for (const key of Object.keys(ins)) out[key] = (Number(ins[key]) || 0) / k;
+  return out;
 }
 
 // ---- 顶部按钮几何（HUD 渲染与点击命中共用；top 缺省 10 = 桌面，right = 安全区右缘）--
@@ -122,14 +137,16 @@ export function inventorySlotRects(W, H, slots, margins = { bottom: 10, right: 1
 }
 
 /** 触屏设备上的物品栏边距（安全区 + 固定边距）；桌面=默认值。
- *  HUD 渲染 / touch 命中 / 物品栏点击共用，保证"点哪是哪"。 */
-export function uiMargins(scene) {
+ *  HUD 渲染 / touch 命中 / 物品栏点击共用，保证"点哪是哪"。
+ *  uiK：桌面 HUD 放大系数（换算到 HUD 坐标空间）。 */
+export function uiMargins(scene, uiK = 1) {
+  const k = uiK > 0 ? uiK : 1;
   const t = scene && scene._touchUI;
   if (t && t.enabled()) {
     const i = t.insets;
-    return { bottom: (i.bottom ?? 0) + 10, right: (i.right ?? 0) + 10 };
+    return { bottom: ((i.bottom ?? 0) + 10) / k, right: ((i.right ?? 0) + 10) / k };
   }
-  return { bottom: 10, right: 10 };
+  return { bottom: 10 / k, right: 10 / k };
 }
 
 /** 命中可点击物体（onTap；bbox ±pad 宽容——滴管等细长物体好点中；
@@ -174,11 +191,18 @@ export function tipPanelRect(W, top = 10, right = 0, H = null) {
  */
 export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   if (!scene || portraitScene(scene)) return false;
-  const top = hudTopOffset(scene);
-  const right = touchInsetsOf(scene).right || 0;
+  // 桌面大屏 HUD 整体放大 kUi（渲染见 hud.render）：命中一并换算到 HUD 坐标空间，
+  // 保证"看到的按钮"和"点到的位置"永远同源；世界点击仍用原始屏幕坐标。
+  const kUi = uiScaleOf(canvas);
+  const W = canvasLW(canvas) / kUi;
+  const H = canvasLH(canvas) / kUi;
+  const x = sx / kUi;
+  const y = sy / kUi;
+  const top = hudTopOffset(scene, kUi);
+  const right = touchInsetsOf(scene, kUi).right || 0;
   // 0) 鸟瞰模式：只认"返回"按钮（暂停态；未中 → 交给鸟瞰拖动/缩放管线）
   if (scene.overview) {
-    if (inRect(overviewButtonRect(canvasLW(canvas), top, right), sx, sy)) {
+    if (inRect(overviewButtonRect(W, top, right), x, y)) {
       scene.toggleOverview();
       onInfo?.({ type: 'overview-exit' });
     }
@@ -187,7 +211,7 @@ export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   // 1) 全屏按钮（仅触屏端显示；click/触点都在用户手势内，可请求全屏）。
   //    老设备/浏览器不支持元素全屏 API → 明确提示（不静默失效）
   if (scene._touchUI && typeof scene._touchUI.enabled === 'function' && scene._touchUI.enabled()) {
-    if (inRect(fullscreenButtonRect(canvasLW(canvas), top, right), sx, sy)) {
+    if (inRect(fullscreenButtonRect(W, top, right), x, y)) {
       if (fullscreenSupported()) toggleFullscreen();
       else pushNotice(scene, '此浏览器不支持全屏');
       onInfo?.({ type: 'fullscreen' });
@@ -195,24 +219,25 @@ export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
     }
   }
   // 2) 鸟瞰按钮（双端）
-  if (inRect(overviewButtonRect(canvasLW(canvas), top, right), sx, sy)) {
+  if (inRect(overviewButtonRect(W, top, right), x, y)) {
     scene.toggleOverview();
     onInfo?.({ type: 'overview' });
     return true;
   }
   // 3) 提示按钮（右上；hud.tipButton 同几何：top..top+34）
   //    点击 = 展示下一条可用提示（没有则俏皮话/收起）——面板/文案由 hud.onTipClick 管理
-  if (sx > canvasLW(canvas) - right - 84 && sx < canvasLW(canvas) - right - 8 && sy > top && sy < top + 34) {
+  if (x > W - right - 84 && x < W - right - 8 && y > top && y < top + 34) {
     if (hud && typeof hud.onTipClick === 'function') hud.onTipClick(scene);
     onInfo?.({ type: 'tip' });
     return true;
   }
   // 3.5) 提示面板（展开中）：面板上点击 = 消费（不穿透到场景）；右上 ✕ = 关闭
   if (hud && hud.showTip) {
-    const pr = tipPanelRect(canvasLW(canvas), top, right);
-    if (sx >= pr.x && sx <= pr.x + pr.w && sy >= pr.y && sy <= pr.y + pr.h) {
-      const r = hud._tipRect ?? pr;
-      if (sx >= r.x + r.w - 32 && sy <= r.y + 32) {
+    // ★ 以 HUD **实际绘制**的矩形为准（面板高度随文案行数变化，只有它知道）；
+    //   没画过（刚展开那一帧）才退回共享布局几何。两边不同源 = 点面板穿透到场景。
+    const pr = hud._tipRect ?? tipPanelRect(W, top, right, H);
+    if (x >= pr.x && x <= pr.x + pr.w && y >= pr.y && y <= pr.y + pr.h) {
+      if (x >= pr.x + pr.w - 32 && y <= pr.y + 32) {
         if (typeof hud.closeTip === 'function') hud.closeTip();
         else hud.showTip = false;
         onInfo?.({ type: 'tip-close' });
@@ -225,10 +250,10 @@ export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   // 4) 物品栏选格（右下；几何与 HUD 渲染共用 inventorySlotRects）
   const p = scene.player;
   if (p && p.inventory) {
-    const rects = inventorySlotRects(canvasLW(canvas), canvasLH(canvas), p.inventory.slots, uiMargins(scene));
+    const rects = inventorySlotRects(W, H, p.inventory.slots, uiMargins(scene, kUi));
     for (let i = 0; i < rects.length; i++) {
       const r = rects[i];
-      if (sx >= r.x && sx <= r.x + r.size && sy >= r.y && sy <= r.y + r.size) {
+      if (x >= r.x && x <= r.x + r.size && y >= r.y && y <= r.y + r.size) {
         p.inventory.selected = i;
         onInfo?.({ type: 'slot' });
         return true;
@@ -360,7 +385,7 @@ export function handleScenePressMove(scene, canvas, sx, sy) {
         ny = pcy + dy * k - o.h / 2;
         if (!d._noticed) {
           d._noticed = true;
-          pushNotice(scene, '距离玩家太远——滴管拖不出这个范围');
+          pushNotice(scene, '距离玩家太远');
         }
       }
     }

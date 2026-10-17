@@ -7,7 +7,7 @@
 // ============================================================================
 
 import { overviewButtonRect, hudTopOffset, touchInsetsOf } from '../level/click.js';
-import { canvasLW, canvasLH } from '../render/canvas.js';
+import { canvasLW, canvasLH, uiScaleOf } from '../render/canvas.js';
 
 /**
  * 给画布绑定鸟瞰输入。
@@ -44,9 +44,12 @@ export function bindOverviewInput(canvas, getActive) {
     const r = canvas.getBoundingClientRect();
     const px = e.clientX - r.left;
     const py = e.clientY - r.top;
-    // "返回"按钮：不进入拖动（click 事件负责切换）
-    const b = overviewButtonRect(canvasLW(canvas), hudTopOffset(scene), touchInsetsOf(scene).right || 0);
-    if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) return;
+    // "返回"按钮：不进入拖动（click 事件负责切换）。命中几何与 HUD 同处一个坐标空间
+    // （大屏 HUD 有 uiScaleOf 放大 → 这里把鼠标坐标/尺寸一起换算过去）
+    const kUi = uiScaleOf(canvas);
+    const b = overviewButtonRect(canvasLW(canvas) / kUi, hudTopOffset(scene, kUi),
+      (touchInsetsOf(scene, kUi).right || 0));
+    if (px / kUi >= b.x && px / kUi <= b.x + b.w && py / kUi >= b.y && py / kUi <= b.y + b.h) return;
     pan = { x: e.clientX, y: e.clientY };
   };
 

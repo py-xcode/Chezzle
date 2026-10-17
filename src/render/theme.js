@@ -89,6 +89,17 @@ export function rr(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
+/** 平行四边形路径（游戏统一元素：斜牌；文字保持正立）。sk = 单侧斜切量（px） */
+export function para(ctx, x, y, w, h, sk = 9) {
+  const s = Math.max(1, Math.min(sk, w / 2 - 1, h / 2));
+  ctx.beginPath();
+  ctx.moveTo(x + s, y);
+  ctx.lineTo(x + w, y);
+  ctx.lineTo(x + w - s, y + h);
+  ctx.lineTo(x, y + h);
+  ctx.closePath();
+}
+
 /** 带发光描边与内阴影的圆角面板（神话风） */
 export function panel(ctx, x, y, w, h, accent = THEME.gold.deep, r = 10) {
   ctx.save();

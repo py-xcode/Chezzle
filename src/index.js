@@ -40,6 +40,7 @@ export * from './objects/spark.js';
 export * from './objects/portal.js';
 export * from './objects/gasdetector.js';
 export * from './objects/extractor.js';
+export * from './objects/gastube.js';
 export * from './objects/dropper.js';
 export * from './objects/drip.js';
 export * from './objects/fx.js';

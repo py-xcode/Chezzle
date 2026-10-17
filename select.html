@@ -6,6 +6,15 @@
 <!-- 空图标：避免浏览器为 /favicon.ico 白跑一次跨国请求 -->
 <link rel="icon" href="data:,">
 <title>Chezzle · 选关 · 元素回廊</title>
+<script>
+/* 站点外壳（SPA）内嵌模式：?spa=1（外壳用 iframe 加载本页）。
+   直接打开 /select 时回到外壳的选关路由，保证全站是同一个文档、同一套转场。 */
+(function () {
+  var spa = /[?&]spa=1/.test(location.search);
+  window.__CZ_SPA_PAGE = spa;
+  if (!spa) location.replace('./#/select');
+})();
+</script>
 <style>
   /* ★ 主题色用三个数值自定义属性承载并注册成 <number>：这样它们**可以被 transition 插值**，
      换元素时背景洗色/符文环/光晕才会平滑过渡而不是硬切（"用 var() 拼的颜色"默认不可动画）。 */
@@ -77,6 +86,13 @@
     outline: 2px solid var(--cyan); outline-offset: 3px; }
   h1 { font-size: 30px; color: var(--gold-l); letter-spacing: 6px; text-shadow: 0 0 18px rgba(232,184,75,.5); }
   h1 small { display: block; margin-top: 3px; font-size: 11.5px; font-weight: normal; letter-spacing: 1px; color: var(--dim); }
+  /* 调试全解锁标记：levels.json 里 "debugUnlockAll": true 时显示，避免忘记关 */
+  .dbg-unlock { margin-left: 12px; padding: 4px 9px; font: bold 10px/1 ui-monospace, Consolas, monospace;
+    font-style: normal; letter-spacing: 2px; color: #ffd9a0;
+    border: 1px solid rgba(255,138,126,.7); background: rgba(90,28,28,.55);
+    filter: drop-shadow(0 0 8px rgba(255,120,100,.35));
+    clip-path: polygon(6px 0, 100% 0, calc(100% - 6px) 100%, 0 100%); }
+  .dbg-unlock[hidden] { display: none; }
   .hspace { margin-left: auto; }
   #progress { display: flex; align-items: center; gap: 10px; padding: 7px 14px; font-size: 12.5px; color: var(--cyan);
     border: 1px solid rgba(127,216,255,.35); background: rgba(16,26,56,.75); letter-spacing: 1px;
@@ -215,10 +231,21 @@
     100% { opacity: 0; transform: translateX(-50%) translateY(-12px); }
   }
   /* 头顶的筛选开关 */
-  .seg { display: inline-flex; border: 1px solid var(--edge); overflow: hidden; }
-  .seg button { padding: 6px 11px; font-size: 11.5px; color: var(--dim); background: rgba(12,16,38,.7); border: 0; cursor: pointer;
-    transition: background .3s ease, color .25s ease; }
-  .seg button.on { color: #241a02; background: linear-gradient(180deg, #ffe9a8, #e8b84b); font-weight: bold; }
+  /* —— 显示范围切换：Chezzle 的「缺角矩形」+ 会滑动的金色指示块 —— */
+  .seg { position: relative; display: inline-flex; gap: 2px; padding: 2px;
+    border: 1px solid var(--edge); background: rgba(12,16,38,.72);
+    clip-path: polygon(10px 0, calc(100% - 10px) 0, 100% 10px, 100% calc(100% - 10px), calc(100% - 10px) 100%, 10px 100%, 0 calc(100% - 10px), 0 10px); }
+  /* 指示块：跟着选中项滑动（宽度 + 位移一起补间 → 切换是"滑过去"而不是"跳过去"） */
+  .seg .ind { position: absolute; left: 0; top: 2px; bottom: 2px; width: 0; pointer-events: none;
+    background: linear-gradient(180deg, #ffe9a8, #e8b84b);
+    box-shadow: 0 0 12px rgba(232,184,75,.45);
+    clip-path: polygon(7px 0, calc(100% - 7px) 0, 100% 7px, 100% calc(100% - 7px), calc(100% - 7px) 100%, 7px 100%, 0 calc(100% - 7px), 0 7px);
+    transition: transform .34s cubic-bezier(.2,.9,.28,1.06), width .34s cubic-bezier(.2,.9,.28,1.06); }
+  .seg button { position: relative; z-index: 1; padding: 6px 12px; font-size: 11.5px; color: var(--dim);
+    background: none; border: 0; cursor: pointer; transition: color .26s ease, text-shadow .26s ease; }
+  .seg button:hover { color: var(--txt); }
+  .seg button.on { color: #241a02; background: none; font-weight: bold; }
+  body.low .seg .ind { transition: none; box-shadow: none; }
   .seg button:focus-visible { outline: 2px solid var(--cyan); outline-offset: -2px; }
 
   /* ---------- 下栏：同位素条 + 进入按钮 ---------- */
@@ -253,25 +280,155 @@
   .chip.lock:hover { border-color: rgba(255,140,140,.5); }
   .chip.empty { opacity: .45; cursor: default; }
 
-  .enter { display: inline-flex; align-items: center; justify-content: center; gap: 10px; padding: 13px 46px;
-    font-size: 16px; font-weight: bold; min-width: 260px; white-space: nowrap;
+  .enter { display: inline-flex; align-items: center; justify-content: center; gap: 10px; padding: 13px 0;
+    /* ★ 定宽：文案在"进入关卡 / 通关 X 解锁 / 暂无"之间切换时按钮尺寸不再变化。
+       旧版按文案宽度做 WAAPI 补间，而 letter-spacing/font-size 又被 CSS 过渡着 ——
+       offsetWidth 量到的是过渡中间值，补间结束回落真实宽度 → "先变长再突然变短"（用户实测）。 */
+    width: min(420px, 64vw);
+    font-size: 16px; font-weight: bold; white-space: nowrap;
     letter-spacing: 5px; cursor: pointer; border: 0; color: #241a02;
     background: linear-gradient(180deg, #ffe9a8 0%, #e8b84b 46%, #9a6d1e 100%);
     filter: drop-shadow(0 0 16px rgba(232,184,75,.45)) drop-shadow(0 8px 18px rgba(0,0,0,.5));
-    transition: transform .18s, filter .3s, background .4s ease, color .3s ease, letter-spacing .3s, font-size .3s;
+    /* 只过渡不引起重排的属性（transform/filter/背景/文字色） */
+    transition: transform .18s ease, filter .3s ease, background .4s ease, color .3s ease;
     clip-path: polygon(14px 0, calc(100% - 14px) 0, 100% 14px, 100% calc(100% - 14px), calc(100% - 14px) 100%, 14px 100%, 0 calc(100% - 14px), 0 14px); }
   .enter:hover { transform: translateY(-2px); filter: drop-shadow(0 0 26px rgba(255,215,106,.8)) drop-shadow(0 12px 22px rgba(0,0,0,.5)); }
   .enter[disabled] { cursor: default; color: #b9c2d8; background: linear-gradient(180deg, #2a3057, #171b3c);
     filter: none; transform: none; letter-spacing: 2px; font-size: 14px; }
   #enterText { display: inline-block; transition: opacity .2s ease; }
 
-  /* ---------- 进入关卡的过场 ---------- */
-  #flash { position: fixed; inset: 0; z-index: 60; pointer-events: none; opacity: 0;
-    background: radial-gradient(60% 60% at 50% 46%, rgba(255,255,255,.92), rgb(var(--ar) var(--ag) var(--ab) / .5) 42%, transparent 74%); }
-  body.launch #flash { animation: flashOut .46s ease-out forwards; }
-  @keyframes flashOut { from { opacity: 0; } 30% { opacity: 1; } to { opacity: 0; } }
-  body.launch .card.active { transition: transform .42s cubic-bezier(.2,.9,.3,1.4); transform: translate(-50%,-50%) scale(1.28) !important; }
-  body.launch #app > *:not(#corridor) { opacity: .25; transition: opacity .3s; }
+  /* ==========================================================================
+     进入关卡的过场（重做版 2）
+     --------------------------------------------------------------------------
+     ① 其他元素隐去（暗幕 + 应用层淡出）；
+     ② **同一个**平行四边形：从选中卡原位整体放大到画面中央——不换框、不换形；
+     ③ 内容改编：同一个框内旧内容向上平移滑出、关卡信息从下方平移滑入（同一条曲线）；
+     ④ 左下 Tips 渐入、右下小平行四边形滑入（白边一段绕圈 + LOADING）；
+     ⑤ 预取就绪且过场演完后交给外壳：选关页**所有东西一起平移出画面**，
+        游戏画面再整体渐入（见 index.html 的 showGame / cz:out、cz:back 消息）。
+     ========================================================================== */
+  #enterFx { position: fixed; inset: 0; z-index: 880; visibility: hidden; pointer-events: none;
+    opacity: 0; transition: opacity .46s ease; }
+  #enterFx.on { visibility: visible; opacity: 1; }
+  /* 暗幕：盖住选关界面 */
+  #enterFx .fx-veil { position: absolute; inset: 0; opacity: 0;
+    background:
+      radial-gradient(1000px 620px at 50% 44%, rgba(var(--c,150,232,176),.16), transparent 62%),
+      radial-gradient(1500px 900px at 50% 112%, rgba(20,14,64,.9), #07051a 62%), #07051a;
+    transition: opacity .52s ease; }
+  #enterFx.on .fx-veil { opacity: .97; }
+  body.entering #app { opacity: .015; transition: opacity .5s ease; pointer-events: none; }
+  body.entering #toast { display: none; }
+  /* —— 唯一的平行四边形：描边层 + 内暗层 + 两个内容层（内容装在矩形裁剪盒里做"平移换内容"）。
+        位置/尺寸由 JS 写成选中卡的矩形，整体只做 transform 缩放；
+        颜色取选中卡自身的 --c（状态色），底板渐变/描边/投影与卡片 active 态一致 → 放大时不变色。 —— */
+  #enterFx .fx-card { position: fixed; left: 0; top: 0; transform-origin: 50% 50%; will-change: transform; }
+  #enterFx .fx-card-bg { position: absolute; inset: 0; pointer-events: none; transform: skewX(-9deg);
+    clip-path: polygon(calc(var(--cw, 320px) * .056) 0, 100% 0,
+      calc(100% - var(--cw, 320px) * .056) 100%, 0 100%);
+    background: rgba(var(--c), .95);
+    filter: drop-shadow(0 10px 26px rgba(0,0,0,.5));
+    transition: filter .5s ease; }
+  #enterFx .fx-card-in { position: absolute; inset: 1px; pointer-events: none; transform: skewX(-9deg);
+    clip-path: polygon(calc(var(--cw, 320px) * .056 - 1px) 0, 100% 0,
+      calc(100% - var(--cw, 320px) * .056 + 1px) 100%, 0 100%);
+    /* 两层：主题色淡染（透明→透明）+ 不透明深底。
+       只写单层半透明渐变时，淡染那端会透出外层实色描边，整张牌会"变绿/变亮"。 */
+    background:
+      linear-gradient(140deg, rgba(var(--c), .16), rgba(10,10,32,0) 60%),
+      #0a0a20; }
+  /* 内容改编后稍微加一点主题色辉光（起点仍与卡片一致） */
+  #enterFx.morph .fx-card-bg { filter: drop-shadow(0 0 24px rgba(var(--c),.22)) drop-shadow(0 12px 30px rgba(0,0,0,.5)); }
+  /* 矩形裁剪盒：内容平移时裁在框内；内容改编期间再按平行四边形斜边裁一遍，
+     防止文字从斜角处"穿"到框外 */
+  #enterFx .fx-clip { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+  #enterFx.morph .fx-clip {
+    clip-path: polygon(calc(var(--cw, 320px) * .056) 0, 100% 0,
+      calc(100% - var(--cw, 320px) * .056) 100%, 0 100%); }
+  #enterFx .fx-face { position: absolute; inset: 0;
+    transition: transform .6s cubic-bezier(.4,0,.2,1); }
+  /* 旧内容：选中卡的等比复制（底板/边框隐藏 → 视觉上的框只有外面那一个） */
+  #enterFx .fx-face-a { transform: translate3d(0, 0, 0); }
+  #enterFx .fx-face-a .card { position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+    margin: 0; padding: 0; border: 0; background: none; text-align: left;
+    transform: none !important; opacity: 1 !important; filter: none !important; cursor: default; }
+  #enterFx .fx-face-a .card .inner { animation: none !important; }
+  #enterFx .fx-face-a .card .plate { border: 0 !important; background: none !important;
+    filter: none !important; animation: none !important; clip-path: none; }
+  /* ★ 内容切换方向**平行于平行四边形的斜边**（tan9° ≈ .1584）：旧内容沿斜边向上滑出，
+     新内容从斜下方沿同一条斜线滑入——垂直切换会让文字横穿斜边、看起来"穿模" */
+  #enterFx.morph .fx-face-a {
+    transform: translate3d(calc(var(--ch, 248px) * .1584), calc(var(--ch, 248px) * -1.02), 0); }
+  /* 新内容：关卡信息（同一个框的内部，沿斜边从下方向上滑入） */
+  #enterFx .fx-face-b { display: flex; align-items: center; justify-content: center;
+    gap: calc(var(--cw, 320px) * .05);
+    padding: calc(var(--ch, 248px) * .07) calc(var(--cw, 320px) * .07);
+    transform: translate3d(calc(var(--ch, 248px) * -.1584), calc(var(--ch, 248px) * 1.02), 0);
+    color: #fff; }
+  #enterFx.morph .fx-face-b { transform: translate3d(0, 0, 0); }
+  #enterFx .fb-sym { flex: 0 0 auto; min-width: 1.05em; text-align: center;
+    font: bold calc(var(--ch, 248px) * .21)/1 "Segoe UI","Microsoft YaHei",sans-serif;
+    color: #fff; text-shadow: 0 0 26px rgba(var(--c),.8); }
+  #enterFx .fb-sym svg { width: .92em; height: .92em; vertical-align: -.06em; }
+  #enterFx .fb-txt { min-width: 0; display: flex; flex-direction: column; }
+  #enterFx .fb-num { font: calc(var(--ch, 248px) * .036)/1 ui-monospace,Consolas,monospace;
+    letter-spacing: 2.5px; color: rgba(var(--c),.9); }
+  #enterFx .fb-name { margin: calc(var(--ch, 248px) * .026) 0 calc(var(--ch, 248px) * .012);
+    font-size: calc(var(--ch, 248px) * .082); font-weight: bold; letter-spacing: 5px; color: #fff;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #enterFx .fb-sub { font-size: calc(var(--ch, 248px) * .046); letter-spacing: 2px; color: #a9b8d0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #enterFx .fb-meta { margin-top: calc(var(--ch, 248px) * .032); font-size: calc(var(--ch, 248px) * .036);
+    letter-spacing: 1.5px; color: #7180a0; }
+  /* 底部信息线：把放大的框下半部撑起来（不然内容全挤在中间） */
+  #enterFx .fb-foot { position: absolute; left: calc(var(--cw, 320px) * .085); right: calc(var(--cw, 320px) * .085);
+    bottom: calc(var(--ch, 248px) * .062); display: flex; align-items: center; gap: 12px;
+    font: calc(var(--ch, 248px) * .033)/1 ui-monospace, Consolas, monospace;
+    letter-spacing: 2.5px; color: rgba(113,128,160,.92); }
+  #enterFx .fb-foot i { flex: 1 1 auto; height: 1px;
+    background: linear-gradient(90deg, rgba(var(--c),.55), rgba(var(--c),0)); }
+  #enterFx .fb-state { position: absolute; right: calc(var(--cw, 320px) * .07); top: calc(var(--ch, 248px) * .062);
+    padding: 3px 9px; font: calc(var(--ch, 248px) * .034)/1 ui-monospace,monospace;
+    letter-spacing: 2px; color: rgb(var(--c)); border: 1px solid rgba(var(--c),.65);
+    background: rgba(8,10,28,.6); }
+  /* 左下 Tips：暗色小名牌 + 主题色竖条，从下方渐入 */
+  #enterFx .fx-tip { position: absolute; left: 26px; bottom: 26px;
+    bottom: calc(26px + env(safe-area-inset-bottom,0px));
+    max-width: min(360px, 46vw); padding: 12px 18px 13px 16px;
+    display: flex; align-items: flex-start; gap: 12px;
+    background: linear-gradient(120deg, rgba(16,20,48,.94), rgba(8,9,26,.9));
+    border-left: 2px solid rgb(var(--c,150,232,176));
+    box-shadow: 0 12px 32px rgba(0,0,0,.5), 0 0 22px rgba(var(--c,150,232,176),.12);
+    clip-path: polygon(0 0, 100% 0, calc(100% - 12px) 100%, 0 100%);
+    opacity: 0; transform: translateY(18px);
+    transition: opacity .5s ease, transform .58s cubic-bezier(.2,.8,.3,1); }
+  #enterFx.tipOn .fx-tip { opacity: 1; transform: none; }
+  #enterFx .fx-tip b { flex: 0 0 auto; padding-top: 1px; font: bold 10px/1.5 ui-monospace,Consolas,monospace;
+    letter-spacing: 3px; color: #ffd76a; text-shadow: 0 0 10px rgba(255,215,106,.45); }
+  #enterFx .fx-tip span { font-size: 12.5px; line-height: 1.7; letter-spacing: .5px; color: #b9c6dd; }
+  /* 右下 LOADING：小平行四边形，白边一段绕圈 */
+  #enterFx .fx-load { position: absolute; right: 26px; bottom: 26px;
+    bottom: calc(26px + env(safe-area-inset-bottom,0px));
+    opacity: 0; transform: translateX(28px);
+    transition: opacity .44s ease, transform .56s cubic-bezier(.2,.86,.3,1); }
+  #enterFx.loadOn .fx-load { opacity: 1; transform: none; }
+  /* 关卡已就绪：所有东西依次平移出画面（只留暗幕 → 外壳让游戏画面整体渐入） */
+  #enterFx.leaving .fx-tip { opacity: 0; transform: translateY(-32vh);
+    transition: opacity .3s ease, transform .52s cubic-bezier(.55,0,.3,1); }
+  #enterFx.leaving .fx-load { opacity: 0; transform: translateY(-26vh);
+    transition: opacity .3s ease .05s, transform .52s cubic-bezier(.55,0,.3,1) .05s; }
+  /* 通用 LOADING 组件（与关卡启动层 levels/boot.js 同一套） */
+  .czlLoad { position: relative; width: 168px; height: 50px; display: grid; place-items: center; pointer-events: none; }
+  .czlLoad svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  .czlLoad .frame { fill: rgba(10,12,32,.72); stroke: rgba(255,255,255,.18); stroke-width: 1.2; vector-effect: non-scaling-stroke; }
+  .czlLoad .spark { fill: none; stroke: #fff; stroke-width: 1.9; stroke-linecap: round; stroke-dasharray: 13 87;
+    animation: czlSpark 1.5s linear infinite; }
+  @keyframes czlSpark { to { stroke-dashoffset: -100; } }
+  .czlLoad > span { position: relative; font: bold 11px/1 ui-monospace,Consolas,monospace; letter-spacing: 6px;
+    color: #fff; padding-left: 6px; text-shadow: 0 0 12px rgba(255,255,255,.5); }
+  /* 跳转前的白光：压过页与页之间的任何空档 */
+  #enterFx .fx-flash { position: absolute; inset: 0; opacity: 0; pointer-events: none;
+    background: radial-gradient(56% 56% at 50% 46%, rgba(255,255,255,.9), rgba(var(--c,150,232,176),.45) 44%, transparent 74%); }
 
   #toast { position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%) translateY(16px); z-index: 70;
     padding: 9px 18px; font-size: 13px; background: #1c1650; border: 1px solid rgba(232,184,75,.5); color: var(--txt);
@@ -308,6 +465,26 @@
      所以"局部空间太矮/太窄"的情况由 JS 打 body 类名来收紧版式（旋转与否都适用）。
      ★ 卡片的宽高/字号一律由 fitDeck() 按实测走廊高度写死（含 --card-h 派生字号），
      这里不再逐个覆盖字号——否则矮屏上字号比卡片还高，内容溢出卡片。 */
+  /* 中等偏矮 / 偏窄窗口（笔记本分屏、浏览器压到半屏，如 1477×558）：
+     页眉+周期条+页脚吃掉太多高度、卡片又顶到 248px 上限 → 整页显得挤。
+     这里先收一档：隐藏周期条/副标题、缩小页眉页脚与卡片上限。vh<430 的 short 再更狠。 */
+  body.compact #periods { display: none; }
+  body.compact h1 small { display: none; }
+  body.compact #ring { width: min(62vh, 62vw); height: min(62vh, 62vw); }
+  body.compact header { padding: 9px 16px 2px; gap: 10px; }
+  body.compact h1 { font-size: 24px; letter-spacing: 5px; }
+  body.compact .back { padding: 7px 13px; font-size: 13px; }
+  body.compact #progress { padding: 5px 10px; font-size: 11.5px; }
+  body.compact #pbar { width: 50px; }
+  body.compact .ghost { padding: 6px 10px; font-size: 10.5px; }
+  body.compact .seg button { padding: 5px 10px; font-size: 11px; }
+  body.compact footer { padding: 3px 16px 12px; gap: 8px; }
+  body.compact #isotopes { min-height: 46px; gap: 7px; }
+  body.compact .chip { padding: 6px 10px; }
+  body.compact .chip .nm { font-size: 13px; }
+  body.compact .chip .iso b { font-size: 12px; }
+  body.compact .enter { width: min(380px, 58vw); padding: 10px 0; font-size: 15px; letter-spacing: 4px; }
+  body.compact .enter[disabled] { font-size: 13px; letter-spacing: 2px; }
   body.short #periods { display: none; }
   body.short h1 small { display: none; }
   body.short #corridor { max-height: none; }
@@ -325,10 +502,13 @@
   }
   /* —— 竖屏强制横屏：整页绕左上角顺时针转 90°（局部坐标系 = innerHeight × innerWidth）——
      旋转后 vw/vh 仍指物理视口，所以这里把"按宽度算"的尺寸改成按 vh 算。
+     ★ 转的是 **body**，不是 html：旋转容器的盒子宽 = innerHeight，竖屏下必然比视口宽；
+       放在根元素上会让移动端把布局视口一起撑大（shrink-to-fit），整页按放大后的尺寸
+       排版、内容裁在屏幕外（用户手机复现）。普通后代盒子不影响布局视口。
      ★ 容器尺寸的**准确值**由 applyRotSize() 按 innerWidth/innerHeight 写死 px：
        iOS 的 100vh 是"地址栏收起后"的大视口，比 innerHeight 大一截，两边会打架。 */
   @media (orientation: portrait) {
-    html { position: absolute; top: 0; left: 100vw; width: 100vh; height: 100vw;
+    body { position: absolute; top: 0; left: 100vw; width: 100vh; height: 100vw;
       transform: rotate(90deg); transform-origin: left top; overflow: hidden; }
     #ring { width: min(78vw, 78vh); height: min(78vw, 78vh); }
     #corridor { max-height: min(58vw, 460px); }
@@ -339,6 +519,50 @@
     footer { padding: 2px 14px 12px; gap: 9px; }
     .enter { width: 100%; max-width: 420px; justify-content: center; letter-spacing: 4px; }
     .chip { padding: 7px 11px; gap: 8px; }
+  }
+
+  /* ==========================================================================
+     SPA 内嵌：数据加载慢时的选关启动层 + 入场编排
+     ========================================================================== */
+  #boot { position: fixed; inset: 0; z-index: 870; background: #07051a; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 24px; opacity: 0; visibility: hidden;
+    transition: opacity .45s ease; }
+  #boot.show { opacity: 1; visibility: visible; }
+  #boot.done { opacity: 0; visibility: hidden; }
+  #boot .boot-bg { position: absolute; inset: 0;
+    background: radial-gradient(1000px 620px at 50% 42%, rgba(150,232,176,.13), transparent 62%),
+      radial-gradient(1500px 900px at 50% 112%, rgba(20,14,64,.9), #07051a 62%), #07051a; }
+  #boot .boot-tag { position: relative; font: 11px/1 ui-monospace,Consolas,monospace; letter-spacing: 8px;
+    color: rgba(232,184,75,.7); }
+  #boot .boot-title { position: relative; font-size: 32px; font-weight: bold; letter-spacing: 14px;
+    color: #ffd76a; text-shadow: 0 0 26px rgba(232,184,75,.5); padding-left: 14px; }
+  #boot .boot-plates { position: relative; display: flex; gap: 18px; }
+  #boot .boot-plates i { width: 88px; height: 118px; opacity: .6;
+    clip-path: polygon(16px 0, 100% 0, calc(100% - 16px) 100%, 0 100%);
+    background: linear-gradient(140deg, rgba(127,216,255,.34), rgba(127,216,255,.06) 24%, rgba(10,10,32,.8) 62%);
+    animation: shardPulse 1.6s ease-in-out infinite; }
+  #boot .boot-plates i:nth-child(2) { animation-delay: .18s; }
+  #boot .boot-plates i:nth-child(3) { animation-delay: .36s; }
+  @keyframes shardPulse { 0%,100% { opacity: .3; transform: translateY(0); } 50% { opacity: .85; transform: translateY(-8px); } }
+  #boot .czlLoad { position: absolute; right: 26px; bottom: 26px;
+    bottom: calc(26px + env(safe-area-inset-bottom, 0px)); }
+  /* 页面入场：数据就绪 / 启动层退场后，页眉/周期/走廊/页脚依次进场（放慢一点，更从容） */
+  header, #periods, footer, #corridor { opacity: 0;
+    transition: opacity .7s ease, transform .82s cubic-bezier(.2,.8,.3,1); }
+  header { transform: translateY(-14px); }
+  #periods { transform: translateY(-10px); }
+  footer { transform: translateY(18px); }
+  #corridor { transform: scale(.955); }
+  body.ready header { opacity: 1; transform: none; transition-delay: .08s; }
+  body.ready #periods { opacity: 1; transform: none; transition-delay: .18s; }
+  body.ready #corridor { opacity: 1; transform: none; transition-delay: .28s; }
+  body.ready footer { opacity: 1; transform: none; transition-delay: .42s; }
+  body.low #corridor { transform: none; }
+  @media (prefers-reduced-motion: reduce) {
+    #boot { transition: none; }
+    #boot .boot-plates i { animation: none; }
+    header, #periods, footer, #corridor { opacity: 1; transform: none; transition: none; }
+    #enterFx, #enterFx .fx-veil, #enterFx .fx-face, #enterFx .fx-tip, #enterFx .fx-load { transition: none; }
   }
 </style>
 </head>
@@ -356,7 +580,32 @@
   </svg>
 </div>
 <div id="meteors" aria-hidden="true"></div>
-<div id="flash" aria-hidden="true"></div>
+<!-- 数据加载慢时的选关启动层 -->
+<div id="boot" aria-hidden="true">
+  <div class="boot-bg"></div>
+  <div class="boot-tag">CHEZZLE · CORRIDOR</div>
+  <div class="boot-title">选关</div>
+  <div class="boot-plates"><i></i><i></i><i></i></div>
+  <div class="czlLoad">
+    <svg viewBox="0 0 168 50" preserveAspectRatio="none" aria-hidden="true">
+      <path class="frame" d="M14 1 H167 L154 49 H1 Z"/>
+      <path class="spark" pathLength="100" d="M14 1 H167 L154 49 H1 Z"/>
+    </svg>
+    <span>LOADING</span>
+  </div>
+</div>
+<!-- 进入关卡的过场层（同一个平行四边形放大 → 框内内容改编 → Tips + LOADING） -->
+<div id="enterFx" aria-hidden="true">
+  <div class="fx-veil"></div>
+  <div class="fx-card">
+    <i class="fx-card-bg"></i>
+    <i class="fx-card-in"></i>
+    <div class="fx-clip"><div class="fx-face fx-face-a"></div></div>
+    <div class="fx-clip"><div class="fx-face fx-face-b"></div></div>
+  </div>
+  <div class="fx-tip"></div>
+  <div class="fx-load"></div>
+</div>
 <div id="wipe" aria-hidden="true"></div>
 
 <div id="app">
@@ -366,6 +615,7 @@
       主页
     </a>
     <h1>选关</h1>
+    <i id="dbgUnlock" class="dbg-unlock" hidden>DEBUG · 全解锁</i>
     <div class="hspace"></div>
     <div class="seg" role="group" aria-label="显示范围">
       <button id="fAll" class="on" type="button">全部元素</button>
@@ -414,6 +664,7 @@
 
 <script src="levels/levels.js"></script>
 <script>
+const SPASHELL = window.__CZ_SPA_PAGE === true; // 外壳 iframe 内嵌模式
 const CFG_READY = window.CHEZZLE_LEVELS_READY || Promise.resolve(window.CHEZZLE_LEVELS || {});
 let CFG = window.CHEZZLE_LEVELS || {};
 const PROG_KEY = 'chezzle-progress-v1';
@@ -436,10 +687,12 @@ const LOW = !REDUCE && (COARSE || Math.min(innerWidth, innerHeight) < 620);
 
 /** 竖屏旋转容器的尺寸：由 JS 按 innerWidth/innerHeight 写死 px，不再依赖 CSS 的 100vh。
  *  iOS 上 100vh 是"地址栏收起后"的大视口，比 innerHeight 大一截 → 与 JS 的 vw()/vh()
- *  换算打架，页面下缘会被地址栏压住。两边用同一组数字就不会错位。 */
+ *  换算打架，页面下缘会被地址栏压住。两边用同一组数字就不会错位。
+ *  ★ 旋转写在 **body** 上（见上面 CSS 注释）：根元素被撑宽会让移动端把布局视口一起
+ *    撑大，整页随即按错误尺寸排版。 */
 const ROT_PROPS = ['position', 'top', 'left', 'width', 'height', 'transform', 'transformOrigin', 'overflow'];
 function applyRotSize() {
-  const h = document.documentElement;
+  const h = document.body;
   if (isRot()) {
     h.style.position = 'absolute';
     h.style.top = '0';
@@ -545,10 +798,19 @@ function allLevels(cfg) {
 }
 /** 解锁判定（前置关卡式）：requires 里的关**全部通关**才解锁；requires 留空 = 一开始就能玩。
  *  ★ 只需写直接前置（链条自动传递）：H-1 已要求新手引导，He-1 只写 H-1 即可。
- *  ★ 旧版是"通关 X → 解锁 X 的子节点"的反向表，且漏判"是否已通关"，会把整张图全解锁。 */
+ *  ★ 旧版是"通关 X → 解锁 X 的子节点"的反向表，且漏判"是否已通关"，会把整张图全解锁。
+ *  ★ 调试：levels/levels.json 顶层 "debugUnlockAll": true → 忽略前置，所有已编写关卡直接可进
+ *    （验证未解锁关卡用；正式发布记得改回 false）。 */
 function unlockedSet(cfg, cleared) {
+  const all = allLevels(cfg);
+  if (cfg && cfg.debugUnlockAll === true) {
+    const set = new Set(all.map((lv) => lv.id));
+    if (cfg.tutorial) set.add(cfg.tutorial.id);
+    try { console.info('[Chezzle] debugUnlockAll=true：已忽略前置解锁（选关页全解锁）'); } catch (e) { /* 忽略 */ }
+    return set;
+  }
   const set = new Set();
-  for (const lv of allLevels(cfg)) {
+  for (const lv of all) {
     const req = lv.requires || [];
     if (req.length === 0 || req.every((r) => cleared.has(r))) set.add(lv.id);
   }
@@ -624,6 +886,8 @@ let curX = 0;          // 走廊当前位置（以"卡片数"为单位的浮点�
 let step = 330;        // 卡片间距（px，由 fitDeck 定尺寸后算出）
 let cardW = 320;       // 卡片宽（px，fitDeck 实测走廊高度后写死）
 let launching = false;
+let enterAnim = null;  // 进入过场的缩放动画（中途要"平移出画面"时先取消）
+let enterGeo = null;   // { box, cx, cy, k } 供 cz:out 接着滑出
 let cards = [];        // 当前走廊里的卡片 DOM（筛选后会重建）
 
 /** 卡片尺寸按**实测走廊高度**算，保证卡片永远装得进走廊。
@@ -635,7 +899,10 @@ function fitDeck() {
   const box = $('corridor');
   const hRoom = Math.max(96, box.clientHeight - 18);          // 走廊可用高度（留足余量给浮动动画）
   const wRoom = Math.min(460, Math.max(190, vw() * 0.66));    // 版式宽度的 66%
-  const h = Math.min(248, hRoom);
+  // 中等偏矮窗口（body.compact）卡片上限也收一档：否则 320×248 的卡在 558px 高的
+  // 窗口里占掉近一半高度，页眉/页脚被挤在一起（用户反馈"非常拥挤"）。
+  const maxH = document.body.classList.contains('compact') ? 208 : 248;
+  const h = Math.min(maxH, hRoom);
   cardW = Math.round(Math.max(190, Math.min(h * 1.29, wRoom)));
   document.body.style.setProperty('--card-w', cardW + 'px');
   document.body.style.setProperty('--card-h', Math.round(h) + 'px');
@@ -725,9 +992,55 @@ function refreshCardStates() {
 }
 
 // ---- 同位素条 ----
+// ★ 动画设计（用户反馈"生硬"的根源在这里）：
+//   旧版每次切换同位素都 `isoBox.innerHTML = ''` 整排重建 → 连"只是换选中项"都会重播浮入，
+//   看着就是整排闪一下、很硬。现在分两种情况：
+//   · 同一元素且各关卡状态没变 → **只挪选中态**（金色高亮平滑过渡 + 选中项轻弹一下）；
+//   · 元素或状态真的变了 → 旧的一排先向上淡出，新的一排再逐个浮入（交叉淡入，不硬切）。
+let isoRowSig = '';
+let isoSwapT = 0;
+let isoSwapTk = 0;
+function isoSignature(e) {
+  if (!e) return '';
+  return e.sym + '|' + e.kind + '|' + e.isotopes.map((it) => `${it.id}:${isotopeState(it, unlocked, cleared)}`).join(',');
+}
+/** 只挪选中态：不动 DOM 结构，也就不重播入场动画 */
+function updateIsoSel() {
+  const chips = [...isoBox.children];
+  chips.forEach((c, i) => {
+    const on = i === activeIso;
+    if (c.classList.contains('sel') === on) return;
+    c.classList.toggle('sel', on);
+    if (on && c.animate && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      c.animate([{ transform: 'scale(.95)' }, { transform: 'scale(1.035)' }, { transform: 'scale(1)' }],
+        { duration: 300, easing: 'cubic-bezier(.22,.9,.3,1.15)' });
+    }
+  });
+}
 function renderIsotopes() {
   const e = ENTRIES[active];
+  const sig = isoSignature(e);
+  if (sig && sig === isoRowSig) { updateIsoSel(); refreshEnter(); return; }
+  const old = [...isoBox.children];
+  const paint = () => {
+    const cur = ENTRIES[active];
+    if (isoSignature(cur) !== sig) return;   // 期间又切了 → 让最后一次调用负责
+    isoRowSig = sig;
+    buildIsoRow(cur);
+    refreshEnter();
+  };
+  if (!old.length || matchMedia('(prefers-reduced-motion: reduce)').matches) { paint(); return; }
+  for (const el of old) {
+    el.style.pointerEvents = 'none';
+    el.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(-7px)' }],
+      { duration: 150, easing: 'cubic-bezier(.4,0,1,1)', fill: 'forwards' });
+  }
+  clearTimeout(isoSwapT);
+  isoSwapT = setTimeout(paint, 150);
+}
+function buildIsoRow(e) {
   isoBox.innerHTML = '';
+  const tk = ++isoSwapTk;
   if (!e.isotopes.length) {
     // 没配关卡的元素：给一条说明，别让下栏空着
     const tip = document.createElement('button');
@@ -737,10 +1050,10 @@ function renderIsotopes() {
     tip.innerHTML = `<span class="row"><span class="iso"><b>—</b><span>${e.sym}</span></span>
       <span class="nm">${e.name}</span><span class="stat">暂无</span></span>`;
     isoBox.appendChild(tip);
-    refreshEnter();
     return;
   }
   e.isotopes.forEach((it, i) => {
+    if (tk !== isoSwapTk) return;                 // 已被新一次渲染取代
     const s = isotopeState(it, unlocked, cleared);
     const stars = e.kind === 'tutorial' ? '' : `<span class="stars">${'★'.repeat(difficultyStars(e, it))}</span>`;
     const status = s === 'done' ? '已通关' : s === 'open' ? '可挑战' : s === 'empty' ? '暂无'
@@ -748,7 +1061,7 @@ function renderIsotopes() {
     const c = document.createElement('button');
     c.type = 'button';
     c.className = `chip${i === activeIso ? ' sel' : ''}${s === 'done' ? ' done' : ''}${s === 'lock' ? ' lock' : ''}${s === 'empty' ? ' empty' : ''}`;
-    c.style.animationDelay = `${Math.min(i * 45, 260)}ms`;   // 逐个浮入
+    c.style.animationDelay = `${Math.min(i * 55, 300)}ms`;   // 逐个浮入（换元素时才有）
     c.innerHTML = `<span class="row">
       <span class="iso"><b>${it.mass || '—'}</b><span>${e.kind === 'tutorial' ? '关' : e.sym}</span></span>
       <span class="nm">${it.name}</span>
@@ -757,12 +1070,11 @@ function renderIsotopes() {
     c.addEventListener('click', () => {
       if (launching) return;
       activeIso = i;
-      renderIsotopes();
+      renderIsotopes();     // 同一元素：只挪选中态（不会整排重播动画）
       refreshEnter();
     });
     isoBox.appendChild(c);
   });
-  refreshEnter();
 }
 function refreshEnter() {
   const e = ENTRIES[active];
@@ -783,24 +1095,51 @@ function refreshEnter() {
     setEnter(`通关 ${need} 解锁`, true, `先通关：${need}`);
   }
 }
-/** 按钮文案/状态切换：文字交叉淡入 + 宽度补间（否则"进入关卡 ↔ 通关 X 解锁"会硬跳变） */
+/** 按钮文案/状态切换：一次"翻页"——旧字上移淡出 → 换字 → 新字自下淡入。
+ *  ★ 按钮**定宽**，所以不再做宽度补间：旧版宽度补间 + 排版过渡互相打架，
+ *    会出现"先变长、再突然变短"（offsetWidth 量到的是过渡中间值，见 .enter 注释）。 */
+let enterSwapT = 0;
+let enterAnims = [];
 function setEnter(txt, disabled, title) {
   enterBtn.title = title || '';
   if (enterText.textContent === txt && enterBtn.disabled === disabled) return;
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const from = enterBtn.offsetWidth;
-  enterText.textContent = txt;
+  clearTimeout(enterSwapT);
+  for (const a of enterAnims) { try { a.cancel(); } catch (e) { /* 已结束 */ } }
+  enterAnims = [];
   enterBtn.disabled = disabled;
-  const to = enterBtn.offsetWidth;
-  if (reduce) return;
-  if (from !== to && enterBtn.animate) {
-    enterBtn.animate([{ width: from + 'px' }, { width: to + 'px' }],
-      { duration: 280, easing: 'cubic-bezier(.3,.9,.3,1)' });
+  if (reduce || !enterText.animate) { enterText.textContent = txt; return; }
+  const a1 = enterText.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(-8px)' }],
+    { duration: 120, easing: 'cubic-bezier(.4,0,1,1)', fill: 'forwards' });
+  enterAnims.push(a1);
+  enterSwapT = setTimeout(() => {
+    a1.cancel();
+    enterText.textContent = txt;
+    const a2 = enterText.animate([{ opacity: 0, transform: 'translateY(9px)' }, { opacity: 1, transform: 'none' }],
+      { duration: 230, easing: 'cubic-bezier(.22,.9,.3,1.04)', fill: 'forwards' });
+    a2.onfinish = () => { a2.cancel(); };   // 收掉 fill，避免残留动画影响后续状态
+    enterAnims = [a2];
+  }, 120);
+  if (enterBtn.animate) {
+    const p = enterBtn.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.035)' }, { transform: 'scale(1)' }],
+      { duration: 420, easing: 'cubic-bezier(.22,.8,.3,1)' });
+    enterAnims.push(p);
   }
-  if (enterText.animate) {
-    enterText.animate([{ opacity: 0, transform: 'translateY(7px)' }, { opacity: 1, transform: 'none' }],
-      { duration: 260, easing: 'ease-out' });
-  }
+}
+
+/** 显示范围切换的滑动指示块：跟着当前选中项定位（宽度 + 位移一起补间） */
+function moveSegInd(instant) {
+  const seg = document.querySelector('.seg');
+  if (!seg) return;
+  const on = seg.querySelector('button.on');
+  if (!on) return;
+  let ind = seg.querySelector('.ind');
+  if (!ind) { ind = document.createElement('span'); ind.className = 'ind'; seg.insertBefore(ind, seg.firstChild); }
+  const r = seg.getBoundingClientRect(), b = on.getBoundingClientRect();
+  if (instant) ind.style.transition = 'none';
+  ind.style.width = b.width + 'px';
+  ind.style.transform = `translateX(${(b.left - r.left).toFixed(1)}px)`;
+  if (instant) { void ind.offsetWidth; ind.style.transition = ''; }
 }
 
 // ---- 走廊位移：缓动 + 逐卡透视/缩放 ----
@@ -937,6 +1276,7 @@ function flashPeriod(p) {
 }
 
 function setActive(i, focusIso) {
+  if (launching) return; // 进入关卡的过场进行中：不允许翻卡/改选中
   const n = ENTRIES.length;
   const prevP = periodOf(ENTRIES[active]);
   active = clampIndex(i, n);
@@ -974,41 +1314,308 @@ function denyCard(b, e) {
   toast(need.length ? `${e.name} 还没解锁 · 先通关 ${need.join(' / ')}` : `${e.name} 暂无`);
 }
 
-// ---- 进入关卡 ----
+// ============================================================================
+// 进入关卡：卡片放大 → 内容变形成关卡信息卡 → 左下 Tips / 右下 LOADING 滑入
+// 同时真预取目标关卡（HTML + 引擎包），就绪且过场演完后交给外壳挂载关卡 iframe。
+// 全程在**本文档内**完成，没有跨页导航 → 浏览器差异（白屏/冻住）不再影响转场。
+// ============================================================================
+const TIP_PLACEHOLDER = '· · ·'; // 文案池为空时的占位；文案写在 levels/levels.json 顶层 "tips": [...]
+let lastTipIndex = -1;           // 随机抽取时避免连续两次同一句
+function escHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+/** Tips 文案：从 levels/levels.json 顶层的 "tips" 池里随机抽一条（与关卡无关）。
+ *  池为空时显示占位；文案由用户补 JSON 即可，不用改代码。 */
+function pickTip() {
+  const pool = (CFG && Array.isArray(CFG.tips) ? CFG.tips : [])
+    .map((s) => (typeof s === 'string' ? s.trim() : ''))
+    .filter(Boolean);
+  if (!pool.length) return TIP_PLACEHOLDER;
+  let i = (Math.random() * pool.length) | 0;
+  if (pool.length > 1 && i === lastTipIndex) i = (i + 1 + ((Math.random() * (pool.length - 1)) | 0)) % pool.length;
+  lastTipIndex = i;
+  return pool[i];
+}
+function loadChipHTML() {
+  return '<div class="czlLoad">' +
+    '<svg viewBox="0 0 168 50" preserveAspectRatio="none" aria-hidden="true">' +
+    '<path class="frame" d="M14 1 H167 L154 49 H1 Z"/>' +
+    '<path class="spark" pathLength="100" d="M14 1 H167 L154 49 H1 Z"/></svg>' +
+    '<span>LOADING</span></div>';
+}
+/** 元素矩形 → 旋转坐标系下的局部矩形（与卡片布局同一套坐标） */
+function localRectOf(el) {
+  const r = el.getBoundingClientRect();
+  if (!isRot()) return { left: r.left, top: r.top, width: r.width, height: r.height };
+  return { left: r.top, top: innerWidth - r.right, width: r.height, height: r.width };
+}
+/** 关卡信息（同一个平行四边形内部的新内容；按选中卡尺寸排版，外层整体缩放后即为大卡） */
+function infoFaceHTML(e, it, state) {
+  const guide = e.kind === 'tutorial';
+  const sym = guide ? GUIDE_ICON : escHtml(e.sym);
+  const num = guide ? 'GUIDE' : 'No.' + e.n;
+  const name = guide ? '新手引导' : escHtml(e.name);
+  const sub = guide ? '引导关 · 从零开始' : escHtml((it.name || '') + (it.id ? ' · ' + it.id : ''));
+  const meta = guide ? 'CHEZZLE · TUTORIAL'
+    : ('第 ' + e.period + ' 周期 · 第 ' + e.group + ' 族' + (e.rare ? ' · 稀有' : ''));
+  const stateTxt = state === 'done' ? '已通关 · 可重玩' : '可挑战';
+  return '<span class="fb-sym">' + sym + '</span>' +
+    '<span class="fb-txt"><span class="fb-num">' + num + '</span>' +
+    '<b class="fb-name">' + name + '</b>' +
+    '<i class="fb-sub">' + sub + '</i>' +
+    '<span class="fb-meta">' + meta + '</span></span>' +
+    '<span class="fb-foot">' + (guide ? 'LEVEL · TUTORIAL' : 'LEVEL · ' + escHtml(it.id || '—')) +
+    '<i></i></span>' +
+    '<span class="fb-state">' + stateTxt + '</span>';
+}
+/** WAAPI 小封装（老内核不支持时直接落到终态，保证功能不丢）；返回 Animation 以便中途取消 */
+function animateTo(el, frames, dur, easing, delay) {
+  try {
+    if (!el.animate) throw new Error('no waapi');
+    return el.animate(frames, { duration: dur, easing, delay: delay || 0, fill: 'both' });
+  } catch (err) {
+    el.style.transform = frames[frames.length - 1].transform || '';
+    return null;
+  }
+}
+/** 预取关卡真的需要的东西：关卡 HTML（外壳 iframe 的同款 URL）+ 引擎包/外链脚本。
+ *  配合 _headers 的缓存策略，命中缓存时这里几乎瞬时完成。 */
+async function prepareLevel(file) {
+  const shellApi = (window.parent !== window && window.parent.__czShell) || null;
+  const url = shellApi && shellApi.withSpa ? shellApi.withSpa(file) : file;
+  let html = '';
+  try {
+    const res = await fetch(url, { cache: 'default' });
+    if (res.ok) html = await res.text();
+  } catch (e) { return; }
+  const urls = new Set();
+  const re = /<script\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi;
+  let m;
+  while ((m = re.exec(html))) {
+    const src = m[1];
+    if (/^(?:https?:|data:)/i.test(src)) continue;
+    try { urls.add(new URL(src, new URL(file, location.href)).href); } catch (e) { /* 忽略 */ }
+  }
+  await Promise.all([...urls].map((u) => fetch(u, { cache: 'default' })
+    .then((r) => r.arrayBuffer()).catch(() => {})));
+}
+
 function tryEnter() {
   const e = ENTRIES[active];
   const it = e.isotopes[activeIso];
   if (!it) { denyCard(cards[active], e); return; }
   const s = isotopeState(it, unlocked, cleared);
   if (s !== 'open' && s !== 'done') { denyCard(cards[active], e); return; }
-  launch(it.file);
+  enterLevel(e, it, s);
 }
-/** 过场：卡片放大 + 白闪 → 再跳转（prefers-reduced-motion 时直接跳） */
-function launch(file) {
+
+/** 把"选中卡 + 关卡信息"交给外壳（SPA）；非外壳环境下退化为直接打开关卡页 */
+function handoff(e, it) {
+  try {
+    sessionStorage.setItem('chezzle-enter-v1', JSON.stringify({
+      file: it.file, id: it.id || '', name: it.name || '',
+      elName: e.kind === 'tutorial' ? '新手引导' : e.name,
+      sym: e.kind === 'tutorial' ? '⚗' : e.sym,
+      num: e.kind === 'tutorial' ? 'GUIDE' : 'No.' + e.n,
+      accent: accentOf(e),
+    }));
+  } catch (err) { /* 隐私模式忽略 */ }
+  if (SPASHELL && window.parent !== window) {
+    parent.postMessage({
+      type: 'cz:play',
+      file: it.file,
+      id: it.id || '',
+      name: it.name || (e.kind === 'tutorial' ? e.name : e.name),
+    }, '*');
+  } else {
+    location.href = it.file;
+  }
+}
+
+function enterLevel(e, it, state) {
   if (launching) return;
-  if (matchMedia('(prefers-reduced-motion: reduce)').matches) { location.href = file; return; }
   launching = true;
-  document.body.classList.add('launch');
-  setTimeout(() => { location.href = file; }, 330);
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const fx = $('enterFx');
+  const card = cards[active];
+  if (reduce || !fx || !card) { handoff(e, it); return; }
+
+  const started = performance.now();
+  const MIN_SHOW = 2350;   // 放慢的节奏：缩放 → 内容改编 → Tips → LOADING → 交棒
+  const MAX_WAIT = 5600;   // 预取最多等这么久，再慢就交给关卡页自己的加载层
+  let prepared = false;
+  let navigated = false;
+
+  const r = localRectOf(card);
+  // 颜色跟选中卡完全一致（卡的状态色：普通/已通关/金光/稀有，都由卡片上的 --c 决定）
+  // —— 以前这里用 accentOf(e)，放大瞬间会从"卡的颜色"跳成"元素色"，看起来像换了一张牌。
+  let accent = '';
+  try { accent = (getComputedStyle(card).getPropertyValue('--c') || '').trim(); } catch (e) { /* 忽略 */ }
+  if (!accent) accent = accentOf(e);
+  fx.style.setProperty('--c', accent);
+  // —— 唯一的平行四边形：位置/尺寸 = 选中卡的矩形；斜切角随宽度等比 ——
+  const box = fx.querySelector('.fx-card');
+  if (enterAnim) { try { enterAnim.cancel(); } catch (e) { /* 已结束 */ } enterAnim = null; }
+  box.style.transition = '';
+  box.style.left = r.left + 'px';
+  box.style.top = r.top + 'px';
+  box.style.width = r.width + 'px';
+  box.style.height = r.height + 'px';
+  box.style.setProperty('--cw', r.width + 'px');
+  box.style.setProperty('--ch', r.height + 'px');
+  box.style.transform = 'none';
+  // 旧内容 = 选中卡的等比复制（隐藏其自带底板，框由外层提供 → 视觉上始终是同一个框）
+  const faceA = fx.querySelector('.fx-face-a');
+  const clone = card.cloneNode(true);
+  clone.removeAttribute('id');
+  clone.style.opacity = '1';
+  clone.style.transform = 'none';
+  clone.style.filter = 'none';
+  // 卡片正处在"呼吸"浮动中时，克隆体停掉 CSS 动画会跳到 +0；把当前偏移抄过来 → 起手帧完全重合
+  try {
+    const liveInner = card.querySelector('.inner');
+    const clonedInner = clone.querySelector('.inner');
+    if (liveInner && clonedInner) clonedInner.style.transform = getComputedStyle(liveInner).transform;
+  } catch (e) { /* 忽略 */ }
+  faceA.replaceChildren(clone);
+  fx.querySelector('.fx-face-b').innerHTML = infoFaceHTML(e, it, state);
+  const tipEl = fx.querySelector('.fx-tip');
+  tipEl.innerHTML = '<b>TIP</b><span></span>';
+  tipEl.querySelector('span').textContent = pickTip();
+  fx.querySelector('.fx-load').innerHTML = loadChipHTML();
+  fx.classList.remove('morph', 'tipOn', 'loadOn', 'go', 'leaving');
+  card.style.visibility = 'hidden';
+  document.body.classList.add('entering');
+  fx.classList.add('on');
+
+  // 1) 同一个平行四边形：从原位整体放大到画面中央（更慢、有惯性）
+  const cx = vw() / 2 - (r.left + r.width / 2);
+  const cy = vh() / 2 - (r.top + r.height / 2);
+  const targetW = Math.min(560, vw() * 0.6);
+  const k = Math.max(1.08, Math.min(1.55, targetW / r.width));
+  enterGeo = { box, cx, cy, k };
+  enterAnim = animateTo(box, [
+    { transform: 'translate(0px,0px) scale(1)' },
+    { transform: `translate(${(cx * 0.26).toFixed(1)}px,${(cy * 0.26).toFixed(1)}px) scale(${(1 + (k - 1) * 0.3).toFixed(3)})`, offset: 0.25 },
+    { transform: `translate(${cx.toFixed(1)}px,${cy.toFixed(1)}px) scale(${k.toFixed(3)})` },
+  ], 880, 'cubic-bezier(.17,.84,.25,1)', 120);
+
+  // 2) 内容改编：同一个框内旧内容向上平移滑出 / 关卡信息从下方平移滑入
+  setTimeout(() => fx.classList.add('morph'), 1020);
+  // 3) Tips / LOADING 依次滑入
+  setTimeout(() => fx.classList.add('tipOn'), 1700);
+  setTimeout(() => fx.classList.add('loadOn'), 1980);
+
+  // 4) 真预取（外壳 iframe 用的同款 URL，命中缓存时瞬时完成）
+  prepareLevel(it.file).then(() => { prepared = true; }).catch(() => { prepared = true; });
+
+  const handoffNow = () => {
+    if (navigated) return;
+    navigated = true;
+    setTimeout(() => handoff(e, it), 260); // 外壳会先让选关页整体平移出画面，再让游戏渐入
+  };
+  const waitReady = () => {
+    if (navigated) return;
+    const t = performance.now() - started;
+    if (t < MIN_SHOW) { setTimeout(waitReady, Math.max(40, MIN_SHOW - t)); return; }
+    if (!prepared && t < MAX_WAIT) { setTimeout(waitReady, 150); return; }
+    handoffNow();
+  };
+  setTimeout(waitReady, MIN_SHOW);
 }
-/** 离场：先淡出到深色再跳（配合目标页的进场淡入 → 页面之间不再"啪"地切换） */
+
+/** 外壳从关卡返回：把过场倒放回去（不重新加载，选关状态原地保留）。
+ *  此时选关 iframe 还在外壳的暗场/不可见里，所以可以无过渡地瞬间复位，再播入场。 */
+function backFromLevel() {
+  const fx = $('enterFx');
+  const card = cards[active];
+  if (card) card.style.visibility = '';
+  document.body.classList.remove('entering');
+  launching = false;
+  if (fx) {
+    const box = fx.querySelector('.fx-card');
+    if (enterAnim) { try { enterAnim.cancel(); } catch (e) { /* 已结束 */ } enterAnim = null; }
+    enterGeo = null;
+    fx.style.transition = 'none';
+    fx.classList.remove('leaving', 'morph', 'go', 'loadOn', 'tipOn');
+    fx.classList.remove('on');
+    if (box) { box.style.transition = 'none'; box.style.transform = 'none'; }
+    const faceA = fx.querySelector('.fx-face-a');
+    if (faceA) faceA.replaceChildren();
+    void fx.offsetWidth;
+    fx.style.transition = '';
+    if (box) box.style.transition = '';
+  }
+  // 关卡里可能通关/解锁变化：重读本地进度，刷新卡片状态与进度条
+  try {
+    cleared = loadProg();
+    unlocked = unlockedSet(CFG || {}, cleared);
+    refreshCardStates();
+    renderIsotopes();
+    refreshProgress();
+    buildPeriods();
+  } catch (e) { /* 忽略 */ }
+  // 稍等外壳把 iframe 揭开，再播放入场（与外壳的 iframe 淡入叠在一起）
+  document.body.classList.remove('ready');
+  void document.body.offsetWidth;
+  setTimeout(() => requestAnimationFrame(() => document.body.classList.add('ready')), 260);
+}
+
+/** 返回首页 / 关于页：SPA 里发消息给外壳；独立打开时走原来的离场 */
 function leaveTo(href) {
   if (!href) return;
+  if (SPASHELL && window.parent !== window) {
+    parent.postMessage({ type: /about/i.test(href) ? 'cz:about' : 'cz:home' }, '*');
+    return;
+  }
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) { location.href = href; return; }
   const w = $('wipe');
   w.classList.remove('off');
   setTimeout(() => { location.href = href; }, 300);
 }
 $('back').addEventListener('click', (e) => { e.preventDefault(); leaveTo('index.html'); });
+// 外壳 → 选关页的消息：
+//   cz:back  从关卡返回：立即复位过场层并重播入场（此时 iframe 还不可见）
+//   cz:out   关卡已就绪：所有东西一起平移出画面，随后外壳让游戏画面渐入
+//   cz:enter  再次展示选关：重播页面入场
+window.addEventListener('message', (ev) => {
+  const d = ev.data;
+  if (!d || typeof d !== 'object') return;
+  if (d.type === 'cz:back') backFromLevel();
+  else if (d.type === 'cz:out') {
+    const fx = $('enterFx');
+    if (!fx) return;
+    fx.classList.add('leaving');
+    // 卡片正在被 WAAPI 缩放：先接到当前帧，再顺着往画面外滑（不能直接 cancel，否则会跳回原位）
+    if (enterGeo && enterGeo.box) {
+      const b = enterGeo.box;
+      const cur = getComputedStyle(b).transform;
+      if (enterAnim) { try { enterAnim.cancel(); } catch (e) { /* 已结束 */ } enterAnim = null; }
+      b.style.transition = 'none';
+      b.style.transform = cur === 'none' ? '' : cur;
+      void b.offsetWidth;
+      b.style.transition = 'transform .52s cubic-bezier(.55,0,.3,1)';
+      b.style.transform = 'translate(' + enterGeo.cx.toFixed(1) + 'px,' +
+        (enterGeo.cy - vh() * 1.2).toFixed(1) + 'px) scale(' + enterGeo.k + ')';
+      setTimeout(() => { b.style.transition = ''; }, 580);
+    }
+  } else if (d.type === 'cz:enter') {
+    document.body.classList.remove('ready');
+    void document.body.offsetWidth;
+    requestAnimationFrame(() => document.body.classList.add('ready'));
+  }
+});
 
 // ---- 显示范围筛选：全部元素 / 只看有关卡 ----
-/** 切换时先让走廊淡出 → 重建 → 再淡入（否则卡片是"啪"地换掉，没有过渡） */
+/** 切换时先让走廊淡出 + 轻微收一下 → 重建 → 再淡入（否则卡片是"啪"地换掉，没有过渡） */
 function applyFilter(playable) {
+  if (launching) return;
   if (playable === onlyPlayable) return;
   const keepSym = ENTRIES[active] ? ENTRIES[active].sym : 'tutorial';
   onlyPlayable = playable;
   $('fAll').classList.toggle('on', !playable);
   $('fPlay').classList.toggle('on', playable);
+  moveSegInd(false);                  // 金色指示块滑过去
   const swap = () => {
     ENTRIES = buildEntries(CFG || {}, bySym, onlyPlayable);
     NAME_OF = buildNameMap();
@@ -1020,10 +1627,12 @@ function applyFilter(playable) {
     const idx = ENTRIES.findIndex((e) => e.sym === keepSym);
     setActive(idx >= 0 ? idx : 0, true);
     track.style.opacity = '1';
+    track.style.transform = 'none';
   };
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) { swap(); return; }
   track.style.opacity = '0';
-  setTimeout(swap, 190);
+  track.style.transform = 'scale(.985)';   // 收一点点再展开：切换有"呼吸"而不是硬替换
+  setTimeout(swap, 200);
 }
 $('fAll').addEventListener('click', () => applyFilter(false));
 $('fPlay').addEventListener('click', () => applyFilter(true));
@@ -1227,6 +1836,8 @@ function markViewport() {
   const b = document.body;
   b.classList.toggle('rot', isRot());
   b.classList.toggle('short', vh() < 430);   // 局部太矮 → 收紧版式（隐藏周期条等）
+  // 中等偏矮/偏窄（笔记本半屏、窗口拉扁）：先收一档，避免页眉卡脚把卡片挤死
+  b.classList.toggle('compact', vh() < 640 || vw() < 1000);
   b.classList.toggle('narrow', vw() < 700);
   b.classList.toggle('low', LOW);            // 低档：停滤镜/停图层（见 CSS body.low）
   document.documentElement.classList.toggle('low', LOW);   // 还要打在 <html> 上：关掉 --ar 过渡（满屏重绘风暴）
@@ -1243,6 +1854,7 @@ function onViewport() {
     vpPending = false;
     markViewport();
     layoutCards();
+    moveSegInd(true);   // 尺寸变了：指示块立即对齐（不做滑动动画）
   });
 }
 addEventListener('resize', onViewport);
@@ -1262,32 +1874,67 @@ function autoTarget() {
   return 0;
 }
 
+// ---------------------------------------------------------------------------
+// SPA 内嵌：慢网启动层 + 就绪交接（外壳收到 cz:page-ready 才揭开 iframe）
+// ---------------------------------------------------------------------------
+let bootShown = false;
+const bootTimer = setTimeout(() => {
+  const b = $('boot');
+  if (b) { b.classList.add('show'); bootShown = true; }
+}, 260);
+let pageReadySent = false;
+/** 数据就绪：收起启动层/暗幕，开始入场编排；通知外壳"可以揭开选关页了" */
+function revealPage() {
+  clearTimeout(bootTimer);
+  const b = $('boot');
+  if (b) {
+    if (bootShown) b.classList.add('done');
+    setTimeout(() => { if (b.parentNode) b.parentNode.removeChild(b); }, 800);
+  }
+  const w = $('wipe');
+  if (w) {
+    if (SPASHELL) { w.style.transition = 'none'; w.classList.add('off'); }
+    else requestAnimationFrame(() => requestAnimationFrame(() => w.classList.add('off')));
+  }
+  document.body.classList.add('ready');
+  if (!pageReadySent) {
+    pageReadySent = true;
+    if (SPASHELL && window.parent !== window) {
+      try { parent.postMessage({ type: 'cz:page-ready' }, '*'); } catch (e) { /* 忽略 */ }
+    }
+  }
+}
+
 /** 关卡表来自 levels/levels.json（levels.js 负责读进来），所以要等它 ready 再建界面 */
 function boot(cfg) {
   CFG = cfg || {};
   unlocked = unlockedSet(CFG, cleared);
+  // 调试全解锁标记（levels.json 的 debugUnlockAll:true 时可见；发布前记得改回 false）
+  const dbgTag = $('dbgUnlock');
+  if (dbgTag) dbgTag.hidden = CFG.debugUnlockAll !== true;
   ENTRIES = buildEntries(CFG, bySym, onlyPlayable);
   NAME_OF = buildNameMap();
   buildCards();                     // 先建卡（全部 118 位元素）
   buildPeriods();                   // 再建周期轨道（条内 = 该周期通关进度）
   setActive(0, true);          // 先停在最开头（新手引导）
   refreshProgress();
+  moveSegInd(true);                 // 显示范围切换的金色指示块：首帧就位
   fitDeck();                        // ★ 页脚内容（同位素条/按钮）定下来后再量走廊高度，卡片尺寸才准
   layoutCards();
   moveCards(true);
   // 再量一次：字体度量/换行在首帧后才稳定（手机 Safari 上曾出现"晚一帧才换行"→ 卡片压到周期条）
-  requestAnimationFrame(() => { fitDeck(); layoutCards(); });
+  requestAnimationFrame(() => { fitDeck(); layoutCards(); moveSegInd(true); });
   // 开场动画：稍等进场淡入，再自动划过走廊到"下一个该打的关卡"
   const target = autoTarget();
   if (target > 0) setTimeout(() => setActive(target, true), matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 520);
-  // 进场：从深色淡入（#wipe 初始不透明）
-  requestAnimationFrame(() => requestAnimationFrame(() => $('wipe').classList.add('off')));
+  revealPage();
 }
 CFG_READY.then(boot).catch(() => {
   $('ptext').textContent = '关卡表读取失败';
   toast('读取 levels/levels.json 失败：请用 http 服务打开（如 python -m http.server）');
-  requestAnimationFrame(() => requestAnimationFrame(() => $('wipe').classList.add('off')));
+  revealPage();
 });
 </script>
 </body>
 </html>
+

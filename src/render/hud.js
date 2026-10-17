@@ -6,16 +6,18 @@
 // 鸟瞰（灵魂出窍）：暂停模拟，整关自由缩放/平移——HUD 只留"返回"按钮 + 操作提示。
 // ============================================================================
 
-import { THEME, rr, panel, glowText, clearText } from './theme.js';
+import { THEME, rr, para, panel, glowText, clearText } from './theme.js';
 import { getSubstance, acidLabelOf, displayName } from '../chem/substances.js';
 import { MIN_ENTRY } from '../chem/solution.js';
 import { solutionColor } from './liquidrender.js';
 import { CFG } from '../core/config.js';
 import { GasColumn } from '../objects/gascolumn.js';
 import { Block } from '../objects/block.js';
-import { inventorySlotRects, uiMargins, overviewButtonRect, fullscreenButtonRect, hudTopOffset, touchInsetsOf, compactView } from '../level/click.js';
+import { inventorySlotRects, uiMargins, overviewButtonRect, fullscreenButtonRect, hudTopOffset, touchInsetsOf, compactView, tinyView, tipPanelRect } from '../level/click.js';
 import { joyGeom, touchButtonRects } from '../core/touch.js';
-import { canvasLW, canvasLH, canvasTransformDpr } from './canvas.js';
+import { fullscreenSupported } from '../core/fullscreen.js';
+import { canvasLW, canvasLH, canvasTransformDpr, uiScaleOf } from './canvas.js';
+import { drawFaded } from './fade.js';
 
 // 溯源 kind → 中文（调试悬停显示物体"为何存在"）
 const ORIGIN_LABELS = {
@@ -137,15 +139,76 @@ export class Hud {
     return !!(t && typeof t.enabled === 'function' && t.enabled());
   }
 
+  /** 鸟瞰切换进度（0=正常画面，1=鸟瞰）：与 Camera.overviewMix 同源并做 ease */
+  _overviewMix() {
+    const c = this.scene && this.scene.camera;
+    const raw = c && Number.isFinite(c.overviewMix) ? c.overviewMix : (this.scene && this.scene.overview ? 1 : 0);
+    const t = Math.max(0, Math.min(1, raw));
+    return t * t * (3 - 2 * t);
+  }
+
+  /** 正常画面的 HUD（单独抽出：鸟瞰切换时先画到离屏层再整体淡出，
+   *  这样玩家面板/物品栏等自带 globalAlpha 的元素也能一起平滑淡出）。
+   *  W/H 为 **HUD 坐标空间**（= 真实逻辑尺寸 / uiK；见 render） */
+  _drawNormal(ctx, scene, p, W, H, time) {
+    const uiK = this._uiK || 1;
+    if (p && !p.hidden) {
+      // 左上信息卡（双端统一紧凑单卡）：物质/体质 + 身体组成 + 大气一张卡解决；
+      // 移动端面板体降透明（CFG.touch.hudAlpha），桌面不透明
+      this.playerPanelCompact(ctx, p, scene, time, hudTopOffset(scene, uiK));
+      // 最近反应本就是调试信息：非调试模式不显示（双端一致）
+      if (scene.debugMode) this.reactionPanel(ctx, p);
+      this.inventory(ctx, p, W, H, time);
+    }
+    this.debugPanel(ctx, scene, W, H, time);
+    if (scene.debugMode) this.hoverPanel(ctx, scene, W, H);
+    const top = hudTopOffset(scene, uiK);
+    const right = touchInsetsOf(scene, uiK).right || 0;
+    this.viewButton(ctx, W, top, right);
+    // 全屏按钮：仅在"触屏端 **且** 这台设备真的支持全屏"时画。
+    // 不支持（iPhone 上的 Safari 全系不支持元素全屏）时它只会白占一个按钮位，
+    // 点下去还弹一句"此浏览器不支持全屏"——极窄屏上寸土寸金，直接不画。
+    if (this._isTouch() && fullscreenSupported()) this.fsButton(ctx, W, top, right);
+    this.tipButton(ctx, W, top, right, time);
+    this.notice(ctx, scene, W, H, time);
+    this.bigBanner(ctx, scene, W, H, time);
+    this.touchControls(ctx, scene, W, H, time);
+  }
+
+  /** 鸟瞰淡出用的离屏层（尺寸跟随画布；无 DOM 环境返回 null → 直接画，不淡出） */
+  _hudLayer(W, H, dpr) {
+    if (typeof document === 'undefined' || !document.createElement) return null;
+    let c = this._layer;
+    if (!c) c = this._layer = document.createElement('canvas');
+    const bw = Math.max(1, Math.round(W * dpr));
+    const bh = Math.max(1, Math.round(H * dpr));
+    if (c.width !== bw) c.width = bw;
+    if (c.height !== bh) c.height = bh;
+    c._lw = W; // 让 HUD 里的 canvasLW/canvasLH/canvasTransformDpr 读到一致值
+    c._lh = H;
+    c._dpr = dpr;
+    return c;
+  }
+
   render(ctx, time = 0) {
     const scene = this.scene;
     const p = scene.player;
     // 屏幕空间 UI 以**逻辑像素**布局与绘制（基座乘 dpr）——否则 dpr>1 设备上
-    // 68px 按钮按物理像素结算、显示只有 34px（"移动端 HUD 明显偏小"根因）
-    const W = canvasLW(ctx.canvas);
-    const H = canvasLH(ctx.canvas);
+    // 68px 按钮按物理像素结算、显示只有 34px（"移动端 HUD 明显偏小"根因）。
+    // ★ 桌面大屏再乘一个 HUD 放大系数 uiK（见 canvas.js uiScaleOf）：世界物体最多放大
+    //   desktopScaleMax，而文字/面板再多放大一档，保证"内容不一定大、文字一定看得清"。
+    //   画布坐标系整体缩放 kUi，布局使用换算后的 W/H（命中在 click.js 里同口径换算）。
+    const realW = canvasLW(ctx.canvas);
+    const realH = canvasLH(ctx.canvas);
+    const uiK = uiScaleOf(ctx.canvas);
+    const W = realW / uiK;
+    const H = realH / uiK;
+    const dpr = canvasTransformDpr(ctx.canvas) * uiK;
+    this._uiK = uiK;
+    this._uiW = W;
+    this._uiH = H;
     ctx.save();
-    ctx.setTransform(canvasTransformDpr(ctx.canvas), 0, 0, canvasTransformDpr(ctx.canvas), 0, 0);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // 条件提示：出现"可点击展示"的新提示 → 按钮闪光（提示只在点按钮时展示，
     // 不自动弹面板；点按钮后由 onTipClick 拉取/收起）
@@ -155,33 +218,38 @@ export class Hud {
     }
     if (!scene.tipReady) this._tipReadyShown = null;
 
-    // 鸟瞰（灵魂出窍）：干净的全局视图——只画返回按钮/操作提示/玩家魂标
-    if (scene.overview) {
+    // 鸟瞰（灵魂出窍）↔ 正常画面：镜头由 Camera 混合，HUD 交叉淡入淡出
+    const mix = this._overviewMix();
+    if (mix >= 0.999) {
+      // 干净的全局视图——只画返回按钮/操作提示/玩家魂标
       this.overviewUI(ctx, scene, W, H, time);
       this.rotateHint(ctx, scene, W, H);
       this.overlay(ctx, scene, W, H);
       ctx.restore();
       return;
     }
-
-    if (p && !p.hidden) {
-      // 左上信息卡（双端统一紧凑单卡）：物质/体质 + 身体组成 + 大气一张卡解决；
-      // 移动端面板体降透明（CFG.touch.hudAlpha），桌面不透明
-      this.playerPanelCompact(ctx, p, scene, time, hudTopOffset(scene));
-      // 最近反应本就是调试信息：非调试模式不显示（双端一致）
-      if (scene.debugMode) this.reactionPanel(ctx, p);
-      this.inventory(ctx, p, W, H, time);
+    if (mix <= 0.001) {
+      this._drawNormal(ctx, scene, p, W, H, time);
+    } else {
+      const layer = this._hudLayer(W, H, dpr);
+      if (layer) {
+        const lctx = layer.getContext('2d');
+        lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        lctx.clearRect(0, 0, W, H);
+        this._drawNormal(lctx, scene, p, W, H, time);
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.globalAlpha = 1 - mix;
+        ctx.drawImage(layer, 0, 0);
+        ctx.restore();
+      } else {
+        this._drawNormal(ctx, scene, p, W, H, time);
+      }
+      ctx.save();
+      ctx.globalAlpha = mix;
+      this.overviewUI(ctx, scene, W, H, time);
+      ctx.restore();
     }
-    this.debugPanel(ctx, scene, W, H, time);
-    if (scene.debugMode) this.hoverPanel(ctx, scene, W, H);
-    const top = hudTopOffset(scene);
-    const right = touchInsetsOf(scene).right || 0;
-    this.viewButton(ctx, W, top, right);
-    if (this._isTouch()) this.fsButton(ctx, W, top, right);
-    this.tipButton(ctx, W, top, right, time);
-    this.notice(ctx, scene, W, H, time);
-    this.bigBanner(ctx, scene, W, H, time);
-    this.touchControls(ctx, scene, W, H, time);
     this.rotateHint(ctx, scene, W, H);
     this.overlay(ctx, scene, W, H);
     ctx.restore();
@@ -190,11 +258,11 @@ export class Hud {
   // ---- 顶部按钮：鸟瞰（双端）/ 全屏（触屏）；y 走 hudTopOffset（触屏避让
   //      "返回选关"悬浮钮与 iOS 系统全屏关闭钮；渲染与命中同源）--------------
 
-  /** 鸟瞰按钮（提示按钮左侧；桌面 V 键同效） */
+  /** 鸟瞰按钮（提示按钮左侧；桌面 V 键同效）。斜牌形状，与页面/选关的平行四边形一致 */
   viewButton(ctx, W, top = 10, right = 0) {
     const r = overviewButtonRect(W, top, right);
     ctx.save();
-    rr(ctx, r.x, r.y, r.w, r.h, 9);
+    para(ctx, r.x, r.y, r.w, r.h, 8);
     const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
     g.addColorStop(0, '#2a3a5e');
     g.addColorStop(1, '#141d38');
@@ -217,7 +285,7 @@ export class Hud {
   fsButton(ctx, W, top = 10, right = 0) {
     const r = fullscreenButtonRect(W, top, right);
     ctx.save();
-    rr(ctx, r.x, r.y, r.w, r.h, 9);
+    para(ctx, r.x, r.y, r.w, r.h, 8);
     const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
     g.addColorStop(0, '#2a3a5e');
     g.addColorStop(1, '#141d38');
@@ -237,11 +305,12 @@ export class Hud {
   // ---- 鸟瞰（灵魂出窍）界面：返回按钮 + 操作提示（干净的全局视图）-----------
 
   overviewUI(ctx, scene, W, H, time) {
-    const top = hudTopOffset(scene);
-    // 返回按钮（命中几何走 overviewButtonRect，点击/触点均可退出）
-    const r = overviewButtonRect(W, top, touchInsetsOf(scene).right || 0);
+    const uiK = this._uiK || 1;
+    const top = hudTopOffset(scene, uiK);
+    // 返回按钮（命中几何走 overviewButtonRect，点击/触点均可退出）；与顶部按钮同款斜牌
+    const r = overviewButtonRect(W, top, touchInsetsOf(scene, uiK).right || 0);
     ctx.save();
-    rr(ctx, r.x, r.y, r.w, r.h, 8);
+    para(ctx, r.x, r.y, r.w, r.h, 8);
     const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
     g.addColorStop(0, '#7a5a20');
     g.addColorStop(1, '#4a3410');
@@ -262,7 +331,7 @@ export class Hud {
     const hint = touch ? '鸟瞰 · 单指拖动平移 · 双指捏合缩放' : '鸟瞰 · 滚轮缩放 · 拖动平移 · V 返回';
     ctx.font = 'bold 13px "Segoe UI", "Microsoft YaHei", sans-serif';
     const tw = ctx.measureText(hint).width;
-    rr(ctx, W / 2 - tw / 2 - 14, top + 3, tw + 28, 28, 9);
+    para(ctx, W / 2 - tw / 2 - 14, top + 3, tw + 28, 28, 7);
     ctx.fillStyle = 'rgba(10,12,26,0.72)';
     ctx.fill();
     ctx.strokeStyle = 'rgba(127,224,255,0.4)';
@@ -277,7 +346,7 @@ export class Hud {
   touchControls(ctx, scene, W, H, time) {
     const ui = scene._touchUI;
     if (!ui || !ui.enabled()) return;
-    if (scene.overview) return; // 鸟瞰：触控改走平移/捏合手势，不画游戏控件
+    if (scene.overview && this._overviewMix() >= 0.999) return; // 鸟瞰：触控改走平移/捏合手势，不画游戏控件
     const touch = ui.insets;
     ctx.save();
     // —— 左下：半透明半圆摇杆基座（直径贴底边）——
@@ -289,7 +358,9 @@ export class Hud {
     ctx.strokeStyle = 'rgba(232,184,75,0.32)';
     ctx.lineWidth = 1.5;
     ctx.stroke();
-    // 5 向刻度（上/左上/右上/左/右），激活方向高亮
+    // 5 向刻度（上/左上/右上/左/右），激活方向高亮（随摇杆半径等比缩放）
+    const tickOff = g.R * 0.91;
+    const tickDot = Math.max(2.4, g.R * 0.041);
     const TICKS = [
       { ux: 0, uy: -1, on: () => ui.joy && ui.joy.dir.jump && !ui.joy.dir.left && !ui.joy.dir.right },
       { ux: -0.7071, uy: -0.7071, on: () => ui.joy && ui.joy.dir.jump && ui.joy.dir.left },
@@ -298,19 +369,28 @@ export class Hud {
       { ux: 1, uy: 0, on: () => ui.joy && ui.joy.dir.right && !ui.joy.dir.jump },
     ];
     for (const t of TICKS) {
-      const tx = g.cx + t.ux * (g.R - 11);
-      const ty = g.cy + t.uy * (g.R - 11);
+      const tx = g.cx + t.ux * tickOff;
+      const ty = g.cy + t.uy * tickOff;
       const active = t.on();
       ctx.beginPath();
-      ctx.arc(tx, ty, active ? 5 : 3.5, 0, Math.PI * 2);
+      ctx.arc(tx, ty, active ? tickDot * 1.42 : tickDot, 0, Math.PI * 2);
       ctx.fillStyle = active ? 'rgba(255,215,106,0.9)' : 'rgba(232,184,75,0.35)';
       ctx.fill();
     }
-    // 摇杆球（吸附位置；未触摸时居中淡显）
+    // 摇杆球（吸附位置；未触摸时居中淡显）——半径/移动距离随摇杆大小等比缩放。
+    // ★ ui.joy.sx/sy 是**手指相对圆心的像素偏移**（已按 R 截断、方向吸附过），不是单位向量；
+    //   这里按摇杆球允许的行程夹取，否则大摇杆下偏移量远超屏幕 → 球被画到画布外（用户复现）。
+    const knobR = Math.max(16, Math.round(g.R * 0.32));
+    const knobMove = Math.max(0, g.R - knobR - 8);
     const ox = ui.joy ? ui.joy.sx : 0;
     const oy = ui.joy ? ui.joy.sy : 0;
+    // 按**行程圆**整体缩放（逐轴截断会让斜向球心超出基座 → 球贴到圆外）
+    const rawLen = Math.hypot(ox, oy);
+    const klen = rawLen > knobMove && rawLen > 0.001 ? knobMove / rawLen : 1;
+    const kx = ox * klen;
+    const ky = oy * klen;
     ctx.beginPath();
-    ctx.arc(g.cx + ox, g.cy + oy, 39, 0, Math.PI * 2);
+    ctx.arc(g.cx + kx, g.cy + ky, knobR, 0, Math.PI * 2);
     ctx.fillStyle = ui.joy ? 'rgba(255,255,255,0.30)' : 'rgba(255,255,255,0.12)';
     ctx.fill();
     ctx.strokeStyle = ui.joy ? 'rgba(255,215,106,0.85)' : 'rgba(232,184,75,0.4)';
@@ -555,34 +635,36 @@ export class Hud {
     if (a <= 0.02) return;
     const lines = String(b.text).split('\n').map((s) => s.trim()).filter((s) => s);
     if (!lines.length) return;
-    ctx.save();
-    ctx.globalAlpha = a;
     // 入场从上方轻微落定（只跟淡入期走）
     const rise = -(1 - Math.min(1, age / fade)) * 12;
-    let size = Math.min(46, H * 0.09);
-    const font = () => `900 ${size}px "Segoe UI", "Microsoft YaHei", sans-serif`;
-    ctx.font = font();
-    let maxW = 0;
-    for (const s of lines) maxW = Math.max(maxW, ctx.measureText(s).width);
-    if (maxW > W * 0.88) { // 超宽自动缩字号（保证不贴边）
-      size = Math.max(14, (size * W * 0.88) / maxW);
-      ctx.font = font();
-    }
-    const lh = size * 1.3;
-    ctx.textAlign = 'center';
-    ctx.lineJoin = 'round';
-    lines.forEach((s, i) => {
-      const y = H * 0.36 + rise + (i - (lines.length - 1) / 2) * lh + size * 0.35;
-      ctx.lineWidth = Math.max(3, size / 7);
-      ctx.strokeStyle = 'rgba(8,10,24,0.88)';
-      ctx.strokeText(s, W / 2, y);
-      ctx.fillStyle = '#fff6df';
-      ctx.shadowColor = 'rgba(255,214,120,0.5)';
-      ctx.shadowBlur = 18;
-      ctx.fillText(s, W / 2, y);
-      ctx.shadowBlur = 0;
+    // ★ 透明度走 drawFaded（离屏位图合成）：横幅文字带 shadowBlur=18，
+    //   而 iPadOS WebKit 上 ctx.globalAlpha 对"带阴影的绘制"无效 → 大字会直接
+    //   出现/消失、淡入淡出整个不见（用户设备实测，见 render/fade.js）。
+    drawFaded(ctx, a, (c) => {
+      let size = Math.min(46, H * 0.09);
+      const font = () => `900 ${size}px "Segoe UI", "Microsoft YaHei", sans-serif`;
+      c.font = font();
+      let maxW = 0;
+      for (const s of lines) maxW = Math.max(maxW, c.measureText(s).width);
+      if (maxW > W * 0.88) { // 超宽自动缩字号（保证不贴边）
+        size = Math.max(14, (size * W * 0.88) / maxW);
+        c.font = font();
+      }
+      const lh = size * 1.3;
+      c.textAlign = 'center';
+      c.lineJoin = 'round';
+      lines.forEach((s, i) => {
+        const y = H * 0.36 + rise + (i - (lines.length - 1) / 2) * lh + size * 0.35;
+        c.lineWidth = Math.max(3, size / 7);
+        c.strokeStyle = 'rgba(8,10,24,0.88)';
+        c.strokeText(s, W / 2, y);
+        c.fillStyle = '#fff6df';
+        c.shadowColor = 'rgba(255,214,120,0.5)';
+        c.shadowBlur = 18;
+        c.fillText(s, W / 2, y);
+        c.shadowBlur = 0;
+      });
     });
-    ctx.restore();
   }
 
   // ---- 调试模式面板（F5 暂停/继续，F6 步进；显示玩家附近的每个反应 + 最近爆炸原因）----
@@ -592,7 +674,7 @@ export class Hud {
     const barW = 280;
     const px = W - barW - 10;
     // 右上角状态条（堆叠面板的当前顶 y；触屏下移避让悬浮钮/系统按钮）
-    let top = hudTopOffset(scene);
+    let top = hudTopOffset(scene, this._uiK || 1);
     panel(ctx, px, top, barW, 22, THEME.gold.deep, 8);
     clearText(ctx, `调试 ${scene.debugPaused ? '[暂停] F5继续 F6步进' : '[运行] F5暂停'}·悬停查源·X切换`, px, top + 11, scene.debugPaused ? '#ffd23f' : '#7fe0ff', 'bold 11px "Segoe UI", sans-serif');
     top += 28;
@@ -658,8 +740,9 @@ export class Hud {
     if (!m || !m.on) return;
     const cam = scene.renderer ? scene.renderer.camera : null;
     if (!cam) return;
-    // 屏幕坐标 → 世界坐标（相机缩放/平移；忽略每帧随机震动，悬停无需精确到像素）
-    const { scale, offsetX, offsetY } = cam.compute(W, H, scene.player);
+    const uiK = this._uiK || 1;
+    // 屏幕坐标 → 世界坐标（相机缩放/平移；鼠标是真实逻辑像素，相机也按真实画布算）
+    const { scale, offsetX, offsetY } = cam.compute(canvasLW(ctx.canvas), canvasLH(ctx.canvas), scene.player);
     const wx = (m.x - offsetX) / scale;
     const wy = (m.y - offsetY) / scale;
     // 鼠标移动 → 重置候选与索引
@@ -676,7 +759,9 @@ export class Hud {
     }
     if (this._hoverIdx >= cands.length) this._hoverIdx = 0;
     const info = cands[this._hoverIdx];
-    this.renderHoverTip(ctx, info, m.x, m.y, W, H, cands.length > 1 ? { idx: this._hoverIdx + 1, total: cands.length } : null);
+    // 提示框画在 HUD 坐标空间 → 鼠标坐标同样换算
+    this.renderHoverTip(ctx, info, m.x / uiK, m.y / uiK, W, H,
+      cands.length > 1 ? { idx: this._hoverIdx + 1, total: cands.length } : null);
   }
 
   /**
@@ -876,10 +961,14 @@ export class Hud {
   // 原桌面三张卡（玩家/组成/空气）竖排 + 移动端重复一套——统一成这一张：
   // 屏幕占用最小、信息不缺；移动端面板体按 CFG.touch.hudAlpha 降透明（文字不降）。
   playerPanelCompact(ctx, p, scene, time, top = 10) {
-    const x0 = 10 + (touchInsetsOf(scene).left || 0); // 刘海横屏：卡片让出左缘安全区
+    const uiK = this._uiK || 1;
+    // 左上卡固定 10px 边距（HUD 坐标空间；大屏时随 uiK 一起放大）
+    const x0 = 10 / uiK + (touchInsetsOf(scene, uiK).left || 0); // 刘海横屏：卡片让出左缘安全区
     // 小屏紧凑（视口高<460/宽<500——老机型无全屏时可用视口很小）：
     // 整卡以左上为锚缩 0.76×——不动内部布局，占用面积减半（遮挡重灾区）
-    const k = compactView(canvasLW(ctx.canvas), canvasLH(ctx.canvas)) ? 0.76 : 1;
+    // 极窄视口（无全屏的手机横屏）再缩一档：0.76 → 0.60
+    const k = tinyView(canvasLW(ctx.canvas), canvasLH(ctx.canvas)) ? 0.60
+      : compactView(canvasLW(ctx.canvas), canvasLH(ctx.canvas)) ? 0.76 : 1;
     const atm = scene.atmosphere;
     // 身体组成（多物质才显示，单物质=血量本身）
     const masses = p.grid ? p.grid.masses() : null;
@@ -976,47 +1065,129 @@ export class Hud {
     if (k !== 1) ctx.restore(); // 关闭紧凑缩放（内部 clearText/vial 自管 save/restore）
   }
 
-  /** 血量药瓶：玻璃烧瓶 + 发光液体填充 */
+  /** 血量药瓶：玻璃试剂瓶（金色瓶盖 + 瓶肩过渡 + 液面/气泡/刻度 + 玻璃高光），
+   *  比旧的"圆角胶囊填色"更像实验器皿，也与面板的金色描边更搭。 */
   vial(ctx, x, y, w, h, ratio, color, time) {
+    const cx = x + w / 2;
+    const neckW = Math.max(6, w * 0.36);
+    const nx0 = cx - neckW / 2;
+    const nx1 = cx + neckW / 2;
+    const bodyX0 = x + 1.5;
+    const bodyX1 = x + w - 1.5;
+    const sho = y + h * 0.30;        // 肩线
+    const lipY = y + 1;
+    const bottom = y + h - 2;
+    const rad = Math.max(3, Math.min(w * 0.34, (bottom - sho) * 0.5));
+    const r = Math.max(0, Math.min(1, ratio));
+    const low = r < 0.28;
+    const bodyPath = () => {
+      ctx.beginPath();
+      ctx.moveTo(nx0, lipY + 2);
+      ctx.lineTo(nx0, sho - 3);
+      ctx.quadraticCurveTo(nx0, sho + 2, bodyX0 + 1, sho + 5);
+      ctx.lineTo(bodyX0, bottom - rad);
+      ctx.quadraticCurveTo(bodyX0, bottom, bodyX0 + rad, bottom);
+      ctx.lineTo(bodyX1 - rad, bottom);
+      ctx.quadraticCurveTo(bodyX1, bottom, bodyX1, bottom - rad);
+      ctx.lineTo(bodyX1, sho + 5);
+      ctx.quadraticCurveTo(nx1, sho + 2, nx1, sho - 3);
+      ctx.lineTo(nx1, lipY + 2);
+      ctx.closePath();
+    };
     ctx.save();
-    rr(ctx, x, y, w, h, w / 2.4);
-    ctx.fillStyle = 'rgba(190,225,255,0.10)';
+    // 玻璃体
+    bodyPath();
+    const glass = ctx.createLinearGradient(x, y, x + w, y + h);
+    glass.addColorStop(0, 'rgba(205,235,255,0.17)');
+    glass.addColorStop(0.45, 'rgba(150,200,240,0.06)');
+    glass.addColorStop(1, 'rgba(190,230,255,0.13)');
+    ctx.fillStyle = glass;
     ctx.fill();
-    ctx.strokeStyle = 'rgba(200,235,255,0.6)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    // 液体
-    const lh = h * Math.max(0.06, Math.min(1, ratio));
+    // 液体（裁到瓶身里）
+    const lh = Math.max(h * 0.07, (bottom - sho - 6) * r);
+    const surf = bottom - lh;
     ctx.save();
-    rr(ctx, x + 1.5, y + h - lh, w - 3, lh, w / 3);
+    bodyPath();
     ctx.clip();
-    const g = ctx.createLinearGradient(x, y, x, y + h);
-    g.addColorStop(0, '#d8f6ff');
-    g.addColorStop(0.5, color);
-    g.addColorStop(1, '#0e2a44');
-    ctx.fillStyle = g;
-    ctx.fillRect(x, y, w, h);
+    const lg = ctx.createLinearGradient(x, surf, x, bottom);
+    lg.addColorStop(0, '#ffffff');
+    lg.addColorStop(0.16, color);
+    lg.addColorStop(1, 'rgba(8,26,46,0.95)');
+    ctx.fillStyle = lg;
+    ctx.fillRect(bodyX0, surf, bodyX1 - bodyX0, bottom - surf);
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    ctx.fillRect(bodyX0, surf - 0.8, bodyX1 - bodyX0, 1.2);
+    ctx.beginPath();
+    ctx.ellipse(cx, surf, (bodyX1 - bodyX0) * 0.4, 1.7, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.22)';
+    ctx.fill();
+    // 气泡：沿液面缓慢上浮
+    for (let i = 0; i < 3; i++) {
+      const ph = (time * 0.18 + i * 0.37) % 1;
+      const by = bottom - 4 - ph * Math.max(4, lh - 4);
+      const bx = cx + Math.sin(time * 0.7 + i * 2.1) * (bodyX1 - bodyX0) * 0.22;
+      ctx.beginPath();
+      ctx.arc(bx, by, 0.9 + (1 - ph) * 1.1, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,' + (0.16 + ph * 0.24).toFixed(3) + ')';
+      ctx.fill();
+    }
+    // 液面辉光（随血量呼吸）
+    if (r > 0.02) {
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 7 + 4 * Math.sin(time * 2.6);
+      ctx.fillStyle = 'rgba(255,255,255,0.45)';
+      ctx.fillRect(bodyX0 + 1, surf - 0.5, bodyX1 - bodyX0 - 2, 1.4);
+    }
     ctx.restore();
-    // 液面辉光（随血量轻微脉动）
-    const pulse = 6 + 4 * Math.sin(time * 3);
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.shadowColor = color;
-    ctx.shadowBlur = pulse;
-    ctx.fillStyle = 'rgba(255,255,255,0.55)';
-    ctx.fillRect(x + 1, y + h - lh, w - 2, 2);
-    ctx.globalCompositeOperation = 'source-over';
+    // 玻璃描边（低血量泛红警示）
+    bodyPath();
+    ctx.strokeStyle = low ? 'rgba(255,138,126,0.85)' : 'rgba(198,232,255,0.62)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    // 瓶身左侧高光 + 右侧刻度
+    ctx.save();
+    bodyPath();
+    ctx.clip();
+    const hi = ctx.createLinearGradient(x, y, x + w, y);
+    hi.addColorStop(0, 'rgba(255,255,255,0)');
+    hi.addColorStop(0.22, 'rgba(255,255,255,0.28)');
+    hi.addColorStop(0.42, 'rgba(255,255,255,0.02)');
+    hi.addColorStop(0.78, 'rgba(255,255,255,0.12)');
+    hi.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = hi;
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = 'rgba(210,240,255,0.26)';
+    ctx.lineWidth = 0.8;
+    for (let i = 0; i < 3; i++) {
+      const ty = sho + 8 + i * 7;
+      if (ty > bottom - 5) break;
+      ctx.beginPath();
+      ctx.moveTo(bodyX1 - 6, ty);
+      ctx.lineTo(bodyX1 - 2, ty);
+      ctx.stroke();
+    }
+    ctx.restore();
+    // 金色瓶盖（带高光）
+    rr(ctx, nx0 - 1, lipY - 0.5, neckW + 2, 3.8, 1.4);
+    const cap = ctx.createLinearGradient(0, lipY, 0, lipY + 4);
+    cap.addColorStop(0, '#ffe6a0');
+    cap.addColorStop(1, '#b9852a');
+    ctx.fillStyle = cap;
+    ctx.fill();
     ctx.restore();
   }
 
   // ---- 玩家反应日志（最近发生在玩家身上的反应；调试模式专属）----
   reactionPanel(ctx, p) {
     if (!p.reactions || p.reactions.length === 0) return;
+    const uiK = this._uiK || 1;
     const shown = Math.min(4, p.reactions.length);
     const W = 264;
     const H = 22 + shown * 17;
     // 排在左上信息卡下方（卡高度可变，按实际高度堆叠）
-    const top = hudTopOffset(this.scene) + (this._leftH ?? 126) + 6;
-    panel(ctx, 10, top, W, H, THEME.gold.deep, 10);
+    const top = hudTopOffset(this.scene, uiK) + (this._leftH ?? 126) + 6 / uiK;
+    panel(ctx, 10 / uiK, top, W, H, THEME.gold.deep, 10);
     clearText(ctx, '最近反应', 22, top + 12, THEME.gold.text, 'bold 11px "Segoe UI", sans-serif');
     let y = top + 26;
     for (let i = 0; i < shown; i++) {
@@ -1029,7 +1200,7 @@ export class Hud {
   // ---- 物品栏（宝石槽）：装物品的格子放大 + 内容物溶质显示 + 获取弹跳 ----
   inventory(ctx, p, W, H, time) {
     const slots = p.inventory.slots;
-    const rects = inventorySlotRects(W, H, slots, uiMargins(this.scene));
+    const rects = inventorySlotRects(W, H, slots, uiMargins(this.scene, this._uiK || 1));
     if (!this._pop) this._pop = {}; // 物品格弹跳计时 {i:{sig,t}}
     let minTop = Infinity;
     for (let i = 0; i < rects.length; i++) {
@@ -1412,7 +1583,7 @@ export class Hud {
     const x = W - right - 82;
     const y = top;
     ctx.save();
-    rr(ctx, x, y, 72, 34, 9);
+    para(ctx, x, y, 72, 34, 8);
     const g = ctx.createLinearGradient(x, y, x, y + 34);
     g.addColorStop(0, '#7a5a20');
     g.addColorStop(1, '#4a3410');
@@ -1439,10 +1610,14 @@ export class Hud {
     if (this._tipA <= 0.01) return;
     const text = this._tipText ?? scene.tip ?? '';
     const lines = text.split('\n');
-    const pw = Math.min(W - 20, 440);
-    const py = top + 42;
+    // ★ 面板几何**必须**取共享的 tipPanelRect（点击/触控滑闭同一份）：
+    //   这里曾自己算 min(W-20,440)，与命中几何（小屏收窄到 340）差 100px——
+    //   看着在面板上点，命中却穿透到场景（用户"点击位置和实际被点击位置偏移"）。
+    const prShared = tipPanelRect(W, top, right, this._uiH ?? canvasLH(ctx.canvas));
+    const pw = prShared.w;
+    const py = prShared.y;
     const ph = 16 + 22 + lines.length * 17 + 14;
-    const px0 = W - right - 10 - pw;
+    const px0 = prShared.x;
     const swipe = Math.max(0, this._tipSwipeDx ?? 0);
     const slide = (1 - this._tipA) * 26; // 开合滑入/滑出（右下方向）
     const alpha = this._tipA * Math.max(0, 1 - swipe / 110);
@@ -1476,53 +1651,160 @@ export class Hud {
     ctx.restore();
   }
 
-  // ---- 通关 / 死亡遮罩 ----
+  // ---- 通关 / 死亡遮罩（与 HUD 同一套"神话·元素"面板风格：圆角深紫面板 + 金描边，
+  //      入场只做淡入 + 轻推；不再用大红/荧光色或大徽记，避免和游戏整体风格脱节。
+  //      通关若已有关卡页 DOM 浮层，画布这边只铺暗场，避免两套 UI 叠一起）----
   overlay(ctx, scene, W, H) {
-    if (scene.status !== 'win' && scene.status !== 'died') return;
-    ctx.save();
-    ctx.fillStyle = 'rgba(6,5,20,0.72)';
-    ctx.fillRect(0, 0, W, H);
-    const win = scene.status === 'win';
-    const c = win ? THEME.portal.light : '#ff7f7f';
+    const st = scene.status;
+    if (st !== 'win' && st !== 'died') { this._ovStatus = null; return; }
+    const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    if (this._ovStatus !== st) { this._ovStatus = st; this._ovAt = now; }
+    const t = Math.max(0, (now - this._ovAt) / 1000);
+    const easeOut = (x) => 1 - Math.pow(1 - Math.max(0, Math.min(1, x)), 3);
+    const a = easeOut(t / 0.5);
+    const win = st === 'win';
+    // 关卡页（levels/report.js）有独立的通关 DOM 浮层：画布只铺暗场，避免重复 UI
+    const hasDomWin = win && typeof document !== 'undefined' && document.getElementById &&
+      !!document.getElementById('czl-win');
     const cx = W / 2;
-    const cy = H / 2 - 10;
-    // 光环
+    const cy = H / 2;
     ctx.save();
-    ctx.strokeStyle = c;
-    ctx.lineWidth = 3;
-    ctx.shadowColor = c;
-    ctx.shadowBlur = 30;
+    // 暗场：深紫黑渐晕（与游戏面板同色系，不用红/荧光）
+    const vg = ctx.createRadialGradient(cx, cy, Math.min(W, H) * 0.12, cx, cy, Math.max(W, H) * 0.8);
+    vg.addColorStop(0, 'rgba(18,14,46,0.55)');
+    vg.addColorStop(1, 'rgba(5,4,16,0.86)');
+    ctx.globalAlpha = a;
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, W, H);
+    // 中央很淡的主题色底光（金/青，不刺眼）
+    const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.min(W, H) * 0.42);
+    glow.addColorStop(0, win ? 'rgba(232,184,75,0.10)' : 'rgba(127,216,255,0.07)');
+    glow.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, W, H);
+    if (hasDomWin) { ctx.restore(); return; }
+    // 面板入场：淡入 + 上推 14px（不做夸张缩放）
+    const pIn = easeOut(t / 0.5);
+    const pw = Math.min(W * 0.56, 400);
+    const ph = win ? 188 : 200;
+    const px = cx - pw / 2;
+    const py = cy - ph / 2 + (1 - pIn) * 14;
+    // 与 HUD 同款圆角面板（theme.panel：深紫渐变 + 金描边 + 8px 辉光）
+    ctx.globalAlpha = a;
+    panel(ctx, px, py, pw, ph, THEME.gold.deep, 12);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    // 顶部小标
+    ctx.fillStyle = 'rgba(232,184,75,0.75)';
+    ctx.font = 'bold 10px ui-monospace, Consolas, monospace';
+    ctx.fillText(win ? 'CHEZZLE · 通关' : 'CHEZZLE · 死亡', cx, py + 22);
+    // 分隔线（中间亮、两端淡）
+    const lg = ctx.createLinearGradient(px + 40, 0, px + pw - 40, 0);
+    lg.addColorStop(0, 'rgba(232,184,75,0)');
+    lg.addColorStop(0.5, 'rgba(232,184,75,0.45)');
+    lg.addColorStop(1, 'rgba(232,184,75,0)');
+    ctx.strokeStyle = lg;
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.arc(cx, cy, 46, 0, Math.PI * 2);
+    ctx.moveTo(px + 40, py + 36);
+    ctx.lineTo(px + pw - 40, py + 36);
     ctx.stroke();
-    ctx.restore();
-    // 图标符文
+    // 元素牌徽记：小平行四边形 + 勾/叉（和选关卡片同源的形状，不用大圆徽）
+    const TW = 46;
+    const TH = 30;
+    const tx = cx - TW / 2;
+    const ty = py + 48;
+    const mark = easeOut((t - 0.08) / 0.4);
     ctx.save();
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';           // ★ 用 middle 基线居中：默认 alphabetic 基线会让
-    ctx.fillStyle = c;                     //   "✦ + 通关！"整体看着偏上/偏歪（用户反馈）
-    ctx.font = '32px serif';
-    ctx.fillText(win ? '✦' : '✧', cx, cy + 4);
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 34px "Segoe UI", "Microsoft YaHei", sans-serif';
-    ctx.fillText(win ? '通关！' : '死亡', cx, cy + 52);
-    ctx.restore();
-    ctx.textAlign = 'center';
-    // 死亡原因（搞笑文案；死亡时由 scene 一次性定案，避免每帧随机闪烁；通关不显示）
-    if (!win) {
-      ctx.fillStyle = '#ffd9a0';
-      ctx.font = 'bold 15px "Segoe UI", "Microsoft YaHei", sans-serif';
-      ctx.fillText(scene.deathQuip ?? deathQuip(scene.deathCause, scene.player && scene.player.substance), cx, cy + 84);
+    ctx.globalAlpha = a * mark;
+    para(ctx, tx, ty, TW, TH, 8);
+    ctx.fillStyle = 'rgba(18,14,46,0.85)';
+    ctx.fill();
+    ctx.strokeStyle = win ? 'rgba(232,184,75,0.85)' : 'rgba(191,230,255,0.7)';
+    ctx.lineWidth = 1.3;
+    ctx.stroke();
+    ctx.strokeStyle = win ? THEME.gold.text : '#cfe4ff';
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    const mx = cx;
+    const my = ty + TH / 2;
+    if (win) {
+      ctx.beginPath();
+      ctx.moveTo(mx - 9, my + 1);
+      ctx.lineTo(mx - 2, my + 8);
+      ctx.lineTo(mx + 10, my - 7);
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(mx - 7, my - 6);
+      ctx.lineTo(mx + 7, my + 8);
+      ctx.moveTo(mx + 7, my - 6);
+      ctx.lineTo(mx - 7, my + 8);
+      ctx.stroke();
     }
-    // 通关时不再提示"重开"（用户要求）：浮层由关卡页注入的按钮负责"返回选关"；
-    // 死亡仍保留重开提示（那是玩家最需要的）。
+    ctx.restore();
+    // 标题（字号/字重与游戏内标题一致，轻发光）
+    const titleIn = easeOut((t - 0.14) / 0.4);
+    ctx.globalAlpha = a * titleIn;
+    ctx.fillStyle = win ? THEME.gold.text : '#dbe7ff';
+    ctx.font = 'bold 26px "Segoe UI", "Microsoft YaHei", sans-serif';
+    ctx.shadowColor = win ? 'rgba(232,184,75,0.55)' : 'rgba(127,216,255,0.35)';
+    ctx.shadowBlur = 10;
+    ctx.fillText(win ? '通关' : '死亡', cx, py + 104);
+    ctx.shadowBlur = 0;
+    // 副文案 / 死亡搞笑文案
+    const subIn = easeOut((t - 0.2) / 0.4);
+    ctx.globalAlpha = a * subIn;
+    ctx.font = '13px "Segoe UI", "Microsoft YaHei", sans-serif';
+    ctx.fillStyle = win ? '#b9c6dd' : '#c9d6ee';
+    const sub = win ? '反应完成 · 物质守恒'
+      : (scene.deathQuip ?? deathQuip(scene.deathCause, scene.player && scene.player.substance));
+    ctx.fillText(sub, cx, py + 132);
+    // 操作提示：与游戏按钮同款"斜牌 + 冷色底 + 细描边"
     if (!win) {
-      ctx.fillStyle = '#e8d8b0';
-      ctx.font = '15px "Segoe UI", sans-serif';
       const touch = scene._touchUI && scene._touchUI.enabled();
-      ctx.fillText(touch ? '轻触屏幕重新开始' : '按 R 重开', cx, cy + 110);
+      const hintTxt = touch ? '轻触屏幕重新开始' : '按 R 重开';
+      ctx.font = 'bold 11px "Segoe UI", "Microsoft YaHei", sans-serif';
+      const hw = ctx.measureText(hintTxt).width + 26;
+      const hx = cx - hw / 2;
+      const hy = py + ph - 46;
+      para(ctx, hx, hy, hw, 24, 7);
+      const hg = ctx.createLinearGradient(0, hy, 0, hy + 24);
+      hg.addColorStop(0, '#2a3a5e');
+      hg.addColorStop(1, '#141d38');
+      ctx.fillStyle = hg;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(127,216,255,0.75)';
+      ctx.lineWidth = 1.1;
+      ctx.shadowColor = 'rgba(127,216,255,0.8)';
+      ctx.shadowBlur = 5;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#bfe6ff';
+      ctx.fillText(hintTxt, cx, hy + 12.5);
+    }
+    ctx.textBaseline = 'alphabetic';
+    // 少量星光粒子（通关金 / 死亡青），只做轻微氛围
+    for (let i = 0; i < 8; i++) {
+      const seed = i * 12.9898;
+      const rnd = (k) => {
+        const v = Math.sin(seed * k) * 43758.5453;
+        return v - Math.floor(v);
+      };
+      const life = 1.8 + rnd(1) * 1.4;
+      const age = (t + rnd(2) * life) % life;
+      const k = age / life;
+      const px2 = cx + (rnd(3) - 0.5) * pw * 0.9;
+      const py2 = win ? py + ph + 8 - k * (ph + 50) : py - 8 + k * (ph + 50);
+      ctx.globalAlpha = a * (1 - k) * 0.55;
+      ctx.fillStyle = win ? 'rgba(255,233,176,0.9)' : 'rgba(127,216,255,0.8)';
+      ctx.beginPath();
+      ctx.arc(px2, py2, 0.8 + 1.2 * (1 - k), 0, Math.PI * 2);
+      ctx.fill();
     }
     ctx.textAlign = 'left';
     ctx.restore();
   }
 }
+

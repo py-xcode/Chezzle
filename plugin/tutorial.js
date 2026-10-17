@@ -27,7 +27,7 @@
 //     {
 //       "types": ["floor", "pool", "block", "deposit", "player", "lamp", "blastlamp",
 //         "switch", "key", "door", "sign", "portal", "gasdetector", "extractor",
-//         "beaker", "dropper", "gasbottle", "gas"],
+//         "beaker", "dropper", "gasbottle", "gas", "gastube"],
 //       "fields": [
 //         { "key": "appearDelay", "label": "延迟出现(秒)", "kind": "number", "def": 0 }
 //       ]
@@ -46,7 +46,7 @@ Chezzle.Plugin.register('tutorial', {
     const hideDeep = (obj) => {
       const arrays = [
         scene.objects, scene.dynamics, scene.statics, scene.particles,
-        scene.containers, scene.lamps, scene.doors, scene.portals,
+        scene.containers, scene.lamps, scene.gasTubes, scene.doors, scene.portals,
       ];
       for (const arr of arrays) {
         const i = arr.indexOf(obj);

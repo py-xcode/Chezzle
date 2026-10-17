@@ -18,7 +18,12 @@
   .btn { background: #2a3060; color: #fff; border: 1px solid #3a4178; border-radius: 4px; padding: 4px 10px; cursor: pointer; }
   .btn:hover { background: #3a4380; }
   .btn.primary { background: var(--gold); color: #2a2000; border-color: #ffd76a; font-weight: bold; }
-  #status { margin-left: auto; color: #9fb2c8; font-size: 12px; }
+  /* 状态栏：**必须单行且可收缩**——它每帧都在变（悬停世界坐标/试玩诊断），若允许换行，
+     文字一长就把工具栏顶成两行 → #main 变矮 → 画布被 resizeCanvas() 重设 → fitView()
+     重置缩放，同时状态栏随鼠标不断变化 → 布局来回抖（用户反馈"移出编辑区缩放会变、
+     悬停世界坐标导致界面抖动"）。nowrap + min-width:0 → 只会被裁短，永不改变高度。 */
+  #status { margin-left: auto; color: #9fb2c8; font-size: 12px;
+    flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   /* 主体：左面板 + 画布 + 右面板 */
   #main { display: flex; flex: 1; min-height: 0; }
   #palette { width: 108px; background: var(--panel); border-right: 1px solid var(--edge); overflow-y: auto; padding: 6px; }
@@ -190,11 +195,12 @@
   </div>
 </div>
 <datalist id="substances"></datalist>
-<script src="../dist/chezzle.js?vmtz3hibk"></script>
+<script src="../prefs.js?vmvc6l20g"></script>
+<script src="../dist/chezzle.js?vmvc6l20g"></script>
 <script>
 // ============================================================================
 // Chezzle 可视化关卡编辑器
-// 复用 dist/chezzle.js?vmtz3hibk 的全局 Chezzle：对象类、Scene、渲染、物理循环。
+// 复用 dist/chezzle.js?vmvc6l20g 的全局 Chezzle：对象类、Scene、渲染、物理循环。
 // 编辑模式：自建 transform 渲染已摆放物体；试玩模式：重建 Scene 跑物理+化学。
 // ============================================================================
 const C = Chezzle;
@@ -299,6 +305,12 @@ const CATALOG = [
     construct: (o) => new C.Extractor({ x: o.x, y: o.y, w: o.w ?? 50, h: o.h ?? 14, poolId: o.poolId, switchId: o.switchId, rate: o.rate ?? 0.25, id: o.id }),
     collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, poolId: o.poolId, switchId: o.switchId, rate: o.rate, id: o.id }),
     fields: [F.num('x'), F.num('y'), F.num('w', '宽'), F.num('h', '高'), F.txt('poolId', '池id'), F.txt('switchId', '开关id(留空=压力提取器)'), F.num('rate', '速率g/s', 0.25), F.txt('id', 'id')] },
+  { type: 'gastube', label: '导气管', dsl: 'gastube', color: '#9aa4b4',
+    // 装置几何由两端药品池自动生成（罩住输入池口 + 管道插到输出池侧面），只需接线：
+    // inId=产气的那口池，outId=接收气体的那口池（两端都填才显示）
+    construct: (o) => new C.GasTube({ x: o.x, y: o.y, w: o.w ?? 90, h: o.h ?? 70, inId: o.inId ?? '', outId: o.outId ?? '', id: o.id }),
+    collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, inId: o.inId ?? '', outId: o.outId ?? '', id: o.id }),
+    fields: [F.txt('inId', '输入端池id(产气)'), F.txt('outId', '输出端池id(通气)'), F.txt('id', 'id')] },
   { type: 'beaker', label: '烧杯', dsl: 'beaker', color: '#9adcff', rect: true,
     construct: (o) => new C.Beaker({ x: o.x, y: o.y, w: o.w ?? 60, h: o.h ?? 80, volume: o.volume ?? 200, water: o.water !== undefined ? o.water : undefined, solutes: o.solutes, noCarry: o.noCarry, id: o.id }),
     collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, volume: o.solution.volume, water: o.solution.water, solutes: mapToObj(o.solution.solutes), noCarry: o.noCarry, id: o.id }),
@@ -1840,7 +1852,10 @@ function renderEdit() {
 function hitTest(wx, wy) {
   for (let i = state.placed.length - 1; i >= 0; i--) {
     const o = state.placed[i].obj;
-    if (o.constructor?.name === 'Rope') {
+    if (o.isGasTube && typeof o.editorHit === 'function') {
+      // 导气管：只认装置轮廓（罩子边/管道/管口）——罩内空间让给药品池选中
+      if (o.editorHit(wx, wy)) return i;
+    } else if (o.constructor?.name === 'Rope') {
       // 绳子是细线：水平 ±12px 宽容命中，垂直整段可点
       if (wx >= o.x - 12 && wx <= o.x + 12 && wy >= o.y && wy <= o.y + o.h) return i;
     } else if (wx >= o.x && wx <= o.x + o.w && wy >= o.y && wy <= o.y + o.h) return i;
@@ -1853,10 +1868,21 @@ function canvasPos(e) {
   const r = canvas.getBoundingClientRect();
   return { x: (e.clientX - r.left) * (canvas.width / r.width), y: (e.clientY - r.top) * (canvas.height / r.height) };
 }
+/** 试玩坐标：引擎的命中/相机/HUD **一律按逻辑像素**（canvasLW/LH = 1100×700）结算。
+ *  ★ 不能用 canvas.width ——那是**缓冲**像素（= 逻辑 × dpr）：dpr>1 时坐标整体放大
+ *    dpr 倍，点击位置全部偏移（"试玩时滴管点不到、导出页却正常"的根因）。
+ *    编辑视图才用缓冲像素（view.scale/view.ox 建立在 canvas.width 上）。 */
+function playPos(e) {
+  const r = canvas.getBoundingClientRect();
+  return {
+    x: (e.clientX - r.left) * (C.canvasLW(canvas) / Math.max(1, r.width)),
+    y: (e.clientY - r.top) * (C.canvasLH(canvas) / Math.max(1, r.height)),
+  };
+}
 canvas.addEventListener('mousedown', (e) => {
   if (state.playing) {
     // 试玩中按下：点中滴管胶头 → 单击滴/长按持续滴(液下=吸取)；玻璃段 → 仅拖动
-    const sp = canvasPos(e);
+    const sp = playPos(e);
     if (e.button === 0 && playScene) {
       C.handleScenePressDown(playScene, canvas, sp.x, sp.y, (info) => {
         const wx = Math.round(info.world?.x ?? 0);
@@ -2455,6 +2481,7 @@ function dslLine(item) {
     case 'portal': return `.portal(${pos}, ${fmtOpts({ w: o.w, h: o.h, color: o.color, uses: Number.isFinite(o.uses) ? o.uses : undefined, switchId: o.switchId || undefined, group: o.group || undefined, inventory: o.inventory || undefined, clearInventory: o.clearInventory ? true : undefined, hidden: HID, id: o.id })})`;
     case 'gasdetector': return `.gasdetector(${pos}, ${fmtOpts({ gas: o.gas, threshold: o.threshold, opening: o.opening, and: o.and, deleteId: o.deleteId || undefined, showId: o.showId || undefined, igniteId: o.igniteId || undefined, extinguishId: o.extinguishId || undefined, openId: o.openId || undefined, hidden: HID, id: o.id })})`;
     case 'extractor': return `.extractor(${pos}, ${fmtOpts({ w: o.w, h: o.h, poolId: o.poolId, switchId: o.switchId, rate: o.rate, hidden: HID, id: o.id })})`;
+    case 'gastube': return `.gastube(${pos}, ${fmtOpts({ inId: o.inId, outId: o.outId, hidden: HID, id: o.id })})`;
     case 'beaker': {
       // water = 容量时为满杯（旧默认）；只在实际水量 ≠ 容量时导出（空杯/半杯）
       const water = Math.round(o.solution.water * 10) / 10;
@@ -2637,8 +2664,11 @@ function exportHTML() {
 </style>
 </head>
 <body>
+<!-- 启动/加载动画：与选关页"进入关卡"过场同款（见 levels/boot.js；导出到 levels/ 下时直接可用） -->
+<script src="boot.js"><\/script>
 <canvas id="game"></canvas>
-<script src="../dist/chezzle.js?vmtz3hibk"><\/script>
+<script src="../prefs.js?vmvc6l20g"><\/script>
+<script src="../dist/chezzle.js?vmvc6l20g"><\/script>
 ${pluginTags()}
 <script src="report.js"><\/script>
 <script>
@@ -2891,18 +2921,16 @@ function togglePlay() {
   // 试玩也带 HUD：鼠标悬停溯源 + 空气计 + 气体变化日志 + 最近反应（与游戏调试模式一致）
   const hud = new C.Hud(scene);
   const onPlayMove = (e) => {
-    const rect = canvas.getBoundingClientRect();
-    scene.mouse = { x: (e.clientX - rect.left) * (canvas.width / rect.width), y: (e.clientY - rect.top) * (canvas.height / rect.height), on: true };
+    const sp = playPos(e);
+    scene.mouse = { x: sp.x, y: sp.y, on: true };
   };
   const onPlayLeave = () => { if (scene.mouse) scene.mouse.on = false; };
   // 试玩点击：提示按钮（右上）+ 物品栏选格（右下）+ 可点击物体（滴管等 onTap）
   // ——与导出关卡 LevelBuilder.bindClick 同一管线（Chezzle.handleSceneClick）
   // 诊断回调：点击/悬停的世界坐标与命中结果实时显示在状态栏（排查"点了没反应"）
   const onPlayClick = (e) => {
-    const rect = canvas.getBoundingClientRect();
-    const x = (e.clientX - rect.left) * (canvas.width / rect.width);
-    const y = (e.clientY - rect.top) * (canvas.height / rect.height);
-    C.handleSceneClick(scene, hud, canvas, x, y, (info) => {
+    const p = playPos(e);
+    C.handleSceneClick(scene, hud, canvas, p.x, p.y, (info) => {
       const wx = Math.round(info.world?.x ?? 0);
       const wy = Math.round(info.world?.y ?? 0);
       let msg;
@@ -2925,10 +2953,8 @@ function togglePlay() {
   // 悬停显示世界坐标（对照滴管实际位置；排查"点偏了/看到的是编辑画面"）
   const onPlayMoveDiag = (e) => {
     if (!state.playing || !scene.camera) return;
-    const rect = canvas.getBoundingClientRect();
-    const sx = (e.clientX - rect.left) * (canvas.width / rect.width);
-    const sy = (e.clientY - rect.top) * (canvas.height / rect.height);
-    const w = C.screenToWorld(scene, canvas, sx, sy);
+    const sp = playPos(e);
+    const w = C.screenToWorld(scene, canvas, sp.x, sp.y);
     $('status').textContent = `试玩中｜悬停世界(${Math.round(w.x)},${Math.round(w.y)})｜滴管：点胶头滴液/按住持续滴·液下长按吸取·玻璃段拖动`;
   };
   canvas.addEventListener('mousemove', onPlayMoveDiag);
@@ -2942,10 +2968,8 @@ function togglePlay() {
   // 拖动滴管（按下后移动>6px = 拖动改变位置；窗口级：拖出画布不丢）
   const onPlayPressMove = (e) => {
     if (!state.playing || !playScene) return;
-    const rect = canvas.getBoundingClientRect();
-    const x = (e.clientX - rect.left) * (canvas.width / rect.width);
-    const y = (e.clientY - rect.top) * (canvas.height / rect.height);
-    C.handleScenePressMove(playScene, canvas, x, y);
+    const p = playPos(e);
+    C.handleScenePressMove(playScene, canvas, p.x, p.y);
     if (playScene._drag) $('status').textContent = '试玩中｜拖动滴管（松开停在位置）';
   };
   window.addEventListener('mousemove', onPlayPressMove);

@@ -405,6 +405,29 @@ test('碳酸钙高温分解：CaCO3 --高温--> CaO + CO2↑', () => {
   assert.ok(Math.abs(env.atmosphere.mass('CO2') - 44) < 1e-3);
 });
 
+test('加热氧化：2Na2O + O2 --加热--> 2Na2O2（钠在空气中加热得过氧化钠）', () => {
+  const engine = new ChemistryEngine();
+  // 常温：钠块在空气里先变成 Na2O 就停住了——不该继续氧化
+  const cold = new Solid({ Na2O: 124 });
+  runSelf(engine, cold, makeEnv());
+  assert.ok(Math.abs(cold.avail('Na2O') - 124) < 1e-9, '常温下 Na2O 不该继续氧化');
+
+  // 加热（灯上）：124g Na2O + 32g O2 → 156g Na2O2
+  const hot = new Solid({ Na2O: 124 });
+  const env = makeEnv({ heat: true });
+  runSelf(engine, hot, env);
+  assert.ok(hot.avail('Na2O') <= 1e-6, `加热应把 Na2O 全部氧化，剩 ${hot.avail('Na2O')}`);
+  const na2o2 = sumEmitted(env, 'Na2O2');
+  assert.ok(Math.abs(na2o2 - 156) < 1e-3, `Na2O2=${na2o2}`);
+  assert.ok(Math.abs(env.atmosphere.mass('O2') - (400 - 32)) < 1e-3, `大气耗氧 O2=${env.atmosphere.mass('O2')}`);
+
+  // 无氧气氛：加热也不反应（O2 来自大气，缺氧就没有过氧化钠）
+  const anoxic = new Solid({ Na2O: 124 });
+  const envN2 = makeEnv({ heat: true }, { atmosphere: new Atmosphere({ totalAir: 2000, init: { N2: 1 } }) });
+  runSelf(engine, anoxic, envN2);
+  assert.ok(Math.abs(anoxic.avail('Na2O') - 124) < 1e-9, '无氧气氛下 Na2O 不该被氧化');
+});
+
 // ---- 13. 催化/加热制氧 ------------------------------------------------------
 test('催化制氧：2H2O2 --MnO2--> 2H2O + O2↑（无催化剂不反应）', () => {
   const engine = new ChemistryEngine();
@@ -500,6 +523,43 @@ test('碳酸自发分解：H2CO3 → H2O + CO2↑', () => {
   assert.ok(env.atmosphere.mass('CO2') > 40, `CO2=${env.atmosphere.mass('CO2')}`);
   // H2CO3 分解 = CO2 逸出（不额外产水）
   assert.ok(pool.solution.water < 1, `water=${pool.solution.water}`);
+});
+
+// ---- 15b. 碳酸盐遇酸分步：碳酸根过量时一滴都不冒泡 ---------------------------
+// 用户实测：滴管只滴一滴盐酸，药品池立刻冒 CO2——离子级把 CO3²⁻+2H⁺→CO₂ 写成一步，
+// 与分子级特例（Na2CO3+HCl→NaHCO3+NaCl，先无气泡）自相矛盾。现按分步建模。
+test('碳酸钠过量 + 少量盐酸：只生成碳酸氢钠，不产生 CO2', () => {
+  const engine = new ChemistryEngine();
+  const pool = new SolutionMaterial(new Solution({ volume: 500, solutes: { Na2CO3: 53 } })); // 0.5 mol
+  const env = makeEnv();
+  pool.solution.add('HCl', 0.5); // 一滴：0.0137 mol
+  runSelf(engine, pool, env, 600);
+  assert.equal(env.atmosphere.mass('CO2'), 0, `应无 CO2，实际 ${env.atmosphere.mass('CO2')}`);
+  // 全部盐酸变成碳酸氢钠：0.0137 mol × 84 = 1.15 g
+  assert.ok(Math.abs(pool.solution.mass('NaHCO3') - 1.15) < 0.05, `NaHCO3=${pool.solution.mass('NaHCO3')}`);
+  assert.ok(Math.abs(pool.solution.mass('NaCl') - 0.80) < 0.05, `NaCl=${pool.solution.mass('NaCl')}`);
+  assert.ok(pool.solution.mass('Na2CO3') > 50, '碳酸钠基本没动');
+});
+
+test('盐酸过量：碳酸钠先全部变碳酸氢钠、再全部分解放出 CO2（分步第二步）', () => {
+  const engine = new ChemistryEngine();
+  const pool = new SolutionMaterial(new Solution({ volume: 500, solutes: { Na2CO3: 5.3 } })); // 0.05 mol
+  const env = makeEnv();
+  pool.solution.add('HCl', 20); // 大大提高过量
+  runSelf(engine, pool, env, 1200);
+  // 0.05 mol 碳 → 0.05 mol CO2 = 2.2 g（分步走完的总结果与一步法一致）
+  assert.ok(Math.abs(env.atmosphere.mass('CO2') - 2.2) < 0.05, `CO2=${env.atmosphere.mass('CO2')}`);
+  assert.equal(pool.solution.mass('NaHCO3'), 0, '碳酸氢钠应被第二步吃光');
+});
+
+test('碳酸根没耗尽前不产气：中途加入的碳酸氢钠也被闸门挡住', () => {
+  const engine = new ChemistryEngine();
+  const pool = new SolutionMaterial(new Solution({ volume: 500, solutes: { Na2CO3: 53, NaHCO3: 8.4 } })); // 碳酸根充足
+  const env = makeEnv();
+  pool.solution.add('HCl', 0.5);
+  runSelf(engine, pool, env, 600);
+  assert.equal(env.atmosphere.mass('CO2'), 0, `碳酸根还在就不该冒泡，实际 ${env.atmosphere.mass('CO2')}`);
+  assert.ok(pool.solution.mass('NaHCO3') > 8.4, '碳酸氢钠只增不减');
 });
 
 // ---- 16. 溶解 -----------------------------------------------------------------

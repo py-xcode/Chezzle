@@ -89,22 +89,43 @@ test('附着生长：先补满底行空位，再开新行（防越撑越大）',
 });
 
 // ---- 6. 相机 -------------------------------------------------------------------
-test('相机：等比缩放并居中', () => {
+// 视窗基准 1000×800（设计视口），但**画布宽高比与之不同时视窗按比例展开**：
+// 铺满画布靠"压缩视窗的另一边"实现（扁屏压视高、高屏压视宽），
+// 可见范围夹在 CFG.camera.viewMin..viewMax ——否则扁屏上缩放被高度限死，
+// 世界只占画布中间一条（用户"比较扁的屏幕游戏显示特别小"）。
+test('相机：等比缩放并居中（画布与设计视口同比例）', () => {
   const cam = new Camera({ worldW: 1000, worldH: 800 });
-  const r = cam.compute(800, 600);
-  assert.equal(r.scale, 0.75);
-  assert.equal(r.offsetX, 25);
+  const r = cam.compute(1000, 800);
+  assert.equal(r.scale, 1);
+  assert.equal(r.offsetX, 0);
   assert.equal(r.offsetY, 0);
+});
 
+test('相机：画布更扁 → 压低视高铺满宽度（元素不再缩成一半）', () => {
+  const cam = new Camera({ worldW: 1000, worldH: 800 }); // 世界=视窗上限 → 偏移只含居中
+  // 800×600（aspect 1.333）：视高 = 1000/1.333 = 750 → scale = 0.8（旧行为 0.75 + 两侧留白）
+  const r = cam.compute(800, 600);
+  assert.equal(r.scale, 0.8);
+  assert.equal(r.offsetX, 0);
+  assert.equal(r.offsetY, -20);
+  // 1200×600（aspect 2）：视高 = 500 → scale = 1.2 → 绘制宽 1000×1.2 = 1200 = 画布宽（铺满）
   const r2 = cam.compute(1200, 600);
-  assert.equal(r2.scale, 0.75);
-  assert.equal(r2.offsetX, 225);
-  assert.equal(r2.offsetY, 0);
+  assert.equal(r2.scale, 1.2);
+  assert.equal(r2.offsetX, 0);
+  assert.equal(r2.offsetY, -180);
+  // 极扁（aspect 3）：视高被 viewMin=440 夹住 → 铺满高度、左右留白（缩放仍 0.909；旧行为 0.5）
+  const r3 = cam.compute(1204, 400);
+  assert.ok(Math.abs(r3.scale - 400 / 440) < 1e-9, `scale=${r3.scale}`);
+  assert.ok(r3.offsetY <= 0 && r3.offsetX > 0, '高度铺满、左右留白');
+});
 
+test('相机：画布更高 → 收窄视宽铺满高度', () => {
+  const cam = new Camera({ worldW: 1000, worldH: 800 });
+  // 500×500（aspect 1）：视宽 = 800×1 = 800 → scale = 0.625（旧行为 0.5 + 上下留白）
   const r3 = cam.compute(500, 500);
-  assert.equal(r3.scale, 0.5);
-  assert.equal(r3.offsetX, 0);
-  assert.equal(r3.offsetY, 50);
+  assert.equal(r3.scale, 0.625);
+  assert.equal(r3.offsetX, -62.5);
+  assert.equal(r3.offsetY, 0);
 });
 
 test('相机：大世界跟随焦点滚动', () => {

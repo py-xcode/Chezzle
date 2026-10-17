@@ -86,6 +86,9 @@ export const COMBUSTION_RULES = [
   // 2Na + O2 --常温--> Na2O（慢） / 2Na + O2 --点燃--> Na2O2
   { type: 'combustion', reactants: [{ id: 'Na', coeff: 4 }, { id: 'O2', coeff: 1 }], products: [{ id: 'Na2O', coeff: 2 }], condition: 'normal', rate: RATE.combustion * 0.2 },
   { type: 'combustion', reactants: [{ id: 'Na', coeff: 2 }, { id: 'O2', coeff: 1 }], products: [{ id: 'Na2O2', coeff: 1 }], condition: 'ignited', rate: RATE.combustion, sparks: true },
+  // 2Na2O + O2 --加热--> 2Na2O2（钠在空气中加热得到的是过氧化钠：先常温氧化出的 Na2O
+  //   上了灯还要继续被氧化。缺这条规则时，钠块在灯上会停在 Na2O+Na2O2 的混合物上不动）
+  { type: 'combustion', reactants: [{ id: 'Na2O', coeff: 2 }, { id: 'O2', coeff: 1 }], products: [{ id: 'Na2O2', coeff: 2 }], condition: 'heat', rate: RATE.thermal },
   { type: 'combustion', reactants: [{ id: 'K', coeff: 2 }, { id: 'O2', coeff: 1 }], products: [{ id: 'K2O', coeff: 1 }], condition: 'ignited', rate: RATE.combustion, sparks: true },
   // 3Mg + N2 --点燃--> Mg3N2（镁在氮气中燃烧）
   { type: 'combustion', reactants: [{ id: 'Mg', coeff: 3 }, { id: 'N2', coeff: 1 }], products: [{ id: 'Mg3N2', coeff: 1 }], condition: 'ignited', rate: RATE.combustion * 0.5 },

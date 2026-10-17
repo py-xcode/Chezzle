@@ -21,6 +21,9 @@ export class Extractor extends Obj {
     ...rest
   } = {}) {
     super({ x, y, w, h, solid: true, physicsKind: 'static', ...rest });
+    // ★ 与开关同理：提取器是贴地薄板，玩家/被推的物块应当能直接上去（默认 11~14px 正好
+    //   卡在 autoStepMax(14) 的临界上，浮点误差就会推不过去）
+    this.stepMax = Math.min(26, h + 4);
     this.poolId = poolId; // 对应的药品池 id
     this.switchId = switchId; // 激活开关 id
     this.rate = rate; // 提取速率 g/s（缓慢冒出）

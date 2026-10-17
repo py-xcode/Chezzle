@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chezzle · 淡入淡出诊断</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 10px 10px 40px; background: #0b0e28; color: #e8ecff;
+    font: 14px/1.5 "Segoe UI", "Microsoft YaHei", sans-serif; }
+  h1 { font-size: 17px; margin: 0 0 4px; }
+  h2 { font-size: 14px; margin: 16px 0 6px; color: #cfe0ff; font-weight: normal; }
+  .hint { color: #9fb2c8; font-size: 12px; margin: 0 0 8px; }
+  .hint b { color: #ffd76a; }
+  #env { white-space: pre-wrap; word-break: break-all; font: 11px ui-monospace, Consolas, monospace;
+    color: #9fe8ff; background: #111735; border: 1px solid #2a3060; padding: 8px; border-radius: 6px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 8px; }
+  .t { background: #111735; border: 1px solid #2a3060; border-radius: 8px; padding: 6px; }
+  .t h3 { font-size: 11px; margin: 0 0 4px; color: #cfe0ff; font-weight: normal; line-height: 1.3; }
+  .screen { display: block; width: 100%; height: 70px; background: #06091c; border-radius: 4px; overflow: hidden; }
+  .screen.eng { height: 150px; }
+  .dom { display: flex; align-items: center; justify-content: center; }
+  .dom .big { font-size: 20px; font-weight: bold; color: #ffd76a; }
+  .v { font: 11px ui-monospace, monospace; margin-top: 4px; }
+  .v.ok { color: #8fd6a6; } .v.instant { color: #ff9a9a; } .v.never { color: #ffd76a; } .v.wait { color: #6f7d9e; } .v.skip { color: #7a86a8; }
+  .t.bad { border-color: #7a3a3a; }
+  .t.good { border-color: #2f6b46; }
+  textarea { width: 100%; height: 190px; margin-top: 6px; background: #0e1432; color: #dfe8f2;
+    border: 1px solid #3a4178; border-radius: 6px; font: 11px ui-monospace, monospace;
+    -webkit-user-select: text; user-select: text; touch-action: auto; }
+  button { background: #2a3060; color: #fff; border: 1px solid #3a4178; border-radius: 6px;
+    padding: 9px 16px; margin-top: 8px; font-size: 14px; }
+  .mark { margin-top: 4px; font: 11px monospace; color: #7fd8ff; cursor: pointer; }
+</style>
+</head>
+<body>
+<h1>Chezzle · 淡入淡出诊断</h1>
+<p class="hint">每块都在循环「淡入 → 停 → 淡出」。请看：<b>哪些块是直接出现/直接消失（没有渐显渐隐）</b>。
+自动判定若和眼睛看到的不一致，点该块下方的「我看到的」改过来。最后复制结果发我。</p>
+
+<div id="env">探测中…</div>
+
+<h2>① 各种淡入实现（同一台设备上哪一个失效）</h2>
+<div class="grid" id="grid"></div>
+
+<h2>② 游戏真实路径（引擎 + 场景 + HUD）</h2>
+<div class="grid" id="engineGrid"></div>
+
+<button id="freeze">⏸ 冻结并生成结果</button>
+<button id="copy">复制结果</button>
+<div id="copyHint" class="hint">结果框只在点上面两个按钮时才写入一次（之前每 0.5s 重写，长按复制会被打断）。</div>
+<textarea id="report" readonly placeholder="点「冻结并生成结果」后这里会出现完整报告"></textarea>
+
+<script src="../dist/chezzle.js"></script>
+<script>
+// ============================================================================
+// 淡入淡出诊断页（开发工具；只在排查"部分设备上淡入动画整个消失"时打开）
+// ----------------------------------------------------------------------------
+// 现象：某些设备上（任何浏览器都一样、电脑端不复现）路标/大横幅的淡入淡出动画
+// **整个不存在**——元素直接出现、直接消失。代码里看不出设备相关的分支，所以这里
+// 并排跑多种实现，用"逐帧采样 + 中间值判定"定位是哪一层失效（绘制/alpha/时钟/合成）。
+// ============================================================================
+const $ = (s) => document.querySelector(s);
+const CYCLE = 2.4, FADE = 0.35, GAP = 0.5;
+/** 循环相位 → 目标透明度 */
+function alphaAt(t) {
+  const hold = CYCLE - 2 * FADE - GAP;
+  if (t < FADE) return t / FADE;
+  if (t < FADE + hold) return 1;
+  if (t < 2 * FADE + hold) return 1 - (t - FADE - hold) / FADE;
+  return 0;
+}
+
+// ---- 环境探测 ---------------------------------------------------------------
+function probe() {
+  const L = [];
+  L.push('UA: ' + navigator.userAgent);
+  L.push('视口 ' + innerWidth + 'x' + innerHeight + '  dpr=' + devicePixelRatio + '  屏幕 ' + screen.width + 'x' + screen.height);
+  L.push('reduced-motion=' + matchMedia('(prefers-reduced-motion: reduce)').matches
+    + '  hover:hover=' + matchMedia('(hover: hover)').matches
+    + '  pointer:coarse=' + matchMedia('(pointer: coarse)').matches
+    + '  orientation=' + (matchMedia('(orientation: portrait)').matches ? 'portrait' : 'landscape'));
+  L.push('visibility=' + document.visibilityState + '  now()步进=' + (() => { const a = performance.now(), b = performance.now(); return (b - a).toFixed(3); })() + 'ms');
+  const c = document.createElement('canvas');
+  c.width = c.height = 8;
+  const g = c.getContext('2d');
+  g.globalAlpha = 0.37;
+  const gaOk = Math.abs(g.globalAlpha - 0.37) < 1e-6;
+  g.globalAlpha = 1;
+  g.fillStyle = '#ffffff';
+  g.fillRect(0, 0, 8, 8);
+  let readOk = false;
+  try { readOk = g.getImageData(0, 0, 1, 1).data[0] > 200; } catch (e) { readOk = 'ERR:' + e.name; }
+  FEAT.filter = ('filter' in g);
+  L.push('canvas: globalAlpha=' + gaOk + '  shadowBlur=' + ('shadowBlur' in g) + '  filter=' + ('filter' in g)
+    + '  readback=' + readOk + '  roundRect=' + (typeof g.roundRect === 'function'));
+  const off = document.createElement('canvas');
+  off.width = off.height = 8;
+  const og = off.getContext('2d');
+  og.fillStyle = '#fff'; og.fillRect(0, 0, 8, 8);
+  g.clearRect(0, 0, 8, 8); // 先清干净再叠：否则白底叠白底，永远测不出 alpha
+  g.globalAlpha = 0.5;
+  g.drawImage(off, 0, 0);
+  let drawOk = false;
+  try { const p = g.getImageData(0, 0, 1, 1).data; drawOk = p[3] > 100 && p[3] < 160; } catch (e) { drawOk = 'ERR'; } // 未预乘读回：看 alpha 通道
+  g.globalAlpha = 1;
+  L.push('canvas: 离屏 drawImage + globalAlpha=' + drawOk);
+  return L.join('\n');
+}
+
+// ---- 判定 -------------------------------------------------------------------
+const FEAT = { filter: false };   // probe() 里探测（本设备不支持的能力对应的测试直接跳过）
+/** 采样序列 → 判定：ok=看得见渐变 / instant=只有全透明与全不透明（动画消失）/ never=整段都没出现 */
+function verdict(vals, needs = null) {
+  if (needs && !FEAT[needs]) return { k: 'skip', t: '本设备不支持该能力（跳过，不代表故障）' };
+  if (!vals.length) return { k: 'wait', t: '采样中…' };
+  const mx = Math.max(...vals), mn = Math.min(...vals);
+  const span = mx - mn;
+  if (span < 0.02) return { k: 'never', t: `始终 ${mx.toFixed(2)}（没变化）`, mx, mn, span };
+  let mid = 0;
+  for (const v of vals) { const r = (v - mn) / span; if (r > 0.15 && r < 0.85) mid++; }
+  if (mid >= 2) return { k: 'ok', t: `有渐变（中间值 ${mid} 帧，范围 ${mn.toFixed(2)}~${mx.toFixed(2)}）`, mx, mn, span, mid };
+  return { k: 'instant', t: `没有渐变（只有 ${mn.toFixed(2)} 与 ${mx.toFixed(2)}，中间值 ${mid} 帧）`, mx, mn, span, mid };
+}
+
+// ---- 测试项 -----------------------------------------------------------------
+/** 画面平均亮度（**含 alpha**）：canvas 的 getImageData 返回未预乘 RGB，
+ *  半透明方块读出来仍是满亮度 → 必须自己乘 alpha，否则渐变会被读成 0/1 两态。
+ *  固定亮度阈值计数同理不可用（alpha 过半才跨阈值）。 */
+function meanLum(ctx, w, h, rect = null) {
+  const x = rect ? Math.max(0, Math.floor(rect.x)) : 0;
+  const y = rect ? Math.max(0, Math.floor(rect.y)) : 0;
+  const rw = Math.max(1, Math.min(w - x, Math.ceil(rect ? rect.w : w)));
+  const rh = Math.max(1, Math.min(h - y, Math.ceil(rect ? rect.h : h)));
+  const d = ctx.getImageData(x, y, rw, rh).data;
+  let s = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    s += (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) * (d[i + 3] / 255);
+  }
+  return s / (d.length / 4);
+}
+
+/** 区域内最亮像素（含 alpha）：路标"深色石板 + 金色文字"在**平均亮度**上会互相抵消
+ *  （板变暗、字变亮，区域均值几乎不变→被判成"没变化"），所以引擎测试用最大值。 */
+function maxLum(ctx, w, h, rect = null) {
+  const x = rect ? Math.max(0, Math.floor(rect.x)) : 0;
+  const y = rect ? Math.max(0, Math.floor(rect.y)) : 0;
+  const rw = Math.max(1, Math.min(w - x, Math.ceil(rect ? rect.w : w)));
+  const rh = Math.max(1, Math.min(h - y, Math.ceil(rect ? rect.h : h)));
+  const d = ctx.getImageData(x, y, rw, rh).data;
+  let m = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    const v = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) * (d[i + 3] / 255);
+    if (v > m) m = v;
+  }
+  return m;
+}
+
+const TESTS = [
+  {
+    key: 'canvas-ga-text-shadow', title: 'canvas 文字 + globalAlpha + 阴影（游戏大横幅用法）', kind: 'canvas',
+    draw(g, w, h, a) {
+      g.clearRect(0, 0, w, h);
+      g.globalAlpha = a;
+      g.font = '900 22px "Segoe UI", sans-serif';
+      g.textAlign = 'center';
+      g.fillStyle = '#fff6df';
+      g.shadowColor = 'rgba(255,214,120,0.5)';
+      g.shadowBlur = 18;
+      g.fillText('大字', w / 2, h / 2 + 8);
+      g.shadowBlur = 0;
+      g.globalAlpha = 1;
+    },
+  },
+  {
+    key: 'canvas-ga-text', title: 'canvas 文字 + globalAlpha（无阴影）', kind: 'canvas',
+    draw(g, w, h, a) {
+      g.clearRect(0, 0, w, h);
+      g.globalAlpha = a;
+      g.font = '900 22px "Segoe UI", sans-serif';
+      g.textAlign = 'center';
+      g.fillStyle = '#fff6df';
+      g.fillText('大字', w / 2, h / 2 + 8);
+      g.globalAlpha = 1;
+    },
+  },
+  {
+    key: 'canvas-ga-shape', title: 'canvas 方块 + globalAlpha（游戏路标石板/方块）', kind: 'canvas',
+    draw(g, w, h, a) {
+      g.clearRect(0, 0, w, h);
+      g.globalAlpha = a;
+      g.fillStyle = '#ffd76a';
+      g.fillRect(w * 0.2, h * 0.25, w * 0.6, h * 0.5);
+      g.globalAlpha = 1;
+    },
+  },
+  {
+    key: 'canvas-ga-shape-shadow', title: 'canvas 方块 + globalAlpha + 阴影', kind: 'canvas',
+    draw(g, w, h, a) {
+      g.clearRect(0, 0, w, h);
+      g.globalAlpha = a;
+      g.shadowColor = '#ffd76a';
+      g.shadowBlur = 12;
+      g.fillStyle = '#ffd76a';
+      g.fillRect(w * 0.25, h * 0.3, w * 0.5, h * 0.4);
+      g.shadowBlur = 0;
+      g.globalAlpha = 1;
+    },
+  },
+  {
+    key: 'canvas-fillstyle-alpha', title: 'canvas 方块 + rgba 颜色（不用 globalAlpha）', kind: 'canvas',
+    draw(g, w, h, a) {
+      g.clearRect(0, 0, w, h);
+      g.fillStyle = `rgba(255,215,106,${a})`;
+      g.fillRect(w * 0.2, h * 0.25, w * 0.6, h * 0.5);
+    },
+  },
+  {
+    key: 'canvas-offscreen-alpha', title: 'canvas 离屏预渲染 + globalAlpha drawImage', kind: 'canvas',
+    draw(g, w, h, a, el) {
+      g.clearRect(0, 0, w, h);
+      if (!el._off) {
+        const o = document.createElement('canvas');
+        o.width = w; o.height = h;
+        const og = o.getContext('2d');
+        og.font = '900 22px "Segoe UI", sans-serif';
+        og.textAlign = 'center';
+        og.fillStyle = '#ffd76a';
+        og.fillText('大字', w / 2, h / 2 + 8);
+        el._off = o;
+      }
+      g.globalAlpha = a;
+      g.drawImage(el._off, 0, 0);
+      g.globalAlpha = 1;
+    },
+  },
+  {
+    key: 'canvas-filter-opacity', title: 'canvas filter:opacity()（另一种透明做法）', kind: 'canvas', needs: 'filter',
+    draw(g, w, h, a) {
+      g.clearRect(0, 0, w, h);
+      g.filter = `opacity(${a})`;
+      g.fillStyle = '#ffd76a';
+      g.fillRect(w * 0.2, h * 0.25, w * 0.6, h * 0.5);
+      g.filter = 'none';
+    },
+  },
+  {
+    // ★ 这条是"带阴影文字淡入"的**修复做法**（引擎 src/render/fade.js 用的就是它）：
+    //   内容先画到离屏画布（阴影照常烘焙），再用 drawImage + globalAlpha 合成整张位图
+    key: 'canvas-offscreen-shadow-composite', title: '★ 文字+阴影 → 离屏合成（修复做法）', kind: 'canvas',
+    draw(g, w, h, a, el) {
+      g.clearRect(0, 0, w, h);
+      if (!el._off2) {
+        const o = document.createElement('canvas');
+        o.width = w; o.height = h;
+        const og = o.getContext('2d');
+        og.font = '900 22px "Segoe UI", sans-serif';
+        og.textAlign = 'center';
+        og.fillStyle = '#fff6df';
+        og.shadowColor = 'rgba(255,214,120,0.5)';
+        og.shadowBlur = 18;
+        og.fillText('大字', w / 2, h / 2 + 8);
+        el._off2 = o;
+      }
+      g.globalAlpha = a;
+      g.drawImage(el._off2, 0, 0);
+      g.globalAlpha = 1;
+    },
+  },
+  {
+    key: 'dom-css-animation', title: 'DOM CSS animation（主页标题用法）', kind: 'dom-anim',
+  },
+  {
+    key: 'dom-css-transition', title: 'DOM CSS transition', kind: 'dom-trans',
+  },
+  {
+    key: 'dom-waapi', title: 'DOM element.animate()（通关浮层用法）', kind: 'dom-waapi',
+  },
+];
+
+// ---- 建面板 -----------------------------------------------------------------
+const grid = $('#grid');
+const items = [];
+for (const t of TESTS) {
+  const box = document.createElement('div');
+  box.className = 't';
+  const h3 = document.createElement('h3');
+  h3.textContent = t.title;
+  box.appendChild(h3);
+  const el = document.createElement(t.kind === 'canvas' ? 'canvas' : 'div');
+  el.className = t.kind === 'canvas' ? 'screen' : 'screen dom';
+  if (t.kind !== 'canvas') el.innerHTML = '<span class="big">大字</span>';
+  box.appendChild(el);
+  const v = document.createElement('div');
+  v.className = 'v wait';
+  v.textContent = '采样中…';
+  box.appendChild(v);
+  const mark = document.createElement('div');
+  mark.className = 'mark';
+  mark.textContent = '我看到的：—（点一下改）';
+  box.appendChild(mark);
+  grid.appendChild(box);
+  const it = { ...t, box, el, v, mark, vals: [], manual: null };
+  mark.onclick = () => {
+    it.manual = it.manual === 'fade' ? 'nofade' : it.manual === 'nofade' ? null : 'fade';
+    mark.textContent = '我看到的：' + (it.manual === 'fade' ? '有渐变' : it.manual === 'nofade' ? '没有渐变' : '—（点一下改）');
+  };
+  if (t.kind === 'canvas') {
+    // 按 CSS 像素 × dpr 建缓冲（与游戏同口径）
+    it.resize = () => {
+      const r = el.getBoundingClientRect();
+      el.width = Math.max(8, Math.round(r.width * devicePixelRatio));
+      el.height = Math.max(8, Math.round(r.height * devicePixelRatio));
+      it.g = el.getContext('2d');
+    };
+  } else if (t.kind === 'dom-anim') {
+    // 纯 CSS 关键帧循环（与主页标题/`.lt` 同一层机制），JS 只读 computed opacity
+    const st = document.createElement('style');
+    const p = (s) => (s / CYCLE * 100).toFixed(2) + '%';
+    st.textContent = `@keyframes ftCycle { 0% {opacity:0} ${p(FADE)} {opacity:1} `
+      + `${p(FADE + (CYCLE - 2 * FADE - GAP))} {opacity:1} ${p(2 * FADE + (CYCLE - 2 * FADE - GAP))} {opacity:0} 100% {opacity:0} }`;
+    document.head.appendChild(st);
+    it.spin = el.querySelector('.big');
+    it.spin.style.animation = `ftCycle ${CYCLE}s linear infinite`;
+  } else if (t.kind === 'dom-trans') {
+    it.spin = el.querySelector('.big');
+    it.spin.style.opacity = '0';
+    it.spin.style.transition = `opacity ${FADE}s linear`;
+  } else if (t.kind === 'dom-waapi') {
+    it.spin = el.querySelector('.big');
+    it.spin.style.opacity = '0';
+    it.spin._anim = it.spin.animate([{ opacity: 0 }, { opacity: 1 }], { duration: FADE * 1000, fill: 'both', easing: 'linear' });
+    it.spin._anim.pause();
+  }
+  items.push(it);
+}
+
+// ---- 主循环：每帧喂目标透明度，逐帧采样 -------------------------------------
+const stat = { frames: 0, gaps: [], lastNow: 0, t0: 0 };
+function tickLoop(now) {
+  requestAnimationFrame(tickLoop);
+  if (paused) return;            // 冻结：画面停在最后一帧，便于肉眼核对 + 长按复制
+  if (!stat.t0) stat.t0 = now;
+  if (stat.lastNow) stat.gaps.push(now - stat.lastNow);
+  stat.lastNow = now;
+  stat.frames++;
+  const t = ((now - stat.t0) / 1000) % CYCLE;
+  const a = alphaAt(t);
+  for (const it of items) {
+    if (it.kind === 'canvas') {
+      const g = it.g;
+      if (!g) continue;
+      const w = it.el.width, h = it.el.height;
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      it.draw(g, w, h, a, it.el);
+      it.vals.push(meanLum(g, w, h));
+    } else if (it.kind === 'dom-anim') {
+      it.vals.push(Number(getComputedStyle(it.spin).opacity));
+    } else if (it.kind === 'dom-trans') {
+      it.spin.style.opacity = String(a);
+      it.vals.push(Number(getComputedStyle(it.spin).opacity));
+    } else if (it.kind === 'dom-waapi') {
+      it.spin._anim.currentTime = a * FADE * 1000; // 与相位同步
+      it.vals.push(Number(getComputedStyle(it.spin).opacity));
+    }
+    if (it.vals.length > 900) it.vals.splice(0, 300);
+  }
+}
+
+// ---- 判定刷新（每 0.5s） -----------------------------------------------------
+// ★ 只刷新屏幕上的判定徽标，**绝不写结果框**：结果框每 0.5s 被重写一次会把选择区间
+//   清掉，手机上长按复制到一半就被打断（用户实测）。结果框只在用户点按钮时写一次，
+//   同时冻结采样，抓到的是"这一瞬间"的完整结果。
+let paused = false;
+function refresh() {
+  if (paused) return;
+  for (const it of items) {
+    // 只拿最近 1.5 个周期的采样
+    const keep = Math.max(20, Math.round(stat.frames / Math.max(1, (stat.lastNow - stat.t0) / 1000) * CYCLE * 1.5));
+    const vals = it.vals.slice(-keep);
+    const r = verdict(vals, it.needs);
+    it.verdict = r;
+    it.v.className = 'v ' + r.k;
+    it.v.textContent = r.t;
+    it.box.classList.toggle('bad', r.k === 'instant' || r.k === 'never');
+    it.box.classList.toggle('good', r.k === 'ok');
+  }
+  const fps = stat.gaps.length ? 1000 / (stat.gaps.reduce((s, x) => s + x, 0) / stat.gaps.length) : 0;
+  const worst = stat.gaps.length ? Math.max(...stat.gaps.slice(-300)) : 0;
+  LAST = { fps, worst };
+  $('#env').textContent = ENV + '\n实测帧率=' + fps.toFixed(1) + 'fps  最大帧间隔=' + worst.toFixed(1) + 'ms  已采样帧=' + stat.frames;
+}
+let LAST = { fps: 0, worst: 0 };
+let lastReport = '';
+/** 冻结/恢复"画面"：冻结时全部按不透明重绘一次——否则正好停在 alpha=0 的那一帧时，
+ *  几个方块看起来是空的（用户会以为"这里什么都没有"）。 */
+function freezeVisuals(on) {
+  for (const it of items) {
+    if (it.kind === 'canvas') {
+      if (on && it.g) { it.g.setTransform(1, 0, 0, 1, 0, 0); it.draw(it.g, it.el.width, it.el.height, 1, it.el); }
+    } else if (it.kind === 'dom-anim') {
+      it.spin.style.animationPlayState = on ? 'paused' : 'running';
+      if (on) it.spin.style.opacity = '1';
+    } else if (it.kind === 'dom-trans') {
+      it.spin.style.opacity = on ? '1' : '0';
+      it.spin.style.transition = on ? 'none' : `opacity ${FADE}s linear`;
+    } else if (it.kind === 'dom-waapi') {
+      if (on) it.spin._anim.currentTime = FADE * 1000;
+    }
+  }
+}
+/** 冻结采样 + 写一次结果（内容此后不再变化 → 可安心长按复制） */
+function freezeReport() {
+  paused = true;
+  refreshOnce();
+  writeReport(LAST.fps, LAST.worst);
+  freezeVisuals(true);
+  $('#freeze').textContent = '▶ 继续采样';
+  $('#copyHint').textContent = '已冻结（画面也停在"全不透明"，结果不再变化）——可长按文本框复制，或点「复制结果」';
+  return $('#report');
+}
+/** 暂停状态下也要把屏幕徽标更新到最后一次采样（不写结果框） */
+function refreshOnce() {
+  const save = paused;
+  paused = false;
+  refresh();
+  paused = save;
+}
+
+// ---- 报告 -------------------------------------------------------------------
+let ENV = '';
+function writeReport(fps = 0, worst = 0) {
+  const L = ['=== Chezzle 淡入淡出诊断 ==='];
+  L.push(ENV);
+  L.push(`实测帧率=${fps.toFixed(1)}fps  最大帧间隔=${worst.toFixed(1)}ms  采样帧=${stat.frames}`);
+  L.push('--- 各实现判定（ok=看得见渐变 / instant=动画整个消失 / never=始终没变化 / skip=设备不支持）---');
+  L.push('注：iPadOS Safari 上「带 shadowBlur 的绘制」会忽略 globalAlpha → 大横幅/路标那种发光文字的淡入淡出整个不见（普通方块、无阴影文字正常）。带 ★ 的那条就是修复做法。');
+  for (const it of items) {
+    const r = it.verdict ?? { k: 'wait', t: '采样中' };
+    L.push(`${r.k.padEnd(8)} ${it.title}  ←  ${r.t}${it.manual ? '  [我看到的：' + (it.manual === 'fade' ? '有渐变' : '没有渐变') + ']' : ''}`);
+  }
+  for (const e of engineItems) {
+    L.push(`${(e.verdict?.k ?? 'wait').padEnd(8)} ${e.title}  ←  ${e.verdict?.t ?? '采样中'}`);
+  }
+  L.push(`冻结时间=${new Date().toLocaleString()}`);
+  lastReport = L.join('\n');
+  $('#report').value = lastReport;
+}
+// 复制/冻结：都先冻结采样再写结果（写一次，之后不再变 → 长按复制不会被清选择）
+$('#freeze').onclick = () => {
+  const ta = $('#report');
+  if (paused) {                       // 再点一次 = 继续采样
+    paused = false;
+    stat.lastNow = 0;                 // 暂停期间的间隔不算进帧率/不喂给引擎
+    stat.resumed = true;
+    freezeVisuals(false);
+    $('#freeze').textContent = '⏸ 冻结并生成结果';
+    $('#copyHint').textContent = '结果框已冻结不会再变；点「继续采样」可恢复循环';
+    return;
+  }
+  freezeReport();
+  ta.focus();
+  ta.setSelectionRange(0, ta.value.length);
+};
+$('#copy').onclick = async () => {
+  const ta = freezeReport();
+  ta.focus();
+  ta.setSelectionRange(0, ta.value.length);
+  try {
+    await navigator.clipboard.writeText(lastReport);
+    $('#copy').textContent = '已复制 ✓';
+    $('#copyHint').textContent = '已复制到剪贴板；若粘贴不出来，可长按文本框手动复制（内容已冻结）';
+  } catch (e) {
+    $('#copy').textContent = '请长按文本框复制';
+    $('#copyHint').textContent = '浏览器不给自动复制权限——已全选，请长按文本框复制（内容已冻结，不会再变）';
+  }
+  setTimeout(() => { $('#copy').textContent = '复制结果'; }, 2500);
+};
+
+// ============================================================================
+// ② 游戏真实路径：真引擎 + 真场景 + 真 HUD（路标淡入 / 大横幅淡入淡出）
+// ============================================================================
+const engineItems = [];
+function makeEngineTest(title, setup) {
+  const box = document.createElement('div');
+  box.className = 't';
+  const h3 = document.createElement('h3');
+  h3.textContent = title;
+  box.appendChild(h3);
+  const cv = document.createElement('canvas');
+  cv.className = 'screen eng';
+  box.appendChild(cv);
+  const v = document.createElement('div');
+  v.className = 'v wait';
+  v.textContent = '采样中…';
+  box.appendChild(v);
+  $('#engineGrid').appendChild(box);
+  const it = { title, box, cv, v, vals: [], verdict: null };
+  engineItems.push(it);
+  return it;
+}
+
+function startEngineTests() {
+  makeEngineTest('游戏真实路径：路标淡入（appearDelay + appearFade=0.5）');
+  makeEngineTest('游戏真实路径：大横幅淡入淡出（showBanner dur=3）');
+  const C = window.Chezzle;
+  if (!C) {
+    engineItems.push({ title: '引擎未加载（dist/chezzle.js 取不到）', verdict: { k: 'never', t: '跳过' }, vals: [] });
+    return;
+  }
+  // 画布 = 逻辑尺寸；相机视窗设成同一尺寸 → 世界 1:1 画出来（否则 1000×800 的
+  // 默认视窗会把 300×200 的世界缩到 0.16 倍，路标只有 9px，信号被背景淹掉）
+  const dims = [];
+  for (const it of engineItems) {
+    const r = it.cv.getBoundingClientRect();
+    const lw = Math.max(64, Math.round(r.width));
+    const lh = Math.max(64, Math.round(r.height));
+    C.setupCanvasSize(it.cv, lw, lh);
+    dims.push({ lw, lh });
+  }
+  const viewOpts = (i) => ({ worldW: dims[i].lw, worldH: dims[i].lh, viewW: dims[i].lw, viewH: dims[i].lh });
+  // 场景 A：路标淡入（appearDelay + appearFade —— 与教程关卡同一机制）
+  const A = engineItems[0];
+  const sceneA = new C.Scene({ worldW: dims[0].lw, worldH: dims[0].lh });
+  const sign = new C.Sign({ x: 16, y: 16, text: '路标\n淡入测试', size: 16, id: 'sg' });
+  sign.appearDelay = 0.8;
+  sign.appearFade = 0.5;
+  sceneA.addObject(sign);
+  sceneA.status = 'running';
+  sceneA.applyAppearDelays();
+  const rendA = new C.Renderer(A.cv, viewOpts(0));
+  sceneA.camera = rendA.camera;
+  const hudA = new C.Hud(sceneA);
+  window.__ft = { sceneA, sign, A, rendA }; // 诊断后门（排查本页自身用）
+
+  // 场景 B：大横幅（showBanner -- HUD 路径，含淡入淡出）
+  const B = engineItems[1];
+  const sceneB = new C.Scene({ worldW: dims[1].lw, worldH: dims[1].lh });
+  sceneB.status = 'running';
+  const rendB = new C.Renderer(B.cv, viewOpts(1));
+  sceneB.camera = rendB.camera;
+  const hudB = new C.Hud(sceneB);
+
+  const TICK = 1 / 30;
+  let last = performance.now(), acc = 0;
+  let nextReveal = 0, nextBanner = 0;
+  function frame(now) {
+    requestAnimationFrame(frame);
+    if (paused) return;                    // 冻结：与机制测试同进同退
+    if (stat.resumed) { stat.resumed = false; last = now; acc = 0; }
+    const dt = Math.min((now - last) / 1000, 0.25);
+    last = now;
+    acc += dt;
+
+    // ---- A：路标（appearDelay + appearFade）每 2.4s 重放一次淡入 ----
+    if (sceneA.time >= nextReveal) {
+      // 手动回到"隐藏"状态（用的还是引擎那几个字段），再走引擎自己的 reveal
+      sceneA.objects = sceneA.objects.filter((o) => o !== sign);
+      sign.hidden = true;
+      sign.appearTime = undefined;
+      sceneA.reveal('sg');
+      nextReveal = sceneA.time + 2.4;
+    }
+    let g = 0;
+    while (acc >= TICK && g < 10) { sceneA.step(TICK); acc -= TICK; g++; }
+    rendA.frame(sceneA.objects, { hud: hudA, time: sceneA.time, scene: sceneA, focus: null });
+    // 只采"路标所在区域"（整幅里路标只占几十像素，信号会被背景淹掉）。
+    // ★ 相机坐标是**逻辑像素**、getImageData 要**缓冲像素** → 必须 ×dpr。
+    const camA = sceneA.camera.compute(C.canvasLW(A.cv), C.canvasLH(A.cv), null);
+    const dprA = A.cv.width / Math.max(1, C.canvasLW(A.cv));
+    A.vals.push(maxLum(A.cv.getContext('2d'), A.cv.width, A.cv.height, {
+      x: ((sign.x - 10) * camA.scale + camA.offsetX) * dprA,
+      y: ((sign.y - 10) * camA.scale + camA.offsetY) * dprA,
+      w: (sign.w + 20) * camA.scale * dprA,
+      h: (sign.h + 20) * camA.scale * dprA,
+    }));
+
+    // ---- B：大横幅（showBanner dur=3 → 淡入 0.5 保持 2 淡出 0.5）每 4s 发一条 ----
+    const wall = (now - stat.t0) / 1000;
+    if (wall >= nextBanner) { sceneB.showBanner('大字横幅', 3); nextBanner = wall + 4; }
+    let g2 = 0;
+    while (acc >= TICK && g2 < 10) { sceneB.step(TICK); acc -= TICK; g2++; }
+    rendB.frame(sceneB.objects, { hud: hudB, time: sceneB.time, scene: sceneB, focus: null });
+    // 只采横幅所在横带、且避开右上角 HUD 按钮的高光（按钮是常亮的金色，会盖住渐变信号）
+    B.vals.push(maxLum(B.cv.getContext('2d'), B.cv.width, B.cv.height, {
+      x: B.cv.width * 0.02, y: B.cv.height * 0.15, w: B.cv.width * 0.6, h: B.cv.height * 0.5,
+    }));
+  }
+  requestAnimationFrame(frame);
+}
+
+// ---- 启动 -------------------------------------------------------------------
+ENV = probe();
+$('#env').textContent = ENV;
+addEventListener('resize', () => { for (const it of items) if (it.resize) it.resize(); });
+for (const it of items) if (it.resize) it.resize();
+setInterval(() => {
+  refresh();
+  for (const e of engineItems) {
+    // 窗口取最近 400 帧（60fps ≈ 6.7s ≥ 1.5 个横幅周期）：窗口太短会只截到"横幅已消失"
+    // 的一段，把正常淡入误判成"始终没变化"
+    const r = verdict(e.vals.slice(-400));
+    e.verdict = r;
+    e.v.className = 'v ' + r.k;
+    e.v.textContent = r.t;
+    e.box.classList.toggle('bad', r.k === 'instant' || r.k === 'never');
+    e.box.classList.toggle('good', r.k === 'ok');
+  }
+}, 500);
+requestAnimationFrame(tickLoop);
+startEngineTests();
+</script>
+</body>
+</html>
+
+
+

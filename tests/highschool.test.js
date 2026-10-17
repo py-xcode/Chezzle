@@ -771,6 +771,27 @@ test('焰色：NaCl 黄、KCl 紫、CaCl2 砖红、BaCl2 黄绿、CuSO4 绿；�
   assert.equal(flameColorOf('Fe'), null, '铁无特征焰色');
 });
 
+test('焰色：没有离子表的化合物按元素判色（Na2O2 黄、铜绿绿）；铁依旧无色', () => {
+  // 焰色反应是元素的性质：Na2O 上灯变黄，氧化成 Na2O2 后不该反而没颜色
+  assert.equal(flameColorOf('Na2O'), '#ffd23f');
+  assert.equal(flameColorOf('Na2O2'), '#ffd23f', '过氧化钠（无离子表）也应是钠的黄焰');
+  assert.equal(flameColorOf('Cu2(OH)2CO3'), '#4dff5f', '铜绿含铜 → 绿焰');
+  // 铁例外：Fe / Fe3O4 都不该有焰色（铁盐的橙金只从离子表走）
+  assert.equal(flameColorOf('Fe'), null);
+  assert.equal(flameColorOf('Fe3O4'), null);
+  assert.equal(flameColorOf('H2O2'), null, '不含焰色元素的物质仍无色');
+});
+
+test('焰色：灯顶 Na2O2 物块火焰变黄（钠块在灯上氧化成过氧化钠后仍显钠焰）', () => {
+  const scene = flatScene();
+  const lamp = new Lamp({ x: 300, y: 680, autoOn: true });
+  scene.addObject(lamp);
+  const blk = new Block({ x: 300, y: 650, w: 30, h: 30, substance: 'Na2O2' });
+  scene.addObject(blk);
+  run(scene, 6);
+  assert.equal(lamp.flameTint, '#ffd23f', '灯顶 Na2O2 块 → 金黄火焰');
+});
+
 test('焰色：灯上放 NaCl 火焰变黄，移走恢复', () => {
   const scene = flatScene();
   const lamp = new Lamp({ x: 300, y: 680, autoOn: true });

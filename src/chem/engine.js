@@ -585,9 +585,100 @@ export class ChemistryEngine {
         // （如 Fe(OH)2 沉淀 + CuSO4 不反应；Cu(OH)2 + HCl 溶解）
         if (!isSoluble(idA) && eB.kind !== 'acid' && eB.kind !== 'base') continue;
         if (!isSoluble(idB) && eA.kind !== 'acid' && eA.kind !== 'base') continue;
+        // ★ 可溶碳酸盐遇一元酸：先走"分步质子化"第一步（只生成碳酸氢盐，不产气）
+        if (this._stepwiseCarbonate(matA, matB, idA, idB, eA, eB, dt, env, ctx)) continue;
         this._ionicOne(matA, matB, idA, idB, eA, eB, dt, env, ctx);
       }
     }
+  }
+
+  /**
+   * 可溶碳酸盐 + 一元酸 → **分步质子化第一步**：CO3²⁻ + H⁺ → HCO3⁻（本步不产气）。
+   * ----------------------------------------------------------------------------
+   * 一步写成 CO3²⁻ + 2H⁺ → CO₂↑ 会让"碳酸钠过量时滴一滴盐酸"立刻冒泡（用户实测：
+   * 一滴就出气体），也与 rules.js 里既有的分步特例（Na2CO3+HCl→NaHCO3+NaCl）自相矛盾。
+   * 计量 = 一次分子级交换：**1 分子酸 + 1 分子碳酸盐 → 1 分子碳酸氢盐 + 1 分子酸根盐**
+   * （Na2CO3+HCl → NaHCO3+NaCl；Na2CO3+H2CO3 → 2NaHCO3；K2CO3+HNO3 → KHCO3+KNO3）。
+   * 二氧化碳只在碳酸根耗尽后由 (H⁺ + HCO3⁻) 那一步产生（见 _carbonateBlocksGas）。
+   * 不溶碳酸盐（CaCO₃ 固体）不走这里：表面遇酸直接分解出 CO₂（经典现象）。
+   * 二元/多元酸（H₂SO₄ 等）不走这里：一个分子带两个质子，按整分子直接分解，
+   * 由通用离子路径处理（Na2CO3+H2SO4 → Na2SO4+CO2↑+H2O）。
+   * @returns {boolean} true = 本对已由本步负责（调用方不再走通用离子路径）
+   */
+  _stepwiseCarbonate(matA, matB, idA, idB, eA, eB, dt, env, ctx) {
+    const pick = (acidId, acidE, acidMat, carbId, carbE, carbMat) => {
+      if (!acidE.ions || !carbE.ions) return null;
+      if (acidE.ions.cat !== 'H+' || (acidE.ions.catCount ?? 1) !== 1) return null;
+      if (carbE.ions.an !== 'CO3^2-') return null;
+      if (!isSoluble(carbId)) return null; // 不溶碳酸盐：表面直接分解（走离子路径产 CO2）
+      return {
+        acidId, acidMat, carbId, carbMat, acidE, carbE,
+        bicarb: ensureSalt(carbE.ions.cat, 'HCO3-').id,
+        bysalt: ensureSalt(carbE.ions.cat, acidE.ions.an).id,
+      };
+    };
+    const m = pick(idA, eA, matA, idB, eB, matB) ?? pick(idB, eB, matB, idA, eA, matA);
+    if (!m) return false;
+    const mmAcid = getSubstance(m.acidId).mm;
+    const mmCarb = getSubstance(m.carbId).mm;
+    const availAcid = this._availFor(m.acidMat, m.acidId) / mmAcid;
+    const availCarb = this._availFor(m.carbMat, m.carbId) / mmCarb;
+    const rate = RATE.ionic * phaseFactor(m.acidMat.phase, m.carbMat.phase)
+      * this._concFactorFor(m.acidMat, m.acidId) * this._concFactorFor(m.carbMat, m.carbId)
+      * this._strengthFactor(m.acidMat, m.acidId);
+    const units = Math.min(availAcid, availCarb, (rate * dt) / mmAcid);
+    // 组合成立但本 tick 推进量为 0：仍返回 true —— 只要碳酸根还在，产气那一步就得让路
+    if (!(units > 1e-12)) return true;
+    this._stamp(ctx, reactionEquation([m.acidId, m.carbId], [m.bicarb, m.bysalt]));
+    const takeAcid = units * mmAcid;
+    const takeCarb = units * mmCarb;
+    const remAcid = m.acidMat.consume(m.acidId, takeAcid);
+    const remCarb = m.carbMat.consume(m.carbId, takeCarb);
+    const scale = Math.min(
+      takeAcid > 1e-12 ? remAcid / takeAcid : 1,
+      takeCarb > 1e-12 ? remCarb / takeCarb : 1,
+    );
+    if (!(scale > 1e-9)) return true;
+    const act = units * scale;
+    this._emit(m.bicarb, act * getSubstance(m.bicarb).mm, ctx);
+    this._emit(m.bysalt, act * getSubstance(m.bysalt).mm, ctx);
+    this._logReaction(ctx, [m.acidId, m.carbId], [m.bicarb, m.bysalt]);
+    return true;
+  }
+
+  /** 分步质子化第二步的门闸：体系里还有 CO3²⁻ 时，H⁺ 优先给碳酸根
+   *  （酸性强弱：CO3²⁻ > HCO3⁻），HCO3⁻ 这条不产气。
+   *  少了它，"碳酸钠 + 少量盐酸"会因为刚生成的 HCO3⁻ 立刻被下一个 H⁺ 打掉而冒泡——
+   *  分步就白做了。碳酸根耗尽（全部变碳酸氢盐）后闸门自动打开 → 开始冒泡。
+   *  离子路径与数据规则（NaHCO3+HCl 等特例）都走这道闸门，两条路不会各行其是。 */
+  _carbonateBlocksGas(ctx, ...mats) {
+    for (const m of [...mats, ctx.containerMat]) {
+      if (!m || typeof m.ids !== 'function') continue;
+      for (const id of m.ids()) {
+        if (id === 'CO3^2-') return true; // 裸离子条目
+        const e = getSubstance(id);
+        if (e.ions?.an === 'CO3^2-' && isSoluble(id) && m.avail(id) > 1e-9) return true;
+      }
+    }
+    return false;
+  }
+
+  /** 数据规则版闸门：**酸**在质子化碳酸氢盐（HCO3⁻）而体系里还有碳酸根 → 跳过。
+   *  只对"碳酸氢盐 + 酸"成立；NaHCO3 + NaOH 这类碱参与的规则不受影响。 */
+  _ruleBlockedByCarbonate(rule, ctx, ...mats) {
+    if (!rule || !Array.isArray(rule.reactants)) return false;
+    const isBicarb = (id) => {
+      if (id === 'HCO3-') return true;
+      const e = getSubstance(id);
+      return e.ions?.an === 'HCO3-';
+    };
+    const isAcid = (id) => {
+      const e = getSubstance(id);
+      return e.ions?.cat === 'H+' || e.kind === 'acid';
+    };
+    if (!rule.reactants.some((r) => isBicarb(r.id))) return false;
+    if (!rule.reactants.some((r) => isAcid(r.id))) return false;
+    return this._carbonateBlocksGas(ctx, ...mats);
   }
 
   _ionicOne(matA, matB, idA, idB, eA, eB, dt, env, ctx) {
@@ -601,6 +692,9 @@ export class ChemistryEngine {
     const p1 = this._pairInfo(catA, anB, idA, idB);
     const p2 = this._pairInfo(catB, anA, idA, idB);
     if (!p1.drives && !p2.drives) return;
+    // ★ 分步质子化闸门：体系里还有 CO3^2- 时，H+ 先给碳酸根（HCO3- 暂不产气）
+    if ((catB === 'H+' && anA === 'HCO3-' && this._carbonateBlocksGas(ctx, matA, matB))
+      || (catA === 'H+' && anB === 'HCO3-' && this._carbonateBlocksGas(ctx, matA, matB))) return;
 
     // 离子不在表中（运行时生成的盐/自定义反应引入的离子）→ 跳过该离子反应，不崩溃
     const c1 = abs(IONS[catA]?.charge ?? 0);
@@ -669,7 +763,16 @@ export class ChemistryEngine {
   /** 一对 (catId, anId) 的产物与是否驱动反应（沉淀/气体/水/显色） */
   _pairInfo(catId, anId, idA, idB) {
     if (catId === 'H+' && anId === 'OH-') return { drives: true, products: [{ id: 'H2O', coeff: 1 }] };
-    if (catId === 'H+' && anId === 'CO3^2-') return { drives: true, products: [{ id: 'CO2', coeff: 1 }, { id: 'H2O', coeff: 1 }] };
+    // 碳酸根遇酸**分步**：CO3^2- + H+ → HCO3-（无气体），HCO3- + H+ → CO2↑ + H2O。
+    //   一步写成 CO2 会让"碳酸钠过量时滴一滴盐酸"立刻冒气泡——与分子级特例
+    //   （Na2CO3 + HCl → NaHCO3 + NaCl，见 rules.js）自相矛盾，也不符合实验事实。
+    //   可溶碳酸盐的第一步由 _stepwiseCarbonate 承担（生成碳酸氢盐）；
+    //   这里只保留**不溶碳酸盐**（CaCO3 固体表面直接分解产气）与 HCO3- 第二步。
+    if (catId === 'H+' && anId === 'CO3^2-') {
+      const carbId = getSubstance(idA).ions?.an === 'CO3^2-' ? idA : idB;
+      if (isSoluble(carbId)) return { drives: false, products: [] };
+      return { drives: true, products: [{ id: 'CO2', coeff: 1 }, { id: 'H2O', coeff: 1 }] };
+    }
     if (catId === 'H+' && anId === 'HCO3-') return { drives: true, products: [{ id: 'CO2', coeff: 1 }, { id: 'H2O', coeff: 1 }] };
     if (catId === 'H+' && anId === 'SO3^2-') return { drives: true, products: [{ id: 'SO2', coeff: 1 }, { id: 'H2O', coeff: 1 }] };
     if (catId === 'H+' && anId === 'S2-') return { drives: true, products: [{ id: 'H2S', coeff: 1 }] };
@@ -809,6 +912,9 @@ export class ChemistryEngine {
    * 规则带 explosive 标签 → 推进后触发爆炸。
    */
   _runRule(rule, sources, dt, env, ctx) {
+    // ★ 分步质子化闸门（放在这里 = 所有执行路径统一生效：成对路径 _runPairDataRule
+    //   与同材料路径 reactSelf 都走 _runRule，不会有一条路绕过闸门）
+    if (this._ruleBlockedByCarbonate(rule, ctx, ...Object.values(sources))) return;
     if (!conditionMet(rule.condition, env, ctx)) return;
     const ref = rule.reactants[0];
     const refMM = getSubstance(ref.id).mm;
@@ -1023,14 +1129,18 @@ export class ChemistryEngine {
   }
 
   /** 气体产物：碱/酸吸收 → 水溶解成酸 → 剩余进大气。
-   *  onGas 返回"已截留质量"（集气瓶收集）——截留部分不再走吸收/水溶/大气；
-   *  opts.forceDissolve（向溶液通入气体）：CO2/SO2/NO2/Cl2 也能溶进水（主动鼓泡）。 */
+   *  onGas 返回"已截留质量"（集气瓶收集 / 导气管输送）——截留部分不再走吸收/水溶/大气；
+   *  opts.forceDissolve（向溶液通入气体）：CO2/SO2/NO2/Cl2 也能溶进水（主动鼓泡）。
+   *  opts.skipOnGas：跳过 onGas 钩子（导气管先把气体鼓入输出池吸收，多余部分再另行冒柱）。
+   *  opts.deferAtmosphere：剩余气体不直接进大气、作为返回值交还调用方（导气管先在输出端
+   *  管口冒气泡柱、再入大气）。
+   *  返回：因 deferAtmosphere 未入大气的剩余质量（普通调用返回 0）。 */
   _emitGas(id, mass, ctx, opts = {}) {
-    if (!Number.isFinite(mass) || mass <= 1e-9) return;
-    if (ctx.env.onGas) {
+    if (!Number.isFinite(mass) || mass <= 1e-9) return 0;
+    if (ctx.env.onGas && !opts.skipOnGas) {
       const captured = ctx.env.onGas(id, mass, ctx) || 0;
       mass -= captured;
-      if (mass <= 1e-9) return;
+      if (mass <= 1e-9) return 0;
     }
     let leftover = mass;
     const baseMat = ctx.inContainer ? ctx.containerMat : null;
@@ -1052,7 +1162,7 @@ export class ChemistryEngine {
           this._emit(p.id, gasMoles * p.coeff * getSubstance(p.id).mm, ctx);
         }
         leftover -= gasAbsorb;
-        if (leftover <= 1e-9) return;
+        if (leftover <= 1e-9) return 0;
       }
     }
     // 2. 水溶解气体（CO2→H2CO3、SO2→H2SO3、SO3→H2SO4、NO2→HNO3+NO、NH3→氨水、
@@ -1083,7 +1193,11 @@ export class ChemistryEngine {
         break;
       }
     }
-    if (leftover > 1e-9) ctx.env.atmosphere.add(id, leftover);
+    if (leftover > 1e-9) {
+      if (opts.deferAtmosphere) return leftover; // 剩余气体交还调用方（导气管：先冒柱再入大气）
+      ctx.env.atmosphere.add(id, leftover);
+    }
+    return 0;
   }
 
   /**

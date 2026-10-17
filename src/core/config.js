@@ -69,6 +69,20 @@ export const CFG = {
   placeLampRange: 120, // px（放置沉淀到灯上的半径）
   inventory: { slots: 5, capacity: 100, slotPx: 56, itemSlotPx: 70 }, // 物品格在 HUD 中放大（装烧杯/滴管/集气瓶看得清）
 
+  // 相机视窗（世界坐标）：设计基准 1000×800；画布宽高比与之不同时按比例展开
+  // （见 Camera.compute），可见范围被这两条夹住——太大会糊成一片，太小会看不到周边。
+  camera: {
+    viewMin: 440,  // 视窗任一边的下限（世界坐标）：与移动端最小视野同值
+    viewMax: 1400, // 视窗任一边的上限（世界坐标）
+    // 桌面大屏：视野优先"把整关宽度装进窗口"（用户反馈大屏视角不够广）。
+    // 缩放 = 画布宽/世界宽，再夹在 [desktopScaleMin, desktopScaleMax]：
+    // 窄窗口不把物体缩得太小，超宽屏也不无限放大物体（多出的宽转成更大视野）。
+    // 纵向仍按原逻辑跟随玩家（关卡高度有限，跟随即可）。文字另有 HUD 的 uiScaleOf 放大一档。
+    desktopScaleMin: 0.85,
+    desktopScaleMax: 2.5,
+    desktopFitWholeWidth: true, // true = 桌面端按关卡世界宽度适配视野；false = 只看物体最大缩放
+  },
+
   // 移动端（触屏/小屏；桌面 fine-pointer 完全不受影响）
   touch: {
     viewH: 560,    // 移动端相机视野高度基准（世界坐标；手机竖宽 ~390 时恰为此值）

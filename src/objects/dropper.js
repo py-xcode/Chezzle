@@ -125,7 +125,7 @@ export class Dropper extends Obj {
       }
     }
     if (this.liquid > 1e-9 && id !== this.substance) {
-      pushNotice(scene, '管里是别的液体——不能混吸');
+      pushNotice(scene, '管里是别的液体');
       return false;
     }
     const take = Math.min(CFG.item.dropperTransfer, room);

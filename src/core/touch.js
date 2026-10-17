@@ -22,6 +22,7 @@
 // ============================================================================
 
 import { CFG } from './config.js';
+import { getPrefs } from './prefs.js';
 import { setupCanvasSize, canvasLW, canvasLH } from '../render/canvas.js';
 import { compactView, compactK } from '../level/click.js';
 import {
@@ -74,9 +75,13 @@ const UIS = [];
 
 /** 摇杆：左下角半圆（直径贴底边，圆心即摇杆原点），cx/cy = 圆心，R = 半径。
  *  半圆 = { dist ≤ R 且 y ≤ cy }（上部半圆）。小屏（compactView）半径缩 72%——
- *  122px 的摇杆在 310px 高的视口里占掉 40%，玩家移动的可视区被吃掉。 */
+ *  122px 的摇杆在 310px 高的视口里占掉 40%，玩家移动的可视区被吃掉。
+ *  用户可在设置里调「摇杆大小」（joyScale 0.8~1.4）。 */
 export function joyGeom(W, H, insets = {}) {
-  const R = compactView(W, H) ? Math.max(70, Math.round(CFG.touch.joyR * 0.72)) : CFG.touch.joyR;
+  const p = getPrefs();
+  const joyScale = Number.isFinite(p.joyScale) ? p.joyScale : 1;
+  const baseR = compactView(W, H) ? Math.max(70, Math.round(CFG.touch.joyR * 0.72)) : CFG.touch.joyR;
+  const R = Math.max(44, Math.round(baseR * joyScale));
   const cx = (insets.left ?? 0) + 14 + R;
   const cy = H - (insets.bottom ?? 0) - 12;
   return { cx, cy, R };
@@ -84,12 +89,15 @@ export function joyGeom(W, H, insets = {}) {
 
 /** 右下按钮：2×2 块（C 上左 / X 上右 / Q 下左 / ⇧ 下右），下方是物品栏。
  *  与物品栏几何（inventorySlotRects，触屏边距版）共用坐标，按钮块贴着物品栏上沿。
- *  小屏：按钮 72%（68→49px，2×2 总高 ≈104px）。 */
+ *  小屏：按钮 72%（68→49px，2×2 总高 ≈104px）。
+ *  用户可在设置里调「右下按钮大小」（btnScale 0.8~1.4）。 */
 export function touchButtonRects(W, H, slots, insets = {}) {
   if (!slots || slots.length === 0) return [];
-  const k = compactK(W, H);
-  const btn = Math.max(36, Math.round(CFG.touch.btnSize * k));
-  const gap = Math.max(5, Math.round(CFG.touch.btnGap * k));
+  const p = getPrefs();
+  const btnScale = Number.isFinite(p.btnScale) ? p.btnScale : 1;
+  const k = compactK(W, H) * btnScale;
+  const btn = Math.max(30, Math.round(CFG.touch.btnSize * k));
+  const gap = Math.max(4, Math.round(CFG.touch.btnGap * k));
   const margins = { bottom: (insets.bottom ?? 0) + CFG.touch.pad, right: (insets.right ?? 0) + CFG.touch.pad };
   const inv = inventorySlotRects(W, H, slots, margins);
   let invTop = Infinity;
@@ -418,9 +426,10 @@ export class TouchUI {
     // ②.5 提示面板（展开中）：点面板 = 消费（不穿透到场景）；右上 ✕ = 关闭；
     //     按住右滑 = 关闭（面板跟随手指，超 60px 触发关闭）
     if (hud && hud.showTip) {
-      const pr = tipPanelRect(canvasLW(this.canvas), hudTopOffset(scene), touchInsetsOf(scene).right || 0);
+      // ★ 与桌面点击同源：以 HUD 实际绘制矩形为准（见 click.js 同处注释）
+      const pr = hud._tipRect ?? tipPanelRect(canvasLW(this.canvas), hudTopOffset(scene), touchInsetsOf(scene).right || 0, canvasLH(this.canvas));
       if (x >= pr.x && x <= pr.x + pr.w && y >= pr.y && y <= pr.y + pr.h) {
-        const r = hud._tipRect ?? pr;
+        const r = pr;
         if (x >= r.x + r.w - 32 && y <= r.y + 32) {
           if (typeof hud.closeTip === 'function') hud.closeTip();
           else hud.showTip = false;

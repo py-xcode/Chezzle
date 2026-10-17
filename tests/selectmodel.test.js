@@ -21,6 +21,8 @@ const {
 } = model;
 
 const CFG = JSON.parse(readFileSync(join(ROOT, 'levels', 'levels.json'), 'utf8'));
+// 仓库里的 levels.json 可能把调试开关打开（方便手动验证关卡）；测试固定按"正式模式"验证解锁
+const CFG_LOCKED = { ...CFG, debugUnlockAll: false };
 const ENTRIES = buildEntries(CFG, FACTS, false);
 const LEVELS = allLevels(CFG);                       // 全部关卡（含引导）拍平
 const ALL_IDS = new Set(LEVELS.map((l) => l.id));
@@ -100,15 +102,27 @@ test('周期条 = 通关进度（done/levels），全部由配置推导', () => 
 test('unlockedSet（前置关卡式）：requires 全通才解锁；链条自动传递', () => {
   for (const lv of LEVELS) {
     const req = lv.requires || [];
-    assert.ok(unlockedSet(CFG, new Set(req)).has(lv.id), `${lv.id} 在前置全通后应解锁`);
+    assert.ok(unlockedSet(CFG_LOCKED, new Set(req)).has(lv.id), `${lv.id} 在前置全通后应解锁`);
     if (req.length) {
-      assert.ok(!unlockedSet(CFG, new Set(req.slice(1))).has(lv.id), `${lv.id} 前置未齐时不该解锁`);
+      assert.ok(!unlockedSet(CFG_LOCKED, new Set(req.slice(1))).has(lv.id), `${lv.id} 前置未齐时不该解锁`);
     }
   }
-  assert.ok(unlockedSet(CFG, new Set()).has('tutorial'), '新手引导始终可玩');
+  assert.ok(unlockedSet(CFG_LOCKED, new Set()).has('tutorial'), '新手引导始终可玩');
   const chain = new Set();
   for (const lv of LEVELS) if ((lv.requires || []).every((r) => chain.has(r))) chain.add(lv.id);
-  for (const lv of LEVELS) assert.ok(unlockedSet(CFG, chain).has(lv.id), `${lv.id} 在链条走通后应解锁`);
+  for (const lv of LEVELS) assert.ok(unlockedSet(CFG_LOCKED, chain).has(lv.id), `${lv.id} 在链条走通后应解锁`);
+});
+
+test('debugUnlockAll：levels.json 顶层开关为 true 时忽略前置解锁（调试用）', () => {
+  const dbg = { ...CFG, debugUnlockAll: true };
+  const none = new Set();
+  for (const lv of LEVELS) assert.ok(unlockedSet(dbg, none).has(lv.id), `${lv.id} 调试模式下应直接解锁`);
+  assert.ok(unlockedSet(dbg, none).has('tutorial'), '调试模式下新手引导也可玩');
+  // 默认（false/缺省）仍然按前置判定：没通关时 H-1 不解锁
+  for (const lv of LEVELS) {
+    const req = lv.requires || [];
+    if (req.length) assert.ok(!unlockedSet(CFG_LOCKED, none).has(lv.id), `${lv.id} 非调试模式仍需前置`);
+  }
 });
 
 test('前置提示方向：本关提示必须取 it.requires，不能取反的 unlockersOf', () => {

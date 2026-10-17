@@ -431,15 +431,20 @@ export class CollisionSystem {
     return ok;
   }
 
-  /** 判定是否为可自动上行的矮台阶：是则抬升并返回 true（不夹紧 X） */
+  /** 判定是否为可自动上行的矮台阶：是则抬升并返回 true（不夹紧 X）。
+   *  ★ 台阶高度上限优先取**障碍物自己的 stepMax**（开关/提取器/酒精灯/喷灯这类"本来就是
+   *    给人踩上去或推物块上去"的台子设备，见 Switch/Extractor/Lamp 构造函数），否则用全局
+   *    autoStepMax。没有这一步，22px 高的压力开关、40px 高的酒精灯都推不上去也走不上去
+   *    （autoStepMax 只有 14）。墙（Floor）不声明 stepMax → 依旧挡人，不会变成万能爬坡。 */
   tryAutoStep(b, s, dir) {
     if (!dir) return false;
     const inFront = dir > 0
       ? s.left <= b.right + 0.01 && s.right >= b.right
       : s.right >= b.left - 0.01 && s.left <= b.left;
     if (!inFront) return false;
+    const max = Number.isFinite(s.stepMax) && s.stepMax > 0 ? s.stepMax : this.autoStepMax;
     const rise = b.bottom - s.top; // 需抬升的高度（台阶顶高于脚底）
-    if (!(rise > 0 && rise <= this.autoStepMax)) return false;
+    if (!(rise > 0 && rise <= max)) return false;
     b.setBottom(s.top);
     return true;
   }

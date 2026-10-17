@@ -126,3 +126,13 @@ for (const f of refFiles) {
   if (nt !== t) { fs.writeFileSync(f, nt, 'utf8'); patched++; }
 }
 console.log(`dist 引用版本同步 → ${VER}（${patched} 个 HTML）`);
+
+// ---- 偏好脚本同样加版本号：prefs.js 更新后用户不会拿到旧缓存 ----
+let prefPatched = 0;
+for (const f of refFiles) {
+  let t = fs.readFileSync(f, 'utf8');
+  if (!/src="(?:\.\.\/)?prefs\.js/.test(t)) continue;
+  const nt = t.replace(/src="((?:\.\.\/)?prefs\.js)(?:\?[A-Za-z0-9]+)*"/g, `src="$1?${VER}"`);
+  if (nt !== t) { fs.writeFileSync(f, nt, 'utf8'); prefPatched++; }
+}
+console.log(`prefs.js 引用版本同步 → ${VER}（${prefPatched} 个 HTML）`);

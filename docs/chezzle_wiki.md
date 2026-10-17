@@ -201,7 +201,7 @@ autoDecomp 300 / acidGas 24 / dissolution 10 / gasCombustion 12 / special 8 / cu
 
 ## 4. 关卡/系统（level/*, core/*）
 - Builder DSL：.floor/.pool/.block/.deposit/.player/.switch/.key/.door/.lamp/.beaker/.rope/
-  .gasColumn/.sign/.portal/.gasDetector/.extractor/.dropper/.gasBottle/.customReaction/
+  .gasColumn/.sign/.portal/.gasDetector/.extractor/.gasTube/.dropper/.gasBottle/.customReaction/
   .pluginObj/.setTip/.tips/.on/.debugmode(废弃空操作)…build()/start()。
 - 初始隐藏：hidden 物体只进 byId+hidden；reveal()/showId 恢复；applyAppearDelays：
   appearDelay>0 开局隐藏 → wait 到时 reveal（淡入 appearFade 默认 0.35s）。

@@ -51,6 +51,7 @@ Object.assign(exports, __require('src/objects/spark.js'));;
 Object.assign(exports, __require('src/objects/portal.js'));;
 Object.assign(exports, __require('src/objects/gasdetector.js'));;
 Object.assign(exports, __require('src/objects/extractor.js'));;
+Object.assign(exports, __require('src/objects/gastube.js'));;
 Object.assign(exports, __require('src/objects/dropper.js'));;
 Object.assign(exports, __require('src/objects/drip.js'));;
 Object.assign(exports, __require('src/objects/fx.js'));;
@@ -151,6 +152,20 @@ const CFG = {
   placeLampRange: 120, // px（放置沉淀到灯上的半径）
   inventory: { slots: 5, capacity: 100, slotPx: 56, itemSlotPx: 70 }, // 物品格在 HUD 中放大（装烧杯/滴管/集气瓶看得清）
 
+  // 相机视窗（世界坐标）：设计基准 1000×800；画布宽高比与之不同时按比例展开
+  // （见 Camera.compute），可见范围被这两条夹住——太大会糊成一片，太小会看不到周边。
+  camera: {
+    viewMin: 440,  // 视窗任一边的下限（世界坐标）：与移动端最小视野同值
+    viewMax: 1400, // 视窗任一边的上限（世界坐标）
+    // 桌面大屏：视野优先"把整关宽度装进窗口"（用户反馈大屏视角不够广）。
+    // 缩放 = 画布宽/世界宽，再夹在 [desktopScaleMin, desktopScaleMax]：
+    // 窄窗口不把物体缩得太小，超宽屏也不无限放大物体（多出的宽转成更大视野）。
+    // 纵向仍按原逻辑跟随玩家（关卡高度有限，跟随即可）。文字另有 HUD 的 uiScaleOf 放大一档。
+    desktopScaleMin: 0.85,
+    desktopScaleMax: 2.5,
+    desktopFitWholeWidth: true, // true = 桌面端按关卡世界宽度适配视野；false = 只看物体最大缩放
+  },
+
   // 移动端（触屏/小屏；桌面 fine-pointer 完全不受影响）
   touch: {
     viewH: 560,    // 移动端相机视野高度基准（世界坐标；手机竖宽 ~390 时恰为此值）
@@ -232,6 +247,7 @@ class Scene {
     this.statics = [];
     this.containers = [];
     this.lamps = [];
+    this.gasTubes = []; // 导气管（输入端产气 → 输出端；见 objects/gastube.js）
     this.doors = [];
     this.portals = [];
     this.particles = [];
@@ -276,6 +292,7 @@ class Scene {
     this._events = {};
     this._emitCtx = null;
     this._plumeSeq = 0;
+    this._tubeBusy = false; // 导气管输送中（输出端吸收再产气时不再被管道截留，防环）
     this._pressTap = null; // 按住的目标（长按持续执行 onTap，如滴管连续滴）
     this._pressTapT = 0; // 距上次触发的时间
     this._pressCand = null; // 按下候选（拖动 vs 点击滴液判定）
@@ -532,6 +549,7 @@ class Scene {
     else if (obj.physicsKind === 'dynamic') this.dynamics.push(obj);
     if (obj instanceof Container) this.containers.push(obj);
     if (obj.isLamp) this.lamps.push(obj);
+    if (obj.isGasTube) this.gasTubes.push(obj);
     if (obj.isDoor) this.doors.push(obj);
     if (obj instanceof Portal) this.portals.push(obj);
     if (obj instanceof Particle) this.particles.push(obj);
@@ -562,7 +580,7 @@ class Scene {
    *  延迟出现/开关隐藏的物体必须**物理也不计算**：半空摆的玩家隐身时不能坠地。 */
   _deindex(obj) {
     const arrays = [this.objects, this.dynamics, this.statics, this.particles,
-      this.containers, this.lamps, this.doors, this.portals, this.hidden];
+      this.containers, this.lamps, this.gasTubes, this.doors, this.portals, this.hidden];
     for (const arr of arrays) {
       const i = arr.indexOf(obj);
       if (i >= 0) arr.splice(i, 1);
@@ -1099,14 +1117,90 @@ class Scene {
   onGas(id, mass, ctx) {
     // 记录"反应产生的气体"（气体探测器只检测这个，不检测预置大气气体）
     this._reactGas[id] = (this._reactGas[id] ?? 0) + mass;
+    // 导气管截留：输入端罩住范围内产出的气体 → 全部经管道鼓入输出端
+    // （输入端不冒气泡柱、气体不进大气）。_tubeBusy：输送途中输出端吸收本身
+    // 再产气（如 NO2 溶水放 NO）时走正常管线，不再被管道截留（防 A→B→A 环）。
+    if (!this._tubeBusy) {
+      const tube = this._gasTubeForEmission();
+      if (tube) {
+        this._tubeBusy = true;
+        try {
+          this._routeTubeGas(tube, id, mass, ctx);
+        } finally {
+          this._tubeBusy = false;
+        }
+        return mass; // 全部截留（引擎按返回值扣掉输入端的吸收/大气份额）
+      }
+    }
+    return this._gasPlume(id, mass, { origin: ctx ? { kind: 'reaction', text: ctx.lastRxText ?? '' } : null });
+  }
+
+  /** 导气管采集：本次产气来源在输入端罩住范围内 → 该管道截留全部气体 */
+  _gasTubeForEmission() {
+    if (!this.gasTubes.length) return null;
+    const emit = this._emitCtx;
+    if (!emit) return null;
+    for (const tube of this.gasTubes) if (tube.captures(this, emit)) return tube;
+    return null;
+  }
+
+  /**
+   * 导气管输送：输入端截留的气体全部按"主动鼓入"管线送进输出端药品池
+   * （碱吸收 → 水溶解，与集气瓶通气同一条管线；之后溶液内的反应照常进行）。
+   * 输出端吸收不完的多余气体才在管口生成气泡柱并进入大气——输入端永远不冒柱。
+   */
+  _routeTubeGas(tube, id, mass, ctx) {
+    const g = tube.geometry(this);
+    if (!g) return;
+    const dt = ctx && ctx.dt > 0 ? ctx.dt : this.dt;
+    const cause = this.atmosphere._cause; // 产气反应（下面的吸收会盖章别的原因，留作气体变化溯源）
+    tube.noteFlow(id); // 管内颜色/管口气泡（吸收不完也照样"有气体通过"）
+    const saved = this._emitCtx;
+    this._emitCtx = { obj: null, container: g.outPool, player: this.player, point: g.mouth, spread: 14 };
+    try {
+      const env = this.makeEnv(g.outPool);
+      const outCtx = this.chem._ctxOf(g.outPool.solutionMat, g.outPool.solutionMat, dt, env);
+      const leftover = this.chem._emitGas(id, mass, outCtx, {
+        forceDissolve: true, // 主动鼓入（同集气瓶通气）
+        skipOnGas: true, // 吸收阶段不冒气泡柱：只有"没反应完的多余气体"才冒柱
+        deferAtmosphere: true, // 多余部分交回本方法（先在管口冒柱、再入大气）
+      });
+      if (leftover > 1e-9) {
+        const captured = this._gasPlume(id, leftover, {
+          bubbleDir: -1, // 管口多余气体：冒柱（液下气泡上浮）
+          width: 56, // 管口冒出的气柱比"池面反应柱"窄（像一股气流从管口升起）
+          source: tube, // 柱归属该管道（多根同种气体的管子各冒各的柱，不合并）
+          origin: cause ? { kind: 'reaction', text: cause } : null,
+        });
+        const rest = leftover - captured;
+        if (rest > 1e-9) {
+          this.atmosphere._cause = cause;
+          this.atmosphere.add(id, rest);
+        }
+      }
+    } finally {
+      this._emitCtx = saved;
+    }
+  }
+
+  /**
+   * 产气视觉：气泡柱 + 气泡 + 集气瓶截留。返回"已截留质量"（按住 C 用集气瓶收集）。
+   * opts.bubbleDir：气泡方向（默认随气体轻重——输出端鼓入池内传 -1，池内气泡一律上浮）。
+   * opts.width：气泡柱宽度（默认按反应面/容器宽推算；导气管管口用窄柱像"一股气"）。
+   * opts.source：气泡柱归属（默认=产气源对象；导气管传自己，多根同气体管各冒各的柱）。
+   * opts.origin：气泡柱来源（调试悬停显示的方程式）。
+   */
+  _gasPlume(id, mass, opts = {}) {
     const point = this._emitCtx ? this._emitCtx.point : { x: this.worldW / 2, y: this.worldH / 2 };
     const sub = getSubstance(id);
     const dir = sub.mm < 29 ? -1 : 1;
+    const bubbleDir = opts.bubbleDir ?? dir;
     // 气流强度随产气量增强（基础 > 重力，使小反应也有明显上浮/下沉）
     const accel = Math.max(1300, 1100 + mass * 130);
     const maxSpeed = Math.min(300, 150 + mass * 18);
     const emit = this._emitCtx ?? {};
     const srcObj = emit.obj ?? null;
+    const plumeKey = opts.source ?? srcObj; // 柱归属（同归属+同方向+同气体才共柱）
     // 柱的位置=**反应暴露面外包**（合并成一条稳定大柱：覆盖整个反应面，不再每条
     // 小柱四处跳——用户反馈"零零散散"）；微观点位（气泡/标签/产物）仍按热点走。
     const eb = srcObj ? this._exposedBounds(srcObj) : null;
@@ -1114,7 +1208,7 @@ class Scene {
     let plume = null;
     for (const o of this.objects) {
       // 同一产气源、同方向、同气体共柱（源变（被溶窄等）时柱自然跟随；不同源各显各的）
-      if (o instanceof GasColumn && o.life > 0 && o.dir === dir && o.gasId === id && o.source === srcObj) {
+      if (o instanceof GasColumn && o.life > 0 && o.dir === dir && o.gasId === id && o.source === plumeKey) {
         plume = o;
         break;
       }
@@ -1125,12 +1219,12 @@ class Scene {
       const gh = ghSrc && ghSrc.gasHeight ? ghSrc.gasHeight : 80;
       // 柱宽 = 反应面（暴露面）宽 × 0.6（36~130px）——覆盖反应面但不过分宽大
       const faceW = eb ? eb.x1 - eb.x0 : (srcObj?.w ?? emit.container?.w ?? 48) * 0.6;
-      const w = Math.max(36, Math.min(130, faceW * 0.6));
+      const w = Math.max(36, Math.min(130, opts.width ?? faceW * 0.6));
       plume = new GasColumn({
         x: center.x - w / 2, y: point.y - gh, w, h: gh,
         dir, accel, maxSpeed, life: 2.5, gasId: id,
-        source: srcObj, // 产气源（自身不被自己的气流托起）
-        origin: ctx ? { kind: 'reaction', text: ctx.lastRxText ?? '' } : null, // 来源方程式（调试悬停显示）
+        source: plumeKey, // 产气源（自身不被自己的气流托起；导气管=该管道）
+        origin: opts.origin ?? null, // 来源方程式（调试悬停显示；由调用方盖章）
         id: `plume${++this._plumeSeq}`,
       });
       this.addObject(plume);
@@ -1142,7 +1236,7 @@ class Scene {
     // 否则旧柱停在原地，形成"空中旧柱 + 液面新柱"的双柱悬空（用户反馈）
     const gh = (srcObj && srcObj.gasHeight) || (emit.container && emit.container.gasHeight) || 80;
     const faceW = eb ? eb.x1 - eb.x0 : (srcObj?.w ?? emit.container?.w ?? 48) * 0.6;
-    const w = Math.max(36, Math.min(130, faceW * 0.6));
+    const w = Math.max(36, Math.min(130, opts.width ?? faceW * 0.6));
     plume.x = center.x - w / 2;
     plume.y = point.y - gh;
     plume.w = w;
@@ -1151,8 +1245,8 @@ class Scene {
     const n = Math.max(1, Math.min(6, Math.round(mass * 1.2)));
     for (let i = 0; i < n; i++) {
       const x = point.x + (Math.random() - 0.5) * 22;
-      const y = point.y + (dir < 0 ? -(3 + i * 4) : 3 + i * 4);
-      this.addObject(new Bubble({ x, y, dir }));
+      const y = point.y + (bubbleDir < 0 ? -(3 + i * 4) : 3 + i * 4);
+      this.addObject(new Bubble({ x, y, dir: bubbleDir }));
     }
     // 集气瓶截留：按住 C 且背包选中集气瓶时，**距离玩家最近的一处气泡柱**产生的
     // 气体不进大气，直接装入集气瓶（按产气速度收集，5g 封顶；瓶满后恢复正常管线）。
@@ -2100,9 +2194,100 @@ class ChemistryEngine {
         // （如 Fe(OH)2 沉淀 + CuSO4 不反应；Cu(OH)2 + HCl 溶解）
         if (!isSoluble(idA) && eB.kind !== 'acid' && eB.kind !== 'base') continue;
         if (!isSoluble(idB) && eA.kind !== 'acid' && eA.kind !== 'base') continue;
+        // ★ 可溶碳酸盐遇一元酸：先走"分步质子化"第一步（只生成碳酸氢盐，不产气）
+        if (this._stepwiseCarbonate(matA, matB, idA, idB, eA, eB, dt, env, ctx)) continue;
         this._ionicOne(matA, matB, idA, idB, eA, eB, dt, env, ctx);
       }
     }
+  }
+
+  /**
+   * 可溶碳酸盐 + 一元酸 → **分步质子化第一步**：CO3²⁻ + H⁺ → HCO3⁻（本步不产气）。
+   * ----------------------------------------------------------------------------
+   * 一步写成 CO3²⁻ + 2H⁺ → CO₂↑ 会让"碳酸钠过量时滴一滴盐酸"立刻冒泡（用户实测：
+   * 一滴就出气体），也与 rules.js 里既有的分步特例（Na2CO3+HCl→NaHCO3+NaCl）自相矛盾。
+   * 计量 = 一次分子级交换：**1 分子酸 + 1 分子碳酸盐 → 1 分子碳酸氢盐 + 1 分子酸根盐**
+   * （Na2CO3+HCl → NaHCO3+NaCl；Na2CO3+H2CO3 → 2NaHCO3；K2CO3+HNO3 → KHCO3+KNO3）。
+   * 二氧化碳只在碳酸根耗尽后由 (H⁺ + HCO3⁻) 那一步产生（见 _carbonateBlocksGas）。
+   * 不溶碳酸盐（CaCO₃ 固体）不走这里：表面遇酸直接分解出 CO₂（经典现象）。
+   * 二元/多元酸（H₂SO₄ 等）不走这里：一个分子带两个质子，按整分子直接分解，
+   * 由通用离子路径处理（Na2CO3+H2SO4 → Na2SO4+CO2↑+H2O）。
+   * @returns {boolean} true = 本对已由本步负责（调用方不再走通用离子路径）
+   */
+  _stepwiseCarbonate(matA, matB, idA, idB, eA, eB, dt, env, ctx) {
+    const pick = (acidId, acidE, acidMat, carbId, carbE, carbMat) => {
+      if (!acidE.ions || !carbE.ions) return null;
+      if (acidE.ions.cat !== 'H+' || (acidE.ions.catCount ?? 1) !== 1) return null;
+      if (carbE.ions.an !== 'CO3^2-') return null;
+      if (!isSoluble(carbId)) return null; // 不溶碳酸盐：表面直接分解（走离子路径产 CO2）
+      return {
+        acidId, acidMat, carbId, carbMat, acidE, carbE,
+        bicarb: ensureSalt(carbE.ions.cat, 'HCO3-').id,
+        bysalt: ensureSalt(carbE.ions.cat, acidE.ions.an).id,
+      };
+    };
+    const m = pick(idA, eA, matA, idB, eB, matB) ?? pick(idB, eB, matB, idA, eA, matA);
+    if (!m) return false;
+    const mmAcid = getSubstance(m.acidId).mm;
+    const mmCarb = getSubstance(m.carbId).mm;
+    const availAcid = this._availFor(m.acidMat, m.acidId) / mmAcid;
+    const availCarb = this._availFor(m.carbMat, m.carbId) / mmCarb;
+    const rate = RATE.ionic * phaseFactor(m.acidMat.phase, m.carbMat.phase)
+      * this._concFactorFor(m.acidMat, m.acidId) * this._concFactorFor(m.carbMat, m.carbId)
+      * this._strengthFactor(m.acidMat, m.acidId);
+    const units = Math.min(availAcid, availCarb, (rate * dt) / mmAcid);
+    // 组合成立但本 tick 推进量为 0：仍返回 true —— 只要碳酸根还在，产气那一步就得让路
+    if (!(units > 1e-12)) return true;
+    this._stamp(ctx, reactionEquation([m.acidId, m.carbId], [m.bicarb, m.bysalt]));
+    const takeAcid = units * mmAcid;
+    const takeCarb = units * mmCarb;
+    const remAcid = m.acidMat.consume(m.acidId, takeAcid);
+    const remCarb = m.carbMat.consume(m.carbId, takeCarb);
+    const scale = Math.min(
+      takeAcid > 1e-12 ? remAcid / takeAcid : 1,
+      takeCarb > 1e-12 ? remCarb / takeCarb : 1,
+    );
+    if (!(scale > 1e-9)) return true;
+    const act = units * scale;
+    this._emit(m.bicarb, act * getSubstance(m.bicarb).mm, ctx);
+    this._emit(m.bysalt, act * getSubstance(m.bysalt).mm, ctx);
+    this._logReaction(ctx, [m.acidId, m.carbId], [m.bicarb, m.bysalt]);
+    return true;
+  }
+
+  /** 分步质子化第二步的门闸：体系里还有 CO3²⁻ 时，H⁺ 优先给碳酸根
+   *  （酸性强弱：CO3²⁻ > HCO3⁻），HCO3⁻ 这条不产气。
+   *  少了它，"碳酸钠 + 少量盐酸"会因为刚生成的 HCO3⁻ 立刻被下一个 H⁺ 打掉而冒泡——
+   *  分步就白做了。碳酸根耗尽（全部变碳酸氢盐）后闸门自动打开 → 开始冒泡。
+   *  离子路径与数据规则（NaHCO3+HCl 等特例）都走这道闸门，两条路不会各行其是。 */
+  _carbonateBlocksGas(ctx, ...mats) {
+    for (const m of [...mats, ctx.containerMat]) {
+      if (!m || typeof m.ids !== 'function') continue;
+      for (const id of m.ids()) {
+        if (id === 'CO3^2-') return true; // 裸离子条目
+        const e = getSubstance(id);
+        if (e.ions?.an === 'CO3^2-' && isSoluble(id) && m.avail(id) > 1e-9) return true;
+      }
+    }
+    return false;
+  }
+
+  /** 数据规则版闸门：**酸**在质子化碳酸氢盐（HCO3⁻）而体系里还有碳酸根 → 跳过。
+   *  只对"碳酸氢盐 + 酸"成立；NaHCO3 + NaOH 这类碱参与的规则不受影响。 */
+  _ruleBlockedByCarbonate(rule, ctx, ...mats) {
+    if (!rule || !Array.isArray(rule.reactants)) return false;
+    const isBicarb = (id) => {
+      if (id === 'HCO3-') return true;
+      const e = getSubstance(id);
+      return e.ions?.an === 'HCO3-';
+    };
+    const isAcid = (id) => {
+      const e = getSubstance(id);
+      return e.ions?.cat === 'H+' || e.kind === 'acid';
+    };
+    if (!rule.reactants.some((r) => isBicarb(r.id))) return false;
+    if (!rule.reactants.some((r) => isAcid(r.id))) return false;
+    return this._carbonateBlocksGas(ctx, ...mats);
   }
 
   _ionicOne(matA, matB, idA, idB, eA, eB, dt, env, ctx) {
@@ -2116,6 +2301,9 @@ class ChemistryEngine {
     const p1 = this._pairInfo(catA, anB, idA, idB);
     const p2 = this._pairInfo(catB, anA, idA, idB);
     if (!p1.drives && !p2.drives) return;
+    // ★ 分步质子化闸门：体系里还有 CO3^2- 时，H+ 先给碳酸根（HCO3- 暂不产气）
+    if ((catB === 'H+' && anA === 'HCO3-' && this._carbonateBlocksGas(ctx, matA, matB))
+      || (catA === 'H+' && anB === 'HCO3-' && this._carbonateBlocksGas(ctx, matA, matB))) return;
 
     // 离子不在表中（运行时生成的盐/自定义反应引入的离子）→ 跳过该离子反应，不崩溃
     const c1 = abs(IONS[catA]?.charge ?? 0);
@@ -2184,7 +2372,16 @@ class ChemistryEngine {
   /** 一对 (catId, anId) 的产物与是否驱动反应（沉淀/气体/水/显色） */
   _pairInfo(catId, anId, idA, idB) {
     if (catId === 'H+' && anId === 'OH-') return { drives: true, products: [{ id: 'H2O', coeff: 1 }] };
-    if (catId === 'H+' && anId === 'CO3^2-') return { drives: true, products: [{ id: 'CO2', coeff: 1 }, { id: 'H2O', coeff: 1 }] };
+    // 碳酸根遇酸**分步**：CO3^2- + H+ → HCO3-（无气体），HCO3- + H+ → CO2↑ + H2O。
+    //   一步写成 CO2 会让"碳酸钠过量时滴一滴盐酸"立刻冒气泡——与分子级特例
+    //   （Na2CO3 + HCl → NaHCO3 + NaCl，见 rules.js）自相矛盾，也不符合实验事实。
+    //   可溶碳酸盐的第一步由 _stepwiseCarbonate 承担（生成碳酸氢盐）；
+    //   这里只保留**不溶碳酸盐**（CaCO3 固体表面直接分解产气）与 HCO3- 第二步。
+    if (catId === 'H+' && anId === 'CO3^2-') {
+      const carbId = getSubstance(idA).ions?.an === 'CO3^2-' ? idA : idB;
+      if (isSoluble(carbId)) return { drives: false, products: [] };
+      return { drives: true, products: [{ id: 'CO2', coeff: 1 }, { id: 'H2O', coeff: 1 }] };
+    }
     if (catId === 'H+' && anId === 'HCO3-') return { drives: true, products: [{ id: 'CO2', coeff: 1 }, { id: 'H2O', coeff: 1 }] };
     if (catId === 'H+' && anId === 'SO3^2-') return { drives: true, products: [{ id: 'SO2', coeff: 1 }, { id: 'H2O', coeff: 1 }] };
     if (catId === 'H+' && anId === 'S2-') return { drives: true, products: [{ id: 'H2S', coeff: 1 }] };
@@ -2324,6 +2521,9 @@ class ChemistryEngine {
    * 规则带 explosive 标签 → 推进后触发爆炸。
    */
   _runRule(rule, sources, dt, env, ctx) {
+    // ★ 分步质子化闸门（放在这里 = 所有执行路径统一生效：成对路径 _runPairDataRule
+    //   与同材料路径 reactSelf 都走 _runRule，不会有一条路绕过闸门）
+    if (this._ruleBlockedByCarbonate(rule, ctx, ...Object.values(sources))) return;
     if (!conditionMet(rule.condition, env, ctx)) return;
     const ref = rule.reactants[0];
     const refMM = getSubstance(ref.id).mm;
@@ -2538,14 +2738,18 @@ class ChemistryEngine {
   }
 
   /** 气体产物：碱/酸吸收 → 水溶解成酸 → 剩余进大气。
-   *  onGas 返回"已截留质量"（集气瓶收集）——截留部分不再走吸收/水溶/大气；
-   *  opts.forceDissolve（向溶液通入气体）：CO2/SO2/NO2/Cl2 也能溶进水（主动鼓泡）。 */
+   *  onGas 返回"已截留质量"（集气瓶收集 / 导气管输送）——截留部分不再走吸收/水溶/大气；
+   *  opts.forceDissolve（向溶液通入气体）：CO2/SO2/NO2/Cl2 也能溶进水（主动鼓泡）。
+   *  opts.skipOnGas：跳过 onGas 钩子（导气管先把气体鼓入输出池吸收，多余部分再另行冒柱）。
+   *  opts.deferAtmosphere：剩余气体不直接进大气、作为返回值交还调用方（导气管先在输出端
+   *  管口冒气泡柱、再入大气）。
+   *  返回：因 deferAtmosphere 未入大气的剩余质量（普通调用返回 0）。 */
   _emitGas(id, mass, ctx, opts = {}) {
-    if (!Number.isFinite(mass) || mass <= 1e-9) return;
-    if (ctx.env.onGas) {
+    if (!Number.isFinite(mass) || mass <= 1e-9) return 0;
+    if (ctx.env.onGas && !opts.skipOnGas) {
       const captured = ctx.env.onGas(id, mass, ctx) || 0;
       mass -= captured;
-      if (mass <= 1e-9) return;
+      if (mass <= 1e-9) return 0;
     }
     let leftover = mass;
     const baseMat = ctx.inContainer ? ctx.containerMat : null;
@@ -2567,7 +2771,7 @@ class ChemistryEngine {
           this._emit(p.id, gasMoles * p.coeff * getSubstance(p.id).mm, ctx);
         }
         leftover -= gasAbsorb;
-        if (leftover <= 1e-9) return;
+        if (leftover <= 1e-9) return 0;
       }
     }
     // 2. 水溶解气体（CO2→H2CO3、SO2→H2SO3、SO3→H2SO4、NO2→HNO3+NO、NH3→氨水、
@@ -2598,7 +2802,11 @@ class ChemistryEngine {
         break;
       }
     }
-    if (leftover > 1e-9) ctx.env.atmosphere.add(id, leftover);
+    if (leftover > 1e-9) {
+      if (opts.deferAtmosphere) return leftover; // 剩余气体交还调用方（导气管：先冒柱再入大气）
+      ctx.env.atmosphere.add(id, leftover);
+    }
+    return 0;
   }
 
   /**
@@ -3147,11 +3355,48 @@ const FLAME_COLORS = {
   'Mg2+': '#d8ffe8', // 白绿
 };
 
-/** 物质的焰色：优先物质自带 flameColor（单质），否则按阳离子查表 */
+/** 元素级焰色表：由 FLAME_COLORS 的阳离子键派生（Na+ → Na），供**没有离子表**的
+ *  化合物按化学式里的元素判色。
+ *  ★ 排除铁：铁没有焰色反应（Fe 单质 → null）。FLAME_COLORS 里的 Fe2+/Fe3+ 是
+ *    "铁盐溶液焰色"的游戏简化，只从离子表走，不下沉到元素级——否则 Fe、Fe3O4
+ *    这类无离子表的铁物质会凭空得到橙金色火焰。 */
+const FLAME_ELEMENTS = (() => {
+  const out = {};
+  for (const [ion, color] of Object.entries(FLAME_COLORS)) {
+    const el = ion.replace(/\d*\+$/, '');
+    if (el === 'Fe') continue;
+    if (!(el in out)) out[el] = color; // 同元素多价态取首个（低价）
+  }
+  return out;
+})();
+
+/** 化学式里出现的元素符号（忽略系数、数字、括号、结晶水点）。
+ *  ★ 元素符号后面不能再跟小写字母——化学式里符号之后只可能是数字/括号/下一个元素
+ *    或结束。否则 "Litmus"（石蕊，非化学式）会被切出 "Li" 而误判成锂焰紫红色。 */
+function elementsIn(id) {
+  const str = String(id);
+  const out = [];
+  const re = /[A-Z][a-z]?/g;
+  let m;
+  while ((m = re.exec(str))) {
+    if (/[a-z]/.test(str[m.index + m[0].length] ?? '')) continue;
+    out.push(m[0]);
+  }
+  return out;
+}
+
+/** 物质的焰色：优先物质自带 flameColor（单质），其次按阳离子查表；
+ *  没有离子表的**化合物**（过氧化钠 Na2O2、铜绿 Cu2(OH)2CO3、氮化镁 Mg3N2…）按
+ *  化学式里的元素判色——焰色反应本质是**元素**的性质，缺这一步时这些物质上了灯
+ *  也不变色（Na2O 上灯变黄、它氧化成 Na2O2 后反而没颜色了）。
+ *  单质（kind:'metal'）不走元素兜底：金属的焰色由自带 flameColor 显式声明
+ *  （Na/K/Li 有，Fe/Cu/Zn/Mg 无），免得顺手改掉这几种金属的既有表现。 */
 function flameColorOf(id) {
   const s = getSubstance(id);
   if (s.flameColor) return s.flameColor;
   if (s.ions) return FLAME_COLORS[s.ions.cat] ?? null;
+  if (s.kind === 'metal') return null;
+  for (const el of elementsIn(s.id ?? id)) if (FLAME_ELEMENTS[el]) return FLAME_ELEMENTS[el];
   return null;
 }
 
@@ -3518,6 +3763,9 @@ const COMBUSTION_RULES = [
   // 2Na + O2 --常温--> Na2O（慢） / 2Na + O2 --点燃--> Na2O2
   { type: 'combustion', reactants: [{ id: 'Na', coeff: 4 }, { id: 'O2', coeff: 1 }], products: [{ id: 'Na2O', coeff: 2 }], condition: 'normal', rate: RATE.combustion * 0.2 },
   { type: 'combustion', reactants: [{ id: 'Na', coeff: 2 }, { id: 'O2', coeff: 1 }], products: [{ id: 'Na2O2', coeff: 1 }], condition: 'ignited', rate: RATE.combustion, sparks: true },
+  // 2Na2O + O2 --加热--> 2Na2O2（钠在空气中加热得到的是过氧化钠：先常温氧化出的 Na2O
+  //   上了灯还要继续被氧化。缺这条规则时，钠块在灯上会停在 Na2O+Na2O2 的混合物上不动）
+  { type: 'combustion', reactants: [{ id: 'Na2O', coeff: 2 }, { id: 'O2', coeff: 1 }], products: [{ id: 'Na2O2', coeff: 2 }], condition: 'heat', rate: RATE.thermal },
   { type: 'combustion', reactants: [{ id: 'K', coeff: 2 }, { id: 'O2', coeff: 1 }], products: [{ id: 'K2O', coeff: 1 }], condition: 'ignited', rate: RATE.combustion, sparks: true },
   // 3Mg + N2 --点燃--> Mg3N2（镁在氮气中燃烧）
   { type: 'combustion', reactants: [{ id: 'Mg', coeff: 3 }, { id: 'N2', coeff: 1 }], products: [{ id: 'Mg3N2', coeff: 1 }], condition: 'ignited', rate: RATE.combustion * 0.5 },
@@ -4621,15 +4869,20 @@ class CollisionSystem {
     return ok;
   }
 
-  /** 判定是否为可自动上行的矮台阶：是则抬升并返回 true（不夹紧 X） */
+  /** 判定是否为可自动上行的矮台阶：是则抬升并返回 true（不夹紧 X）。
+   *  ★ 台阶高度上限优先取**障碍物自己的 stepMax**（开关/提取器/酒精灯/喷灯这类"本来就是
+   *    给人踩上去或推物块上去"的台子设备，见 Switch/Extractor/Lamp 构造函数），否则用全局
+   *    autoStepMax。没有这一步，22px 高的压力开关、40px 高的酒精灯都推不上去也走不上去
+   *    （autoStepMax 只有 14）。墙（Floor）不声明 stepMax → 依旧挡人，不会变成万能爬坡。 */
   tryAutoStep(b, s, dir) {
     if (!dir) return false;
     const inFront = dir > 0
       ? s.left <= b.right + 0.01 && s.right >= b.right
       : s.right >= b.left - 0.01 && s.left <= b.left;
     if (!inFront) return false;
+    const max = Number.isFinite(s.stepMax) && s.stepMax > 0 ? s.stepMax : this.autoStepMax;
     const rise = b.bottom - s.top; // 需抬升的高度（台阶顶高于脚底）
-    if (!(rise > 0 && rise <= this.autoStepMax)) return false;
+    if (!(rise > 0 && rise <= max)) return false;
     b.setBottom(s.top);
     return true;
   }
@@ -5430,6 +5683,17 @@ function rr(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
+/** 平行四边形路径（游戏统一元素：斜牌；文字保持正立）。sk = 单侧斜切量（px） */
+function para(ctx, x, y, w, h, sk = 9) {
+  const s = Math.max(1, Math.min(sk, w / 2 - 1, h / 2));
+  ctx.beginPath();
+  ctx.moveTo(x + s, y);
+  ctx.lineTo(x + w, y);
+  ctx.lineTo(x + w - s, y + h);
+  ctx.lineTo(x, y + h);
+  ctx.closePath();
+}
+
 /** 带发光描边与内阴影的圆角面板（神话风） */
 function panel(ctx, x, y, w, h, accent = THEME.gold.deep, r = 10) {
   ctx.save();
@@ -5550,6 +5814,7 @@ function flamePath(ctx, x, y, h, w, wob) {
 exports.THEME = THEME;
 exports.screenTextScale = screenTextScale;
 exports.rr = rr;
+exports.para = para;
 exports.panel = panel;
 exports.glowText = glowText;
 exports.clearText = clearText;
@@ -7973,7 +8238,15 @@ function canvasTransformDpr(canvas) {
 /** 设定画布：w/h = 逻辑尺寸（CSS px）；缓冲 = w×h×dpr，CSS 尺寸 = w×h。
  *  尺寸没变则不重设缓冲（重设会清空画布，避免无谓闪烁——同编辑器 ensureCanvasSize）。 */
 function setupCanvasSize(canvas, w, h) {
-  const dpr = canvasDpr();
+  let dpr = canvasDpr();
+  // 大屏（2K/4K）铺满时，物理缓冲 = w×h×dpr² 很容易超过 1000 万像素：
+  // 桌面 GPU 画 2D 还行，Retina 5K 会到 3000 万+（每帧清屏都很贵）。
+  // 按**面积**再压一次 dpr（逻辑尺寸不变 → 布局/坐标完全不受影响，只是缓冲变少）。
+  const MAX_BUF_PX = 11e6;
+  if (w > 0 && h > 0) {
+    const px = w * h * dpr * dpr;
+    if (px > MAX_BUF_PX) dpr = Math.max(1, Math.round(Math.sqrt(MAX_BUF_PX / (w * h)) * 100) / 100);
+  }
   const bw = Math.max(1, Math.round(w * dpr));
   const bh = Math.max(1, Math.round(h * dpr));
   if (canvas.width !== bw) canvas.width = bw;
@@ -7988,10 +8261,27 @@ function setupCanvasSize(canvas, w, h) {
   return canvas;
 }
 
-/** 窗口自适应视口上限（逻辑 px）≈ 原参考视口 1100×700 的 1.6 倍：
- *  超大窗口（4K/超宽屏 dpr=1）不再无脑放大——世界内容会变成 2.7 倍怪大。 */
-const MAX_VIEW_W = 1760;
-const MAX_VIEW_H = 1120;
+/** 窗口自适应视口上限（逻辑 px）：桌面大屏也铺满（4K 以内）。
+ *  ★ 世界物体"放大到什么程度"由 CFG.camera.desktopScaleMax 限制，所以这里可以放心
+ *    把画布铺满窗口——多出来的视野装更多关卡内容，而不是把一切等比放大。 */
+const MAX_VIEW_W = 3840;
+const MAX_VIEW_H = 2160;
+
+/** 桌面端 HUD/文字放大系数（随窗口尺寸，1~1.6）。
+ *  "游戏内容不一定要更大，但文字必须看得清"：HUD 与画布内 UI 比世界物体多放大一档；
+ *  移动端已有自己的紧凑/放大逻辑 → 返回 1。 */
+function uiScaleOf(canvas) {
+  const W = canvasLW(canvas);
+  const H = canvasLH(canvas);
+  if (!(W > 0 && H > 0)) return 1;
+  if (typeof window !== 'undefined' && window.matchMedia) {
+    try {
+      if (window.matchMedia('(pointer: coarse)').matches) return 1; // 触屏：走原有移动端布局
+    } catch (e) { /* 老内核 */ }
+  }
+  const base = Math.min(W / 1280, H / 720);
+  return Math.max(1, Math.min(1.6, Math.round(base * 100) / 100));
+}
 
 /** 逻辑尺寸 = 窗口可用尺寸（扣 pad）但不超过上限；返回 {w,h}（由 setupCanvasSize 应用）。
  *  无 window（Node 测试）→ 直接使用上限值。 */
@@ -8018,6 +8308,7 @@ exports.canvasTransformDpr = canvasTransformDpr;
 exports.setupCanvasSize = setupCanvasSize;
 exports.MAX_VIEW_W = MAX_VIEW_W;
 exports.MAX_VIEW_H = MAX_VIEW_H;
+exports.uiScaleOf = uiScaleOf;
 exports.fitCanvasToWindow = fitCanvasToWindow;
 
   };
@@ -9676,7 +9967,7 @@ class Dropper extends Obj {
       }
     }
     if (this.liquid > 1e-9 && id !== this.substance) {
-      pushNotice(scene, '管里是别的液体——不能混吸');
+      pushNotice(scene, '管里是别的液体');
       return false;
     }
     const take = Math.min(CFG.item.dropperTransfer, room);
@@ -9876,7 +10167,7 @@ exports.Dropper = Dropper;
 
 const { CFG } = __require('src/core/config.js');;
 const { toggleFullscreen, fullscreenSupported, isFullscreen } = __require('src/core/fullscreen.js');;
-const { canvasLW, canvasLH } = __require('src/render/canvas.js');;
+const { canvasLW, canvasLH, uiScaleOf } = __require('src/render/canvas.js');;
 
 /** 屏幕坐标 → 世界坐标（与 Renderer.frame 同口径：跟随玩家/聚焦内容；鸟瞰时走鸟瞰视图）。
  *  输入/输出均为**逻辑像素**（canvas 缓冲 ×dpr，UI/命中统一逻辑系）。 */
@@ -9894,12 +10185,14 @@ function screenToWorld(scene, canvas, sx, sy) {
  *  - 全屏：再让开 iOS 系统全屏关闭按钮（也挂在左上角）——report.js 的返回钮
  *    在全屏时同步下移到 52，这里留到 92。
  * 桌面（fine pointer）：默认 10；关卡页注入"返回选关"悬浮钮时会声明避让量（见函数内注释）。
+ *  uiK：桌面大屏 HUD 放大系数（见 canvas.js uiScaleOf）——返回值换算到 HUD 坐标空间。
  */
-function hudTopOffset(scene) {
+function hudTopOffset(scene, uiK = 1) {
   const t = scene && scene._touchUI;
+  const k = uiK > 0 ? uiK : 1;
   if (t && typeof t.enabled === 'function' && t.enabled()) {
     const base = (t.insets && t.insets.top) || 0;
-    return Math.max(isFullscreen() ? CFG.touch.hudTopFs : CFG.touch.hudTop, base + 10);
+    return Math.max(isFullscreen() ? CFG.touch.hudTopFs : CFG.touch.hudTop, base + 10) / k;
   }
   // 桌面端：关卡页左上角有"返回选关"悬浮钮（levels/report.js 注入）。画布自高清改造后
   // 铺满窗口，该钮会压住 HUD 左上卡片 → 这里**直接量它的实际底边**（比让页面声明避让量更
@@ -9912,13 +10205,13 @@ function hudTopOffset(scene) {
         const cv = document.querySelector('canvas');
         const ctop = cv ? cv.getBoundingClientRect().top : 0;
         const inset = Math.ceil(rb.bottom - ctop + 6);
-        if (Number.isFinite(inset) && inset > 10) return inset;
+        if (Number.isFinite(inset) && inset > 10) return inset / k;
       }
     }
   } catch (e) { /* 量不到就退回兜底 */ }
   const g = (typeof window !== 'undefined' && Number.isFinite(window.CHEZZLE_HUD_TOP_INSET))
     ? window.CHEZZLE_HUD_TOP_INSET : 0;
-  return Math.max(10, g);
+  return Math.max(10, g) / k;
 }
 
 /** 小屏紧凑视图？触屏小屏（含老机型无全屏：浏览器 chrome 占高，视口实际很小——
@@ -9928,16 +10221,29 @@ function compactView(W, H) {
   return W < 500 || H < 460;
 }
 
-/** 紧凑系数（非紧凑=1；紧凑=0.72 基准） */
+/** 极窄视口（无全屏的手机横屏：iOS Safari 不支持元素全屏，可用高度常常只剩 250~330px）
+ *  → 比 compactView 再狠一档：HUD 卡片/按钮/物品栏/摇杆全部再缩一圈，
+ *  否则"本就不够的屏幕"会被界面吃掉一大半（用户截图：文字互相压叠）。 */
+function tinyView(W, H) {
+  return H < 380 || W < 560;
+}
+
+/** 紧凑系数（非紧凑=1；紧凑=0.72；极窄=0.58） */
 function compactK(W, H) {
+  if (tinyView(W, H)) return 0.58;
   return compactView(W, H) ? 0.72 : 1;
 }
 
-/** 触屏端的安全区 insets；桌面/未启用 → 全 0（刘海横屏时 left/right 才有值） */
-function touchInsetsOf(scene) {
+/** 触屏端的安全区 insets；桌面/未启用 → 全 0（刘海横屏时 left/right 才有值）。
+ *  uiK：桌面 HUD 放大系数（把 CSS px 换算到 HUD 坐标空间；触屏恒 1）。 */
+function touchInsetsOf(scene, uiK = 1) {
   const t = scene && scene._touchUI;
-  if (t && typeof t.enabled === 'function' && t.enabled()) return t.insets || {};
-  return {};
+  const k = uiK > 0 ? uiK : 1;
+  const ins = (t && typeof t.enabled === 'function' && t.enabled()) ? (t.insets || {}) : {};
+  if (k === 1) return ins;
+  const out = {};
+  for (const key of Object.keys(ins)) out[key] = (Number(ins[key]) || 0) / k;
+  return out;
 }
 
 // ---- 顶部按钮几何（HUD 渲染与点击命中共用；top 缺省 10 = 桌面，right = 安全区右缘）--
@@ -9986,14 +10292,16 @@ function inventorySlotRects(W, H, slots, margins = { bottom: 10, right: 10 }) {
 }
 
 /** 触屏设备上的物品栏边距（安全区 + 固定边距）；桌面=默认值。
- *  HUD 渲染 / touch 命中 / 物品栏点击共用，保证"点哪是哪"。 */
-function uiMargins(scene) {
+ *  HUD 渲染 / touch 命中 / 物品栏点击共用，保证"点哪是哪"。
+ *  uiK：桌面 HUD 放大系数（换算到 HUD 坐标空间）。 */
+function uiMargins(scene, uiK = 1) {
+  const k = uiK > 0 ? uiK : 1;
   const t = scene && scene._touchUI;
   if (t && t.enabled()) {
     const i = t.insets;
-    return { bottom: (i.bottom ?? 0) + 10, right: (i.right ?? 0) + 10 };
+    return { bottom: ((i.bottom ?? 0) + 10) / k, right: ((i.right ?? 0) + 10) / k };
   }
-  return { bottom: 10, right: 10 };
+  return { bottom: 10 / k, right: 10 / k };
 }
 
 /** 命中可点击物体（onTap；bbox ±pad 宽容——滴管等细长物体好点中；
@@ -10038,11 +10346,18 @@ function tipPanelRect(W, top = 10, right = 0, H = null) {
  */
 function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   if (!scene || portraitScene(scene)) return false;
-  const top = hudTopOffset(scene);
-  const right = touchInsetsOf(scene).right || 0;
+  // 桌面大屏 HUD 整体放大 kUi（渲染见 hud.render）：命中一并换算到 HUD 坐标空间，
+  // 保证"看到的按钮"和"点到的位置"永远同源；世界点击仍用原始屏幕坐标。
+  const kUi = uiScaleOf(canvas);
+  const W = canvasLW(canvas) / kUi;
+  const H = canvasLH(canvas) / kUi;
+  const x = sx / kUi;
+  const y = sy / kUi;
+  const top = hudTopOffset(scene, kUi);
+  const right = touchInsetsOf(scene, kUi).right || 0;
   // 0) 鸟瞰模式：只认"返回"按钮（暂停态；未中 → 交给鸟瞰拖动/缩放管线）
   if (scene.overview) {
-    if (inRect(overviewButtonRect(canvasLW(canvas), top, right), sx, sy)) {
+    if (inRect(overviewButtonRect(W, top, right), x, y)) {
       scene.toggleOverview();
       onInfo?.({ type: 'overview-exit' });
     }
@@ -10051,7 +10366,7 @@ function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   // 1) 全屏按钮（仅触屏端显示；click/触点都在用户手势内，可请求全屏）。
   //    老设备/浏览器不支持元素全屏 API → 明确提示（不静默失效）
   if (scene._touchUI && typeof scene._touchUI.enabled === 'function' && scene._touchUI.enabled()) {
-    if (inRect(fullscreenButtonRect(canvasLW(canvas), top, right), sx, sy)) {
+    if (inRect(fullscreenButtonRect(W, top, right), x, y)) {
       if (fullscreenSupported()) toggleFullscreen();
       else pushNotice(scene, '此浏览器不支持全屏');
       onInfo?.({ type: 'fullscreen' });
@@ -10059,24 +10374,25 @@ function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
     }
   }
   // 2) 鸟瞰按钮（双端）
-  if (inRect(overviewButtonRect(canvasLW(canvas), top, right), sx, sy)) {
+  if (inRect(overviewButtonRect(W, top, right), x, y)) {
     scene.toggleOverview();
     onInfo?.({ type: 'overview' });
     return true;
   }
   // 3) 提示按钮（右上；hud.tipButton 同几何：top..top+34）
   //    点击 = 展示下一条可用提示（没有则俏皮话/收起）——面板/文案由 hud.onTipClick 管理
-  if (sx > canvasLW(canvas) - right - 84 && sx < canvasLW(canvas) - right - 8 && sy > top && sy < top + 34) {
+  if (x > W - right - 84 && x < W - right - 8 && y > top && y < top + 34) {
     if (hud && typeof hud.onTipClick === 'function') hud.onTipClick(scene);
     onInfo?.({ type: 'tip' });
     return true;
   }
   // 3.5) 提示面板（展开中）：面板上点击 = 消费（不穿透到场景）；右上 ✕ = 关闭
   if (hud && hud.showTip) {
-    const pr = tipPanelRect(canvasLW(canvas), top, right);
-    if (sx >= pr.x && sx <= pr.x + pr.w && sy >= pr.y && sy <= pr.y + pr.h) {
-      const r = hud._tipRect ?? pr;
-      if (sx >= r.x + r.w - 32 && sy <= r.y + 32) {
+    // ★ 以 HUD **实际绘制**的矩形为准（面板高度随文案行数变化，只有它知道）；
+    //   没画过（刚展开那一帧）才退回共享布局几何。两边不同源 = 点面板穿透到场景。
+    const pr = hud._tipRect ?? tipPanelRect(W, top, right, H);
+    if (x >= pr.x && x <= pr.x + pr.w && y >= pr.y && y <= pr.y + pr.h) {
+      if (x >= pr.x + pr.w - 32 && y <= pr.y + 32) {
         if (typeof hud.closeTip === 'function') hud.closeTip();
         else hud.showTip = false;
         onInfo?.({ type: 'tip-close' });
@@ -10089,10 +10405,10 @@ function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   // 4) 物品栏选格（右下；几何与 HUD 渲染共用 inventorySlotRects）
   const p = scene.player;
   if (p && p.inventory) {
-    const rects = inventorySlotRects(canvasLW(canvas), canvasLH(canvas), p.inventory.slots, uiMargins(scene));
+    const rects = inventorySlotRects(W, H, p.inventory.slots, uiMargins(scene, kUi));
     for (let i = 0; i < rects.length; i++) {
       const r = rects[i];
-      if (sx >= r.x && sx <= r.x + r.size && sy >= r.y && sy <= r.y + r.size) {
+      if (x >= r.x && x <= r.x + r.size && y >= r.y && y <= r.y + r.size) {
         p.inventory.selected = i;
         onInfo?.({ type: 'slot' });
         return true;
@@ -10224,7 +10540,7 @@ function handleScenePressMove(scene, canvas, sx, sy) {
         ny = pcy + dy * k - o.h / 2;
         if (!d._noticed) {
           d._noticed = true;
-          pushNotice(scene, '距离玩家太远——滴管拖不出这个范围');
+          pushNotice(scene, '距离玩家太远');
         }
       }
     }
@@ -10339,6 +10655,7 @@ function bindSceneClick(canvas, getScreenPos, getActive) {
 exports.screenToWorld = screenToWorld;
 exports.hudTopOffset = hudTopOffset;
 exports.compactView = compactView;
+exports.tinyView = tinyView;
 exports.compactK = compactK;
 exports.touchInsetsOf = touchInsetsOf;
 exports.overviewButtonRect = overviewButtonRect;
@@ -10805,16 +11122,18 @@ exports.Rope = Rope;
 // 鸟瞰（灵魂出窍）：暂停模拟，整关自由缩放/平移——HUD 只留"返回"按钮 + 操作提示。
 // ============================================================================
 
-const { THEME, rr, panel, glowText, clearText } = __require('src/render/theme.js');;
+const { THEME, rr, para, panel, glowText, clearText } = __require('src/render/theme.js');;
 const { getSubstance, acidLabelOf, displayName } = __require('src/chem/substances.js');;
 const { MIN_ENTRY } = __require('src/chem/solution.js');;
 const { solutionColor } = __require('src/render/liquidrender.js');;
 const { CFG } = __require('src/core/config.js');;
 const { GasColumn } = __require('src/objects/gascolumn.js');;
 const { Block } = __require('src/objects/block.js');;
-const { inventorySlotRects, uiMargins, overviewButtonRect, fullscreenButtonRect, hudTopOffset, touchInsetsOf, compactView } = __require('src/level/click.js');;
+const { inventorySlotRects, uiMargins, overviewButtonRect, fullscreenButtonRect, hudTopOffset, touchInsetsOf, compactView, tinyView, tipPanelRect } = __require('src/level/click.js');;
 const { joyGeom, touchButtonRects } = __require('src/core/touch.js');;
-const { canvasLW, canvasLH, canvasTransformDpr } = __require('src/render/canvas.js');;
+const { fullscreenSupported } = __require('src/core/fullscreen.js');;
+const { canvasLW, canvasLH, canvasTransformDpr, uiScaleOf } = __require('src/render/canvas.js');;
+const { drawFaded } = __require('src/render/fade.js');;
 
 // 溯源 kind → 中文（调试悬停显示物体"为何存在"）
 const ORIGIN_LABELS = {
@@ -10936,15 +11255,76 @@ class Hud {
     return !!(t && typeof t.enabled === 'function' && t.enabled());
   }
 
+  /** 鸟瞰切换进度（0=正常画面，1=鸟瞰）：与 Camera.overviewMix 同源并做 ease */
+  _overviewMix() {
+    const c = this.scene && this.scene.camera;
+    const raw = c && Number.isFinite(c.overviewMix) ? c.overviewMix : (this.scene && this.scene.overview ? 1 : 0);
+    const t = Math.max(0, Math.min(1, raw));
+    return t * t * (3 - 2 * t);
+  }
+
+  /** 正常画面的 HUD（单独抽出：鸟瞰切换时先画到离屏层再整体淡出，
+   *  这样玩家面板/物品栏等自带 globalAlpha 的元素也能一起平滑淡出）。
+   *  W/H 为 **HUD 坐标空间**（= 真实逻辑尺寸 / uiK；见 render） */
+  _drawNormal(ctx, scene, p, W, H, time) {
+    const uiK = this._uiK || 1;
+    if (p && !p.hidden) {
+      // 左上信息卡（双端统一紧凑单卡）：物质/体质 + 身体组成 + 大气一张卡解决；
+      // 移动端面板体降透明（CFG.touch.hudAlpha），桌面不透明
+      this.playerPanelCompact(ctx, p, scene, time, hudTopOffset(scene, uiK));
+      // 最近反应本就是调试信息：非调试模式不显示（双端一致）
+      if (scene.debugMode) this.reactionPanel(ctx, p);
+      this.inventory(ctx, p, W, H, time);
+    }
+    this.debugPanel(ctx, scene, W, H, time);
+    if (scene.debugMode) this.hoverPanel(ctx, scene, W, H);
+    const top = hudTopOffset(scene, uiK);
+    const right = touchInsetsOf(scene, uiK).right || 0;
+    this.viewButton(ctx, W, top, right);
+    // 全屏按钮：仅在"触屏端 **且** 这台设备真的支持全屏"时画。
+    // 不支持（iPhone 上的 Safari 全系不支持元素全屏）时它只会白占一个按钮位，
+    // 点下去还弹一句"此浏览器不支持全屏"——极窄屏上寸土寸金，直接不画。
+    if (this._isTouch() && fullscreenSupported()) this.fsButton(ctx, W, top, right);
+    this.tipButton(ctx, W, top, right, time);
+    this.notice(ctx, scene, W, H, time);
+    this.bigBanner(ctx, scene, W, H, time);
+    this.touchControls(ctx, scene, W, H, time);
+  }
+
+  /** 鸟瞰淡出用的离屏层（尺寸跟随画布；无 DOM 环境返回 null → 直接画，不淡出） */
+  _hudLayer(W, H, dpr) {
+    if (typeof document === 'undefined' || !document.createElement) return null;
+    let c = this._layer;
+    if (!c) c = this._layer = document.createElement('canvas');
+    const bw = Math.max(1, Math.round(W * dpr));
+    const bh = Math.max(1, Math.round(H * dpr));
+    if (c.width !== bw) c.width = bw;
+    if (c.height !== bh) c.height = bh;
+    c._lw = W; // 让 HUD 里的 canvasLW/canvasLH/canvasTransformDpr 读到一致值
+    c._lh = H;
+    c._dpr = dpr;
+    return c;
+  }
+
   render(ctx, time = 0) {
     const scene = this.scene;
     const p = scene.player;
     // 屏幕空间 UI 以**逻辑像素**布局与绘制（基座乘 dpr）——否则 dpr>1 设备上
-    // 68px 按钮按物理像素结算、显示只有 34px（"移动端 HUD 明显偏小"根因）
-    const W = canvasLW(ctx.canvas);
-    const H = canvasLH(ctx.canvas);
+    // 68px 按钮按物理像素结算、显示只有 34px（"移动端 HUD 明显偏小"根因）。
+    // ★ 桌面大屏再乘一个 HUD 放大系数 uiK（见 canvas.js uiScaleOf）：世界物体最多放大
+    //   desktopScaleMax，而文字/面板再多放大一档，保证"内容不一定大、文字一定看得清"。
+    //   画布坐标系整体缩放 kUi，布局使用换算后的 W/H（命中在 click.js 里同口径换算）。
+    const realW = canvasLW(ctx.canvas);
+    const realH = canvasLH(ctx.canvas);
+    const uiK = uiScaleOf(ctx.canvas);
+    const W = realW / uiK;
+    const H = realH / uiK;
+    const dpr = canvasTransformDpr(ctx.canvas) * uiK;
+    this._uiK = uiK;
+    this._uiW = W;
+    this._uiH = H;
     ctx.save();
-    ctx.setTransform(canvasTransformDpr(ctx.canvas), 0, 0, canvasTransformDpr(ctx.canvas), 0, 0);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // 条件提示：出现"可点击展示"的新提示 → 按钮闪光（提示只在点按钮时展示，
     // 不自动弹面板；点按钮后由 onTipClick 拉取/收起）
@@ -10954,33 +11334,38 @@ class Hud {
     }
     if (!scene.tipReady) this._tipReadyShown = null;
 
-    // 鸟瞰（灵魂出窍）：干净的全局视图——只画返回按钮/操作提示/玩家魂标
-    if (scene.overview) {
+    // 鸟瞰（灵魂出窍）↔ 正常画面：镜头由 Camera 混合，HUD 交叉淡入淡出
+    const mix = this._overviewMix();
+    if (mix >= 0.999) {
+      // 干净的全局视图——只画返回按钮/操作提示/玩家魂标
       this.overviewUI(ctx, scene, W, H, time);
       this.rotateHint(ctx, scene, W, H);
       this.overlay(ctx, scene, W, H);
       ctx.restore();
       return;
     }
-
-    if (p && !p.hidden) {
-      // 左上信息卡（双端统一紧凑单卡）：物质/体质 + 身体组成 + 大气一张卡解决；
-      // 移动端面板体降透明（CFG.touch.hudAlpha），桌面不透明
-      this.playerPanelCompact(ctx, p, scene, time, hudTopOffset(scene));
-      // 最近反应本就是调试信息：非调试模式不显示（双端一致）
-      if (scene.debugMode) this.reactionPanel(ctx, p);
-      this.inventory(ctx, p, W, H, time);
+    if (mix <= 0.001) {
+      this._drawNormal(ctx, scene, p, W, H, time);
+    } else {
+      const layer = this._hudLayer(W, H, dpr);
+      if (layer) {
+        const lctx = layer.getContext('2d');
+        lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        lctx.clearRect(0, 0, W, H);
+        this._drawNormal(lctx, scene, p, W, H, time);
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.globalAlpha = 1 - mix;
+        ctx.drawImage(layer, 0, 0);
+        ctx.restore();
+      } else {
+        this._drawNormal(ctx, scene, p, W, H, time);
+      }
+      ctx.save();
+      ctx.globalAlpha = mix;
+      this.overviewUI(ctx, scene, W, H, time);
+      ctx.restore();
     }
-    this.debugPanel(ctx, scene, W, H, time);
-    if (scene.debugMode) this.hoverPanel(ctx, scene, W, H);
-    const top = hudTopOffset(scene);
-    const right = touchInsetsOf(scene).right || 0;
-    this.viewButton(ctx, W, top, right);
-    if (this._isTouch()) this.fsButton(ctx, W, top, right);
-    this.tipButton(ctx, W, top, right, time);
-    this.notice(ctx, scene, W, H, time);
-    this.bigBanner(ctx, scene, W, H, time);
-    this.touchControls(ctx, scene, W, H, time);
     this.rotateHint(ctx, scene, W, H);
     this.overlay(ctx, scene, W, H);
     ctx.restore();
@@ -10989,11 +11374,11 @@ class Hud {
   // ---- 顶部按钮：鸟瞰（双端）/ 全屏（触屏）；y 走 hudTopOffset（触屏避让
   //      "返回选关"悬浮钮与 iOS 系统全屏关闭钮；渲染与命中同源）--------------
 
-  /** 鸟瞰按钮（提示按钮左侧；桌面 V 键同效） */
+  /** 鸟瞰按钮（提示按钮左侧；桌面 V 键同效）。斜牌形状，与页面/选关的平行四边形一致 */
   viewButton(ctx, W, top = 10, right = 0) {
     const r = overviewButtonRect(W, top, right);
     ctx.save();
-    rr(ctx, r.x, r.y, r.w, r.h, 9);
+    para(ctx, r.x, r.y, r.w, r.h, 8);
     const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
     g.addColorStop(0, '#2a3a5e');
     g.addColorStop(1, '#141d38');
@@ -11016,7 +11401,7 @@ class Hud {
   fsButton(ctx, W, top = 10, right = 0) {
     const r = fullscreenButtonRect(W, top, right);
     ctx.save();
-    rr(ctx, r.x, r.y, r.w, r.h, 9);
+    para(ctx, r.x, r.y, r.w, r.h, 8);
     const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
     g.addColorStop(0, '#2a3a5e');
     g.addColorStop(1, '#141d38');
@@ -11036,11 +11421,12 @@ class Hud {
   // ---- 鸟瞰（灵魂出窍）界面：返回按钮 + 操作提示（干净的全局视图）-----------
 
   overviewUI(ctx, scene, W, H, time) {
-    const top = hudTopOffset(scene);
-    // 返回按钮（命中几何走 overviewButtonRect，点击/触点均可退出）
-    const r = overviewButtonRect(W, top, touchInsetsOf(scene).right || 0);
+    const uiK = this._uiK || 1;
+    const top = hudTopOffset(scene, uiK);
+    // 返回按钮（命中几何走 overviewButtonRect，点击/触点均可退出）；与顶部按钮同款斜牌
+    const r = overviewButtonRect(W, top, touchInsetsOf(scene, uiK).right || 0);
     ctx.save();
-    rr(ctx, r.x, r.y, r.w, r.h, 8);
+    para(ctx, r.x, r.y, r.w, r.h, 8);
     const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
     g.addColorStop(0, '#7a5a20');
     g.addColorStop(1, '#4a3410');
@@ -11061,7 +11447,7 @@ class Hud {
     const hint = touch ? '鸟瞰 · 单指拖动平移 · 双指捏合缩放' : '鸟瞰 · 滚轮缩放 · 拖动平移 · V 返回';
     ctx.font = 'bold 13px "Segoe UI", "Microsoft YaHei", sans-serif';
     const tw = ctx.measureText(hint).width;
-    rr(ctx, W / 2 - tw / 2 - 14, top + 3, tw + 28, 28, 9);
+    para(ctx, W / 2 - tw / 2 - 14, top + 3, tw + 28, 28, 7);
     ctx.fillStyle = 'rgba(10,12,26,0.72)';
     ctx.fill();
     ctx.strokeStyle = 'rgba(127,224,255,0.4)';
@@ -11076,7 +11462,7 @@ class Hud {
   touchControls(ctx, scene, W, H, time) {
     const ui = scene._touchUI;
     if (!ui || !ui.enabled()) return;
-    if (scene.overview) return; // 鸟瞰：触控改走平移/捏合手势，不画游戏控件
+    if (scene.overview && this._overviewMix() >= 0.999) return; // 鸟瞰：触控改走平移/捏合手势，不画游戏控件
     const touch = ui.insets;
     ctx.save();
     // —— 左下：半透明半圆摇杆基座（直径贴底边）——
@@ -11088,7 +11474,9 @@ class Hud {
     ctx.strokeStyle = 'rgba(232,184,75,0.32)';
     ctx.lineWidth = 1.5;
     ctx.stroke();
-    // 5 向刻度（上/左上/右上/左/右），激活方向高亮
+    // 5 向刻度（上/左上/右上/左/右），激活方向高亮（随摇杆半径等比缩放）
+    const tickOff = g.R * 0.91;
+    const tickDot = Math.max(2.4, g.R * 0.041);
     const TICKS = [
       { ux: 0, uy: -1, on: () => ui.joy && ui.joy.dir.jump && !ui.joy.dir.left && !ui.joy.dir.right },
       { ux: -0.7071, uy: -0.7071, on: () => ui.joy && ui.joy.dir.jump && ui.joy.dir.left },
@@ -11097,19 +11485,28 @@ class Hud {
       { ux: 1, uy: 0, on: () => ui.joy && ui.joy.dir.right && !ui.joy.dir.jump },
     ];
     for (const t of TICKS) {
-      const tx = g.cx + t.ux * (g.R - 11);
-      const ty = g.cy + t.uy * (g.R - 11);
+      const tx = g.cx + t.ux * tickOff;
+      const ty = g.cy + t.uy * tickOff;
       const active = t.on();
       ctx.beginPath();
-      ctx.arc(tx, ty, active ? 5 : 3.5, 0, Math.PI * 2);
+      ctx.arc(tx, ty, active ? tickDot * 1.42 : tickDot, 0, Math.PI * 2);
       ctx.fillStyle = active ? 'rgba(255,215,106,0.9)' : 'rgba(232,184,75,0.35)';
       ctx.fill();
     }
-    // 摇杆球（吸附位置；未触摸时居中淡显）
+    // 摇杆球（吸附位置；未触摸时居中淡显）——半径/移动距离随摇杆大小等比缩放。
+    // ★ ui.joy.sx/sy 是**手指相对圆心的像素偏移**（已按 R 截断、方向吸附过），不是单位向量；
+    //   这里按摇杆球允许的行程夹取，否则大摇杆下偏移量远超屏幕 → 球被画到画布外（用户复现）。
+    const knobR = Math.max(16, Math.round(g.R * 0.32));
+    const knobMove = Math.max(0, g.R - knobR - 8);
     const ox = ui.joy ? ui.joy.sx : 0;
     const oy = ui.joy ? ui.joy.sy : 0;
+    // 按**行程圆**整体缩放（逐轴截断会让斜向球心超出基座 → 球贴到圆外）
+    const rawLen = Math.hypot(ox, oy);
+    const klen = rawLen > knobMove && rawLen > 0.001 ? knobMove / rawLen : 1;
+    const kx = ox * klen;
+    const ky = oy * klen;
     ctx.beginPath();
-    ctx.arc(g.cx + ox, g.cy + oy, 39, 0, Math.PI * 2);
+    ctx.arc(g.cx + kx, g.cy + ky, knobR, 0, Math.PI * 2);
     ctx.fillStyle = ui.joy ? 'rgba(255,255,255,0.30)' : 'rgba(255,255,255,0.12)';
     ctx.fill();
     ctx.strokeStyle = ui.joy ? 'rgba(255,215,106,0.85)' : 'rgba(232,184,75,0.4)';
@@ -11354,34 +11751,36 @@ class Hud {
     if (a <= 0.02) return;
     const lines = String(b.text).split('\n').map((s) => s.trim()).filter((s) => s);
     if (!lines.length) return;
-    ctx.save();
-    ctx.globalAlpha = a;
     // 入场从上方轻微落定（只跟淡入期走）
     const rise = -(1 - Math.min(1, age / fade)) * 12;
-    let size = Math.min(46, H * 0.09);
-    const font = () => `900 ${size}px "Segoe UI", "Microsoft YaHei", sans-serif`;
-    ctx.font = font();
-    let maxW = 0;
-    for (const s of lines) maxW = Math.max(maxW, ctx.measureText(s).width);
-    if (maxW > W * 0.88) { // 超宽自动缩字号（保证不贴边）
-      size = Math.max(14, (size * W * 0.88) / maxW);
-      ctx.font = font();
-    }
-    const lh = size * 1.3;
-    ctx.textAlign = 'center';
-    ctx.lineJoin = 'round';
-    lines.forEach((s, i) => {
-      const y = H * 0.36 + rise + (i - (lines.length - 1) / 2) * lh + size * 0.35;
-      ctx.lineWidth = Math.max(3, size / 7);
-      ctx.strokeStyle = 'rgba(8,10,24,0.88)';
-      ctx.strokeText(s, W / 2, y);
-      ctx.fillStyle = '#fff6df';
-      ctx.shadowColor = 'rgba(255,214,120,0.5)';
-      ctx.shadowBlur = 18;
-      ctx.fillText(s, W / 2, y);
-      ctx.shadowBlur = 0;
+    // ★ 透明度走 drawFaded（离屏位图合成）：横幅文字带 shadowBlur=18，
+    //   而 iPadOS WebKit 上 ctx.globalAlpha 对"带阴影的绘制"无效 → 大字会直接
+    //   出现/消失、淡入淡出整个不见（用户设备实测，见 render/fade.js）。
+    drawFaded(ctx, a, (c) => {
+      let size = Math.min(46, H * 0.09);
+      const font = () => `900 ${size}px "Segoe UI", "Microsoft YaHei", sans-serif`;
+      c.font = font();
+      let maxW = 0;
+      for (const s of lines) maxW = Math.max(maxW, c.measureText(s).width);
+      if (maxW > W * 0.88) { // 超宽自动缩字号（保证不贴边）
+        size = Math.max(14, (size * W * 0.88) / maxW);
+        c.font = font();
+      }
+      const lh = size * 1.3;
+      c.textAlign = 'center';
+      c.lineJoin = 'round';
+      lines.forEach((s, i) => {
+        const y = H * 0.36 + rise + (i - (lines.length - 1) / 2) * lh + size * 0.35;
+        c.lineWidth = Math.max(3, size / 7);
+        c.strokeStyle = 'rgba(8,10,24,0.88)';
+        c.strokeText(s, W / 2, y);
+        c.fillStyle = '#fff6df';
+        c.shadowColor = 'rgba(255,214,120,0.5)';
+        c.shadowBlur = 18;
+        c.fillText(s, W / 2, y);
+        c.shadowBlur = 0;
+      });
     });
-    ctx.restore();
   }
 
   // ---- 调试模式面板（F5 暂停/继续，F6 步进；显示玩家附近的每个反应 + 最近爆炸原因）----
@@ -11391,7 +11790,7 @@ class Hud {
     const barW = 280;
     const px = W - barW - 10;
     // 右上角状态条（堆叠面板的当前顶 y；触屏下移避让悬浮钮/系统按钮）
-    let top = hudTopOffset(scene);
+    let top = hudTopOffset(scene, this._uiK || 1);
     panel(ctx, px, top, barW, 22, THEME.gold.deep, 8);
     clearText(ctx, `调试 ${scene.debugPaused ? '[暂停] F5继续 F6步进' : '[运行] F5暂停'}·悬停查源·X切换`, px, top + 11, scene.debugPaused ? '#ffd23f' : '#7fe0ff', 'bold 11px "Segoe UI", sans-serif');
     top += 28;
@@ -11457,8 +11856,9 @@ class Hud {
     if (!m || !m.on) return;
     const cam = scene.renderer ? scene.renderer.camera : null;
     if (!cam) return;
-    // 屏幕坐标 → 世界坐标（相机缩放/平移；忽略每帧随机震动，悬停无需精确到像素）
-    const { scale, offsetX, offsetY } = cam.compute(W, H, scene.player);
+    const uiK = this._uiK || 1;
+    // 屏幕坐标 → 世界坐标（相机缩放/平移；鼠标是真实逻辑像素，相机也按真实画布算）
+    const { scale, offsetX, offsetY } = cam.compute(canvasLW(ctx.canvas), canvasLH(ctx.canvas), scene.player);
     const wx = (m.x - offsetX) / scale;
     const wy = (m.y - offsetY) / scale;
     // 鼠标移动 → 重置候选与索引
@@ -11475,7 +11875,9 @@ class Hud {
     }
     if (this._hoverIdx >= cands.length) this._hoverIdx = 0;
     const info = cands[this._hoverIdx];
-    this.renderHoverTip(ctx, info, m.x, m.y, W, H, cands.length > 1 ? { idx: this._hoverIdx + 1, total: cands.length } : null);
+    // 提示框画在 HUD 坐标空间 → 鼠标坐标同样换算
+    this.renderHoverTip(ctx, info, m.x / uiK, m.y / uiK, W, H,
+      cands.length > 1 ? { idx: this._hoverIdx + 1, total: cands.length } : null);
   }
 
   /**
@@ -11675,10 +12077,14 @@ class Hud {
   // 原桌面三张卡（玩家/组成/空气）竖排 + 移动端重复一套——统一成这一张：
   // 屏幕占用最小、信息不缺；移动端面板体按 CFG.touch.hudAlpha 降透明（文字不降）。
   playerPanelCompact(ctx, p, scene, time, top = 10) {
-    const x0 = 10 + (touchInsetsOf(scene).left || 0); // 刘海横屏：卡片让出左缘安全区
+    const uiK = this._uiK || 1;
+    // 左上卡固定 10px 边距（HUD 坐标空间；大屏时随 uiK 一起放大）
+    const x0 = 10 / uiK + (touchInsetsOf(scene, uiK).left || 0); // 刘海横屏：卡片让出左缘安全区
     // 小屏紧凑（视口高<460/宽<500——老机型无全屏时可用视口很小）：
     // 整卡以左上为锚缩 0.76×——不动内部布局，占用面积减半（遮挡重灾区）
-    const k = compactView(canvasLW(ctx.canvas), canvasLH(ctx.canvas)) ? 0.76 : 1;
+    // 极窄视口（无全屏的手机横屏）再缩一档：0.76 → 0.60
+    const k = tinyView(canvasLW(ctx.canvas), canvasLH(ctx.canvas)) ? 0.60
+      : compactView(canvasLW(ctx.canvas), canvasLH(ctx.canvas)) ? 0.76 : 1;
     const atm = scene.atmosphere;
     // 身体组成（多物质才显示，单物质=血量本身）
     const masses = p.grid ? p.grid.masses() : null;
@@ -11775,47 +12181,129 @@ class Hud {
     if (k !== 1) ctx.restore(); // 关闭紧凑缩放（内部 clearText/vial 自管 save/restore）
   }
 
-  /** 血量药瓶：玻璃烧瓶 + 发光液体填充 */
+  /** 血量药瓶：玻璃试剂瓶（金色瓶盖 + 瓶肩过渡 + 液面/气泡/刻度 + 玻璃高光），
+   *  比旧的"圆角胶囊填色"更像实验器皿，也与面板的金色描边更搭。 */
   vial(ctx, x, y, w, h, ratio, color, time) {
+    const cx = x + w / 2;
+    const neckW = Math.max(6, w * 0.36);
+    const nx0 = cx - neckW / 2;
+    const nx1 = cx + neckW / 2;
+    const bodyX0 = x + 1.5;
+    const bodyX1 = x + w - 1.5;
+    const sho = y + h * 0.30;        // 肩线
+    const lipY = y + 1;
+    const bottom = y + h - 2;
+    const rad = Math.max(3, Math.min(w * 0.34, (bottom - sho) * 0.5));
+    const r = Math.max(0, Math.min(1, ratio));
+    const low = r < 0.28;
+    const bodyPath = () => {
+      ctx.beginPath();
+      ctx.moveTo(nx0, lipY + 2);
+      ctx.lineTo(nx0, sho - 3);
+      ctx.quadraticCurveTo(nx0, sho + 2, bodyX0 + 1, sho + 5);
+      ctx.lineTo(bodyX0, bottom - rad);
+      ctx.quadraticCurveTo(bodyX0, bottom, bodyX0 + rad, bottom);
+      ctx.lineTo(bodyX1 - rad, bottom);
+      ctx.quadraticCurveTo(bodyX1, bottom, bodyX1, bottom - rad);
+      ctx.lineTo(bodyX1, sho + 5);
+      ctx.quadraticCurveTo(nx1, sho + 2, nx1, sho - 3);
+      ctx.lineTo(nx1, lipY + 2);
+      ctx.closePath();
+    };
     ctx.save();
-    rr(ctx, x, y, w, h, w / 2.4);
-    ctx.fillStyle = 'rgba(190,225,255,0.10)';
+    // 玻璃体
+    bodyPath();
+    const glass = ctx.createLinearGradient(x, y, x + w, y + h);
+    glass.addColorStop(0, 'rgba(205,235,255,0.17)');
+    glass.addColorStop(0.45, 'rgba(150,200,240,0.06)');
+    glass.addColorStop(1, 'rgba(190,230,255,0.13)');
+    ctx.fillStyle = glass;
     ctx.fill();
-    ctx.strokeStyle = 'rgba(200,235,255,0.6)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    // 液体
-    const lh = h * Math.max(0.06, Math.min(1, ratio));
+    // 液体（裁到瓶身里）
+    const lh = Math.max(h * 0.07, (bottom - sho - 6) * r);
+    const surf = bottom - lh;
     ctx.save();
-    rr(ctx, x + 1.5, y + h - lh, w - 3, lh, w / 3);
+    bodyPath();
     ctx.clip();
-    const g = ctx.createLinearGradient(x, y, x, y + h);
-    g.addColorStop(0, '#d8f6ff');
-    g.addColorStop(0.5, color);
-    g.addColorStop(1, '#0e2a44');
-    ctx.fillStyle = g;
-    ctx.fillRect(x, y, w, h);
+    const lg = ctx.createLinearGradient(x, surf, x, bottom);
+    lg.addColorStop(0, '#ffffff');
+    lg.addColorStop(0.16, color);
+    lg.addColorStop(1, 'rgba(8,26,46,0.95)');
+    ctx.fillStyle = lg;
+    ctx.fillRect(bodyX0, surf, bodyX1 - bodyX0, bottom - surf);
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    ctx.fillRect(bodyX0, surf - 0.8, bodyX1 - bodyX0, 1.2);
+    ctx.beginPath();
+    ctx.ellipse(cx, surf, (bodyX1 - bodyX0) * 0.4, 1.7, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.22)';
+    ctx.fill();
+    // 气泡：沿液面缓慢上浮
+    for (let i = 0; i < 3; i++) {
+      const ph = (time * 0.18 + i * 0.37) % 1;
+      const by = bottom - 4 - ph * Math.max(4, lh - 4);
+      const bx = cx + Math.sin(time * 0.7 + i * 2.1) * (bodyX1 - bodyX0) * 0.22;
+      ctx.beginPath();
+      ctx.arc(bx, by, 0.9 + (1 - ph) * 1.1, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,' + (0.16 + ph * 0.24).toFixed(3) + ')';
+      ctx.fill();
+    }
+    // 液面辉光（随血量呼吸）
+    if (r > 0.02) {
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 7 + 4 * Math.sin(time * 2.6);
+      ctx.fillStyle = 'rgba(255,255,255,0.45)';
+      ctx.fillRect(bodyX0 + 1, surf - 0.5, bodyX1 - bodyX0 - 2, 1.4);
+    }
     ctx.restore();
-    // 液面辉光（随血量轻微脉动）
-    const pulse = 6 + 4 * Math.sin(time * 3);
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.shadowColor = color;
-    ctx.shadowBlur = pulse;
-    ctx.fillStyle = 'rgba(255,255,255,0.55)';
-    ctx.fillRect(x + 1, y + h - lh, w - 2, 2);
-    ctx.globalCompositeOperation = 'source-over';
+    // 玻璃描边（低血量泛红警示）
+    bodyPath();
+    ctx.strokeStyle = low ? 'rgba(255,138,126,0.85)' : 'rgba(198,232,255,0.62)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    // 瓶身左侧高光 + 右侧刻度
+    ctx.save();
+    bodyPath();
+    ctx.clip();
+    const hi = ctx.createLinearGradient(x, y, x + w, y);
+    hi.addColorStop(0, 'rgba(255,255,255,0)');
+    hi.addColorStop(0.22, 'rgba(255,255,255,0.28)');
+    hi.addColorStop(0.42, 'rgba(255,255,255,0.02)');
+    hi.addColorStop(0.78, 'rgba(255,255,255,0.12)');
+    hi.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = hi;
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = 'rgba(210,240,255,0.26)';
+    ctx.lineWidth = 0.8;
+    for (let i = 0; i < 3; i++) {
+      const ty = sho + 8 + i * 7;
+      if (ty > bottom - 5) break;
+      ctx.beginPath();
+      ctx.moveTo(bodyX1 - 6, ty);
+      ctx.lineTo(bodyX1 - 2, ty);
+      ctx.stroke();
+    }
+    ctx.restore();
+    // 金色瓶盖（带高光）
+    rr(ctx, nx0 - 1, lipY - 0.5, neckW + 2, 3.8, 1.4);
+    const cap = ctx.createLinearGradient(0, lipY, 0, lipY + 4);
+    cap.addColorStop(0, '#ffe6a0');
+    cap.addColorStop(1, '#b9852a');
+    ctx.fillStyle = cap;
+    ctx.fill();
     ctx.restore();
   }
 
   // ---- 玩家反应日志（最近发生在玩家身上的反应；调试模式专属）----
   reactionPanel(ctx, p) {
     if (!p.reactions || p.reactions.length === 0) return;
+    const uiK = this._uiK || 1;
     const shown = Math.min(4, p.reactions.length);
     const W = 264;
     const H = 22 + shown * 17;
     // 排在左上信息卡下方（卡高度可变，按实际高度堆叠）
-    const top = hudTopOffset(this.scene) + (this._leftH ?? 126) + 6;
-    panel(ctx, 10, top, W, H, THEME.gold.deep, 10);
+    const top = hudTopOffset(this.scene, uiK) + (this._leftH ?? 126) + 6 / uiK;
+    panel(ctx, 10 / uiK, top, W, H, THEME.gold.deep, 10);
     clearText(ctx, '最近反应', 22, top + 12, THEME.gold.text, 'bold 11px "Segoe UI", sans-serif');
     let y = top + 26;
     for (let i = 0; i < shown; i++) {
@@ -11828,7 +12316,7 @@ class Hud {
   // ---- 物品栏（宝石槽）：装物品的格子放大 + 内容物溶质显示 + 获取弹跳 ----
   inventory(ctx, p, W, H, time) {
     const slots = p.inventory.slots;
-    const rects = inventorySlotRects(W, H, slots, uiMargins(this.scene));
+    const rects = inventorySlotRects(W, H, slots, uiMargins(this.scene, this._uiK || 1));
     if (!this._pop) this._pop = {}; // 物品格弹跳计时 {i:{sig,t}}
     let minTop = Infinity;
     for (let i = 0; i < rects.length; i++) {
@@ -12211,7 +12699,7 @@ class Hud {
     const x = W - right - 82;
     const y = top;
     ctx.save();
-    rr(ctx, x, y, 72, 34, 9);
+    para(ctx, x, y, 72, 34, 8);
     const g = ctx.createLinearGradient(x, y, x, y + 34);
     g.addColorStop(0, '#7a5a20');
     g.addColorStop(1, '#4a3410');
@@ -12238,10 +12726,14 @@ class Hud {
     if (this._tipA <= 0.01) return;
     const text = this._tipText ?? scene.tip ?? '';
     const lines = text.split('\n');
-    const pw = Math.min(W - 20, 440);
-    const py = top + 42;
+    // ★ 面板几何**必须**取共享的 tipPanelRect（点击/触控滑闭同一份）：
+    //   这里曾自己算 min(W-20,440)，与命中几何（小屏收窄到 340）差 100px——
+    //   看着在面板上点，命中却穿透到场景（用户"点击位置和实际被点击位置偏移"）。
+    const prShared = tipPanelRect(W, top, right, this._uiH ?? canvasLH(ctx.canvas));
+    const pw = prShared.w;
+    const py = prShared.y;
     const ph = 16 + 22 + lines.length * 17 + 14;
-    const px0 = W - right - 10 - pw;
+    const px0 = prShared.x;
     const swipe = Math.max(0, this._tipSwipeDx ?? 0);
     const slide = (1 - this._tipA) * 26; // 开合滑入/滑出（右下方向）
     const alpha = this._tipA * Math.max(0, 1 - swipe / 110);
@@ -12275,56 +12767,163 @@ class Hud {
     ctx.restore();
   }
 
-  // ---- 通关 / 死亡遮罩 ----
+  // ---- 通关 / 死亡遮罩（与 HUD 同一套"神话·元素"面板风格：圆角深紫面板 + 金描边，
+  //      入场只做淡入 + 轻推；不再用大红/荧光色或大徽记，避免和游戏整体风格脱节。
+  //      通关若已有关卡页 DOM 浮层，画布这边只铺暗场，避免两套 UI 叠一起）----
   overlay(ctx, scene, W, H) {
-    if (scene.status !== 'win' && scene.status !== 'died') return;
-    ctx.save();
-    ctx.fillStyle = 'rgba(6,5,20,0.72)';
-    ctx.fillRect(0, 0, W, H);
-    const win = scene.status === 'win';
-    const c = win ? THEME.portal.light : '#ff7f7f';
+    const st = scene.status;
+    if (st !== 'win' && st !== 'died') { this._ovStatus = null; return; }
+    const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    if (this._ovStatus !== st) { this._ovStatus = st; this._ovAt = now; }
+    const t = Math.max(0, (now - this._ovAt) / 1000);
+    const easeOut = (x) => 1 - Math.pow(1 - Math.max(0, Math.min(1, x)), 3);
+    const a = easeOut(t / 0.5);
+    const win = st === 'win';
+    // 关卡页（levels/report.js）有独立的通关 DOM 浮层：画布只铺暗场，避免重复 UI
+    const hasDomWin = win && typeof document !== 'undefined' && document.getElementById &&
+      !!document.getElementById('czl-win');
     const cx = W / 2;
-    const cy = H / 2 - 10;
-    // 光环
+    const cy = H / 2;
     ctx.save();
-    ctx.strokeStyle = c;
-    ctx.lineWidth = 3;
-    ctx.shadowColor = c;
-    ctx.shadowBlur = 30;
+    // 暗场：深紫黑渐晕（与游戏面板同色系，不用红/荧光）
+    const vg = ctx.createRadialGradient(cx, cy, Math.min(W, H) * 0.12, cx, cy, Math.max(W, H) * 0.8);
+    vg.addColorStop(0, 'rgba(18,14,46,0.55)');
+    vg.addColorStop(1, 'rgba(5,4,16,0.86)');
+    ctx.globalAlpha = a;
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, W, H);
+    // 中央很淡的主题色底光（金/青，不刺眼）
+    const glow = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.min(W, H) * 0.42);
+    glow.addColorStop(0, win ? 'rgba(232,184,75,0.10)' : 'rgba(127,216,255,0.07)');
+    glow.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, W, H);
+    if (hasDomWin) { ctx.restore(); return; }
+    // 面板入场：淡入 + 上推 14px（不做夸张缩放）
+    const pIn = easeOut(t / 0.5);
+    const pw = Math.min(W * 0.56, 400);
+    const ph = win ? 188 : 200;
+    const px = cx - pw / 2;
+    const py = cy - ph / 2 + (1 - pIn) * 14;
+    // 与 HUD 同款圆角面板（theme.panel：深紫渐变 + 金描边 + 8px 辉光）
+    ctx.globalAlpha = a;
+    panel(ctx, px, py, pw, ph, THEME.gold.deep, 12);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    // 顶部小标
+    ctx.fillStyle = 'rgba(232,184,75,0.75)';
+    ctx.font = 'bold 10px ui-monospace, Consolas, monospace';
+    ctx.fillText(win ? 'CHEZZLE · 通关' : 'CHEZZLE · 死亡', cx, py + 22);
+    // 分隔线（中间亮、两端淡）
+    const lg = ctx.createLinearGradient(px + 40, 0, px + pw - 40, 0);
+    lg.addColorStop(0, 'rgba(232,184,75,0)');
+    lg.addColorStop(0.5, 'rgba(232,184,75,0.45)');
+    lg.addColorStop(1, 'rgba(232,184,75,0)');
+    ctx.strokeStyle = lg;
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.arc(cx, cy, 46, 0, Math.PI * 2);
+    ctx.moveTo(px + 40, py + 36);
+    ctx.lineTo(px + pw - 40, py + 36);
     ctx.stroke();
-    ctx.restore();
-    // 图标符文
+    // 元素牌徽记：小平行四边形 + 勾/叉（和选关卡片同源的形状，不用大圆徽）
+    const TW = 46;
+    const TH = 30;
+    const tx = cx - TW / 2;
+    const ty = py + 48;
+    const mark = easeOut((t - 0.08) / 0.4);
     ctx.save();
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';           // ★ 用 middle 基线居中：默认 alphabetic 基线会让
-    ctx.fillStyle = c;                     //   "✦ + 通关！"整体看着偏上/偏歪（用户反馈）
-    ctx.font = '32px serif';
-    ctx.fillText(win ? '✦' : '✧', cx, cy + 4);
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 34px "Segoe UI", "Microsoft YaHei", sans-serif';
-    ctx.fillText(win ? '通关！' : '死亡', cx, cy + 52);
-    ctx.restore();
-    ctx.textAlign = 'center';
-    // 死亡原因（搞笑文案；死亡时由 scene 一次性定案，避免每帧随机闪烁；通关不显示）
-    if (!win) {
-      ctx.fillStyle = '#ffd9a0';
-      ctx.font = 'bold 15px "Segoe UI", "Microsoft YaHei", sans-serif';
-      ctx.fillText(scene.deathQuip ?? deathQuip(scene.deathCause, scene.player && scene.player.substance), cx, cy + 84);
+    ctx.globalAlpha = a * mark;
+    para(ctx, tx, ty, TW, TH, 8);
+    ctx.fillStyle = 'rgba(18,14,46,0.85)';
+    ctx.fill();
+    ctx.strokeStyle = win ? 'rgba(232,184,75,0.85)' : 'rgba(191,230,255,0.7)';
+    ctx.lineWidth = 1.3;
+    ctx.stroke();
+    ctx.strokeStyle = win ? THEME.gold.text : '#cfe4ff';
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    const mx = cx;
+    const my = ty + TH / 2;
+    if (win) {
+      ctx.beginPath();
+      ctx.moveTo(mx - 9, my + 1);
+      ctx.lineTo(mx - 2, my + 8);
+      ctx.lineTo(mx + 10, my - 7);
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(mx - 7, my - 6);
+      ctx.lineTo(mx + 7, my + 8);
+      ctx.moveTo(mx + 7, my - 6);
+      ctx.lineTo(mx - 7, my + 8);
+      ctx.stroke();
     }
-    // 通关时不再提示"重开"（用户要求）：浮层由关卡页注入的按钮负责"返回选关"；
-    // 死亡仍保留重开提示（那是玩家最需要的）。
+    ctx.restore();
+    // 标题（字号/字重与游戏内标题一致，轻发光）
+    const titleIn = easeOut((t - 0.14) / 0.4);
+    ctx.globalAlpha = a * titleIn;
+    ctx.fillStyle = win ? THEME.gold.text : '#dbe7ff';
+    ctx.font = 'bold 26px "Segoe UI", "Microsoft YaHei", sans-serif';
+    ctx.shadowColor = win ? 'rgba(232,184,75,0.55)' : 'rgba(127,216,255,0.35)';
+    ctx.shadowBlur = 10;
+    ctx.fillText(win ? '通关' : '死亡', cx, py + 104);
+    ctx.shadowBlur = 0;
+    // 副文案 / 死亡搞笑文案
+    const subIn = easeOut((t - 0.2) / 0.4);
+    ctx.globalAlpha = a * subIn;
+    ctx.font = '13px "Segoe UI", "Microsoft YaHei", sans-serif';
+    ctx.fillStyle = win ? '#b9c6dd' : '#c9d6ee';
+    const sub = win ? '反应完成 · 物质守恒'
+      : (scene.deathQuip ?? deathQuip(scene.deathCause, scene.player && scene.player.substance));
+    ctx.fillText(sub, cx, py + 132);
+    // 操作提示：与游戏按钮同款"斜牌 + 冷色底 + 细描边"
     if (!win) {
-      ctx.fillStyle = '#e8d8b0';
-      ctx.font = '15px "Segoe UI", sans-serif';
       const touch = scene._touchUI && scene._touchUI.enabled();
-      ctx.fillText(touch ? '轻触屏幕重新开始' : '按 R 重开', cx, cy + 110);
+      const hintTxt = touch ? '轻触屏幕重新开始' : '按 R 重开';
+      ctx.font = 'bold 11px "Segoe UI", "Microsoft YaHei", sans-serif';
+      const hw = ctx.measureText(hintTxt).width + 26;
+      const hx = cx - hw / 2;
+      const hy = py + ph - 46;
+      para(ctx, hx, hy, hw, 24, 7);
+      const hg = ctx.createLinearGradient(0, hy, 0, hy + 24);
+      hg.addColorStop(0, '#2a3a5e');
+      hg.addColorStop(1, '#141d38');
+      ctx.fillStyle = hg;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(127,216,255,0.75)';
+      ctx.lineWidth = 1.1;
+      ctx.shadowColor = 'rgba(127,216,255,0.8)';
+      ctx.shadowBlur = 5;
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#bfe6ff';
+      ctx.fillText(hintTxt, cx, hy + 12.5);
+    }
+    ctx.textBaseline = 'alphabetic';
+    // 少量星光粒子（通关金 / 死亡青），只做轻微氛围
+    for (let i = 0; i < 8; i++) {
+      const seed = i * 12.9898;
+      const rnd = (k) => {
+        const v = Math.sin(seed * k) * 43758.5453;
+        return v - Math.floor(v);
+      };
+      const life = 1.8 + rnd(1) * 1.4;
+      const age = (t + rnd(2) * life) % life;
+      const k = age / life;
+      const px2 = cx + (rnd(3) - 0.5) * pw * 0.9;
+      const py2 = win ? py + ph + 8 - k * (ph + 50) : py - 8 + k * (ph + 50);
+      ctx.globalAlpha = a * (1 - k) * 0.55;
+      ctx.fillStyle = win ? 'rgba(255,233,176,0.9)' : 'rgba(127,216,255,0.8)';
+      ctx.beginPath();
+      ctx.arc(px2, py2, 0.8 + 1.2 * (1 - k), 0, Math.PI * 2);
+      ctx.fill();
     }
     ctx.textAlign = 'left';
     ctx.restore();
   }
 }
+
 
 exports.deathQuip = deathQuip;
 exports.bannerEnvelope = bannerEnvelope;
@@ -12471,6 +13070,7 @@ exports.Block = Block;
 // ============================================================================
 
 const { CFG } = __require('src/core/config.js');;
+const { getPrefs } = __require('src/core/prefs.js');;
 const { setupCanvasSize, canvasLW, canvasLH } = __require('src/render/canvas.js');;
 const { compactView, compactK } = __require('src/level/click.js');;
 const { handleSceneClick, handleScenePressDown, handleScenePressMove, handleScenePressUp, inventorySlotRects, uiMargins, overviewButtonRect, hudTopOffset, touchInsetsOf, tipPanelRect } = __require('src/level/click.js');;
@@ -12512,9 +13112,13 @@ const UIS = [];
 
 /** 摇杆：左下角半圆（直径贴底边，圆心即摇杆原点），cx/cy = 圆心，R = 半径。
  *  半圆 = { dist ≤ R 且 y ≤ cy }（上部半圆）。小屏（compactView）半径缩 72%——
- *  122px 的摇杆在 310px 高的视口里占掉 40%，玩家移动的可视区被吃掉。 */
+ *  122px 的摇杆在 310px 高的视口里占掉 40%，玩家移动的可视区被吃掉。
+ *  用户可在设置里调「摇杆大小」（joyScale 0.8~1.4）。 */
 function joyGeom(W, H, insets = {}) {
-  const R = compactView(W, H) ? Math.max(70, Math.round(CFG.touch.joyR * 0.72)) : CFG.touch.joyR;
+  const p = getPrefs();
+  const joyScale = Number.isFinite(p.joyScale) ? p.joyScale : 1;
+  const baseR = compactView(W, H) ? Math.max(70, Math.round(CFG.touch.joyR * 0.72)) : CFG.touch.joyR;
+  const R = Math.max(44, Math.round(baseR * joyScale));
   const cx = (insets.left ?? 0) + 14 + R;
   const cy = H - (insets.bottom ?? 0) - 12;
   return { cx, cy, R };
@@ -12522,12 +13126,15 @@ function joyGeom(W, H, insets = {}) {
 
 /** 右下按钮：2×2 块（C 上左 / X 上右 / Q 下左 / ⇧ 下右），下方是物品栏。
  *  与物品栏几何（inventorySlotRects，触屏边距版）共用坐标，按钮块贴着物品栏上沿。
- *  小屏：按钮 72%（68→49px，2×2 总高 ≈104px）。 */
+ *  小屏：按钮 72%（68→49px，2×2 总高 ≈104px）。
+ *  用户可在设置里调「右下按钮大小」（btnScale 0.8~1.4）。 */
 function touchButtonRects(W, H, slots, insets = {}) {
   if (!slots || slots.length === 0) return [];
-  const k = compactK(W, H);
-  const btn = Math.max(36, Math.round(CFG.touch.btnSize * k));
-  const gap = Math.max(5, Math.round(CFG.touch.btnGap * k));
+  const p = getPrefs();
+  const btnScale = Number.isFinite(p.btnScale) ? p.btnScale : 1;
+  const k = compactK(W, H) * btnScale;
+  const btn = Math.max(30, Math.round(CFG.touch.btnSize * k));
+  const gap = Math.max(4, Math.round(CFG.touch.btnGap * k));
   const margins = { bottom: (insets.bottom ?? 0) + CFG.touch.pad, right: (insets.right ?? 0) + CFG.touch.pad };
   const inv = inventorySlotRects(W, H, slots, margins);
   let invTop = Infinity;
@@ -12856,9 +13463,10 @@ class TouchUI {
     // ②.5 提示面板（展开中）：点面板 = 消费（不穿透到场景）；右上 ✕ = 关闭；
     //     按住右滑 = 关闭（面板跟随手指，超 60px 触发关闭）
     if (hud && hud.showTip) {
-      const pr = tipPanelRect(canvasLW(this.canvas), hudTopOffset(scene), touchInsetsOf(scene).right || 0);
+      // ★ 与桌面点击同源：以 HUD 实际绘制矩形为准（见 click.js 同处注释）
+      const pr = hud._tipRect ?? tipPanelRect(canvasLW(this.canvas), hudTopOffset(scene), touchInsetsOf(scene).right || 0, canvasLH(this.canvas));
       if (x >= pr.x && x <= pr.x + pr.w && y >= pr.y && y <= pr.y + pr.h) {
-        const r = hud._tipRect ?? pr;
+        const r = pr;
         if (x >= r.x + r.w - 32 && y <= r.y + 32) {
           if (typeof hud.closeTip === 'function') hud.closeTip();
           else hud.showTip = false;
@@ -13120,28 +13728,158 @@ exports.TouchUI = TouchUI;
 exports.bindTouchUI = bindTouchUI;
 
   };
+  __modules["src/core/prefs.js"] = function (module, exports, __require) {
+// ============================================================================
+// 引擎侧偏好读取（设置面板写入的 localStorage → 相机 / 触控几何 / 键位）
+// ----------------------------------------------------------------------------
+// 数据本身由经典脚本 prefs.js 维护（window.ChezzlePrefs）；这里只读并做默认兜底
+// （Node 测试、编辑器等没有 prefs.js 的场景 → 全默认，行为与以前完全一致）。
+// ============================================================================
+
+/** 可改键的动作（与 prefs.js 的 ACTIONS 一一对应） */
+const KEY_ACTIONS = [
+  { id: 'left', label: '左移', def: 'KeyA' },
+  { id: 'right', label: '右移', def: 'KeyD' },
+  { id: 'jump', label: '跳跃', def: 'Space' },
+  { id: 'place', label: '放置 / 倒出', def: 'ShiftLeft' },
+  { id: 'collect', label: '拾取', def: 'KeyQ' },
+  { id: 'grab', label: '抓取 / 吸取', def: 'KeyC' },
+  { id: 'use', label: '使用 / 通气', def: 'KeyX' },
+  { id: 'restart', label: '重开', def: 'KeyR' },
+  { id: 'overview', label: '鸟瞰', def: 'KeyV' },
+];
+
+const DEFAULT_KEYS = (() => {
+  const k = {};
+  for (const a of KEY_ACTIONS) k[a.id] = a.def;
+  return k;
+})();
+
+const FALLBACK = Object.freeze({ viewScale: 1, joyScale: 1, btnScale: 1, keys: DEFAULT_KEYS });
+
+function api() {
+  if (typeof window === 'undefined') return null;
+  return window.ChezzlePrefs && typeof window.ChezzlePrefs.get === 'function' ? window.ChezzlePrefs : null;
+}
+
+/** 当前偏好（无 prefs.js 时返回默认值） */
+function getPrefs() {
+  const p = api();
+  if (!p) return FALLBACK;
+  try { return p.get(); } catch (e) { return FALLBACK; }
+}
+
+/** 某个动作当前绑定的 KeyboardEvent.code */
+function keyOf(action) {
+  const keys = getPrefs().keys || DEFAULT_KEYS;
+  return keys[action] || DEFAULT_KEYS[action] || '';
+}
+
+/** 物理键位 → 动作 id（找不到返回 null）。
+ *  ShiftRight 作为 place 的默认别名：默认 place=ShiftLeft 时右 Shift 也能放置（旧行为）。 */
+function actionOfCode(code) {
+  if (!code) return null;
+  const keys = getPrefs().keys || DEFAULT_KEYS;
+  for (const a of KEY_ACTIONS) if (keys[a.id] === code) return a.id;
+  if (code === 'ShiftRight' && keys.place === 'ShiftLeft') return 'place';
+  return null;
+}
+
+/** 订阅设置变更（返回取消函数；无 prefs.js 时是空订阅） */
+function onPrefsChange(fn) {
+  const p = api();
+  if (!p || typeof p.listen !== 'function') return function () {};
+  return p.listen(fn);
+}
+
+exports.KEY_ACTIONS = KEY_ACTIONS;
+exports.getPrefs = getPrefs;
+exports.keyOf = keyOf;
+exports.actionOfCode = actionOfCode;
+exports.onPrefsChange = onPrefsChange;
+
+  };
+  __modules["src/render/fade.js"] = function (module, exports, __require) {
+// ============================================================================
+// 画布淡入/淡出合成：**不要靠 ctx.globalAlpha 直接画带阴影的内容**。
+// ----------------------------------------------------------------------------
+// 实测（用户设备 iPadOS 26.6 Safari / WebKit，见 tools/fadetest.html 的诊断报告）：
+//   绘制**带 shadowBlur 的内容**时 ctx.globalAlpha 被忽略 ——
+//   · 大横幅（shadowBlur=18）与路标（shadowBlur=5）的淡入淡出**整个消失**（直接出现/消失）；
+//   · 同一台设备上，无阴影文字、方块、rgba 填充、离屏 drawImage 全部正常；
+//   · 所以只有"带发光阴影的文字"出问题（用户："仅仅对于路标"），桌面 Chrome 永不复现。
+// 做法：把要淡入的内容先画到**离屏画布**（alpha=1，阴影照常烘焙进位图），
+//       再用 drawImage + globalAlpha 把整张位图合成回来 —— 位图合成在所有引擎上都吃 alpha
+//       （同设备实测：离屏预渲染 + globalAlpha drawImage 正常）。
+// 无 document（Node 单元测试）/ 无位图可用时退回 globalAlpha 直画（保持原有可测行为）。
+// ============================================================================
+
+let offCv = null; // 复用的离屏画布（尺寸随主画布变化）
+
+/** 以 alpha 淡入方式绘制：draw(ctx) 里正常画（含阴影），透明度由外层统一施加。
+ *  @param {CanvasRenderingContext2D} ctx 目标上下文（主画布）
+ *  @param {number} alpha 0..1
+ *  @param {(c: CanvasRenderingContext2D) => void} draw 绘制回调（可能收到离屏上下文）
+ */
+function drawFaded(ctx, alpha, draw) {
+  const a = Math.max(0, Math.min(1, Number(alpha) || 0));
+  const canvas = ctx && ctx.canvas;
+  const canComposite = typeof document !== 'undefined' && typeof document.createElement === 'function'
+    && canvas && canvas.width > 0 && canvas.height > 0
+    && typeof ctx.getTransform === 'function' && typeof ctx.drawImage === 'function';
+  if (a >= 1 || !canComposite) {
+    ctx.save();
+    ctx.globalAlpha = a;
+    draw(ctx);
+    ctx.restore();
+    return;
+  }
+  if (!offCv) offCv = document.createElement('canvas');
+  if (offCv.width !== canvas.width || offCv.height !== canvas.height) {
+    offCv.width = canvas.width;
+    offCv.height = canvas.height;
+  }
+  // 逻辑尺寸/dpr 同步：对象里 screenTextScale() 等会读 ctx.canvas 上的这几个字段
+  offCv._dpr = canvas._dpr;
+  offCv._lw = canvas._lw;
+  offCv._lh = canvas._lh;
+  const fctx = offCv.getContext('2d');
+  fctx.setTransform(1, 0, 0, 1, 0, 0);
+  fctx.clearRect(0, 0, offCv.width, offCv.height);
+  const m = ctx.getTransform(); // 相机变换照抄，离屏内容与直接绘制像素对齐
+  fctx.setTransform(m.a, m.b, m.c, m.d, m.e, m.f);
+  draw(fctx);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = a;
+  ctx.drawImage(offCv, 0, 0);
+  ctx.restore();
+}
+
+exports.drawFaded = drawFaded;
+
+  };
   __modules["src/core/input.js"] = function (module, exports, __require) {
 // ============================================================================
 // 键盘输入 → Scene.control（长按）/ Scene.pressed（本刻刚按下）
-// 触控暂不实现（接口位预留）。
+// 键位来自设置（src/core/prefs.js ← 首页设置面板写入的 localStorage）：
+//   左移/右移/跳跃/放置/拾取/抓取/使用/重开/鸟瞰 均可改键；
+//   调试键 F5/F6 与"悬停查源 X"是开发用固定键，不参与改键。
 // ============================================================================
 
-const KEYMAP = {
-  KeyA: 'left',
-  KeyD: 'right',
-  Space: 'jump',
-  ShiftLeft: 'place',
-  ShiftRight: 'place',
-  KeyQ: 'collect',
-  KeyC: 'grab', // 拾取物品/吸液/（按住）集气
-  KeyX: 'use', // 烧杯倒入 /（按住）集气瓶通气
-};
+const { actionOfCode } = __require('src/core/prefs.js');;
 
 // 物理按住的键（window 级）：bindKeyboard 随场景切换重绑后，把"仍按住的键"恢复进新
 // 场景 control——否则按住方向键走过传送门/切场景会停下（keydown 只发一次，新绑定
 // 拿不到按住态；浏览器 auto-repeat 不可依赖）。pressed 不恢复（那是"刚按下"语义，
 // 恢复会导致跳跃/放置被误触发）。
 const HELD = new Set();
+
+/** 只写入 scene.control 的动作（重开/鸟瞰是即时动作，不进长按集合） */
+function isControlAction(a) {
+  return a === 'left' || a === 'right' || a === 'jump' || a === 'place' ||
+    a === 'collect' || a === 'grab' || a === 'use';
+}
 
 function bindKeyboard(scene) {
   // 立即清空：右键菜单、焦点切换、页面隐藏等会吞掉 keyup 的场景
@@ -13155,18 +13893,20 @@ function bindKeyboard(scene) {
     if (typeof document !== 'undefined' && !document.hasFocus()) return;
     // 运行时钩子：任意键都可被插件/关卡脚本监听（返回 true 表示已处理）
     scene._fireKey('down', e);
-    HELD.add(e.code); // 先记物理态（KeyR 等非方向键 keyup 也要精确释放）
-    if (e.code === 'KeyR') {
+    HELD.add(e.code); // 先记物理态（非方向键 keyup 也要精确释放）
+    const action = actionOfCode(e.code);
+    if (action === 'restart') {
       scene.restart();
+      e.preventDefault();
       return;
     }
-    // 鸟瞰模式（灵魂出窍）：V 进出（暂停模拟，自由缩放/平移看整关）
-    if (e.code === 'KeyV' && typeof scene.toggleOverview === 'function') {
+    // 鸟瞰模式（灵魂出窍）：暂停模拟，自由缩放/平移看整关
+    if (action === 'overview' && typeof scene.toggleOverview === 'function') {
       scene.toggleOverview();
       e.preventDefault();
       return;
     }
-    // 调试模式：F5 暂停/继续，F6 步进一 tick，X 循环切换悬停重叠目标
+    // 调试模式：F5 暂停/继续，F6 步进一 tick，X 循环切换悬停重叠目标（固定键）
     if (scene.debugMode) {
       if (e.code === 'F5') {
         scene.debugPaused = !scene.debugPaused;
@@ -13189,17 +13929,16 @@ function bindKeyboard(scene) {
         }
       }
     }
-    const c = KEYMAP[e.code];
-    if (!c) return;
+    if (!action) return;
     e.preventDefault();
-    if (!scene.control.has(c)) scene.pressed.add(c);
-    scene.control.add(c);
+    if (!scene.control.has(action)) scene.pressed.add(action);
+    scene.control.add(action);
   };
   const onUp = (e) => {
     HELD.delete(e.code);
     scene._fireKey('up', e);
-    const c = KEYMAP[e.code];
-    if (c) scene.control.delete(c);
+    const action = actionOfCode(e.code);
+    if (action) scene.control.delete(action);
   };
   window.addEventListener('keydown', onDown);
   window.addEventListener('keyup', onUp);
@@ -13210,8 +13949,8 @@ function bindKeyboard(scene) {
   // ★ 恢复仍按住的键（Multiscene.switchTo 重绑时会调 bindKeyboard——按住方向键
   //   走过传送门，切场景后继续走，不用松开重按）
   for (const code of HELD) {
-    const c = KEYMAP[code];
-    if (c) scene.control.add(c);
+    const action = actionOfCode(code);
+    if (action && isControlAction(action)) scene.control.add(action);
   }
   return () => {
     window.removeEventListener('keydown', onDown);
@@ -13273,6 +14012,9 @@ function startLoop(scene, renderer, opts = {}) {
           }
           if (acc >= TICK) acc = 0; // 追不上就丢帧
         }
+        // 鸟瞰进出动画：镜头混合与 HUD 交叉淡入淡出共用同一进度
+        // （鸟瞰时模拟暂停，但这段动画照常推进）
+        if (S.camera && typeof S.camera.tickOverviewAnim === 'function') S.camera.tickOverviewAnim(dt);
         const R = active.renderer ?? renderer;
         R.frame(S.objects, { hud: active.hud ?? opts.hud, time: S.time, scene: S, focus: S.player ?? S.cameraFocus ?? null });
       }
@@ -13305,7 +14047,7 @@ exports.startLoop = startLoop;
 // ============================================================================
 
 const { overviewButtonRect, hudTopOffset, touchInsetsOf } = __require('src/level/click.js');;
-const { canvasLW, canvasLH } = __require('src/render/canvas.js');;
+const { canvasLW, canvasLH, uiScaleOf } = __require('src/render/canvas.js');;
 
 /**
  * 给画布绑定鸟瞰输入。
@@ -13342,9 +14084,12 @@ function bindOverviewInput(canvas, getActive) {
     const r = canvas.getBoundingClientRect();
     const px = e.clientX - r.left;
     const py = e.clientY - r.top;
-    // "返回"按钮：不进入拖动（click 事件负责切换）
-    const b = overviewButtonRect(canvasLW(canvas), hudTopOffset(scene), touchInsetsOf(scene).right || 0);
-    if (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h) return;
+    // "返回"按钮：不进入拖动（click 事件负责切换）。命中几何与 HUD 同处一个坐标空间
+    // （大屏 HUD 有 uiScaleOf 放大 → 这里把鼠标坐标/尺寸一起换算过去）
+    const kUi = uiScaleOf(canvas);
+    const b = overviewButtonRect(canvasLW(canvas) / kUi, hudTopOffset(scene, kUi),
+      (touchInsetsOf(scene, kUi).right || 0));
+    if (px / kUi >= b.x && px / kUi <= b.x + b.w && py / kUi >= b.y && py / kUi <= b.y + b.h) return;
     pan = { x: e.clientX, y: e.clientY };
   };
 
@@ -13874,6 +14619,7 @@ const { Sign } = __require('src/objects/sign.js');;
 const { Portal } = __require('src/objects/portal.js');;
 const { GasDetector } = __require('src/objects/gasdetector.js');;
 const { Extractor } = __require('src/objects/extractor.js');;
+const { GasTube } = __require('src/objects/gastube.js');;
 const { Dropper } = __require('src/objects/dropper.js');;
 const { GasBottle } = __require('src/objects/gasbottle.js');;
 const { bindSceneClick } = __require('src/level/click.js');;
@@ -13957,6 +14703,11 @@ class LevelBuilder {
 
   extractor(x, y, opts = {}) {
     return this.add(new Extractor({ x, y, ...opts }));
+  }
+
+  /** 导气管（连接两个药品池：输入端罩内产气 → 输出端鼓入；单向、无碰撞箱） */
+  gastube(x, y, opts = {}) {
+    return this.add(new GasTube({ x, y, ...opts }));
   }
 
   dropper(x, y, opts = {}) {
@@ -14280,6 +15031,7 @@ const { renderBackground } = __require('src/render/background.js');;
 const { Particle } = __require('src/objects/particle.js');;
 const { flushLabels } = __require('src/render/label.js');;
 const { canvasLW, canvasLH } = __require('src/render/canvas.js');;
+const { drawFaded } = __require('src/render/fade.js');;
 
 function renderParticles(ctx, particles, opts) {
   for (const pt of particles) {
@@ -14327,17 +15079,17 @@ class Renderer {
     for (const obj of objects) {
       if (obj instanceof Particle) { particles.push(obj); continue; }
       if (obj && typeof obj.render === 'function') {
-        // 淡入（延迟出现/开关显现后）：appearTime=显现时刻，按 appearFade 秒渐入
+        // 淡入（延迟出现/开关显现后）：appearTime=显现时刻，按 appearFade 秒渐入。
+        // ★ 透明度走 drawFaded（离屏位图 + drawImage 合成）：iPadOS WebKit 上
+        //   ctx.globalAlpha 对"带 shadowBlur 的绘制"无效——路标那种发光文字会直接
+        //   出现/消失，淡入淡出动画整个不见（用户设备实测，见 render/fade.js）。
         const ft = obj.appearTime;
         if (ft != null && Number.isFinite(ft)) {
           const fade = Number(obj.appearFade) > 0 ? Number(obj.appearFade) : 0.35;
           const a = (opts.time ?? 0) - ft;
           if (a < 0) continue; // 未到显现时刻（容错）
           if (a < fade) {
-            ctx.save();
-            ctx.globalAlpha = Math.max(0.05, a / fade);
-            obj.render(ctx, opts);
-            ctx.restore();
+            drawFaded(ctx, Math.max(0.05, a / fade), (c) => obj.render(c, opts));
             continue;
           }
           obj.appearTime = null; // 淡入完成：清标记（不再每帧判断）
@@ -14365,6 +15117,7 @@ exports.Renderer = Renderer;
 // ============================================================================
 
 const { CFG } = __require('src/core/config.js');;
+const { getPrefs } = __require('src/core/prefs.js');;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -14378,6 +15131,7 @@ class Camera {
     this._shake = 0; // 屏幕震动强度（px），每帧衰减
     // 鸟瞰（自由视图）：_ov = {scale, ox, oy}（scale = 屏幕px/世界px；ox/oy = 视窗左上角世界坐标）
     this.overview = false;
+    this.overviewMix = 0; // 0..1：鸟瞰进出动画进度（主循环每帧 tick；compute 与 HUD 共用）
     this._ov = null; // 惰性初始化（首次 compute 时按当前画布尺寸适配整关）
   }
 
@@ -14404,7 +15158,23 @@ class Camera {
 
   exitOverview() {
     this.overview = false;
-    this._ov = null;
+    // ★ 保留 _ov：退出动画要从"用户当前鸟瞰视角"平滑缩回正常视角；
+    //   清空会先跳回"整关适配"再缩，看起来像闪一下。
+  }
+
+  /** 鸟瞰进出动画推进（主循环每帧调用；鸟瞰时模拟暂停，也照常推进） */
+  tickOverviewAnim(dt) {
+    const target = this.overview ? 1 : 0;
+    if (this.overviewMix === target) return;
+    const speed = 1 / 0.36; // 约 360ms 完成
+    const d = target - this.overviewMix;
+    const stepLen = Math.min(Math.abs(d), Math.max(0.0001, (dt > 0 ? dt : 0.016) * speed));
+    this.overviewMix += Math.sign(d) * stepLen;
+    if (Math.abs(target - this.overviewMix) < 0.0015) {
+      this.overviewMix = target;
+      // 退出动画结束：释放保留的鸟瞰视图（进入时退出后会重新 fit）
+      if (target === 0) this._ov = null;
+    }
   }
 
   /** 鸟瞰初始视图：整个世界适配进画布并居中 */
@@ -14456,25 +15226,77 @@ class Camera {
    * 鸟瞰模式（overview）：忽略 focus，用自由视图。
    */
   compute(vw, vh, focus = null) {
-    if (this.overview) {
+    // 鸟瞰视图：进入动画期间也要参与混合；退出动画保留旧 _ov（见 exitOverview）
+    const ovActive = this.overview || this.overviewMix > 0;
+    let ov = null;
+    if (ovActive) {
       if (!this._ov) this._ov = this._ovFit(vw, vh);
-      const { scale, ox, oy } = this._ov;
-      return { scale, ox, oy, offsetX: -ox * scale, offsetY: -oy * scale };
+      ov = this._ov;
+      // 完全进入鸟瞰：直接返回自由视图（避免每帧多算一遍正常视图）
+      if (this.overview && this.overviewMix >= 0.999) {
+        return { scale: ov.scale, ox: ov.ox, oy: ov.oy, offsetX: -ov.ox * ov.scale, offsetY: -ov.oy * ov.scale };
+      }
     }
     let viewW = this.viewW;
     let viewH = this.viewH;
     let biasY = 0;
     let padTop = viewH * CFG.touch.padTop; // 顶部探出量（双端；爬高时相机跟进天空）
-    if (this.mobileViewH > 0 && vw > 0 && vh > 0 && vh < vw) {
+    // 是否真的走"移动端横屏视野"（竖屏时移动端也沿用桌面逻辑 → 桌面缩放上限同样适用）
+    const mobileView = this.mobileViewH > 0 && vw > 0 && vh > 0 && vh < vw;
+    if (mobileView) {
       viewH = this.mobileViewH;
       viewW = Math.max(1, viewH * (vw / vh));
       biasY = viewH * CFG.touch.focusBias; // 视窗中心下移 → 玩家画在屏幕偏上
       padTop = viewH * CFG.touch.padTop;
+    } else if (vw > 0 && vh > 0) {
+      // ★ 桌面/未启用触控：视窗按**画布宽高比**展开——旧代码视窗固定 1000×800，
+      //   扁屏（如 1204×400）上缩放被高度限死（0.5），世界只占画布中间一条、
+      //   元素缩到一半（用户"比较扁的屏幕游戏显示特别小"）。
+      //   现在：画布更扁 → 压低视窗高度（缩放交给宽度决定，铺满画布）；
+      //        画布更高 → 收窄视窗宽度（同理铺满）。两边夹在 [viewMin, viewMax]，
+      //        避免极端比例下可见范围大到糊/小到只剩一块。
+      const aspect = vw / vh;
+      if (aspect > viewW / viewH) {
+        viewH = Math.min(CFG.camera.viewMax, Math.max(CFG.camera.viewMin, viewW / aspect));
+      } else {
+        viewW = Math.min(CFG.camera.viewMax, Math.max(CFG.camera.viewMin, viewH * aspect));
+      }
+      padTop = viewH * CFG.touch.padTop;
     }
-    const scale = Math.min(vw / viewW, vh / viewH);
-    // 实际显示的世界窗口（单位：世界坐标）
-    const vx = Math.min(this.worldW, viewW);
-    const vy = Math.min(this.worldH, viewH);
+    let scale = Math.min(vw / viewW, vh / viewH);
+    // 桌面大屏：视野优先"把整关宽度装进窗口"（用户反馈大屏视角不够广）；
+    // 纵向沿用原逻辑跟随玩家。缩放 = 画布宽/世界宽，夹在
+    // [desktopScaleMin, desktopScaleMax]：窄窗口不把物体缩太小，超宽屏也不无限放大。
+    // 放不下的尺寸转成更大视野，而不是更大的物体；HUD 文字另有 uiScaleOf 放大一档。
+    const camCfg = CFG.camera;
+    let capS = Infinity;
+    if (!mobileView) {
+      capS = camCfg.desktopFitWholeWidth === false
+        ? (camCfg.desktopScaleMax || 1.85)
+        : Math.max(camCfg.desktopScaleMin || 0.85,
+          Math.min(camCfg.desktopScaleMax || 2.5, vw / Math.max(1, this.worldW)));
+    }
+    if (capS && scale > capS) {
+      const f = scale / capS;
+      viewW *= f;
+      viewH *= f;
+      padTop = viewH * CFG.touch.padTop;
+      scale = capS;
+    }
+    // 设置里的「视角大小」：在自动适配结果上再乘用户缩放（>1 拉近 / <1 拉远）。
+    // ★ 缩放后必须用**实际可见的世界窗口**（画布尺寸/缩放）重算 vx/vy，否则相机仍按
+    //   缩放前的窗口算原点：桌面"整关宽度适配"时 vx 已等于世界宽度 → ox/oy 被钉死，
+    //   视角就变成"以世界中心硬放大"，玩家跑出画面（用户反馈的显示问题）。
+    const viewScale = getPrefs().viewScale;
+    const zoom = Number.isFinite(viewScale) && viewScale > 0 ? viewScale : 1;
+    if (zoom !== 1) scale *= zoom;
+    const vx = Math.min(this.worldW, zoom !== 1 ? vw / scale : viewW);
+    const vy = Math.min(this.worldH, zoom !== 1 ? vh / scale : viewH);
+    if (zoom !== 1) {
+      // 跟随偏置/顶部探出也按可见高度换算（否则放大后偏移量相对屏幕过大）
+      biasY = mobileView ? vy * CFG.touch.focusBias : 0;
+      padTop = vy * CFG.touch.padTop;
+    }
     // 窗口原点 ox, oy。下缘钳位放宽 biasY：玩家永远贴着世界底部走（地板在
     // worldH 附近），若只把期望值下移会被底缘钳位吞掉——放宽后视窗探到世界
     // 底边之下（空背景，正被摇杆/按钮控件盖住），玩家才能真的画到屏幕中上部。
@@ -14492,8 +15314,18 @@ class Camera {
       oy = (this.worldH - vy) / 2;
     }
     // 屏幕偏移：把 vx×vy 窗口放到 vw×vh 画布中央
-    const offsetX = (vw - vx * scale) / 2 - ox * scale;
-    const offsetY = (vh - vy * scale) / 2 - oy * scale;
+    let offsetX = (vw - vx * scale) / 2 - ox * scale;
+    let offsetY = (vh - vy * scale) / 2 - oy * scale;
+    // 鸟瞰进出：在"正常视角"与"自由鸟瞰视角"之间插值（世界会平滑缩/放+平移）
+    if (ov && this.overviewMix > 0) {
+      const m = Math.max(0, Math.min(1, this.overviewMix));
+      const e = m * m * (3 - 2 * m);
+      scale += (ov.scale - scale) * e;
+      ox += (ov.ox - ox) * e;
+      oy += (ov.oy - oy) * e;
+      offsetX += (-ov.ox * ov.scale - offsetX) * e;
+      offsetY += (-ov.oy * ov.scale - offsetY) * e;
+    }
     return { scale, ox, oy, offsetX, offsetY };
   }
 
@@ -15399,6 +16231,10 @@ class Switch extends Container {
   } = {}) {
     // 开关是干式机构（存放"开启物质"），内部不应有液体水（否则放进去的盐会被溶解掉、开关失效）
     super({ x, y, w, h, solid: true, physicsKind: 'static', water: 0, volume: 0, ...rest });
+    // ★ 可自动上台阶高度：开关本来就是"踩上去 / 把物块推上去"的小设备，
+    //   默认 22px 高于全局 autoStepMax(14) → 玩家和物块都上不去（用户实测）。
+    //   这里按自身高度给上限（留 4px 余量，并夹到 26 以免高开关被当成斜坡）。
+    this.stepMax = Math.min(26, h + 4);
     this.opening = opening; // 开启物质 id
     this.consumeRate = consumeRate; // g/s（0 = 不消耗）
     this.mode = mode;
@@ -15811,6 +16647,11 @@ class Lamp extends Container {
     // 灯/喷灯是干燥加热台：内部不应有液体水（否则 CaO+H2O、Na+H2O 等在灯上凭空发生，
     // 且 CaCO3 分解出的 CaO 会被灯水消耗掉）。water=0 由 …rest 之后显式覆盖保证。
     super({ x, y, w, h, solid: true, physicsKind: 'static', water: 0, volume: 0, ...rest });
+    // ★ 可自动上台阶高度：灯默认高 40（远超全局 autoStepMax=14），物块被推过来时会被灯侧面
+    //   挡住。而"推物块越灯"必须是**玩家和物块一起上台阶**：物块被抬到灯顶后高度差 > 玩家
+    //   身高，玩家若不跟着上去就和物块脱开了，物块只能孤零零骑在灯上推不走。所以灯按自身
+    //   高度给上限（留 4px 余量）；夹到 48 只为挡住手写 DSL 里夸张的巨灯变成斜坡。
+    this.stepMax = Math.min(48, h + 4);
     this.lit = autoOn;
     this.flameLevel = this.lit ? 1 : 0; // 火焰淡入淡出（0..1）
     this.range = range;
@@ -16498,6 +17339,9 @@ class Extractor extends Obj {
     ...rest
   } = {}) {
     super({ x, y, w, h, solid: true, physicsKind: 'static', ...rest });
+    // ★ 与开关同理：提取器是贴地薄板，玩家/被推的物块应当能直接上去（默认 11~14px 正好
+    //   卡在 autoStepMax(14) 的临界上，浮点误差就会推不过去）
+    this.stepMax = Math.min(26, h + 4);
     this.poolId = poolId; // 对应的药品池 id
     this.switchId = switchId; // 激活开关 id
     this.rate = rate; // 提取速率 g/s（缓慢冒出）
@@ -16619,6 +17463,334 @@ class Extractor extends Obj {
 }
 
 exports.Extractor = Extractor;
+
+  };
+  __modules["src/objects/gastube.js"] = function (module, exports, __require) {
+// ============================================================================
+// 导气管：连接两个药品池的单向气体装置。
+// ----------------------------------------------------------------------------
+// 输入端 = 罩住整个输入药品池的大罩子（池口以上是罩体，池体本身也在罩内）：
+//   池内产气（溶液反应 / 池中物块·烧杯产气 / 滴管落入池中反应产气）产生的
+//   气体**全部**被罩住，经管道鼓入输出端药品池（与集气瓶通气同一条"主动鼓入"
+//   管线：碱吸收 → 水溶解，之后溶液内反应照常）。输入端不冒气泡柱、气体也不
+//   进大气。
+// 输出端 = 从池子侧面插入池内的管口：气体从管口冒泡鼓入输出池；输出池吸收
+//   不完的多余气体才在管口生成气泡柱并进入大气。输入端无论如何都不会生成
+//   气泡柱。单向：输出端自己产气不受影响（照常冒柱/进大气），也不会反灌。
+// ----------------------------------------------------------------------------
+// 无碰撞箱（physicsKind='none'）：罩子/管子在物理里完全不存在，不挡玩家、
+//   物块、物品进出药品池。
+// 视觉：整体半透明灰色玻璃管，因此显示色与流过的气体颜色（gasColor）有关；
+//   输出端管口通气时冒气泡。
+// 接线：inId / outId = 药品池对象 id（两端都接好才工作；否则装置不显示）。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+const { Bubble } = __require('src/objects/bubble.js');;
+const { getSubstance } = __require('src/chem/substances.js');;
+const { rr } = __require('src/render/theme.js');;
+
+const PIPE_W = 13; // 管径（px）
+const FLOW_FADE = 0.55; // 停止产气后管内颜色褪回灰色所需时间（s）
+const HOOD_MARGIN = 6; // 罩子比池宽多出来的边缘（px）
+
+class GasTube extends Obj {
+  get hoverLabel() {
+    return '导气管';
+  }
+
+  get isGasTube() {
+    return true;
+  }
+
+  constructor({ x = 0, y = 0, w = 90, h = 70, inId = '', outId = '', ...rest } = {}) {
+    super({ x, y, w, h, solid: false, physicsKind: 'none', ...rest });
+    this.inId = inId ?? ''; // 输入端药品池 id
+    this.outId = outId ?? ''; // 输出端药品池 id
+    this.flow = 0; // 管内气流强度 0..1（有新气体通过时置 1，随时间衰减）
+    this.gasId = null; // 最近流过的气体（管内颜色/管口微光用）
+    this._bubbleAcc = 0; // 管口气泡生成节流
+    this._geom = null; // 最近一次布局（编辑器命中检测用）
+  }
+
+  /** 解析两端药品池；未接好（缺 id / 不是池 / 已隐藏 / 同一池）→ null */
+  _poolOf(scene, id) {
+    if (!scene || !scene.byId || !id) return null;
+    const o = scene.byId[id];
+    return o && o.isPool && !o.hidden && o.solution && typeof o.innerRect === 'function' ? o : null;
+  }
+
+  /**
+   * 计算装置几何（世界坐标）：罩住整个输入池的罩体 + 从罩顶接出、绕到输出池
+   * 侧面再水平插入的管道 + 管口。返回 null = 两端未接好（装置不工作）。
+   * 同时把自身 body 矩形同步为装置包围盒（编辑器选中框/命中/导出用）。
+   */
+  _layout(scene) {
+    const inPool = this._poolOf(scene, this.inId);
+    const outPool = this._poolOf(scene, this.outId);
+    if (!inPool || !outPool || inPool === outPool) return null;
+    // 罩体：罩住整个池口（比池宽略大，底边落在池口地面线上）
+    const hoodH = Math.round(Math.max(48, Math.min(84, inPool.w * 0.22)));
+    const hood = { x: inPool.x - HOOD_MARGIN, y: inPool.y - hoodH, w: inPool.w + HOOD_MARGIN * 2, h: hoodH };
+    const cx = hood.x + hood.w / 2;
+    // 输出端：从靠近输入端的一侧水平插入池壁（管口在池内，离内壁 14px）
+    const wall = Number.isFinite(outPool.wall) ? outPool.wall : 8;
+    const fromLeft = outPool.x + outPool.w / 2 >= inPool.x + inPool.w / 2;
+    const insertY = Math.round(outPool.y + outPool.h * 0.55); // 插在池深中部（液面下）
+    const mouth = {
+      x: fromLeft ? outPool.x + wall + 14 : outPool.x + outPool.w - wall - 14,
+      y: insertY,
+    };
+    const sideX = fromLeft ? outPool.x - 22 : outPool.x + outPool.w + 22; // 下降段贴池外侧
+    const topY = Math.round(Math.min(hood.y, outPool.y) - 22);
+    const path = [
+      { x: cx, y: hood.y + 2 }, // 罩顶接出
+      { x: cx, y: topY }, // 竖管
+      { x: sideX, y: topY }, // 横管
+      { x: sideX, y: insertY }, // 沿输出池外侧下行
+      { x: mouth.x, y: insertY }, // 水平插入池内
+    ];
+    // body 矩形 = 装置包围盒
+    let x0 = hood.x;
+    let x1 = hood.x + hood.w;
+    let y0 = hood.y;
+    let y1 = hood.y + hood.h;
+    for (const p of path) {
+      x0 = Math.min(x0, p.x);
+      x1 = Math.max(x1, p.x);
+      y0 = Math.min(y0, p.y);
+      y1 = Math.max(y1, p.y);
+    }
+    this.x = Math.round(x0 - PIPE_W);
+    this.y = Math.round(y0 - PIPE_W);
+    this.w = Math.round(x1 - x0 + PIPE_W * 2);
+    this.h = Math.round(y1 - y0 + PIPE_W * 2);
+    return { inPool, outPool, hood, path, mouth, fromLeft };
+  }
+
+  /** 当前装置几何（世界坐标；两端未接好 → null）。Scene 输送气体时用 */
+  geometry(scene) {
+    return this._layout(scene);
+  }
+
+  /** 本次产气是否来自输入端（罩住整个输入池：池内反应 + 池口贴合处产气） */
+  captures(scene, emit) {
+    if (!emit) return false;
+    const g = this._layout(scene);
+    if (!g) return false;
+    if (emit.container === g.inPool) return true; // 输入池自身反应 / 池内物体与池溶液反应
+    if (emit.obj === g.inPool) return true;
+    const pt = emit.point;
+    if (!pt) return false;
+    // 池体（含盆壁/池口贴合处）：罩子罩住整个池口，池内冒出的气都归它
+    const r = g.inPool;
+    return pt.x >= r.x - 8 && pt.x <= r.x + r.w + 8 && pt.y >= r.y - 8 && pt.y <= r.y + r.h + 8;
+  }
+
+  /** 本 tick 有气体通过（Scene 输送时调用）：点亮管内气流颜色 */
+  noteFlow(id) {
+    if (id) this.gasId = id;
+    this.flow = 1;
+  }
+
+  /** 管内显示的气体色（半透明灰管透过气体色；气体未声明 gasColor 时用通用气流青） */
+  tintColor() {
+    return (this.gasId && getSubstance(this.gasId)?.gasColor) || '#78dcff';
+  }
+
+  update(dt, scene) {
+    const g = this._layout(scene);
+    this._geom = g;
+    // 停止产气后管内颜色渐褪回灰色
+    this.flow = Math.max(0, this.flow - dt / FLOW_FADE);
+    // 管口气泡：只在有气流时冒（气体正在鼓入输出池；纯视觉）
+    if (g && this.flow > 0.03) {
+      this._bubbleAcc += dt;
+      if (this._bubbleAcc >= 0.14) {
+        this._bubbleAcc = 0;
+        const m = g.mouth;
+        scene.addObject(new Bubble({
+          x: m.x - 3 + (Math.random() - 0.5) * 6,
+          y: m.y - 4 - Math.random() * 6,
+          dir: -1, // 池内气泡一律上浮（与气体轻重无关）
+          speed: 46 + Math.random() * 26,
+        }));
+      }
+    } else {
+      this._bubbleAcc = 0;
+    }
+  }
+
+  render(ctx, opts) {
+    const scene = opts?.scene ?? null;
+    const g = scene ? this._layout(scene) : this._geom;
+    if (!g) {
+      this._renderPlaceholder(ctx, scene);
+      return;
+    }
+    this._geom = g;
+    const t = opts?.time ?? 0;
+    const flow = Math.max(0, Math.min(1, this.flow));
+    const tint = flow > 0.02 ? this.tintColor() : null;
+    const rgb = tint ? hexToRgb(tint) : null;
+    const gas = (a) => `rgba(${rgb.r},${rgb.g},${rgb.b},${a})`;
+
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    // ---- 管道：半透明灰玻璃（外壁 → 内壁高光 → 管内气体色 → 流动光带）----
+    this._strokePath(ctx, g.path, PIPE_W + 4, 'rgba(108,118,136,0.36)');
+    this._strokePath(ctx, g.path, PIPE_W, 'rgba(162,172,190,0.34)');
+    this._strokePath(ctx, g.path, PIPE_W - 4, 'rgba(216,224,238,0.11)');
+    if (tint) {
+      this._strokePath(ctx, g.path, PIPE_W - 3, gas(0.12 + 0.30 * flow));
+      // 气流光带（沿管道向输出端流动）
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(g.path[0].x, g.path[0].y);
+      for (let i = 1; i < g.path.length; i++) ctx.lineTo(g.path[i].x, g.path[i].y);
+      ctx.setLineDash([5, 15]);
+      ctx.lineDashOffset = -t * 110;
+      ctx.strokeStyle = gas(0.55 * flow);
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.restore();
+    }
+    // ---- 输出端管口：玻璃圆环 + 冒气微光（气泡是 Bubble 对象，见 update）----
+    const m = g.mouth;
+    ctx.beginPath();
+    ctx.arc(m.x, m.y, PIPE_W / 2 + 1, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(150,160,178,0.55)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(205,214,228,0.45)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    if (tint) {
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = gas(0.35 + 0.45 * flow);
+      ctx.shadowColor = gas(0.8);
+      ctx.shadowBlur = 10;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+    // ---- 输入罩：罩住整个池口的大玻璃罩（罩内空间也在采集范围内）----
+    this._renderHood(ctx, g.hood, rgb ? gas : null, flow);
+    ctx.restore();
+  }
+
+  /** 输入罩体：圆顶玻璃罩 + 底部法兰；有气流时罩内泛出气体色 */
+  _renderHood(ctx, h, gas, flow) {
+    const rad = Math.min(h.w / 2 - 2, h.h - 4);
+    const dome = () => {
+      ctx.beginPath();
+      ctx.moveTo(h.x, h.y + h.h);
+      ctx.lineTo(h.x, h.y + rad);
+      ctx.quadraticCurveTo(h.x, h.y, h.x + rad, h.y);
+      ctx.lineTo(h.x + h.w - rad, h.y);
+      ctx.quadraticCurveTo(h.x + h.w, h.y, h.x + h.w, h.y + rad);
+      ctx.lineTo(h.x + h.w, h.y + h.h);
+    };
+    // 玻璃罩体（半透明灰，能看到池内）
+    dome();
+    const grad = ctx.createLinearGradient(0, h.y, 0, h.y + h.h);
+    grad.addColorStop(0, 'rgba(178,188,206,0.15)');
+    grad.addColorStop(1, 'rgba(126,136,156,0.06)');
+    ctx.fillStyle = grad;
+    ctx.fill();
+    if (gas) {
+      ctx.fillStyle = gas(0.05 + 0.09 * flow); // 罩内气体色
+      ctx.fill();
+    }
+    ctx.strokeStyle = 'rgba(182,192,210,0.55)';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    // 玻璃高光（左侧一道弧）
+    ctx.beginPath();
+    ctx.moveTo(h.x + h.w * 0.16, h.y + h.h - 10);
+    ctx.quadraticCurveTo(h.x + h.w * 0.08, h.y + h.h * 0.42, h.x + h.w * 0.26, h.y + h.h * 0.1);
+    ctx.strokeStyle = 'rgba(255,255,255,0.13)';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    // 底部法兰：压在池口地面线上（"罩住整个池"的底座）
+    rr(ctx, h.x - 6, h.y + h.h - 7, h.w + 12, 11, 4);
+    const fg = ctx.createLinearGradient(0, h.y + h.h - 7, 0, h.y + h.h + 4);
+    fg.addColorStop(0, 'rgba(172,182,200,0.50)');
+    fg.addColorStop(1, 'rgba(92,102,120,0.50)');
+    ctx.fillStyle = fg;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(200,210,226,0.35)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+  }
+
+  /** 两端未接好：编辑器里画虚线框便于选中/接线；游戏里不显示（不凭空出现装置） */
+  _renderPlaceholder(ctx, scene) {
+    if (scene && scene.status === 'running') return;
+    ctx.save();
+    ctx.setLineDash([5, 4]);
+    ctx.strokeStyle = 'rgba(160,172,190,0.55)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(this.x + 1, this.y + 1, Math.max(8, this.w - 2), Math.max(8, this.h - 2));
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  /** 编辑器命中检测：只认装置轮廓（罩边/管道/管口），罩子内部留给药品池选中 */
+  editorHit(wx, wy) {
+    const g = this._geom;
+    if (!g) {
+      const pad = 8;
+      return wx >= this.x - pad && wx <= this.x + this.w + pad && wy >= this.y - pad && wy <= this.y + this.h + pad;
+    }
+    const h = g.hood;
+    if (wx >= h.x - 10 && wx <= h.x + h.w + 10 && wy >= h.y - 10 && wy <= h.y + h.h + 10) {
+      const nearSide = Math.abs(wx - h.x) <= 10 || Math.abs(wx - (h.x + h.w)) <= 10;
+      const nearTop = wy <= h.y + 14
+        || Math.hypot(wx - h.x, wy - h.y) <= 18
+        || Math.hypot(wx - (h.x + h.w), wy - h.y) <= 18;
+      const nearBase = wy >= h.y + h.h - 8;
+      if (nearSide || nearTop || nearBase) return true;
+    }
+    const pts = g.path;
+    for (let i = 1; i < pts.length; i++) {
+      if (segDist(wx, wy, pts[i - 1], pts[i]) <= PIPE_W) return true;
+    }
+    return Math.hypot(wx - g.mouth.x, wy - g.mouth.y) <= PIPE_W + 2;
+  }
+
+  /** 折线描边（管道共用） */
+  _strokePath(ctx, pts, width, style) {
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.lineWidth = width;
+    ctx.strokeStyle = style;
+    ctx.stroke();
+  }
+}
+
+/** 点到线段距离（编辑器命中检测用） */
+function segDist(px, py, a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  if (len2 < 1e-9) return Math.hypot(px - a.x, py - a.y);
+  let t = ((px - a.x) * dx + (py - a.y) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (a.x + t * dx), py - (a.y + t * dy));
+}
+
+function hexToRgb(hex) {
+  const h = String(hex).replace('#', '');
+  return {
+    r: parseInt(h.slice(0, 2), 16),
+    g: parseInt(h.slice(2, 4), 16),
+    b: parseInt(h.slice(4, 6), 16),
+  };
+}
+
+exports.GasTube = GasTube;
 
   };
   __modules["src/level/multiscene.js"] = function (module, exports, __require) {
@@ -16917,4 +18089,4 @@ exports.Multiscene = Multiscene;
   };
   global.Chezzle = __require("src/index.js");
 })(typeof window !== 'undefined' ? window : globalThis);
-console.log('[Chezzle] 引擎构建 "vmtz3hibk"');
+console.log('[Chezzle] 引擎构建 "vmvc6l20g"');

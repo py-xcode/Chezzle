@@ -10,12 +10,15 @@
 </style>
 </head>
 <body>
+<!-- 启动/加载动画：与选关页"进入关卡"过场同款（见 levels/boot.js） -->
+<script src="boot.js"></script>
 <canvas id="game"></canvas>
-<script src="../dist/chezzle.js?vmtz3hibk"></script>
+<script src="../prefs.js?vmvc6l20g"></script>
+<script src="../dist/chezzle.js?vmvc6l20g"></script>
 <script src="report.js"></script>
 <script>
 const canvas = document.getElementById('game');
-// 高清 + 窗口自适应：逻辑尺寸=窗口（上限 1760×1120），缓冲 ×devicePixelRatio
+// 高清 + 窗口自适应：逻辑尺寸=窗口（4K 内铺满；物理缓冲按面积限 dpr），缓冲 ×devicePixelRatio
 Chezzle.fitCanvasToWindow(canvas);
 window.addEventListener('resize', () => Chezzle.fitCanvasToWindow(canvas));
 const L = new Chezzle.LevelBuilder(canvas, { worldW: 950, worldH: 800 });

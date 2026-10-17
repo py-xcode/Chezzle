@@ -11,6 +11,14 @@
   const KEY = 'chezzle-progress-v1';
   // 关卡文件位于 levels/ 下，选关/主页在上级目录
   const BASE = location.pathname.includes('/levels/') ? '../' : '';
+  /** SPA 外壳内嵌模式（外壳用 iframe 加载关卡页，?spa=1）：
+   *  返回按钮/通关浮层的"返回选关"不再跳页，而是发消息给外壳做同文档转场。 */
+  const SPASHELL = (function () {
+    try {
+      if (/[?&]spa=1/.test(location.search)) return true;
+      return window.parent !== window && !!window.parent.__CZ_SPA__;
+    } catch (e) { return false; }
+  })();
 
   // 场景 → 关卡 id（bind 时登记）；未登记时按"当前文件名"到 levels.json 反查，
   // 这样即使关卡页忘了写 ChezzleReport.bind(...) 也能记录进度。
@@ -114,24 +122,78 @@
     const height = (h && h.offsetHeight) || 30;
     window.CHEZZLE_HUD_TOP_INSET = top + height + 6;   // 引擎 hudTopOffset 读它
   }
+  /**
+   * 离场转场：一块斜切面板从右侧扫入（与选关页同一套"平行四边形"视觉），
+   * 面板压满屏幕的瞬间再跳转 —— 进关卡有加载过场，出关卡也要有收场，不能"啪"地切页。
+   * 返回 false 表示没做动画（调用方按原方式跳转）。
+   */
+  function leaveWithWipe(href, color) {
+    if (!href || document.getElementById('czl-out')) return false;
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
+    const c = color || '232,184,75';
+    const w = document.createElement('div');
+    w.id = 'czl-out';
+    w.style.cssText = 'position:fixed;inset:0;z-index:1200;pointer-events:none;overflow:hidden';
+    const panel = document.createElement('i');
+    panel.style.cssText = 'position:absolute;top:-12%;bottom:-12%;left:0;width:132%;' +
+      'transform:translateX(112%) skewX(-14deg);will-change:transform;' +
+      'background:linear-gradient(96deg,rgba(' + c + ',.1) 0%,#07051a 26%,#07051a 100%)';
+    // 前缘只留一条亮线（不再有辉光，和主站的扫屏一致）
+    const edge = document.createElement('b');
+    edge.style.cssText = 'position:absolute;top:0;bottom:0;left:0;width:2px;background:#fff;opacity:.9';
+    panel.appendChild(edge);
+    w.appendChild(panel);
+    document.body.appendChild(w);
+    requestAnimationFrame(() => {
+      panel.style.transition = 'transform .44s cubic-bezier(.66,0,.24,1)';
+      panel.style.transform = 'translateX(-6%) skewX(-14deg)';
+    });
+    setTimeout(() => { location.href = href; }, 420);
+    return true;
+  }
   function backLink() {
     if (document.getElementById('czl-back')) return;
+    // 桌面大屏：按窗口尺寸放大返回按钮（2K 上 13px 太小；与画布 HUD 同向放大）
+    let uiK = 1;
+    try {
+      if (!matchMedia('(pointer: coarse)').matches) {
+        uiK = Math.max(1, Math.min(1.5, Math.min(innerWidth / 1280, innerHeight / 720)));
+      }
+    } catch (e) { /* 忽略 */ }
     const a = document.createElement('a');
     a.id = 'czl-back';
-    a.href = BASE + 'select.html';
+    // SPA 外壳的选关路由（hash 直达；`../#/select` 从 /levels/ 解析到根路由，
+    // 绕开 Cloudflare 的 .html → clean URL 301 链）
+    a.href = BASE + '#/select';
     a.setAttribute('aria-label', '返回选关');
     a.title = '返回选关';
     a.style.cssText = [
       'position:fixed;top:10px;left:10px;z-index:40;display:inline-flex;align-items:center;gap:6px;',
-      'padding:7px 12px;border-radius:8px;border:1px solid #2b3047;background:rgba(20,26,64,.88);',
-      'color:#dfe8f2;font:13px "Segoe UI","Microsoft YaHei",sans-serif;text-decoration:none;',
-      'transition:border-color .18s,color .18s,box-shadow .18s;backdrop-filter:blur(2px)',
+      'padding:' + Math.round(7 * uiK) + 'px ' + Math.round(12 * uiK) + 'px;border-radius:8px;',
+      'border:1px solid #2b3047;background:rgba(20,26,64,.88);',
+      'color:#dfe8f2;font:' + Math.round(13 * uiK) + 'px "Segoe UI","Microsoft YaHei",sans-serif;',
+      'text-decoration:none;',
+      'transition:border-color .18s,color .18s,box-shadow .18s,opacity .45s ease;backdrop-filter:blur(2px)',
+      'opacity:0',
     ].join('');
     a.innerHTML = `
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <svg width="${Math.round(13 * uiK)}" height="${Math.round(13 * uiK)}" viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <path d="M15 5l-7 7 7 7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
       </svg><span style="opacity:.85">返回选关</span>`;
     layoutBack(a);
+    // 关卡启动层（boot.js）还在时先别露头；启动画面揭开后再淡入。
+    // SPA 内嵌模式（外壳负责加载层）→ 直接显示。
+    const docEl = (typeof document !== 'undefined' && document.documentElement) || null;
+    const bootedNow = () => !!(docEl && docEl.classList && docEl.classList.contains('czlBooted'));
+    const appear = () => { a.style.opacity = '1'; };
+    if (SPASHELL) setTimeout(appear, 700);
+    else if (bootedNow()) setTimeout(appear, 420);
+    else {
+      const t = setInterval(() => {
+        if (bootedNow()) { clearInterval(t); setTimeout(appear, 420); }
+      }, 120);
+      setTimeout(() => { clearInterval(t); appear(); }, 4000); // 极端情况（启动层没跑）也别一直隐身
+    }
     document.addEventListener('fullscreenchange', () => layoutBack(a));
     document.addEventListener('webkitfullscreenchange', () => layoutBack(a));
     a.addEventListener('mouseenter', () => {
@@ -143,6 +205,15 @@
       a.style.borderColor = '#2b3047';
       a.style.color = '#dfe8f2';
       a.style.boxShadow = 'none';
+    });
+    a.addEventListener('click', (e) => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+      e.preventDefault();
+      if (SPASHELL) {
+        try { parent.postMessage({ type: 'cz:leave' }, '*'); } catch (err) { location.href = a.href; }
+        return;
+      }
+      if (!leaveWithWipe(a.href, '232,184,75')) location.href = a.href;
     });
     document.body.appendChild(a);
   }
@@ -195,62 +266,109 @@
       ChezzleReport.overlay(id, total, id ? '' : idWhy);
     },
 
-    /** 通关浮层（游戏风格面板；不污染画布，纯 DOM）。why = 未识别 id 时的具体原因 */
+    /** 通关浮层样式：只注入一次（与 HUD 同一套圆角深紫面板 + 金描边风格） */
+    _winStyle(doc) {
+      if (doc.getElementById('czl-win-style')) return;
+      const s = doc.createElement('style');
+      s.id = 'czl-win-style';
+      s.textContent = [
+        '#czl-win{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;',
+        '  background:radial-gradient(120% 90% at 50% 42%, rgba(18,14,46,.62), rgba(5,4,16,.88));',
+        '  opacity:0;transition:opacity .28s ease}',
+        '#czl-win.in{opacity:1}',
+        '#czl-win .czw-card{position:relative;width:min(400px,86vw);padding:20px 30px 20px;text-align:center;color:#dfe8f2;',
+        '  background:linear-gradient(180deg,#282050 0%,#120d30 55%,#0e0a24 100%);',
+        '  border:1.5px solid rgba(232,184,75,.8);border-radius:12px;',
+        '  box-shadow:0 0 20px rgba(232,184,75,.18),0 16px 38px rgba(0,0,0,.55);',
+        '  transform:translateY(14px);opacity:0;transition:transform .36s cubic-bezier(.2,.9,.3,1.05),opacity .3s ease}',
+        '#czl-win.in .czw-card{transform:none;opacity:1}',
+        '#czl-win .czw-kicker{font:bold 10px/1 ui-monospace,Consolas,monospace;letter-spacing:3px;color:rgba(232,184,75,.75)}',
+        '#czl-win .czw-divider{width:70%;height:1px;margin:9px auto 12px;',
+        '  background:linear-gradient(90deg,transparent,rgba(232,184,75,.45),transparent)}',
+        '#czl-win .czw-emblem{display:block;width:62px;height:40px;margin:0 auto 2px;overflow:visible}',
+        '#czl-win .czw-tile{fill:rgba(18,14,46,.9);stroke:rgba(232,184,75,.85);stroke-width:1.4}',
+        '#czl-win .czw-check{fill:none;stroke:#ffe9b0;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round;',
+        '  stroke-dasharray:36;stroke-dashoffset:36;filter:drop-shadow(0 0 5px rgba(255,215,106,.5))}',
+        '#czl-win.in .czw-check{animation:czwDraw .42s cubic-bezier(.3,.7,.2,1) .16s forwards}',
+        '@keyframes czwDraw{to{stroke-dashoffset:0}}',
+        '#czl-win .czw-title{margin-top:8px;font:bold 24px/1.2 "Segoe UI","Microsoft YaHei",sans-serif;',
+        '  letter-spacing:8px;color:#ffe9b0;text-shadow:0 0 12px rgba(255,215,106,.45)}',
+        '#czl-win .czw-meta{margin-top:8px;font-size:12px;letter-spacing:1px;color:#9fb2c8}',
+        '#czl-win .czw-meta b{color:#ffd76a;font-weight:bold;letter-spacing:1px}',
+        '#czl-win .czw-dot{display:inline-block;width:4px;height:4px;margin:0 10px 2px;border-radius:50%;',
+        '  background:rgba(232,184,75,.65)}',
+        '#czl-win .czw-note{margin-top:10px;font-size:11px;line-height:1.6;color:#8a94b5;text-align:left;',
+        '  padding:7px 9px;border-left:2px solid rgba(232,184,75,.45);background:rgba(232,184,75,.05);border-radius:4px}',
+        '#czl-win .czw-btn{margin-top:16px;padding:10px 34px;border:0;cursor:pointer;',
+        '  font:bold 15px/1 "Segoe UI","Microsoft YaHei",sans-serif;letter-spacing:4px;color:#2a2000;',
+        '  background:linear-gradient(180deg,#ffe6a0,#e8b84b);',
+        '  clip-path:polygon(12px 0,100% 0,calc(100% - 12px) 100%,0 100%);',
+        '  filter:drop-shadow(0 0 14px rgba(232,184,75,.5));transition:filter .18s ease,transform .18s ease}',
+        '#czl-win .czw-btn:hover{filter:drop-shadow(0 0 22px rgba(232,184,75,.8));transform:translateY(-1px)}',
+        '#czl-win .czw-btn:active{transform:translateY(1px)}',
+        '#czl-win .czw-btn:focus-visible{outline:2px solid #fff;outline-offset:3px}',
+        '@media (prefers-reduced-motion: reduce){#czl-win,#czl-win .czw-card{transition:none}',
+        '  #czl-win.in .czw-check{animation:none;stroke-dashoffset:0}}',
+        // 大屏同步放大（与画布 HUD 的 uiScaleOf 同向：2K≈1.2×、超宽≈1.4×）
+        '@media (min-width:1600px){#czl-win .czw-card{zoom:1.2}}',
+        '@media (min-width:2100px){#czl-win .czw-card{zoom:1.42}}',
+      ].join('');
+      doc.head.appendChild(s);
+    },
+
+    /** 通关浮层（与 HUD 同款圆角深紫面板 + 金描边；小平行四边形徽记 + 勾线动画）。
+     *  why = 未识别关卡 id 时的具体原因 */
     overlay(id, total, why) {
       if (document.getElementById('czl-win')) return;
+      const esc = (s) => String(s == null ? '' : s)
+        .replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      this._winStyle(document);
       const d = document.createElement('div');
       d.id = 'czl-win';
       d.setAttribute('role', 'dialog');
       d.setAttribute('aria-label', '通关');
-      d.style.cssText = [
-        'position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;',
-        'background:rgba(6,9,26,0.72);backdrop-filter:blur(3px);',
-      ].join('');
-      const title = id === 'tutorial' ? '引导完成' : '通关！';
-      d.innerHTML = `
-        <div style="position:relative;min-width:300px;max-width:420px;padding:28px 34px 24px;text-align:center;
-          background:linear-gradient(180deg,#1b1650,#100c2e);border:1.5px solid #e8b84b;color:#dfe8f2;
-          font:15px 'Segoe UI','Microsoft YaHei',sans-serif;
-          filter:drop-shadow(0 0 26px rgba(232,184,75,.4)) drop-shadow(0 16px 36px rgba(0,0,0,.55));
-          clip-path:polygon(16px 0, calc(100% - 16px) 0, 100% 16px, 100% calc(100% - 16px), calc(100% - 16px) 100%, 16px 100%, 0 calc(100% - 16px), 0 16px)">
-          <svg width="46" height="46" viewBox="0 0 24 24" aria-hidden="true" style="display:block;margin:0 auto 10px">
-            <circle cx="12" cy="12" r="10.5" fill="none" stroke="#e8b84b" stroke-width="1.6"/>
-            <path d="M7.2 12.4l3.1 3.1 6.4-6.9" fill="none" stroke="#ffd76a" stroke-width="2.2"
-              stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          <div style="font:bold 24px 'Segoe UI','Microsoft YaHei',sans-serif;color:#ffd76a;text-shadow:0 0 14px rgba(255,215,106,.6)">${title}</div>
-          <div style="margin:8px 0 20px;color:#9fb2c8;font-size:13px">
-            关卡进度已保存：<b style="color:#ffd76a">${id || '未识别关卡 id'}</b> · 累计 ${total ?? 0} 关
-            <br><span style="font-size:11.5px;color:#7f8db0">${id
-              ? '进度按关卡 id 记录；改 id 请同步改 levels/levels.json'
-              : '没认出本页是哪个关卡' + (why ? '：' + why : '') +
-                '<br>修法（二选一）：① 本关卡脚本里加 ChezzleReport.bind(scene, \'关卡id\')；' +
-                '② 在 levels/levels.json 里把该关的 file 写成 ' + hereRaw() + '（.html 可省）'}</span>
-          </div>
-          <div style="display:flex;justify-content:center">
-            <button class="czl-btn" data-act="select" style="cursor:pointer;padding:11px 40px;border:0;font-weight:bold;font-size:15px;
-              background:linear-gradient(180deg,#ffd76a,#e8b84b);color:#2a2000;letter-spacing:3px;
-              filter:drop-shadow(0 0 16px rgba(232,184,75,.55));
-              clip-path:polygon(10px 0, calc(100% - 10px) 0, 100% 10px, 100% calc(100% - 10px), calc(100% - 10px) 100%, 10px 100%, 0 calc(100% - 10px), 0 10px)">返回选关</button>
-          </div>
-        </div>`;
+      const title = id === 'tutorial' ? '引导完成' : '通关';
+      const note = id ? '' : (
+        '<div class="czw-note">没认出本页是哪个关卡' + (why ? '：' + esc(why) : '') +
+        '<br>修法（二选一）：① 本关脚本里加 ChezzleReport.bind(scene, \'关卡id\')；' +
+        '② 在 levels/levels.json 里把该关的 file 写成 ' + esc(hereRaw()) + '（.html 可省）</div>');
+      d.innerHTML =
+        '<div class="czw-card">' +
+        '<div class="czw-kicker">CHEZZLE · ' + title + '</div>' +
+        '<div class="czw-divider"></div>' +
+        '<svg class="czw-emblem" viewBox="0 0 96 64" aria-hidden="true">' +
+        '<path class="czw-tile" d="M18 6 H92 L78 58 H4 Z"/>' +
+        '<path class="czw-check" d="M34 33 L46 45 L66 21"/>' +
+        '</svg>' +
+        '<div class="czw-title">' + title + '</div>' +
+        '<div class="czw-meta">关卡 <b>' + esc(id || '未识别') + '</b>' +
+        '<span class="czw-dot"></span>累计 <b>' + (total ?? 0) + '</b> 关</div>' +
+        note +
+        '<button class="czw-btn" data-act="select" type="button">返回选关</button>' +
+        '</div>';
       document.body.appendChild(d);
-      // 进场动画：遮罩淡入 + 面板上浮放大（尊重 prefers-reduced-motion）
-      const panel = d.firstElementChild;
-      if (!matchMedia('(prefers-reduced-motion: reduce)').matches && panel.animate) {
-        d.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: 'ease-out' });
-        panel.animate(
-          [{ opacity: 0, transform: 'translateY(22px) scale(.94)' }, { opacity: 1, transform: 'none' }],
-          { duration: 380, easing: 'cubic-bezier(.2,.9,.3,1.25)', delay: 60 },
-        );
-      }
+      // 进场：遮罩淡入 + 面板上浮（CSS transition；勾线用 keyframes）
+      requestAnimationFrame(() => d.classList.add('in'));
       const go = (href) => {
+        if (SPASHELL) {
+          // 外壳内嵌：淡出浮层后发消息，由外壳做"关卡 → 选关"的同文档转场
+          d.classList.remove('in');
+          if (d.animate && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+            d.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 200, easing: 'ease-in' });
+          }
+          setTimeout(() => {
+            try { parent.postMessage({ type: 'cz:leave' }, '*'); } catch (err) { location.href = href; }
+          }, 180);
+          return;
+        }
         if (!matchMedia('(prefers-reduced-motion: reduce)').matches && d.animate) {
           d.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 220, easing: 'ease-in' });
-          setTimeout(() => { location.href = href; }, 200);
-        } else location.href = href;
+          setTimeout(() => {
+            if (!leaveWithWipe(href, '232,184,75')) location.href = href;
+          }, 200);
+        } else if (!leaveWithWipe(href, '232,184,75')) location.href = href;
       };
-      d.querySelector('[data-act="select"]').addEventListener('click', () => go(BASE + 'select.html'));
+      d.querySelector('[data-act="select"]').addEventListener('click', () => go(BASE + '#/select'));
     },
   };
 })();
