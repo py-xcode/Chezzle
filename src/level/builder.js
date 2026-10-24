@@ -27,9 +27,11 @@ import { Portal } from '../objects/portal.js';
 import { GasDetector } from '../objects/gasdetector.js';
 import { Extractor } from '../objects/extractor.js';
 import { GasTube } from '../objects/gastube.js';
+import { GasChamber } from '../objects/gaschamber.js';
+import { ElectrolysisPool, HeatingPool, HighTempPool } from '../objects/poolvariants.js';
 import { Dropper } from '../objects/dropper.js';
 import { GasBottle } from '../objects/gasbottle.js';
-import { bindSceneClick } from './click.js';
+import { bindSceneClick, hoverTapAt } from './click.js';
 import { bindOverviewInput } from '../core/overview.js';
 import { bindTouchUI } from '../core/touch.js';
 import { attachRecorderPanel } from '../core/recorder.js';
@@ -112,9 +114,29 @@ export class LevelBuilder {
     return this.add(new Extractor({ x, y, ...opts }));
   }
 
-  /** 导气管（连接两个药品池：输入端罩内产气 → 输出端鼓入；单向、无碰撞箱） */
+  /** 导气管（一个输入池 → 多个输出端药品池/气室；支路可装阀门，单向、无碰撞箱） */
   gastube(x, y, opts = {}) {
     return this.add(new GasTube({ x, y, ...opts }));
+  }
+
+  /** 气室：无碰撞箱的矩形区域，内部大气与外部独立；可作导气管输出端 */
+  gaschamber(x, y, w, h, opts = {}) {
+    return this.add(new GasChamber({ x, y, w, h, ...opts }));
+  }
+
+  /** 电解池：池内反应获得"通电"条件（常开或由开关控制） */
+  elepool(x, y, w, h, opts = {}) {
+    return this.add(new ElectrolysisPool({ x, y, w, h, ...opts }));
+  }
+
+  /** 加热池：池内反应获得"加热"条件（常开或由开关控制） */
+  heatpool(x, y, w, h, opts = {}) {
+    return this.add(new HeatingPool({ x, y, w, h, ...opts }));
+  }
+
+  /** 高温池：池内反应获得"高温"条件（常开或由开关控制） */
+  hotpool(x, y, w, h, opts = {}) {
+    return this.add(new HighTempPool({ x, y, w, h, ...opts }));
   }
 
   dropper(x, y, opts = {}) {
@@ -237,14 +259,18 @@ export class LevelBuilder {
         y: (e.clientY - rect.top) * (canvasLH(canvas) / rect.height),
       };
     };
-    // 记录鼠标位置（调试模式悬停显示物体来源用）；离开画布清除
+    // 记录鼠标位置（调试模式悬停显示物体来源用）+ 桌面端"可点击物体"手型指针提示
+    // （导气管阀门/滴管等 onTap 物体；与点击同一套命中规则，含 tapHit 细粒度命中）
     const onMove = (e) => {
-      if (!scene.debugMode) return;
       const { x, y } = screenPos(e);
-      scene.mouse = { x, y, on: true };
+      if (scene.debugMode) scene.mouse = { x, y, on: true };
+      const hit = hoverTapAt(scene, canvas, x, y);
+      const cursor = hit ? 'pointer' : '';
+      if (canvas.style.cursor !== cursor) canvas.style.cursor = cursor;
     };
     const onLeave = () => {
       if (scene.mouse) scene.mouse.on = false;
+      canvas.style.cursor = '';
     };
     canvas.addEventListener('mousemove', onMove);
     canvas.addEventListener('mouseleave', onLeave);

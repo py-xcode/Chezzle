@@ -312,6 +312,40 @@ test('玩家站在物块上走动：物块不被带动、不沉地', () => {
   assert.equal(blk.top, 670, '物块仍在地板上');
 });
 
+/** 把玩家网格底行两侧挖空、只留中间"龙骨"（模拟被腐蚀后的不规则底面；同 physics.test.js） */
+function carveKeelBottom(p, sideFrac = 0.2, rows = 1) {
+  const g = p.grid;
+  const leftEnd = Math.floor(g.cols * sideFrac);
+  const rightStart = Math.ceil(g.cols * (1 - sideFrac));
+  for (let r = 0; r < rows; r++) {
+    for (let x = 0; x < leftEnd; x++) g.cells[g.rows - 1 - r][x] = null;
+    for (let x = rightStart; x < g.cols; x++) g.cells[g.rows - 1 - r][x] = null;
+  }
+  g._dirty = true;
+  p.syncGrid();
+}
+
+test('网格被腐蚀出缺口的玩家站在窄物块上行走：物块不被带走（用户反馈回归）', () => {
+  const scene = flatScene();
+  const blk = new Block({ x: 520, y: 670, w: 50, h: 50, substance: 'Fe', mass: 10, id: 'blk' });
+  scene.addObject(blk);
+  const p = new Player({ x: 480, y: 580, mass: 30, id: 'p' }); // 真实玩家网格 85×90
+  carveKeelBottom(p, 0.3, 1); // 底面两侧缺 1 行 → AABB 底 = 中间龙骨
+  p.y = blk.top - p.h;
+  scene.addObject(p);
+  scene.status = 'running';
+  run(scene, 60);
+  assert.ok(Math.abs(p.bottom - blk.top) < 1.5,
+    `玩家应站在物块上：bottom=${p.bottom.toFixed(1)} vs 顶=${blk.top.toFixed(1)}`);
+  const x0 = blk.x;
+  scene.control.add('right');
+  run(scene, 150);
+  scene.control.delete('right');
+  // 旧代码：龙骨滑出物块后，两侧较高的格子以 ≤2px 的 eps 接触物块顶，而 AABB 底
+  // 已低于物块顶 >1.5px → integrateX 的 standing 判定失败 → tryPushX 把物块推走。
+  assert.ok(Math.abs(blk.x - x0) < 1, `物块不得被不规则底面的玩家带走，Δx=${(blk.x - x0).toFixed(1)}`);
+});
+
 // ============================================================================
 // 烧杯/集气瓶下落穿透回归：①不下穿玩家等动态体 ②跨高低静态体时停在最浅支撑面
 // （不再"取最深支撑"沉进池盆）③杯内玩家被下行带动时不被压进静态体

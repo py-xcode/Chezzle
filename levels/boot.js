@@ -17,6 +17,14 @@
   'use strict';
   if (window.__czlBootLoaded) return;
   window.__czlBootLoaded = true;
+  // 浏览器前进/后退缓存（bfcache）恢复页面时，整页 JS 状态（包括内存里的存档点快照）
+  // 会原样复活。关卡要求"退出重进永远从关卡开头开始"，所以从 bfcache 恢复时强制重载。
+  // 只处理 persisted 恢复；正常首次加载/刷新不受影响。
+  try {
+    window.addEventListener('pageshow', function (e) {
+      if (e && e.persisted) location.reload();
+    });
+  } catch (e) { /* 老内核 */ }
   // SPA 外壳内嵌模式（?spa=1）：外壳负责加载层/转场；这里不再铺第二层启动画面，
   // 也不隐藏画布（iframe 本来就要等 load 之后才被外壳揭开），避免"双层加载动画"。
   try {

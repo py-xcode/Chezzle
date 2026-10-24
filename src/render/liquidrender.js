@@ -145,9 +145,16 @@ function mixToward(cur, target, k) {
 // 模块级：最近渲染时间（frameK 计算帧间流逝用）
 let solution_frameT = null;
 
-/** 渲染一个矩形液面（灵动：起伏波浪 + 持续上升的气泡 + 辉光） */
-export function renderLiquid(ctx, x, y, w, h, solution, time = 0) {
+/**
+ * 渲染一个矩形液面（灵动：起伏波浪 + 持续上升气泡 + 辉光）。
+ * time：动画时间（秒，确定性 sin）。
+ * pulse：0..1 液量突变脉冲（**可选**，默认 0，向后兼容旧调用）——只让波幅与
+ *   液面高光短暂增强（短暂涟漪），不引入额外光纹/多层渐变；由调用方
+ *   （Pool/Beaker）按 `_liquidPulse` 传入并自行衰减。
+ */
+export function renderLiquid(ctx, x, y, w, h, solution, time = 0, pulse = 0) {
   if (w <= 0 || h <= 0) return;
+  const p = Math.max(0, Math.min(1, Number.isFinite(pulse) ? pulse : 0));
   const { color, alpha } = solutionColor(solution, time);
   ctx.save();
   // 主体：纵向渐变（底部更深）
@@ -158,9 +165,9 @@ export function renderLiquid(ctx, x, y, w, h, solution, time = 0) {
   ctx.fillStyle = g;
   ctx.fillRect(x, y, w, h);
   ctx.globalAlpha = 1;
-  // 起伏波浪表面（随时间推进，不是死线）
-  const waveAmp = 2.4;
-  ctx.globalAlpha = Math.min(1, alpha + 0.35);
+  // 起伏波浪表面（随时间推进，不是死线；pulse 仅让波幅略大、表面略亮）
+  const waveAmp = 2.4 + p * 2.4;
+  ctx.globalAlpha = Math.min(1, alpha + 0.35 + p * 0.15);
   ctx.fillStyle = mix(color, '#ffffff', 0.5);
   ctx.shadowColor = color;
   ctx.shadowBlur = 10;
@@ -177,7 +184,7 @@ export function renderLiquid(ctx, x, y, w, h, solution, time = 0) {
   ctx.closePath();
   ctx.fill();
   ctx.shadowBlur = 0;
-  // 上升的气泡（从底部持续冒出，速度不一，随时间循环）
+  // 上升的气泡（原版动画：从底部持续冒出，速度不一，随时间循环）
   const n = Math.min(22, Math.max(1, Math.round((w * h) / 900)));
   for (let i = 0; i < n; i++) {
     const bx = x + ((i * 7919) % 997) / 997 * w;

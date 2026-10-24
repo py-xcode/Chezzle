@@ -15,6 +15,11 @@
   if (!spa) location.replace('./#/select');
 })();
 </script>
+<!-- 偏好 + 音效：prefs.js 供 audio.js 读 sfxVolume/sfxMuted；点击音由 audio.js 统一接线，
+     需要不同语义的元素用 data-sfx 覆盖（本页：返回 ui.back、筛选/重置 ui.tick、进入 ui.open；
+     走廊卡片在 select-model 之后按"可进/锁定"动态挂 level.enter / ui.deny，拖动时跳过）。 -->
+<script src="prefs.js?vmvmdw3n4"></script>
+<script src="audio.js?vmvmdw3n4"></script>
 <style>
   /* ★ 主题色用三个数值自定义属性承载并注册成 <number>：这样它们**可以被 transition 插值**，
      换元素时背景洗色/符文环/光晕才会平滑过渡而不是硬切（"用 var() 拼的颜色"默认不可动画）。 */
@@ -610,7 +615,7 @@
 
 <div id="app">
   <header>
-    <a class="back" id="back" href="index.html" aria-label="返回主页">
+    <a class="back" id="back" href="index.html" aria-label="返回主页" data-sfx="ui.back">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M15 5l-7 7 7 7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       主页
     </a>
@@ -618,14 +623,14 @@
     <i id="dbgUnlock" class="dbg-unlock" hidden>DEBUG · 全解锁</i>
     <div class="hspace"></div>
     <div class="seg" role="group" aria-label="显示范围">
-      <button id="fAll" class="on" type="button">全部元素</button>
-      <button id="fPlay" type="button">只看有关卡</button>
+      <button id="fAll" class="on" type="button" data-sfx="ui.tick">全部元素</button>
+      <button id="fPlay" type="button" data-sfx="ui.tick">只看有关卡</button>
     </div>
     <div id="progress" title="通关进度">
       <span id="ptext">已通关 0 / 0</span>
       <span id="pbar"><span id="pfill"></span></span>
     </div>
-    <button id="reset" class="ghost" type="button">清除进度</button>
+    <button id="reset" class="ghost" type="button" data-sfx="ui.tick">清除进度</button>
   </header>
 
   <div id="periods" role="group" aria-label="周期"></div>
@@ -651,7 +656,7 @@
 
   <footer>
     <div id="isotopes" role="group" aria-label="同位素关卡"></div>
-    <button class="enter" id="enter" type="button">
+    <button class="enter" id="enter" type="button" data-sfx="ui.open">
       <svg width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <path d="M7 4.6v14.8L19 12z" fill="currentColor"/>
       </svg>
@@ -868,6 +873,15 @@ const $ = (id) => document.getElementById(id);
 const track = $('track'), isoBox = $('isotopes'), enterBtn = $('enter'), enterText = $('enterText');
 const prevBtn = $('prev'), nextBtn = $('next');
 
+/** 播放一次 UI 音效。audio.js 可能没加载（本页被单独打开/旧缓存）→ 防御式调用，绝不抛错。 */
+function uiSfx(name, opts) {
+  try {
+    const a = window.ChezzleAudio;
+    if (a && typeof a.play === 'function') return a.play(name, opts);
+  } catch (e) { /* 音频异常不影响选关交互 */ }
+  return false;
+}
+
 // ---- 预取（配合根目录 _headers 的缓存策略）----
 // 选关页是"点进关卡"前的最后一站：趁玩家在走廊里滑动，把他当前选中元素的关卡页先抓下来，
 // 真按「进入关卡」时就不必再等一次跨国往返（关卡页 30~90KB，本身还内嵌关卡数据与插件）。
@@ -966,6 +980,24 @@ function buildCards() {
 function cardPlayable(e) {
   return e.isotopes.some((it) => it.file && unlocked.has(it.id));
 }
+/** 当前选中卡片的点击音（audio.js 的点击委托按 data-sfx 播放，单击只响一声）：
+ *  选中的同位素可进 → level.enter（正好在跳转/发送 cz:play 之前）；锁定/暂无 → ui.deny。
+ *  侧边卡不挂 data-sfx：单击只是把它滑到中间，用默认 ui.click。 */
+function currentCardSfx() {
+  const e = ENTRIES[active];
+  const it = e && e.isotopes[activeIso];
+  const s = it ? isotopeState(it, unlocked, cleared) : '';
+  return s === 'open' || s === 'done' ? 'level.enter' : 'ui.deny';
+}
+/** 只给停在中间的那张卡挂语义音；其余卡清掉旧标记（默认 ui.click） */
+function syncActiveCardSfx() {
+  const b = cards[active];
+  if (!b) return;
+  const sfx = currentCardSfx();
+  if (b._sfx === sfx) return;
+  b._sfx = sfx;
+  b.setAttribute('data-sfx', sfx);
+}
 /** ★ 119 张卡的状态刷新：**只碰真正变了的卡**。
  *  旧写法每次 setActive（每翻一张卡）就对 119 张卡写 className + 重解析 pips 的 innerHTML
  *  + 两次 setAttribute ≈ 500 次 DOM 变更 —— iPhone 8 Plus 上每次翻卡都会"顿一下"。 */
@@ -986,7 +1018,9 @@ function refreshCardStates() {
     if (b._al !== label) { b._al = label; b.setAttribute('aria-label', label); }
     const sel = i === active ? 'true' : 'false';
     if (b._as !== sel) { b._as = sel; b.setAttribute('aria-selected', sel); }
+    if (i !== active && b._sfx) { b._sfx = ''; b.removeAttribute('data-sfx'); }
   });
+  syncActiveCardSfx();
   prevBtn.disabled = active === 0;
   nextBtn.disabled = active === ENTRIES.length - 1;
 }
@@ -1077,6 +1111,7 @@ function buildIsoRow(e) {
   });
 }
 function refreshEnter() {
+  syncActiveCardSfx();   // 选中同位素变了 → 中间那张卡的点击音（level.enter / ui.deny）跟着变
   const e = ENTRIES[active];
   const it = e.isotopes[activeIso];
   if (!it) { // 该元素还没写任何关卡
@@ -1305,6 +1340,7 @@ function setActive(i, focusIso) {
 }
 
 function denyCard(b, e) {
+  uiSfx('ui.deny');        // 锁定关卡抖动：拒绝音（单击卡片时 audio.js 已按 data-sfx 响过，同名限频不会双响）
   b.classList.remove('locked-shake');
   void b.offsetWidth;      // 重启动画
   b.classList.add('locked-shake');
@@ -1736,6 +1772,7 @@ let wheelAcc = 0, wheelTimer = 0;
     samples.push({ x: p.x, t });
     if (samples.length > 24) samples.shift();
     if (Math.abs(moved) > 6) {
+      if (!dragged) box.setAttribute('data-sfx-off', '');  // 拖动走廊整棵子树跳过点击音（松手后恢复，见 up）
       dragged = true;                // ★ 只有真的拖起来了才吞随后的 click；
       try { box.setPointerCapture(id); } catch (err) { /* 合成事件 / pointerId 已失效 */ }
       curX = posFrom(moved);   // 带阻尼地跟手
@@ -1754,7 +1791,7 @@ let wheelAcc = 0, wheelTimer = 0;
     if (target === active) kickCards();               // ★ 原地回弹走缓动；直接 curX = active 会瞬移
     else setActive(target, true);
     moved = 0; samples = [];
-    if (dragged) setTimeout(() => { dragged = false; }, 60); // 让尾随的 click 被吞掉
+    if (dragged) setTimeout(() => { dragged = false; box.removeAttribute('data-sfx-off'); }, 60); // 让尾随的 click 被吞掉（音效已跳过）
   };
   box.addEventListener('pointerup', up);
   box.addEventListener('pointercancel', up);

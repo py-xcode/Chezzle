@@ -75,23 +75,29 @@ Chezzle 是纯 HTML5 2D 化学解谜游戏（无后端）。核心库为 src/（
   并即时标记 _groundIce 防连放搭高）。
 - 物品栏 5 格，容量 100g/格；跨格收集：先满同物质格再占空格；物品格不堆叠不混装。
   place() 按 amount 扣、清空；Shift 放物品走 placeCarriedItem。
+- Q 收集沉淀：距离按玩家**身体最近边缘**算（不是身体中心）——站在台阶/物块上时，
+  脚边正下方地面的沉淀也能收到；平地范围仍为 collectRadius=70px。
 - 死亡判定：hp≤0（lastRxAcid/Base 定 acid/base/reaction + partner）或出界（上=sky，下=void）。
   deathCause 一次性定案（deathQuip 随机文案不每帧闪）。
 
 ### 2.2 物品交互（level/items.js + objects/dropper.js,beaker.js,gasbottle.js）
-- C 拾取：选中格须为空；收最近可携带物品（noCarry 除外），连带内容物（removeItem 含子体）。
-- C 吸液（烧杯 20g/次，同比例样品 takeSample；容量满拒绝）；滴管 5g/次，只装一种液体
-  （占优溶质，纯水→H2O；已装别液拒绝续吸）。
-- X 倒出（烧杯）：每次 10g 样品到最近目标（烧杯有 volume-totalMass 余量上限，池敞开）。
-- X 按住（集气瓶）：0.05g/s 通入最近有水容器（forceDissolve 溶解 CO2/SO2/NO2/Cl2）。
-- C 按住（集气瓶）：截留最近气泡柱产气（容量 5g 封顶；超过自动进大气）。
-- 滴管：点胶头（上半 12px）=滴一滴 0.5g；长按 ≥0.5s 觉醒：液下→每 0.3s 吸一手，
-  液上→每 0.08s 持续滴；拖动（胶头/玻璃段均可）移动管身（无碰撞箱，rx/ry 指数趋近平滑）；
-  拖出 480px 边界被钳制。
+- **可拾取物品** = 集气瓶/烧杯/滴管（以及以后任何可收进物品栏的非沉淀物体）。
+- Q 拾取：优先放进选中空格，否则放进第一个空格；收最近可拾取物品（noCarry 除外），
+  连带内容物（removeItem 含子体）。附近没有物品时 Q 仍按原语义收集沉淀。
+  例外：最近物品若是"内有沉淀的烧杯"，先收杯里的沉淀（收不到/栏满才捡杯）——
+  避免 Q 把杯子捡走导致里面的沉淀拿不出来。
+- 选中物品后，物品自己定义最多两个操作（`carryActionsOf`，绑定设置里的「物品操作 1/2」，
+  默认 C/X；HUD 显示名称/图标/键位，触屏显示按钮）：
+  - 烧杯：吸液（20g/次，同比例样品 takeSample；容量满拒绝） / 倒出（每次 10g 到最近目标；目标可以是烧杯或药品池）。
+  - 滴管：吸液（5g/次，只装一种液体：占优溶质，纯水→H2O；已装别液拒绝续吸） /
+    滴加（向最近容器滴一滴，默认 0.5g；世界里的滴管仍可点胶头/长按/拖动精细操作）。
+  - 集气瓶：按住集气（截留最近气泡柱产气，5g 封顶）/ 按住通气（0.05g/s 通入最近有水容器——烧杯/池均可，
+    forceDissolve 溶解 CO2/SO2/NO2/Cl2）。瓶口敞开（无盖板）；瓶内气体绘制为充满整瓶的淡雾，
+    无色气体用冷白淡雾，不按密度积在瓶底，也不套用蓝色液体色。
 - 烧杯倒出会话动画：平移 0.16s → 起倾 0.14s → 最大倾角 0.52rad（≈30°）→ 松手 0.45s 后
   0.22s 回位；同一目标续倒不重跑位移（POUR_HOLD_MAX=0.45s 续期）。
-- 放置占位探测 spotBlocked（收缩 3px 容差）：实体/可携带物品/实心放置粒子挡路；被挡向
-  前×1/×2、向后×1/×2 探测；仍堵兜底放玩家正下方（x=player.x，见问题表 B11 潜在）。
+- 放置占位探测 spotBlocked（收缩 3px 容差）：实体/可拾取物品/实心放置粒子挡路，**玩家自身也算占位**；
+  被挡向前×1/×2、向后×1/×2 探测；仍堵则本次不放下、物品留在物品栏，并提示「这里放不下」（绝不与玩家重叠）。
 
 ### 2.3 容器（objects/container.js, pool.js, beaker.js, lamp.js）
 - Solution：固定 volume（容器默认 100mL；编辑器烧杯常用 200）；溶质 Map + water；
@@ -128,7 +134,9 @@ Chezzle 是纯 HTML5 2D 化学解谜游戏（无后端）。核心库为 src/（
 - particleSizeOf(amount)：k=log(1.5)/log(3)≈0.369，size=5·(amount/0.5)^k 夹在 [3,7.5]px。
 - splitPile(mass, maxN=600)：常规 0.5g/颗；颗数 >600 按 1.5g 堆叠颗分配；保底 1 颗。
 - Particle 物理：默认 0.5g/5px；不实心（除非 placed）不与动态体碰撞、与静态体碰撞；
-  placed=true 可垫脚/可被踢开/不可移动（除重收集）；collectible=!isSoluble。
+  placed=true 可垫脚/可被踢开/不可移动（除重收集）；Particle 默认 collectible=!isSoluble，
+  但产物路由掉到干地面的游离固体粒子显式 collectible=true（Na2CO3 等可溶盐粉末也能捡，
+  是否溶于水只影响遇水后的溶解行为）。
 
 ## 3. 化学引擎（chem/）
 ### 3.1 反应分层与顺序
@@ -196,11 +204,12 @@ autoDecomp 300 / acidGas 24 / dissolution 10 / gasCombustion 12 / special 8 / cu
 - 水只进真溶液容器；干台/开阔地蒸发不建模。
 - 固体：玩家参与→可溶产物（非核心）进溶液、核心回附着（回血）、不溶附着；粉末参与→沉淀；
   有固反应物→原地转化优先（addInPlace→盈余 growExposed）；Cu(OH)2 一律成核沉淀；
-  附着落空→静默丢弃（不撒游离粒子）。
+  附着落空→静默丢弃（不撒游离粒子）。干式台子/开阔地没有液体接收时，游离固体产物
+  一律撒成**可拾取**粉末（collectible=true），不按水溶性剔除。
 - 离子双置换驱动力：沉淀/微溶/水/CO2/SO2/H2S/H2SiO3/NH3/Fe(SCN)3；产物盐等于原反应物不驱动。
 
 ## 4. 关卡/系统（level/*, core/*）
-- Builder DSL：.floor/.pool/.block/.deposit/.player/.switch/.key/.door/.lamp/.beaker/.rope/
+- Builder DSL：.floor/.pool/.elepool/.heatpool/.hotpool/.gaschamber/.block/.deposit/.player/.switch/.key/.door/.lamp/.beaker/.rope/
   .gasColumn/.sign/.portal/.gasDetector/.extractor/.gasTube/.dropper/.gasBottle/.customReaction/
   .pluginObj/.setTip/.tips/.on/.debugmode(废弃空操作)…build()/start()。
 - 初始隐藏：hidden 物体只进 byId+hidden；reveal()/showId 恢复；applyAppearDelays：
@@ -210,8 +219,9 @@ autoDecomp 300 / acidGas 24 / dissolution 10 / gasCombustion 12 / special 8 / cu
 - scene.wait/after/interval/onTick 基于游戏时间（暂停即停）；wait 负数钳 0；
   interval 无循环护栏（回调改 scene.time 会死循环——问题表 B8）。
 - 通关：任一 open Door 与玩家中心距 ≤80px；死亡：hp≤0 或出界 ±200px。
-- 键盘：A/D 左右、Space 跳、Shift 放置、Q 收集、C 拾取/吸液/按住集气、X 倒出/按住通气、
-  R 重开（整页 reload）、V 鸟瞰；调试 F5 暂停 / F6 步进。
+- 键盘：A/D 左右、Space 跳、Shift 放置、Q 拾取/收集、选中物品后 C=物品操作 1 / X=物品操作 2
+  （烧杯：吸液/倒出；滴管：吸液/滴加；集气瓶：按住集气/按住通气）、R 重开（整页 reload）、
+  V 鸟瞰；调试 F5 暂停 / F6 步进。
 - Multiscene：多场景共享主循环；switchTo 默认 carryPlayer（搬玩家对象，保留背包/血量；
   目标场景摆放玩家=落点并替换占位玩家）；场景画布叠放、display 切换。
 

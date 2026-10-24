@@ -1,13 +1,14 @@
 // ============================================================================
-// 爆炸视觉 v3：
-//  白热闪核 → 14 瓣火团（翻涌边缘+二级甩出火团）→ 撕裂冲击环+径向光纹
-//  → 带下坠拖尾火星（1/3 按焰色反应上色）→ 碎片/余烬/烟尘 → 焰色残余辉光。
+// 爆炸视觉 v3（Chezzle 暗紫+金配色版）：
+//  白热闪核 → 14 瓣火团（翻涌边缘+二级甩出火团）→ 撕裂冲击环+金色外环+径向光纹
+//  → 带下坠拖尾火星（1/3 按焰色反应上色）→ 碎片/余烬/紫烟尘 → 焰色残余辉光。
 //  0.5s 后移除；每实例用确定性随机种子（连续爆炸不雷同）。
 // 物理冲击（炸飞/碎裂）由 Scene.explode 处理；本对象只负责视觉反馈。
 // ============================================================================
 
 import { Obj } from './obj.js';
 import { mix } from '../render/color.js';
+import { THEME } from '../render/theme.js';
 
 /** 确定性伪随机（mulberry32）：同一 Explosion 实例内每次渲染形状一致；不同实例不同形 */
 function mulberry32(seed) {
@@ -132,6 +133,20 @@ export class Explosion extends Obj {
     ctx.beginPath();
     ctx.arc(x, y, R * (0.75 + 1.05 * ease), gapB, gapA + Math.PI * 2);
     ctx.stroke();
+    // 金色外环（Chezzle 金色冲击波：慢半拍扩张的细环，呼应细金边语言）
+    ctx.strokeStyle = rgbaOf(THEME.gold.base, 0.55);
+    ctx.lineWidth = 1.2;
+    ctx.shadowColor = rgbaOf(THEME.gold.light, 0.65);
+    ctx.shadowBlur = 7;
+    ctx.beginPath();
+    ctx.arc(x, y, R * (0.95 + 1.3 * ease), 0, Math.PI * 2);
+    ctx.stroke();
+    // 贴地压扁的冲击环（爆炸有重量感；椭圆而非正圆）
+    ctx.strokeStyle = rgbaOf(THEME.gold.light, 0.35);
+    ctx.lineWidth = (1 - t) * 2.4 + 0.6;
+    ctx.beginPath();
+    ctx.ellipse(x, y + R * 0.16, R * (0.65 + 1.15 * ease), R * (0.22 + 0.36 * ease), 0, 0, Math.PI * 2);
+    ctx.stroke();
     ctx.shadowBlur = 0;
     // ---- 径向光纹（前 35%"刀光"） ----
     if (t < 0.35) {
@@ -204,12 +219,12 @@ export class Explosion extends Obj {
         ctx.fill();
       }
     }
-    // ---- 烟尘：深灰蓝团上升 + 余烬小亮点 ----
+    // ---- 烟尘：暗紫烟雾团上升（Chezzle 暗紫语言；外深内浅）+ 余烬小亮点 ----
     for (let i = 0; i < 5; i++) {
       const px = x + Math.sin(rnd[5 + i] * 9 + t * 1.5) * R * (0.5 + rnd[10 + i] * 0.4);
       const py = y - (4 + i * 8) * (0.4 + t * 1.2);
       ctx.globalAlpha = alpha * 0.3 * (1 - t * 0.55);
-      ctx.fillStyle = '#54596b';
+      ctx.fillStyle = i < 2 ? 'rgba(42,35,80,0.95)' : 'rgba(70,72,104,0.9)';
       ctx.beginPath();
       ctx.arc(px, py, 2.6 + t * 8.5 + rnd[i] * 2, 0, Math.PI * 2);
       ctx.fill();
@@ -223,21 +238,33 @@ export class Explosion extends Obj {
       ctx.arc(ex, ey, Math.max(0.6, 1.8 - t), 0, Math.PI * 2);
       ctx.fill();
     }
-    // ---- 爆炸原因文本（调试）：炸点上方弹出，逐帧上浮淡出 ----
+    // ---- 爆炸原因文本（调试）：炸点上方弹出，逐帧上浮淡出；暗紫面板 + 细金边 ----
     if (this.cause && this.age < 0.32) {
       ctx.globalAlpha = Math.min(1, (0.32 - this.age) * 4);
       ctx.font = 'bold 12px "Segoe UI", "Microsoft YaHei", monospace';
       ctx.textAlign = 'center';
-      ctx.fillStyle = 'rgba(8,14,26,0.72)';
       const ty = y - R * 0.9 - 10;
       const tw = ctx.measureText(this.cause).width;
+      ctx.fillStyle = 'rgba(18,14,46,0.9)';
       ctx.beginPath();
       ctx.roundRect(x - tw / 2 - 6, ty - 14, tw + 12, 20, 6);
       ctx.fill();
+      ctx.strokeStyle = rgbaOf(THEME.gold.base, 0.55);
+      ctx.lineWidth = 1;
+      ctx.stroke();
       ctx.fillStyle = '#ffe9b0';
       ctx.fillText(this.cause, x, ty - 1);
       ctx.textAlign = 'left';
     }
     ctx.restore();
   }
+}
+
+/** 十六进制色 + 透明度 → rgba 字符串 */
+function rgbaOf(hex, a) {
+  const h = String(hex ?? '#ffffff').replace('#', '');
+  const n = h.length === 3
+    ? [parseInt(h[0] + h[0], 16), parseInt(h[1] + h[1], 16), parseInt(h[2] + h[2], 16)]
+    : [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  return `rgba(${n[0]},${n[1]},${n[2]},${Math.max(0, Math.min(1, a))})`;
 }

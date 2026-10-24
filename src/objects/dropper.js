@@ -14,10 +14,12 @@ import { Obj } from './obj.js';
 import { getSubstance } from '../chem/substances.js';
 import { Solution } from '../chem/solution.js';
 import { solutionColor } from '../render/liquidrender.js';
+import { rr } from '../render/theme.js';
 import { Drip } from './drip.js';
 import { flowFx, puffFx } from './fx.js';
 import { CFG } from '../core/config.js';
 import { pushNotice } from '../level/click.js';
+import { sfx } from '../core/audio.js';
 
 export const DROPPER_W = 11;
 export const DROPPER_H = 52;
@@ -35,13 +37,19 @@ export class Dropper extends Obj {
     this.liquid = liquid == null ? this.capacity : Math.min(this.capacity, liquid);
     this.rx = x; // 渲染坐标（追赶 x/y，拖动时产生平滑滑行感）
     this.ry = y;
+    // 纯视觉：胶头压缩（滴液时）/ 拉伸（吸液时）脉冲，0..1 短促衰减
+    this._squish = 0;
+    this._suckKick = 0;
   }
 
-  /** 渲染坐标每 tick 向真实坐标收敛（指数趋近，帧率无关） */
+  /** 渲染坐标每 tick 向真实坐标收敛（指数趋近，帧率无关）+ 胶头动画衰减 */
   update(dt) {
     const k = 1 - Math.exp(-14 * dt);
     this.rx += (this.x - this.rx) * k;
     this.ry += (this.y - this.ry) * k;
+    // 胶头压缩/回弹（约 0.18s）与吸液拉伸（约 0.25s）——纯视觉，确定性衰减
+    if (this._squish > 0) this._squish = Math.max(0, this._squish - dt / 0.18);
+    if (this._suckKick > 0) this._suckKick = Math.max(0, this._suckKick - dt / 0.25);
   }
 
   get hoverLabel() {
@@ -142,6 +150,7 @@ export class Dropper extends Obj {
     }
     this.substance = id;
     this.liquid += got;
+    this._suckKick = 1; // 视觉：吸液时胶头轻拉（纯表现）
     c.noteSolOrigin?.(id, { kind: 'fill', text: '液下吸取' });
     // 特效：表面涟漪尘雾 + 一串上行液滴飞进管口
     const r = c.innerRect();
@@ -153,6 +162,7 @@ export class Dropper extends Obj {
       color: solutionColor(new Solution({ volume: this.capacity, water: this.liquid > 0 ? 1 : 0, solutes: this.substance === 'H2O' ? {} : { [this.substance]: this.liquid } })).color,
       life: 0.4, n: 6, bend: 0.25,
     });
+    sfx('item.suck');
     return true;
   }
 
@@ -181,6 +191,7 @@ export class Dropper extends Obj {
     const dx = Math.max(r.x + 4, Math.min(r.x + r.w - 4, this.x + this.w / 2));
     const dy = Math.max(r.y + 4, Math.min(r.y + r.h - 6, this.bottom + 30));
     c.depositAt = { x: dx, y: dy };
+    this._squish = 1; // 视觉：胶头压缩回弹（纯表现，不影响滴加逻辑）
     // 液滴下坠动画（从滴管口到液面；带滴管液体颜色）
     if (typeof scene.addObject === 'function') {
       const { color } = this.liquidColor();
@@ -193,6 +204,7 @@ export class Dropper extends Obj {
         id: `drip${scene._dripSeq}`,
       }));
     }
+    sfx('item.drip');
     return true;
   }
 
@@ -215,64 +227,98 @@ export class Dropper extends Obj {
     return best;
   }
 
+  // ---------------------------------------------------------------------------
+  // 渲染（简洁版）：暗紫玻璃细管 + 黄铜卡箍 + 红橡胶胶头 + 管内液面；
+  //   滴液时胶头压缩回弹、尖端口形成液珠（Drip 粒子由物品管线生成）；
+  //   吸液时胶头反向轻拉。纯视觉动画，不影响点击/拖动与 onBulb 命中区。
+  // ---------------------------------------------------------------------------
   render(ctx) {
     const x = Number.isFinite(this.rx) ? this.rx : this.x;
     const y = Number.isFinite(this.ry) ? this.ry : this.y;
     const w = this.w;
     const h = this.h;
-    // 橡皮胶头（红色泪滴形：大头在上，下缘收进管口）——参照真实胶头滴管
     const hx = x + w / 2;
-    const bulbY = y + 4.5;
-    ctx.fillStyle = '#c0303a';
+    const squish = this._squish ?? 0; // 滴液压缩 0..1
+    const stretch = this._suckKick ?? 0; // 吸液拉伸 0..1
+    // ---- 1) 红橡胶胶头（泪滴形：圆肩 → 收腰进卡箍；滴液压扁 / 吸液拉长）----
+    const neckY = y + 9.2;
+    const bulbTopY = y + 0.6 - squish * 0.5 + stretch * 0.4;
+    const bulbRX = w * 0.46 * (1 + 0.30 * squish + 0.10 * stretch);
+    const bulbRY = Math.max(2.2, 4.7 * (1 - 0.30 * squish + 0.16 * stretch));
+    const bulgeY = bulbTopY + bulbRY;
+    ctx.save();
+    const bulbGrad = ctx.createLinearGradient(hx - bulbRX, bulbTopY, hx + bulbRX, neckY);
+    bulbGrad.addColorStop(0, '#ff9298');
+    bulbGrad.addColorStop(0.5, '#d23a46');
+    bulbGrad.addColorStop(1, '#8e1f2a');
+    ctx.fillStyle = bulbGrad;
     ctx.beginPath();
-    ctx.ellipse(hx, bulbY, w * 0.44, 6.5, 0, 0, Math.PI * 2);
+    ctx.moveTo(hx - bulbRX * 0.38, neckY);
+    ctx.bezierCurveTo(hx - bulbRX * 1.12, bulgeY + bulbRY * 0.3, hx - bulbRX * 0.94, bulbTopY, hx, bulbTopY);
+    ctx.bezierCurveTo(hx + bulbRX * 0.94, bulbTopY, hx + bulbRX * 1.12, bulgeY + bulbRY * 0.3, hx + bulbRX * 0.38, neckY);
+    ctx.closePath();
     ctx.fill();
-    // 胶头高光（左上亮斑 + 下棱线）
-    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.strokeStyle = 'rgba(70,12,18,0.5)';
+    ctx.lineWidth = 0.9;
+    ctx.stroke();
+    // 高光（左上亮斑，静态）
+    ctx.fillStyle = 'rgba(255,255,255,0.38)';
     ctx.beginPath();
-    ctx.ellipse(hx - 1.6, bulbY - 2, 1.6, 2.6, -0.5, 0, Math.PI * 2);
+    ctx.ellipse(hx - bulbRX * 0.34, bulbTopY + bulbRY * 0.55, bulbRX * 0.26, bulbRY * 0.34, -0.5, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = 'rgba(120,20,24,0.5)';
+    // 胶头下缘棱线（与卡箍衔接）
+    ctx.strokeStyle = 'rgba(90,16,22,0.55)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(hx - 3.4, bulbY + 5.4);
-    ctx.quadraticCurveTo(hx, bulbY + 6.8, hx + 3.4, bulbY + 5.4);
+    ctx.moveTo(hx - bulbRX * 0.42, neckY - 1.2);
+    ctx.quadraticCurveTo(hx, neckY + 0.4, hx + bulbRX * 0.42, neckY - 1.2);
     ctx.stroke();
-    // 玻璃管（细长）：管口从胶头垂到细管口
-    const gx = hx - w * 0.14;
-    const gw = w * 0.28;
-    const gy = y + 10;
-    const gh = h - 14 - 8; // 上到锥尖
-    ctx.fillStyle = 'rgba(215,235,255,0.16)';
+    ctx.restore();
+    // ---- 2) 黄铜卡箍（胶头/玻璃管交界）----
+    const collarY = y + 9.4;
+    const collarW = w * 0.62;
+    rr(ctx, hx - collarW / 2, collarY, collarW, 2.2, 1);
+    const cg = ctx.createLinearGradient(0, collarY, 0, collarY + 2.2);
+    cg.addColorStop(0, '#ffe6a8');
+    cg.addColorStop(0.5, '#b98a3a');
+    cg.addColorStop(1, '#6b4a18');
+    ctx.fillStyle = cg;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(40,26,8,0.7)';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+    // ---- 3) 玻璃细管（暗紫玻璃 + 左侧高光）+ 管内液体 ----
+    const gx = hx - w * 0.15;
+    const gw = w * 0.3;
+    const gy = y + 10.5;
+    const gh = h - 20; // 管长（下接锥形滴嘴）
+    const glass = ctx.createLinearGradient(gx, 0, gx + gw, 0);
+    glass.addColorStop(0, 'rgba(200,225,255,0.34)');
+    glass.addColorStop(0.35, 'rgba(120,110,190,0.14)');
+    glass.addColorStop(1, 'rgba(200,225,255,0.26)');
+    ctx.fillStyle = glass;
     ctx.fillRect(gx, gy, gw, gh);
-    ctx.strokeStyle = 'rgba(215,235,255,0.85)';
-    ctx.lineWidth = 1.2;
-    ctx.strokeRect(gx, gy, gw, gh);
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.fillRect(gx + 0.6, gy, 0.7, gh); // 左侧玻璃高光
-    // 管内液体（颜色与溶液取色一致；液面随剩余比例下降；液体**贯穿到锥形滴嘴**——
-    // 滴嘴也是玻璃腔的一部分，装的是同一管液体，不该是空的）
+    // 管内液体（颜色与溶液取色一致；液面随剩余比例下降；贯穿锥形滴嘴）
     const frac = Math.max(0, Math.min(1, this.liquid / this.capacity));
     const innerY = gy + 1;
     const innerH = gh - 2;
     const lh = innerH * frac;
     if (lh > 0.6) {
       const { color, alpha } = this.liquidColor();
-      const bodyTop = innerY + innerH - lh; // 液面 y（管内部）
-      const tipBase = gy + gh; // 管底 → 滴嘴起
-      ctx.globalAlpha = Math.max(alpha, 0.45);
+      const bodyTop = innerY + innerH - lh;
+      const tipBase = gy + gh;
+      ctx.globalAlpha = Math.max(alpha, 0.5);
       ctx.fillStyle = color;
       ctx.beginPath();
       ctx.moveTo(gx + 0.6, bodyTop);
       ctx.lineTo(gx + gw - 0.6, bodyTop);
-      // 沿管向下 → 两侧收进锥形滴嘴（液体充满到尖端）
       ctx.lineTo(gx + gw - 0.6, tipBase);
       ctx.lineTo(hx, y + h - 1);
       ctx.lineTo(gx + 0.6, tipBase);
       ctx.closePath();
       ctx.fill();
       ctx.globalAlpha = 1;
-      // 液面线（只在管内部分显示）
+      // 液面线
       if (bodyTop >= innerY + 1) {
         ctx.strokeStyle = 'rgba(255,255,255,0.7)';
         ctx.lineWidth = 0.8;
@@ -281,26 +327,38 @@ export class Dropper extends Obj {
         ctx.lineTo(gx + gw - 0.8, bodyTop);
         ctx.stroke();
       }
-      // 液面下"尖嘴"与管交界的光泽（液体连贯感）
-      ctx.fillStyle = 'rgba(255,255,255,0.18)';
-      ctx.beginPath();
-      ctx.moveTo(gx + 0.6, tipBase - 1);
-      ctx.lineTo(gx + gw - 0.6, tipBase - 1);
-      ctx.lineTo(hx + 0.5, y + h - 2.5);
-      ctx.lineTo(hx - 0.5, y + h - 2.5);
-      ctx.closePath();
-      ctx.fill();
     }
-    // 锥形滴嘴（细管下端收尖）
-    ctx.fillStyle = 'rgba(215,235,255,0.2)';
+    // 玻璃管描边（细冷色）+ 左缘高光（静态）
+    ctx.strokeStyle = 'rgba(215,235,255,0.85)';
+    ctx.lineWidth = 0.9;
+    ctx.strokeRect(gx, gy, gw, gh);
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.fillRect(gx + 0.5, gy, 0.6, gh);
+    // ---- 4) 锥形滴嘴（玻璃收尖 + 尖端高光）----
     ctx.beginPath();
     ctx.moveTo(gx, gy + gh);
     ctx.lineTo(hx, y + h);
     ctx.lineTo(gx + gw, gy + gh);
     ctx.closePath();
+    ctx.fillStyle = 'rgba(180,205,245,0.20)';
     ctx.fill();
-    ctx.strokeStyle = 'rgba(215,235,255,0.7)';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(215,235,255,0.72)';
+    ctx.lineWidth = 0.9;
     ctx.stroke();
+    // ---- 5) 滴液瞬间：尖端口形成的液珠（压缩后出现，随回弹淡出）----
+    if (squish > 0.18 && this.liquid > 1e-9) {
+      const { color, alpha } = this.liquidColor();
+      const dr = 0.9 + 1.3 * squish;
+      ctx.globalAlpha = Math.max(0.25, alpha) * squish;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.ellipse(hx, y + h + dr * 0.7, dr * 0.72, dr, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = 'rgba(255,255,255,0.75)';
+      ctx.beginPath();
+      ctx.arc(hx - dr * 0.2, y + h + dr * 0.4, dr * 0.18, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 }

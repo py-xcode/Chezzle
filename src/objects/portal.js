@@ -14,7 +14,15 @@
 import { Obj } from './obj.js';
 import { overlaps } from '../physics/collision.js';
 import { applyInventorySetup } from '../level/items.js';
-import { screenTextScale } from '../render/theme.js';
+import { rr, screenTextScale } from '../render/theme.js';
+import { hexToRgb } from '../render/color.js';
+import { sfx } from '../core/audio.js';
+
+/** 十六进制色 + 透明度 → rgba 字符串（装置组视觉共用） */
+function rgbaOf(hex, a) {
+  const c = hexToRgb(hex);
+  return `rgba(${c.r},${c.g},${c.b},${a})`;
+}
 
 const EMBED_TOL = 8; // 落点嵌入实心体多少 px 以内仍可落（物理一帧即可温柔推开）
 function overlapsBox(box, o, m = EMBED_TOL) {
@@ -92,6 +100,9 @@ export class Portal extends Obj {
     this.inventory = inventory ?? null;
     this.clearInventory = !!clearInventory;
     this.pair = null; // 对侧门（惰性解析）
+    // 纯视觉：通过脉冲（0..1 衰减 ~0.5s）+ 能量幕开关渐变（确定性，不参与传送判定）
+    this._passPulse = 0;
+    this._gate = 0;
   }
 
   get hoverLabel() {
@@ -165,9 +176,13 @@ export class Portal extends Obj {
   }
 
   update(dt, scene) {
+    // ---- 纯视觉计时先推进（没有配对门也要流动/衰减；不影响传送逻辑）----
+    if (this._passPulse > 0) this._passPulse = Math.max(0, this._passPulse - dt / 0.5);
+    const activeNow = scene ? this._isActive(scene) : false;
+    this._gate += ((activeNow ? 1 : 0) - this._gate) * (1 - Math.exp(-8 * dt)); // 能量幕开关渐变
     const pair = this._resolvePair(scene);
     if (!pair) return;
-    const active = this._isActive(scene); // 绑定开关时只有开关开启才传送
+    const active = activeNow; // 绑定开关时只有开关开启才传送
     const crossScene = this.pairScene && this.pairScene !== scene;
     // 候选：动态体（玩家/物块）+ 自由沉淀粒子
     for (const obj of [...scene.dynamics, ...scene.particles]) {
@@ -191,6 +206,9 @@ export class Portal extends Obj {
             });
             this._applyInventory(obj);
             this._consumeUse(scene, pair);
+            // 视觉：两端门各闪一下（通过脉冲；纯表现层）
+            this._passPulse = 1;
+            if (pair) pair._passPulse = 1;
           }
           continue;
         }
@@ -201,6 +219,10 @@ export class Portal extends Obj {
         obj._portalLast = pair; // 站在对侧门内：本门不重复触发；离开本门后才能再进本门
         this._applyInventory(obj);
         this._consumeUse(scene, pair);
+        // 视觉：两端门各闪一下（通过脉冲；纯表现层）
+        this._passPulse = 1;
+        if (pair) pair._passPulse = 1;
+        sfx('portal'); // 同场景传送：真正移动的那一刻
       } else if (!inside && obj._portalLast === this) {
         // 已走出本门：允许下次再进本门
         obj._portalLast = null;
@@ -235,59 +257,93 @@ export class Portal extends Obj {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // 渲染（简洁版）：深紫石/钢拱门框 + 一条细金内缘 + 门色能量幕（单层流动漩涡）+
+  //   通过时的克制涟漪脉冲（_passPulse）；绑定开关关闭时能量幕平滑变暗（_gate）。
+  //   无星点/多层弧线/符文/拱心石装饰。
+  // ---------------------------------------------------------------------------
   render(ctx, opts) {
-    // 渲染器传的是 opts（{ scene, time, ... }），必须先解出 scene 再访问 scene.byId
     const scene = opts?.scene ?? null;
-    const t = scene?.time ?? 0;
+    const t = opts?.time ?? 0;
     const cx = this.x + this.w / 2;
     const cy = this.y + this.h / 2;
     const active = this._isActive(scene); // 绑定开关未开 → 熄灭
+    const gate = Math.max(0, Math.min(1, Number.isFinite(this._gate) ? this._gate : (active ? 1 : 0)));
+    const pulse = Math.max(0, Math.min(1, this._passPulse ?? 0));
     const col = active ? this.color : '#4a4f70';
-    const blur = active ? 14 : 0;
+    const W = this.w;
+    const H = this.h;
+    if (!(W > 0 && H > 0)) return;
+    const frame = Math.max(2, Math.min(5, Math.floor(Math.min(W, H) * 0.12)));
     ctx.save();
-    // 外框（同色发光；未激活时熄灭）
-    ctx.strokeStyle = col;
-    ctx.lineWidth = 2;
-    ctx.shadowColor = active ? this.color : 'transparent';
-    ctx.shadowBlur = blur;
-    this._arch(ctx, 0);
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-    // 内部漩涡（径向渐变 + 旋转符文粒子）
-    const g = ctx.createRadialGradient(cx, cy, 2, cx, cy, this.w * 0.55);
-    g.addColorStop(0, active ? '#f2e6ff' : '#5a5f74');
-    g.addColorStop(0.45, col);
-    g.addColorStop(1, active ? 'rgba(90,42,154,0)' : 'rgba(60,60,80,0)');
+    // ---- 1) 门洞能量幕（裁剪在拱内）----
     ctx.save();
-    this._arch(ctx, 3);
+    this._arch(ctx, frame);
     ctx.clip();
-    ctx.fillStyle = g;
-    ctx.fillRect(this.x, this.y, this.w, this.h);
-    const n = 10;
-    for (let i = 0; i < n; i++) {
-      const a = t * 1.6 + (i / n) * Math.PI * 2;
-      const rr = 4 + ((i * 37) % (this.w / 2));
-      const px = cx + Math.cos(a) * rr;
-      const py = cy + Math.sin(a) * rr * 0.8;
-      ctx.fillStyle = 'rgba(242,230,255,0.85)';
+    // 暗腔
+    ctx.fillStyle = 'rgba(5,4,16,0.94)';
+    ctx.fillRect(this.x, this.y, W, H);
+    if (gate > 0.01) {
+      // 能量幕：径向亮核 + 门色渐变（单层）
+      const rg = ctx.createRadialGradient(cx, cy, 1, cx, cy, H * 0.72);
+      rg.addColorStop(0, `rgba(255,255,255,${(0.32 * gate).toFixed(3)})`);
+      rg.addColorStop(0.3, rgbaOf(col, 0.52 * gate));
+      rg.addColorStop(0.75, rgbaOf(col, 0.2 * gate));
+      rg.addColorStop(1, 'rgba(40,20,80,0)');
+      ctx.fillStyle = rg;
+      ctx.fillRect(this.x, this.y, W, H);
+      // 单条缓慢旋转的能量流（确定性）
+      ctx.strokeStyle = rgbaOf('#f2e6ff', 0.24 * gate);
+      ctx.lineWidth = Math.max(1, W * 0.03);
+      const rot = t * 1.1;
       ctx.beginPath();
-      ctx.arc(px, py, 1.8, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.ellipse(cx, cy, W * 0.3, H * 0.29, rot * 0.3, rot, rot + Math.PI * 1.25);
+      ctx.stroke();
+      // 通过脉冲：一圈克制的涟漪光
+      if (pulse > 0.01) {
+        const pr = H * (0.2 + 0.55 * (1 - pulse));
+        ctx.strokeStyle = rgbaOf('#fff2d0', 0.55 * pulse);
+        ctx.lineWidth = 1.2 + 1.2 * pulse;
+        ctx.beginPath();
+        ctx.arc(cx, cy, pr, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    } else {
+      // 未激活：暗腔里极淡的余辉
+      ctx.fillStyle = rgbaOf(col, 0.06);
+      ctx.fillRect(this.x, this.y, W, H);
     }
     ctx.restore();
-    // 顶部不再显示分组（组色圆点 + 「组N」标签都按用户要求去掉）：
-    // 门的配对关系由颜色本身表达；剩余次数徽标照旧显示。
-    // n次门：顶部显示剩余次数（无限次数不显示）——大号数字 + 深色底板（任何背景下可读）
+    // ---- 2) 门框：深紫石/钢拱环 + 一条细金内缘（无符文/拱心石）----
+    ctx.beginPath();
+    this._archTrail(ctx, 0);
+    this._archTrail(ctx, frame);
+    const stone = ctx.createLinearGradient(this.x, this.y, this.x + W, this.y + H);
+    stone.addColorStop(0, '#4a5180');
+    stone.addColorStop(0.5, '#33385a');
+    stone.addColorStop(1, '#1b2038');
+    ctx.fillStyle = stone;
+    ctx.fill('evenodd');
+    ctx.strokeStyle = 'rgba(8,6,22,0.92)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    this._archTrail(ctx, 0);
+    ctx.stroke();
+    // 细金内缘（激活稍亮，无辉光）
+    ctx.beginPath();
+    this._arch(ctx, frame + 0.6);
+    ctx.strokeStyle = gate > 0.05 ? 'rgba(255,233,176,0.72)' : 'rgba(169,120,42,0.6)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    // ---- 3) 剩余次数徽标（原版样式：大号数字 + 深色底板；无限次数不显示）----
     if (Number.isFinite(this.usesLeft)) {
-      ctx.shadowBlur = 0;
-      const kn = screenTextScale(ctx, 16, 12); // 次数数字保底 12px、上限 1.15（别盖过组号）
+      const kn = screenTextScale(ctx, 16, 12);
       ctx.font = `bold ${Math.round(16 * kn * 10) / 10}px monospace`;
       ctx.textAlign = 'center';
       const txt = String(this.usesLeft);
       const tw = ctx.measureText(txt).width;
-      ctx.fillStyle = 'rgba(16,20,40,0.78)';
-      ctx.beginPath();
-      ctx.roundRect(cx - tw / 2 - 5 * kn, this.y - 31 * kn, tw + 10 * kn, 21 * kn, 6 * kn);
+      rr(ctx, cx - tw / 2 - 5 * kn, this.y - 31 * kn, tw + 10 * kn, 21 * kn, 6 * kn);
+      ctx.fillStyle = 'rgba(16,20,40,0.82)';
       ctx.fill();
       ctx.fillStyle = active ? '#ffffff' : '#9fb2c8';
       ctx.fillText(txt, cx, this.y - 16 * kn);
@@ -296,14 +352,20 @@ export class Portal extends Obj {
     ctx.restore();
   }
 
-  /** 拱形门路径 */
+  /** 拱形路径（独立 beginPath；inset 为向内缩进） */
   _arch(ctx, inset) {
+    ctx.beginPath();
+    this._archTrail(ctx, inset);
+    ctx.closePath();
+  }
+
+  /** 向当前路径追加拱形轮廓（不自开路径：供 even-odd「门框环」组合子路径用） */
+  _archTrail(ctx, inset) {
     const x = this.x + inset;
     const y = this.y + inset;
     const w = this.w - inset * 2;
     const h = this.h - inset * 2;
     const r = w / 2;
-    ctx.beginPath();
     ctx.moveTo(x, y + h);
     ctx.lineTo(x, y + r);
     ctx.arcTo(x, y, x + r, y, r);

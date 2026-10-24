@@ -12,6 +12,9 @@
   if (!spa) location.replace('./#/about');
 })();
 </script>
+<!-- 偏好 + 音效：prefs.js 供 audio.js 读 sfxVolume/sfxMuted；返回/去选关的点击音用 data-sfx 覆盖默认 -->
+<script src="prefs.js?vmvmdw3n4"></script>
+<script src="audio.js?vmvmdw3n4"></script>
 <style>
   :root { --gold: #e8b84b; --gold-l: #ffd76a; --cyan: #7fd8ff; --panel: #141a40; --edge: #2b3047; --txt: #dfe8f2; --dim: #9fb2c8; }
   * { box-sizing: border-box; margin: 0; }
@@ -120,8 +123,8 @@
 </svg>
 <div class="wrap">
 <header>
-  <a class="back" href="index.html" aria-label="返回主页">← 主页</a>
-  <a class="back" href="select.html" aria-label="去选关">⚗ 去选关</a>
+  <a class="back" href="index.html" aria-label="返回主页" data-sfx="ui.back">← 主页</a>
+  <a class="back" href="select.html" aria-label="去选关" data-sfx="ui.open">⚗ 去选关</a>
   <h1>关于 Chezzle</h1>
 </header>
 
@@ -135,16 +138,17 @@
   <div class="keys">
     <span class="k"><kbd>A</kbd><kbd>D</kbd> 左右移动</span>
     <span class="k"><kbd>空格</kbd> 跳跃</span>
-    <span class="k"><kbd>Q</kbd> 收集沉淀/溶质</span>
+    <span class="k"><kbd>Q</kbd> 拾取物品 / 收集沉淀·溶质</span>
     <span class="k"><kbd>Shift</kbd> 放下手中物质 / 放置烧杯·滴管·集气瓶</span>
-    <span class="k"><kbd>C</kbd> 拾取物品 · 烧杯/滴管吸液（滴管同液可续吸至满管） · 按住=集气瓶收气</span>
-    <span class="k"><kbd>X</kbd> 烧杯倒出10g/次 · 按住=集气瓶向溶液通气</span>
+    <span class="k"><kbd>C</kbd> 物品操作 1（选中物品后生效）：烧杯/滴管吸液 · 按住=集气瓶集气</span>
+    <span class="k"><kbd>X</kbd> 物品操作 2（选中物品后生效）：烧杯倒出10g/次 · 滴管滴加一滴 · 按住=集气瓶通气</span>
     <span class="k">鼠标 拖动/点击/长按 <b>滴管</b>（移动即拖动，按住原位才持续滴加）</span>
     <span class="k"><kbd>R</kbd> 重开本关</span>
     <span class="k"><kbd>V</kbd> 鸟瞰（灵魂出窍）：暂停 + 滚轮缩放 + 拖动平移，看整关布局</span>
     <span class="k"><kbd>F5</kbd> 暂停 <kbd>F6</kbd> 步进（调试模式，URL 加 <kbd>?debug=1</kbd> 开启）</span>
   </div>
-  <p>悬停物体可以查看它的<b>来源与成分</b>（调试模式）。鼠标点击右下角的物品栏格子可以切换收集槽——装着烧杯/滴管/集气瓶的格子会放大显示，里面装的液体和气体成分一目了然。<b>移动端</b>：左下摇杆 + 右下 C/X/Q/⇧ 按键，首次触屏自动全屏（右上 ⛶ 可切换），左上信息合并成一张卡；鸟瞰模式单指拖动平移、双指捏合缩放。</p>
+  <p>悬停物体可以查看它的<b>来源与成分</b>（调试模式）。鼠标点击右下角的物品栏格子可以切换收集槽——装着烧杯/滴管/集气瓶的格子会放大显示，里面装的液体和气体成分一目了然；选中可拾取物品时，物品栏上方会显示该物品的操作与键位（移动端则在右下直接出现对应按钮）。<b>移动端</b>：左下摇杆 + 右下 Q/⇧ 与物品操作按键，首次触屏自动全屏（右上 ⛶ 可切换），左上信息合并成一张卡；鸟瞰模式单指拖动平移、双指捏合缩放。</p>
+  <p><a href="levels/items-demo.html" style="color:#ffd76a"><b>▶ 打开物品演示关</b></a>（烧杯 / 滴管 / 集气瓶的操作用例）。</p>
 </div>
 
 <div class="card">
@@ -154,7 +158,7 @@
     <li><b>浸入液体</b>：Fe 掉进 CuSO₄ 池子会慢慢变成铜（置换反应）；Zn + HCl 冒 H₂。</li>
     <li><b>大气气体</b>：空气中飘着 CO₂ 时，NaOH 会被<b>碳化</b>掉血；跳进 Ba(OH)₂ 池又反应再生。</li>
     <li><b>产物与壳</b>：固体产物会<b>附着在表面</b>生长；BaCO₃、Cu 这类致密壳会包住内核<b>阻断反应</b>（这也是防守手段！）。</li>
-    <li><b>收集与放置</b>：<kbd>Q</kbd> 把沉淀收进背包，站到开关/池子上按 <kbd>Shift</kbd> 放下——化学开关就是这么开的。</li>
+    <li><b>收集与放置</b>：<kbd>Q</kbd> 把沉淀/物品收进背包，站到开关/池子上按 <kbd>Shift</kbd> 放下——化学开关就是这么开的。</li>
     <li><b>焰色反应</b>：火焰沾上 Na/K/Cu 等元素会变色，是检验物质的利器；<b>多种盐同在时焰色按暴露质量取平均</b>（混合色调）。</li>
     <li><b>自定义反应</b>：部分关卡添加了专属反应式（优先级最高），注意关卡里的手写提示。</li>
   </ul>

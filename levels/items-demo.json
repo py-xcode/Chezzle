@@ -1,0 +1,85 @@
+{
+  "version": 2,
+  "levelId": "items-demo",
+  "worldW": 1900,
+  "worldH": 800,
+  "plugins": [],
+  "rx": [],
+  "atmosphere": {},
+  "tips": [],
+  "editorState": {},
+  "objects": [
+    {
+      "type": "floor",
+      "opts": { "x": 0, "y": 720, "w": 1900, "h": 80, "id": "ground" }
+    },
+    {
+      "type": "player",
+      "opts": { "x": 100, "y": 560, "substance": "NaOH", "mass": 30, "id": "player" }
+    },
+    {
+      "type": "sign",
+      "opts": { "x": 80, "y": 560, "text": "物品演示\nQ 拾取 · Shift 放置", "id": "sign-title" }
+    },
+    {
+      "type": "beaker",
+      "opts": { "x": 260, "y": 650, "w": 70, "h": 70, "volume": 300, "water": 280, "id": "beaker-water" }
+    },
+    {
+      "type": "beaker",
+      "opts": { "x": 430, "y": 650, "w": 70, "h": 70, "volume": 300, "water": 0, "id": "beaker-empty" }
+    },
+    {
+      "type": "beaker",
+      "opts": { "x": 600, "y": 650, "w": 70, "h": 70, "volume": 300, "water": 270, "solutes": { "CuSO4": 30 }, "id": "beaker-cuso4" }
+    },
+    {
+      "type": "sign",
+      "opts": { "x": 260, "y": 545, "text": "烧杯\nQ 拾取 / C 吸液 / X 倒出", "id": "sign-beaker" }
+    },
+    {
+      "type": "beaker",
+      "opts": { "x": 760, "y": 650, "w": 70, "h": 70, "volume": 200, "water": 150, "solutes": { "NaOH": 5, "C20H14O4": 1 }, "id": "beaker-pink" }
+    },
+    {
+      "type": "dropper",
+      "opts": { "x": 870, "y": 650, "substance": "HCl", "capacity": 50, "liquid": 40, "drop": 0.5, "id": "dropper-hcl" }
+    },
+    {
+      "type": "beaker",
+      "opts": { "x": 980, "y": 650, "w": 70, "h": 70, "volume": 300, "water": 280, "solutes": { "HCl": 20 }, "id": "beaker-hcl" }
+    },
+    {
+      "type": "sign",
+      "opts": { "x": 760, "y": 535, "text": "滴管\nC 吸液 / X 滴加\n放下后点胶头也能滴", "id": "sign-dropper" }
+    },
+    {
+      "type": "beaker",
+      "opts": { "x": 1250, "y": 645, "w": 90, "h": 75, "volume": 300, "water": 280, "solutes": { "Ca(OH)2": 3 }, "id": "beaker-lime" }
+    },
+    {
+      "type": "beaker",
+      "opts": { "x": 1520, "y": 630, "w": 140, "h": 90, "volume": 400, "water": 360, "solutes": { "HCl": 40 }, "id": "beaker-gas" }
+    },
+    {
+      "type": "gasbottle",
+      "opts": { "x": 1380, "y": 650, "capacity": 5, "gases": { "CO2": 2 }, "id": "gasbottle" }
+    },
+    {
+      "type": "switch",
+      "opts": { "x": 1440, "y": 698, "mode": "pressure", "showId": "deposit-gas", "id": "switch-gas" }
+    },
+    {
+      "type": "deposit",
+      "opts": { "x": 1560, "y": 560, "substance": "CaCO3", "mass": 40, "hidden": true, "id": "deposit-gas" }
+    },
+    {
+      "type": "sign",
+      "opts": { "x": 1250, "y": 525, "text": "集气瓶\nQ 拾取 / 按住 C 集气\n按住 X 通入石灰水", "id": "sign-bottle" }
+    },
+    {
+      "type": "sign",
+      "opts": { "x": 1720, "y": 560, "text": "演示结束", "id": "sign-end" }
+    }
+  ]
+}

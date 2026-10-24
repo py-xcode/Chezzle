@@ -10,19 +10,21 @@
 </style>
 </head>
 <body>
-<!-- 启动/加载动画：与选关页"进入关卡"过场同款（见 levels/boot.js） -->
+<!-- 启动/加载动画：与选关页"进入关卡"过场同款（见 levels/boot.js；导出到 levels/ 下时直接可用） -->
 <script src="boot.js"></script>
 <canvas id="game"></canvas>
-<script src="../prefs.js?vmvc6l20g"></script>
-<script src="../dist/chezzle.js?vmvc6l20g"></script>
+<script src="../prefs.js?vmvmdw3n4"></script>
+<script src="../audio.js?vmvmdw3n4"></script>
+<script src="../dist/chezzle.js?vmvmdw3n4"></script>
+
 <script src="report.js"></script>
 <script>
 const canvas = document.getElementById('game');
-// 高清 + 窗口自适应：逻辑尺寸=窗口（4K 内铺满；物理缓冲按面积限 dpr），缓冲 ×devicePixelRatio
 Chezzle.fitCanvasToWindow(canvas);
 window.addEventListener('resize', () => Chezzle.fitCanvasToWindow(canvas));
 const L = new Chezzle.LevelBuilder(canvas, { worldW: 1500, worldH: 800 });
-L.debugmode()
+L
+  // 调试模式：打开本关时 URL 加 ?debug=1（.debugmode() 已废弃，导出仅留提示）
   .floor(16, 703, 296, 50, { id: 'floor1' })
   .player(45, 580, { substance: 'Fe2O3', mass: 30, id: 'player1' })
   .blastlamp(182, 665, { autoOn: true, highTemp: true, id: 'blastlamp1' })
@@ -36,24 +38,23 @@ L.debugmode()
   .floor(558, 702, 190, 50, { id: 'floor5' })
   .block(689, 649, { substance: 'NaOH', w: 50, h: 50, noLift: true, id: 'block3' })
   .floor(580, 396, 20, 126, { id: 'floor6' })
-  .pool(740, 699, 150, 63, { volume: 200, solutes: {"NH3·H2O":1}, gasHeight: 850, id: 'pool3' })
+  .pool(740, 699, 244, 63, { volume: 200, solutes: {"NH3·H2O":1}, gasHeight: 850, id: 'pool3' })
   .floor(563, 337, 174, 64, { id: 'floor7' })
-  .extractor(263, 321, { w: 50, h: 14, poolId: 2, switchId: 1, rate: 0.25, id: 'extractor1' })
-  .switch(206, 326, { mode: 'pressure', id: '1' })
-  .portal(123, 271, { w: 44, h: 64, color: '#c78bff', uses: 2, id: 'portal1' })
-  .portal(386, 454, { w: 44, h: 64, color: '#c78bff', uses: 2, id: 'portal3' })
-  .portal(517, 451, { w: 44, h: 64, color: '#2bc001', uses: 1, id: 'portal4' })
-  .portal(335, 272, { w: 44, h: 64, color: '#2bc001', uses: 1, id: 'portal2' })
-  .floor(885, 702, 350, 50, { id: 'floor8' })
+  .extractor(263, 321, { w: 50, h: 14, poolId: 2, rate: 0.25, id: 'extractor1' })
+  .portal(123, 271, { w: 44, h: 64, color: '#c78bff', uses: 2, group: 'g5124', id: 'portal1' })
+  .portal(386, 454, { w: 44, h: 64, color: '#c78bff', uses: 2, group: 'g5124', id: 'portal3' })
+  .portal(517, 451, { w: 44, h: 64, color: '#2bc001', uses: 1, group: 'g1580', id: 'portal4' })
+  .portal(335, 272, { w: 44, h: 64, color: '#2bc001', uses: 1, group: 'g1580', id: 'portal2' })
+  .floor(975, 702, 260, 50, { id: 'floor8' })
   .floor(907, 342, 280, 58, { id: 'floor9' })
   .gasdetector(579, 328, { gas: 'H2', threshold: 0.1, opening: 'H2', id: 'gasdetector1' })
-  .switch(1019, 320, { mode: 'chemical', opening: 'Al2O3', and: 'switch2', id: 'switch1' })
+  .switch(997, 322, { mode: 'chemical', opening: 'Al2O3', and: 'switch2', id: 'switch1' })
   .switch(1077, 320, { mode: 'chemical', opening: 'FeCl2', id: 'switch2' })
-  .portal(678, 269, { w: 44, h: 64, color: '#d8b32c', switchId: 'gasdetector1', id: 'portal5' })
-  .portal(941, 282, { w: 44, h: 64, color: '#d8b32c', switchId: 'gasdetector1', id: 'portal6' })
-  .portal(1138, 277, { w: 44, h: 64, color: '#1e77eb', switchId: 'switch1', id: 'portal7' })
+  .portal(678, 269, { w: 44, h: 64, color: '#d8b32c', switchId: 'gasdetector1', group: 'g5312', id: 'portal5' })
+  .portal(941, 282, { w: 44, h: 64, color: '#d8b32c', switchId: 'gasdetector1', group: 'g5312', id: 'portal6' })
+  .portal(1138, 277, { w: 44, h: 64, color: '#1e77eb', switchId: 'switch1', group: 'g7890', id: 'portal7' })
   .floor(16, 162, 240, 27, { id: 'floor10' })
-  .portal(49, 97, { w: 44, h: 64, color: '#1e77eb', switchId: 'switch1', id: 'portal8' })
+  .portal(49, 97, { w: 44, h: 64, color: '#1e77eb', switchId: 'switch1', group: 'g7890', id: 'portal8' })
   .switch(147, 140, { mode: 'chemical', opening: 'Fe(OH)3', igniteId: 'lamp1', id: 'switch3' })
   .lamp(208, 127, { autoOn: false, id: 'lamp1' })
   .pool(249, 162, 173, 43, { volume: 200, solutes: {"HClO":10}, id: 'pool4' })
@@ -62,22 +63,23 @@ L.debugmode()
   .floor(483, -38, 20, 200, { id: 'floor12' })
   .block(516, 125, { substance: 'Cu', w: 25, h: 30, id: 'block4' })
   .pool(559, 162, 182, 30, { volume: 200, solutes: {"HNO3":5}, id: 'pool5' })
-  .floor(736, 163, 250, 43, { id: 'floor13' })
-  .extractor(743, 149, { w: 50, h: 14, poolId: 'pool5', switchId: 'switch4', rate: 0.25, id: 'extractor2' })
-  .switch(803, 143, { mode: 'pressure', id: 'switch4' })
+  .floor(736, 163, 309, 43, { id: 'floor13' })
+  .extractor(768, 146, { w: 50, h: 14, poolId: 'pool5', rate: 0.25, id: 'extractor2' })
   .key(869, 140, { opening: 'CuCl2', openId: 'door1', id: 'key1' })
   .door(928, 92, 50, 70, { id: 'door1' })
   .sign(759, 639, '3NaClO + 2NH₃ → 3NaCl + N₂↑ + 3H₂O', { id: 'sign2' })
-  .extractor(570, 686, { w: 50, h: 14, poolId: 'pool1', switchId: 'switch5', rate: 1, id: 'extractor3' })
-  .switch(638, 692, { mode: 'pressure', id: 'switch5' })
+  .extractor(570, 685, { w: 50, h: 14, poolId: 'pool1', rate: 1, id: 'extractor3' })
   .floor(904, 242, 20, 99, { id: 'floor14' })
   .sign(1265, 777, 'enjoy!', { id: 'sign3' })
+  .floor(1020, -68, 20, 231, { id: 'floor15' })
   .reaction('NaClO+NH4OH->NaCl+N2+H2O')
 ;
 
 const scene = L.build();
 scene.byId['blastlamp1'].addPrecipitate('Al', 1);
 scene.addObject(new Chezzle.Rope({ x: 456, y: 494, length: 100, anchor: { fixed: { x: 456, y: 494 } }, hanging: scene.byId['block2'] }));
+scene.atmosphere.preset({}); // 关卡大气
+scene.applyAppearDelays(); // 延迟出现
 
 // ⚡ 接线（示例，按需取消注释）：
 // scene.byId['sw'].onOpen(() => scene.byId['lamp'].ignite());
@@ -86,8 +88,7 @@ scene.addObject(new Chezzle.Rope({ x: 456, y: 494, length: 100, anchor: { fixed:
 // scene.atmosphere.add('CO2', 8); // 可选：初始大气 CO2（碳化玩法）
 
 L.start();
-// 通关上报（选关系统：He 元素 · 氦-4）
-ChezzleReport.bind(scene, 'He-1');
+ChezzleReport.bind(scene, 'tutorial'); // 选关系统：通关上报
 </script>
 </body>
 </html>

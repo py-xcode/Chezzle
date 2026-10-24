@@ -115,7 +115,12 @@ const walkRefs = (dir) => {
   }
 };
 for (const d of ['levels', 'tools', 'docs/examples', 'docs']) if (fs.existsSync(path.join(SRC, '..', d))) walkRefs(path.join(SRC, '..', d));
-if (fs.existsSync(path.join(SRC, '..', 'index.html'))) refFiles.push(path.join(SRC, '..', 'index.html'));
+// 根目录页面（index/select/about…）也要同步版本号：prefs.js / audio.js 引用在这
+for (const e of fs.readdirSync(path.join(SRC, '..'), { withFileTypes: true })) {
+  if (!e.isFile() || !/\.html$/.test(e.name)) continue;
+  const p = path.join(SRC, '..', e.name);
+  if (!refFiles.includes(p)) refFiles.push(p);
+}
 let patched = 0;
 for (const f of refFiles) {
   let t = fs.readFileSync(f, 'utf8');
@@ -136,3 +141,13 @@ for (const f of refFiles) {
   if (nt !== t) { fs.writeFileSync(f, nt, 'utf8'); prefPatched++; }
 }
 console.log(`prefs.js 引用版本同步 → ${VER}（${prefPatched} 个 HTML）`);
+
+// ---- 音效脚本同样加版本号（audio.js 由页面与关卡页共用，更新后不能被旧缓存挡住） ----
+let audioPatched = 0;
+for (const f of refFiles) {
+  let t = fs.readFileSync(f, 'utf8');
+  if (!/src="(?:\.\.\/)?audio\.js/.test(t)) continue;
+  const nt = t.replace(/src="((?:\.\.\/)?audio\.js)(?:\?[A-Za-z0-9]+)*"/g, `src="$1?${VER}"`);
+  if (nt !== t) { fs.writeFileSync(f, nt, 'utf8'); audioPatched++; }
+}
+console.log(`audio.js 引用版本同步 → ${VER}（${audioPatched} 个 HTML）`);

@@ -13,6 +13,8 @@
 import { CFG } from '../core/config.js';
 import { toggleFullscreen, fullscreenSupported, isFullscreen } from '../core/fullscreen.js';
 import { canvasLW, canvasLH, uiScaleOf } from '../render/canvas.js';
+import { sfx } from '../core/audio.js';
+import { Savepoint } from '../core/savepoint.js';
 
 /** 屏幕坐标 → 世界坐标（与 Renderer.frame 同口径：跟随玩家/聚焦内容；鸟瞰时走鸟瞰视图）。
  *  输入/输出均为**逻辑像素**（canvas 缓冲 ×dpr，UI/命中统一逻辑系）。 */
@@ -103,6 +105,47 @@ export function fullscreenButtonRect(W, top = 10, right = 0) {
   return { x: W - right - 214, y: top, w: 52, h: 34 };
 }
 
+/** 重开按钮（右上按钮排最左；图标 = 环形箭头）：与全屏/鸟瞰按钮同一排。
+ *  withFs = 本端是否真的画了全屏按钮（触屏 且 设备支持全屏，见 hud._drawNormal）——
+ *  带全屏时让出它的位置，否则左移一格贴住鸟瞰按钮。绘制（hud.js）与命中同源。 */
+export function restartButtonRect(W, top = 10, right = 0, withFs = false) {
+  return { x: W - right - (withFs ? 272 : 222), y: top, w: 52, h: 34 };
+}
+
+/** 重开按钮双击判定阈值（ms）：单次点击只记时刻，两次内才打开重开菜单 */
+const RESTART_DOUBLE_MS = 400;
+
+/** 重开选择菜单布局（面板 + 两个按钮；绘制 hud.restartMenu 与命中同源）：
+ *  面板居中，宽 min(400, W×0.84)、高 214；按钮竖排（主「回到存档点」在上、
+ *  次「整局重开」在下），高 46、左右留 28。 */
+export function restartMenuLayout(W, H) {
+  const w = Math.min(400, W * 0.84);
+  const h = 214;
+  const x = (W - w) / 2;
+  const y = (H - h) / 2;
+  const bx = x + 28;
+  const bw = w - 56;
+  return {
+    panel: { x, y, w, h },
+    checkpoint: { x: bx, y: y + 92, w: bw, h: 46 },
+    full: { x: bx, y: y + 148, w: bw, h: 46 },
+  };
+}
+
+/** 墙钟毫秒（双击阈值用真实时间：菜单/死亡时游戏时钟可能暂停） */
+function wallNow() {
+  try {
+    if (typeof performance !== 'undefined' && typeof performance.now === 'function') return performance.now();
+  } catch (e) { /* 老内核没有 performance */ }
+  return Date.now();
+}
+
+/** 世界按下管线是否应冻结（重开菜单打开 / 已死亡）：此时点击属于 UI 语义
+ *  （重开菜单操作、死亡后重开），不能穿透到场景物体上。 */
+function worldPaused(scene) {
+  return !!(scene && (scene.restartMenuOpen || scene.status === 'died'));
+}
+
 function inRect(r, sx, sy) {
   return sx >= r.x && sx <= r.x + r.w && sy >= r.y && sy <= r.y + r.h;
 }
@@ -150,17 +193,30 @@ export function uiMargins(scene, uiK = 1) {
 }
 
 /** 命中可点击物体（onTap；bbox ±pad 宽容——滴管等细长物体好点中；
- *   desktop 默认 6，触屏手指传 14（由 touchui 管线传入）） */
+ *   desktop 默认 6，触屏手指传 14（由 touchui 管线传入）。
+ *   物体可提供 tapHit(world) 做细粒度命中（如导气管只认阀门圆，整台装置 bbox 不抢滴管）。 */
 function hitTap(scene, canvas, sx, sy, pad = 6) {
   const w = screenToWorld(scene, canvas, sx, sy);
   for (let i = scene.objects.length - 1; i >= 0; i--) {
     const o = scene.objects[i];
     if (typeof o.onTap !== 'function') continue;
+    if (typeof o.tapHit === 'function') {
+      if (o.tapHit(w)) return { obj: o, world: w };
+      continue; // 细粒度命中未中：继续找下层可点物体（不被大包围盒截胡）
+    }
     if (w.x >= o.x - pad && w.x <= o.x + o.w + pad && w.y >= o.y - pad && w.y <= o.y + o.h + pad) {
       return { obj: o, world: w };
     }
   }
   return null;
+}
+
+/** 鼠标悬停是否指在可点击物体上（与点击同源的命中规则）：桌面端手型指针提示用。
+ *  暂停/选单/死亡/鸟瞰时不提示（此时点击语义已被暂停或改为别处处理）。 */
+export function hoverTapAt(scene, canvas, sx, sy, pad = 6) {
+  if (!scene || !canvas || scene.status !== 'running') return null;
+  if (scene.restartMenuOpen || scene.overview || scene.debugPaused) return null;
+  return hitTap(scene, canvas, sx, sy, pad);
 }
 
 /** 中心距离 */
@@ -186,8 +242,9 @@ export function tipPanelRect(W, top = 10, right = 0, H = null) {
 }
 
 /**
- * 处理一次"点击"（提示按钮 / 物品栏选格 / 鸟瞰与全屏按钮）。
- * hud 可为空。返回 true = 已消费。onInfo（可选）诊断回调。
+ * 处理一次"点击"（重开菜单 / 死亡重开 / 重开按钮双击 / 全屏/鸟瞰/提示按钮 / 物品栏选格）。
+ * 死亡时点击屏幕 = 回存档点（有存档）或整局重开（无存档）；重开按钮双击 = 打开
+ * 重开选择菜单（单次点击只记时刻）。hud 可为空。返回 true = 已消费。onInfo（可选）诊断回调。
  */
 export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   if (!scene || portraitScene(scene)) return false;
@@ -200,7 +257,39 @@ export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   const y = sy / kUi;
   const top = hudTopOffset(scene, kUi);
   const right = touchInsetsOf(scene, kUi).right || 0;
-  // 0) 鸟瞰模式：只认"返回"按钮（暂停态；未中 → 交给鸟瞰拖动/缩放管线）
+  const touchOn = !!(scene._touchUI && typeof scene._touchUI.enabled === 'function' && scene._touchUI.enabled());
+  // 全屏按钮只在"触屏端且设备真的支持全屏"时才画（见 hud._drawNormal）——重开按钮
+  // 的排位必须与绘制同源：带全屏时让出全屏按钮位，否则左移一格。
+  const withFs = touchOn && fullscreenSupported();
+
+  // ⓪ 重开选择菜单（画布弹层；打开时 Scene.step 已暂停）：只认面板内两个按钮，
+  //    点面板外 = 关闭；永远吞掉本次点击（不穿透到世界/其它 HUD）。
+  if (scene.restartMenuOpen) {
+    const L = restartMenuLayout(W, H);
+    if (inRect(L.checkpoint, x, y)) {
+      // 无存档 → 按钮禁用：不响应（菜单保持打开，玩家可改选「整局重开」）
+      if (Savepoint.has(scene)) {
+        Savepoint.restore(scene);
+        onInfo?.({ type: 'restart-checkpoint' });
+      }
+      return true;
+    }
+    if (inRect(L.full, x, y)) {
+      Savepoint.fullRestart(scene);
+      onInfo?.({ type: 'restart-full' });
+      return true;
+    }
+    if (!inRect(L.panel, x, y)) scene.closeRestartMenu();
+    onInfo?.({ type: 'restart-menu' });
+    return true;
+  }
+  // ① 死亡：点击屏幕 = 有存档回存档点 / 无存档整局重开（电脑端鼠标同样生效）
+  if (scene.status === 'died') {
+    Savepoint.retryAfterDeath(scene);
+    onInfo?.({ type: 'died-retry' });
+    return true;
+  }
+  // ② 鸟瞰模式：只认"返回"按钮（暂停态；未中 → 交给鸟瞰拖动/缩放管线）
   if (scene.overview) {
     if (inRect(overviewButtonRect(W, top, right), x, y)) {
       scene.toggleOverview();
@@ -208,30 +297,50 @@ export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
     }
     return false;
   }
-  // 1) 全屏按钮（仅触屏端显示；click/触点都在用户手势内，可请求全屏）。
+  // ③ 重开按钮（右上按钮排最左）：单击只记录时刻（播点击音），400ms 内双击才
+  //    打开重开菜单（单次点击不重开）。★ 必须在全屏按钮之前判定：iOS 不支持
+  //    元素全屏时 HUD 不画全屏按钮、重开按钮左移到它的位置，两者命中区重叠。
+  if (inRect(restartButtonRect(W, top, right, withFs), x, y)) {
+    const now = wallNow();
+    const last = Number(scene._restartTapAt) || 0;
+    if (last > 0 && now - last <= RESTART_DOUBLE_MS
+        && typeof scene.openRestartMenu === 'function' && scene.openRestartMenu()) {
+      scene._restartTapAt = 0;
+      sfx('ui.open');
+      onInfo?.({ type: 'restart-menu-open' });
+    } else {
+      scene._restartTapAt = now;
+      sfx('ui.click');
+      onInfo?.({ type: 'restart-tap' });
+    }
+    return true;
+  }
+  // ④ 全屏按钮（仅触屏端显示；click/触点都在用户手势内，可请求全屏）。
   //    老设备/浏览器不支持元素全屏 API → 明确提示（不静默失效）
-  if (scene._touchUI && typeof scene._touchUI.enabled === 'function' && scene._touchUI.enabled()) {
+  if (touchOn) {
     if (inRect(fullscreenButtonRect(W, top, right), x, y)) {
       if (fullscreenSupported()) toggleFullscreen();
       else pushNotice(scene, '此浏览器不支持全屏');
+      sfx('ui.click');
       onInfo?.({ type: 'fullscreen' });
       return true;
     }
   }
-  // 2) 鸟瞰按钮（双端）
+  // ⑤ 鸟瞰按钮（双端）
   if (inRect(overviewButtonRect(W, top, right), x, y)) {
     scene.toggleOverview();
     onInfo?.({ type: 'overview' });
     return true;
   }
-  // 3) 提示按钮（右上；hud.tipButton 同几何：top..top+34）
+  // ⑥ 提示按钮（右上；hud.tipButton 同几何：top..top+34）
   //    点击 = 展示下一条可用提示（没有则俏皮话/收起）——面板/文案由 hud.onTipClick 管理
   if (x > W - right - 84 && x < W - right - 8 && y > top && y < top + 34) {
+    sfx('ui.click');
     if (hud && typeof hud.onTipClick === 'function') hud.onTipClick(scene);
     onInfo?.({ type: 'tip' });
     return true;
   }
-  // 3.5) 提示面板（展开中）：面板上点击 = 消费（不穿透到场景）；右上 ✕ = 关闭
+  // ⑦ 提示面板（展开中）：面板上点击 = 消费（不穿透到场景）；右上 ✕ = 关闭
   if (hud && hud.showTip) {
     // ★ 以 HUD **实际绘制**的矩形为准（面板高度随文案行数变化，只有它知道）；
     //   没画过（刚展开那一帧）才退回共享布局几何。两边不同源 = 点面板穿透到场景。
@@ -240,6 +349,7 @@ export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
       if (x >= pr.x + pr.w - 32 && y <= pr.y + 32) {
         if (typeof hud.closeTip === 'function') hud.closeTip();
         else hud.showTip = false;
+        sfx('ui.close');
         onInfo?.({ type: 'tip-close' });
       } else {
         onInfo?.({ type: 'tip-panel' });
@@ -247,13 +357,14 @@ export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
       return true;
     }
   }
-  // 4) 物品栏选格（右下；几何与 HUD 渲染共用 inventorySlotRects）
+  // ⑧ 物品栏选格（右下；几何与 HUD 渲染共用 inventorySlotRects）
   const p = scene.player;
   if (p && p.inventory) {
     const rects = inventorySlotRects(W, H, p.inventory.slots, uiMargins(scene, kUi));
     for (let i = 0; i < rects.length; i++) {
       const r = rects[i];
       if (x >= r.x && x <= r.x + r.size && y >= r.y && y <= r.y + r.size) {
+        sfx('ui.click');
         p.inventory.selected = i;
         onInfo?.({ type: 'slot' });
         return true;
@@ -304,7 +415,8 @@ export function handleSceneTapUp(scene) {
  * 落在滴管玻璃段但玩家太远 / 无容器等 → 未命中（不滴也不拖）。
  */
 export function handleScenePressDown(scene, canvas, sx, sy, onInfo = null, pad = 6) {
-  if (!scene || scene.overview || portraitScene(scene)) return false; // 鸟瞰/竖屏：场景管线冻结
+  // 鸟瞰/竖屏/菜单打开/已死亡：场景管线冻结（后两者点击属于 UI 语义，不能穿透到物体）
+  if (!scene || scene.overview || portraitScene(scene) || worldPaused(scene)) return false;
   scene._pressHome = null;
   const hit = hitTap(scene, canvas, sx, sy, pad);
   if (!hit) {
@@ -341,7 +453,7 @@ export function handleScenePressDown(scene, canvas, sx, sy, onInfo = null, pad =
 /** 移动（按住期间）：拖动 = 移动滴管位置；胶头/玻璃段都允许拖。
  *  候选期拖出 dragStartPx → 拖动（不滴）；已开滴/开吸再拖出 dragAbortPx → 停转拖动 */
 export function handleScenePressMove(scene, canvas, sx, sy) {
-  if (!scene || scene.overview || portraitScene(scene)) return;
+  if (!scene || scene.overview || portraitScene(scene) || worldPaused(scene)) return;
   const c = scene._pressCand;
   if (c && !c.moved && Math.hypot(sx - c.startX, sy - c.startY) > CFG.item.dragStartPx) {
     c.moved = true;
@@ -398,6 +510,15 @@ export function handleScenePressMove(scene, canvas, sx, sy) {
  *  玻璃段候选不滴（松开即完成，仅拖动会移动位置）；结束一切按住状态 */
 export function handleScenePressUp(scene, canvas = null, pad = 6) {
   if (!scene || scene.overview || portraitScene(scene)) return;
+  // 菜单打开/已死亡：只清按住态（不触发滴液等世界交互——该点击是 UI 语义）
+  if (worldPaused(scene)) {
+    scene._pressCand = null;
+    scene._drag = null;
+    scene._holdSuck = null;
+    scene._pressHome = null;
+    handleSceneTapUp(scene);
+    return;
+  }
   const c = scene._pressCand;
   if (c && c.mode === 'bulb' && !c.moved && c.downT < CFG.item.dripArmDelay && canvas) {
     scene._pressCand = null;

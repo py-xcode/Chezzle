@@ -20,23 +20,24 @@ import { ReactionLabel } from '../objects/reactionlabel.js';
 import { Container } from '../objects/container.js';
 import { Portal } from '../objects/portal.js';
 import { Rope } from '../objects/rope.js';
+import { puffFx, swirlFx, flashFx } from '../objects/fx.js';
+import { hexToRgb } from '../render/color.js';
 import { CFG } from './config.js';
 import { stepPressTap } from '../level/click.js';
 import { deathQuip } from '../render/hud.js';
+import { sfx } from './audio.js';
 
 export class Scene {
-  constructor({ worldW = CFG.worldW, worldH = CFG.worldH, physics = {}, hideTouchGrab = false } = {}) {
+  constructor({ worldW = CFG.worldW, worldH = CFG.worldH, physics = {} } = {}) {
     this.worldW = worldW;
     this.worldH = worldH;
-    // 移动端"拾取/吸液"按钮（=电脑端 C 键：拾烧杯/吸液/集气）开关：
-    // 很多关卡用不到它，默认收起防误导（true=隐藏）；桌面端无影响
-    this.hideTouchGrab = !!hideTouchGrab;
     this.objects = [];
     this.dynamics = [];
     this.statics = [];
     this.containers = [];
     this.lamps = [];
-    this.gasTubes = []; // 导气管（输入端产气 → 输出端；见 objects/gastube.js）
+    this.gasTubes = []; // 导气管（输入端产气 → 多个输出端；见 objects/gastube.js）
+    this.gasChambers = []; // 气室（内部独立大气区域；见 objects/gaschamber.js）
     this.doors = [];
     this.portals = [];
     this.particles = [];
@@ -75,6 +76,9 @@ export class Scene {
     this.debugPaused = false; // 暂停 tick 推进
     this.debugStepOnce = false; // 手动步进一 tick
     this.overview = false; // 鸟瞰模式（灵魂出窍）：暂停模拟，相机自由缩放/平移看整关
+    this.restartMenuOpen = false; // 重开选择菜单（HUD 画布弹层）：打开时暂停模拟
+    this._menuKeyUnsub = null;    // Esc 关闭菜单的键盘钩子
+    this._saveToast = null;       // 左上角"已存档/已回到存档点"提示（HUD 渲染）
 
     this.control = new Set(); // 长按（left/right/jump/place/collect/grab/use）
     this.pressed = new Set(); // 本刻刚按下（边缘触发）
@@ -94,6 +98,8 @@ export class Scene {
 
     // ---- 运行时钩子（插件/关卡脚本用）：全部走"游戏时间"，受调试暂停(F5)控制 ----
     this._tickFns = [];    // 每帧执行: fn(dt, time)，返回 true 自动卸载
+    this._hooksRunning = false; // 正在执行 _runHooks（钩子里存档必须延后到本刻结束）
+    this._postStepFns = [];     // 本刻结束后执行一次（在 _runHooks 之外）
     this._timers = [];     // 一次性延迟: {at, fn}（游戏时间）
     this._intervals = [];  // 周期: {next, period, fn}
     this._afterFns = [];   // 下一帧开头执行一次
@@ -105,6 +111,17 @@ export class Scene {
   // 运行时钩子 API：wait/after/interval 基于游戏时间（scene.time，暂停即停），
   // 与 setTimeout（墙钟时间）不同——调试暂停时不会"偷偷"继续走。
   // ---------------------------------------------------------------------------
+
+  /** 本刻结束后执行一次（在 _runHooks 之外）。
+   *  存档等"需要完整调度表"的操作若发生在 tick/wait 回调里，必须用这个延后一帧：
+   *  _runHooks 期间 _tickFns/_timers 正在边跑边重建，此刻快照会丢钩子。 */
+  postStep(fn) {
+    this._postStepFns.push(fn);
+    return () => {
+      const i = this._postStepFns.indexOf(fn);
+      if (i >= 0) this._postStepFns.splice(i, 1);
+    };
+  }
 
   /** 每帧执行 fn(dt, time)：返回 true 则卸载；返回 deregister 函数可手动卸载 */
   onTick(fn) {
@@ -177,6 +194,8 @@ export class Scene {
 
   /** 每帧推进运行时钩子（在 step 的时间推进后、对象 update 前） */
   _runHooks(dt) {
+    this._hooksRunning = true;
+    try {
     const after = this._afterFns;
     this._afterFns = [];
     for (const fn of after) fn();
@@ -221,6 +240,9 @@ export class Scene {
         if (this.time >= t.next) t.next = this.time + t.period;
       }
     }
+    } finally {
+      this._hooksRunning = false;
+    }
   }
 
   on(name, fn) {
@@ -230,6 +252,14 @@ export class Scene {
 
   fire(name, ...args) {
     for (const fn of this._events[name] ?? []) fn(...args);
+  }
+
+  /** 世界坐标 → 声像（-1..1；无坐标/无世界宽 → 0，不做声像） */
+  _sfxPan(point) {
+    if (!point || !(this.worldW > 0)) return 0;
+    const x = Number(point.x);
+    if (!Number.isFinite(x)) return 0;
+    return Math.max(-1, Math.min(1, (x / this.worldW) * 2 - 1));
   }
 
   // ---------------------------------------------------------------------------
@@ -255,6 +285,7 @@ export class Scene {
       if (v) this.camera.enterOverview();
       else this.camera.exitOverview();
     }
+    sfx(v ? 'overview.on' : 'overview.off');
     this.fire('overview', { on: v });
     return v;
   }
@@ -303,6 +334,7 @@ export class Scene {
       text: t, t: this.time, dur: Math.max(0.6, Number(dur) || 4),
       wall: (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0,
     };
+    sfx('banner');
     this.fire('banner', this.banner);
     return this.banner;
   }
@@ -314,6 +346,7 @@ export class Scene {
     this.tipSeq++;
     this.tipActive = t;
     this.tip = t.text;
+    sfx('tip');
     this.fire('tip', { tip: t, seq: this.tipSeq, source: 'button' });
     return t.text;
   }
@@ -339,6 +372,7 @@ export class Scene {
     if (obj instanceof Container) this.containers.push(obj);
     if (obj.isLamp) this.lamps.push(obj);
     if (obj.isGasTube) this.gasTubes.push(obj);
+    if (obj.isGasChamber) this.gasChambers.push(obj); // 气室：独立大气区域
     if (obj.isDoor) this.doors.push(obj);
     if (obj instanceof Portal) this.portals.push(obj);
     if (obj instanceof Particle) this.particles.push(obj);
@@ -369,7 +403,7 @@ export class Scene {
    *  延迟出现/开关隐藏的物体必须**物理也不计算**：半空摆的玩家隐身时不能坠地。 */
   _deindex(obj) {
     const arrays = [this.objects, this.dynamics, this.statics, this.particles,
-      this.containers, this.lamps, this.gasTubes, this.doors, this.portals, this.hidden];
+      this.containers, this.lamps, this.gasTubes, this.gasChambers, this.doors, this.portals, this.hidden];
     for (const arr of arrays) {
       const i = arr.indexOf(obj);
       if (i >= 0) arr.splice(i, 1);
@@ -418,9 +452,10 @@ export class Scene {
   // 主刻
   // ===========================================================================
   step(dt) {
-    if (this.status !== 'running') return;
+    if (this.status !== 'running' || this.restartMenuOpen) return; // 菜单打开 = 暂停整局模拟
     this.time += dt;
     this.dt = dt;
+    this._seedChambers(); // 气室初始大气（第一次 step 时复制外部大气/应用配置成分）
     this._runHooks(dt); // 运行时钩子（插件/关卡脚本的 onTick/wait/interval/after）
     this._updateTipReady(); // 条件提示：只求值"可点击展示"（不自动出现，纯读安全）
     // 页面不在前台（切走/最小化）时清空输入：失焦时 keyup/blur 可能不触发，
@@ -493,6 +528,15 @@ export class Scene {
     // 8. 清空边缘触发
     this.pressed.clear();
     this._gasHold = null; // 集气瓶按住的标记只在本 tick 有效（Player.update 每帧重设）
+
+    // 9. 本刻结束钩子（钩子里排队的存档在这执行：此刻 _tickFns/_timers 已重建完整）
+    if (this._postStepFns.length) {
+      const fns = this._postStepFns;
+      this._postStepFns = [];
+      for (const fn of fns) {
+        try { fn(); } catch (err) { /* 插件/存档回调异常不拖垮游戏循环 */ }
+      }
+    }
   }
 
   updateContainment() {
@@ -512,7 +556,9 @@ export class Scene {
   // 化学反应调度
   // ===========================================================================
   stepChemistry(dt) {
+    this._seedChambers(); // 气室在第一次参与化学前必须有独立大气
     this.atmosphere._cause = null; // 复位大气变化原因（由引擎按反应盖章）
+    for (const c of this.gasChambers) c.atmosphere._cause = null; // 气室内大气同样每刻复位
     // 自反应（分解/催化/燃烧/溶解/气态还原）
     for (const obj of this.objects) {
       if (!obj.material) continue;
@@ -568,25 +614,43 @@ export class Scene {
       this.chem._tryDissolution(obj.material, dt, ctx);
     }
 
-    // 含碱容器吸收大气酸性气体（CO2/SO2）
+    // 含碱容器吸收大气酸性气体（CO2/SO2）：容器在气室内时吸气室内大气
     for (const c of this.containers) {
       if (c.solution.ids().some((id) => getSubstance(id).kind === 'base')) {
         this.chem.absorbAtmosphereGas(c.material, dt, this.makeEnv(c));
       }
     }
-    // 大气中可燃气体燃烧
+    // 大气中可燃气体燃烧：外部大气 + 每个气室的内部大气各自独立结算
+    // （气室内的反应产物/消耗不影响外部，外部同理不影响内部）
     this.chem.reactAtmosphere(this.makeEnv(null), dt);
+    for (const c of this.gasChambers) {
+      if (c.hidden) continue;
+      const savedEmit = this._emitCtx;
+      // 气室内大气反应的产物（如 NH4Cl 白烟颗粒）落在气室内，不飘到外部场景
+      this._emitCtx = {
+        obj: null,
+        container: null,
+        player: this.player,
+        point: { x: c.x + c.w / 2, y: c.y + c.h / 2 },
+        spread: Math.min(c.w, c.h) * 0.5,
+      };
+      try { this.chem.reactAtmosphere(this.makeEnv(c), dt); } finally { this._emitCtx = savedEmit; }
+    }
 
-    // 收集本 tick 大气气体变化（产生/消耗原因，调试面板显示）
+    // 收集本 tick 大气气体变化（产生/消耗原因，调试面板显示）：外部 + 各气室分别收集
     const glog = this.atmosphere.flushLog();
+    for (const c of this.gasChambers) {
+      if (c.hidden) continue;
+      for (const g of c.atmosphere.flushLog()) glog.push({ ...g, region: c.id });
+    }
     if (glog.length) {
       if (!this.gasLog) this.gasLog = [];
-      // 合并同一 tick 内同气体+同原因的变化
+      // 合并同一 tick 内同气体+同原因（+同区域）的变化
       const merged = new Map();
       for (const g of glog) {
-        const k = `${g.id}|${g.cause ?? ''}`;
+        const k = `${g.id}|${g.cause ?? ''}|${g.region ?? ''}`;
         if (merged.has(k)) merged.get(k).delta += g.delta;
-        else merged.set(k, { id: g.id, delta: g.delta, cause: g.cause ?? null, t: this.time });
+        else merged.set(k, { id: g.id, delta: g.delta, cause: g.cause ?? null, region: g.region ?? null, t: this.time });
       }
       for (const m of merged.values()) this.gasLog.unshift(m);
       if (this.gasLog.length > 60) this.gasLog.length = 60;
@@ -634,6 +698,85 @@ export class Scene {
     return base ?? { x: this.worldW / 2, y: this.worldH / 2 };
   }
 
+  // ===========================================================================
+  // 气室（内部独立大气区域）
+  // ---------------------------------------------------------------------------
+  // 气室无碰撞箱、不进物理；与矩形有任何重叠的物体/玩家/反应点算"在内部"。
+  // 内部大气与外部完全独立：产气、吸气、大气燃烧、气体探测器、白烟颗粒都按区域隔离。
+  // ===========================================================================
+
+  /** 某对象所在的气室（无 → null = 外部大气；多个气室重叠时取先加入的） */
+  gasChamberFor(obj) {
+    if (!obj || !this.gasChambers || !this.gasChambers.length) return null;
+    for (const c of this.gasChambers) {
+      if (c.hidden) continue;
+      if (c === obj) return c;
+      if (typeof c.containsObj === 'function' && c.containsObj(obj)) return c;
+    }
+    return null;
+  }
+
+  /** 某点所在的气室（点位产气/白烟/爆炸等用） */
+  gasChamberAtPoint(x, y) {
+    if (!this.gasChambers || !this.gasChambers.length) return null;
+    for (const c of this.gasChambers) {
+      if (c.hidden) continue;
+      if (typeof c.containsPoint === 'function'
+        ? c.containsPoint(x, y)
+        : (x >= c.x && x <= c.x + c.w && y >= c.y && y <= c.y + c.h)) return c;
+    }
+    return null;
+  }
+
+  /** 本次产气属于哪个气室（按产物上下文：容器 > 物体 > 反应点）；null=外部大气 */
+  emitChamber() {
+    const emit = this._emitCtx;
+    if (!emit || !this.gasChambers || !this.gasChambers.length) return null;
+    if (emit.container) {
+      const c = this.gasChamberFor(emit.container);
+      if (c) return c;
+    }
+    if (emit.obj) {
+      const c = this.gasChamberFor(emit.obj);
+      if (c) return c;
+    }
+    if (emit.point) return this.gasChamberAtPoint(emit.point.x, emit.point.y);
+    return null;
+  }
+
+  /** 某对象所在区域的大气（气室内 → 气室内部大气；外部 → 场景大气） */
+  atmosphereAt(obj) {
+    const c = this.gasChamberFor(obj);
+    return c ? c.atmosphere : this.atmosphere;
+  }
+
+  /** HUD 大气面板：玩家在气室内时显示气室内大气 */
+  atmosphereForPlayer() {
+    return this.player ? this.atmosphereAt(this.player) : this.atmosphere;
+  }
+
+  /** 气体探测器：对象所在区域的"反应产气"累积表（气室内探测器看不到外部产气，反之亦然） */
+  reactGasFor(obj) {
+    const c = this.gasChamberFor(obj);
+    return c ? (c._reactGas ??= {}) : this._reactGas;
+  }
+
+  /** 某区域的点燃源：气室只认与它重叠的灯；外部不认气室内的灯（大气互不影响） */
+  _litLampsIn(chamber) {
+    return this.lamps.filter((l) => {
+      if (!l.lit) return false;
+      return this.gasChamberFor(l) === chamber;
+    });
+  }
+
+  /** 气室第一次参与化学前，seed 内部大气（复制外部大气或应用配置成分） */
+  _seedChambers() {
+    if (!this.gasChambers) return;
+    for (const c of this.gasChambers) {
+      if (!c.hidden && typeof c.seed === 'function') c.seed(this);
+    }
+  }
+
   _setEmitCtx(obj, container) {
     // 容器自身的反应（如灯上沉淀分解）：产物回到容器自己，而不是当开阔地粒子撒出去
     const selfContainer = obj && obj.material && obj.material.owner === obj ? obj : null;
@@ -648,12 +791,13 @@ export class Scene {
     };
   }
 
-  /** 构造化学引擎 env：大气 + 该对象的环境条件 + 产物路由 + 产气气泡 + 爆炸 */
+  /** 构造化学引擎 env：所在区域大气 + 该对象的环境条件 + 产物路由 + 产气气泡 + 爆炸 */
   makeEnv(obj) {
+    const chamber = this.gasChamberFor(obj);
     return {
-      atmosphere: this.atmosphere,
+      atmosphere: chamber ? chamber.atmosphere : this.atmosphere,
       conditions: this.conditionsFor(obj),
-      globalIgnited: this.lamps.some((l) => l.lit),
+      globalIgnited: this._litLampsIn(chamber).length > 0,
       emit: (product, origin) => this.routeProduct(product, origin),
       onGas: (id, mass, ctx) => this.onGas(id, mass, ctx),
       onReaction: (text) => this.onReaction(text),
@@ -661,11 +805,11 @@ export class Scene {
       customReactions: this.customReactions, // 关卡自定义反应（L0 最高优先级）
       debugMode: this.debugMode,
       explode: (point, strength, cause) => this.explode(point ?? null, strength, cause),
-      // 爆炸中心：当前反应点；大气爆炸（无反应点）取第一个点燃灯的火苗位置
+      // 爆炸中心：当前反应点；大气爆炸（无反应点）取该区域第一个点燃灯的火苗位置
       explodePoint: this._emitCtx
         ? this._emitCtx.point
         : (() => {
-            const lit = this.lamps.find((l) => l.lit);
+            const lit = this._litLampsIn(chamber)[0];
             return lit ? { x: lit.x + lit.w / 2, y: lit.flameY() } : null;
           })(),
     };
@@ -700,6 +844,11 @@ export class Scene {
     const cap = 36;
     let n = 0;
     for (const o of this.objects) if (o instanceof Spark && ++n >= cap) return;
+    // 火星声：金属燃烧每 tick 只加 2 颗火星，0.2s 限频
+    if (this.time - (this._sfxSparkT ?? -10) >= 0.2) {
+      this._sfxSparkT = this.time;
+      sfx('chem.spark', { pan: this._sfxPan(pt) });
+    }
     const spread = this._emitCtx.spread ?? 20;
     for (let i = 0; i < 2; i++) {
       this.addObject(new Spark({
@@ -724,6 +873,12 @@ export class Scene {
     const point = this._emitCtx ? this._emitCtx.point : null;
     const key = this._rxKey(text);
     const now = this.time;
+    // 反应音效：同一规范化反应 0.5s 内只响一次（反应每 tick 都可能发生，不限频会爆音）
+    const rxSfxT = (this._rxSfxT ??= {});
+    if (now - (rxSfxT[key] ?? -10) >= 0.5) {
+      rxSfxT[key] = now;
+      sfx('chem.react', { pan: this._sfxPan(point) });
+    }
     // 死亡原因记录：**涉及玩家**的反应才更新记录（伙伴物质 + 酸/碱分类）。
     // 酸/碱致死只认**反应文本里的伙伴**（玩家确实与该物质反应）——碱性/酸性
     // **环境**不算对手（把池子反应烧成 KOH 的不是碱攻击，是水反应）；
@@ -741,6 +896,12 @@ export class Scene {
         const sub = partner ? getSubstance(partner) : null;
         this.player.lastRxAcid = sub ? sub.kind === 'acid' : false;
         this.player.lastRxBase = sub ? sub.kind === 'base' : false;
+        // 玩家参与反应：受伤/腐蚀反馈音（0.6s 限频；音量随剩余玩家物质）
+        if (now - (this._rxHurtT ?? -10) >= 0.6) {
+          this._rxHurtT = now;
+          const m = Number(this.player.hp);
+          sfx('player.hurt', { gain: Math.max(0.5, Math.min(1.2, Number.isFinite(m) ? m / 30 : 1)) });
+        }
       }
     }
     // 防"反应抖动"：同一反应（规范化键：反应物排序后）在 0.5s 内只进一次
@@ -806,6 +967,11 @@ export class Scene {
 
   explode(point, strength, cause = null, flames = null) {
     const p = point ?? (this._emitCtx ? this._emitCtx.point : { x: this.worldW / 2, y: this.worldH / 2 });
+    // 爆炸音：预设本身够响，强度只做 0.7..1.2 的微调
+    sfx('chem.explode', {
+      gain: Math.max(0.7, Math.min(1.2, Number(strength) > 0 ? Number(strength) / 10 : 1)),
+      pan: this._sfxPan(p),
+    });
     const R = 150; // 爆炸半径（衰减基准）
     // 视觉 + 屏幕震动；记录最近爆炸原因（HUD 调试面板显示）
     const flip = (this._explosionSeq = (this._explosionSeq ?? 0) + 1) % 2 === 0; // 连续爆炸相位交替，不雷同
@@ -904,9 +1070,21 @@ export class Scene {
   }
 
   onGas(id, mass, ctx) {
-    // 记录"反应产生的气体"（气体探测器只检测这个，不检测预置大气气体）
-    this._reactGas[id] = (this._reactGas[id] ?? 0) + mass;
-    // 导气管截留：输入端罩住范围内产出的气体 → 全部经管道鼓入输出端
+    // 产气音：每个产气源每 tick 都在冒气，0.15s 限频；音量随气量小幅变化
+    if (this.time - (this._sfxGasT ?? -10) >= 0.15) {
+      this._sfxGasT = this.time;
+      const pt = this._emitCtx ? this._emitCtx.point : null;
+      sfx('chem.bubble', {
+        gain: Math.max(0.3, Math.min(1, Number(mass) > 0 ? Number(mass) : 0.3)),
+        pan: this._sfxPan(pt),
+      });
+    }
+    // 记录"反应产生的气体"（气体探测器只检测这个，不检测预置大气气体）：
+    // ★ 按产气所在区域分别记录——气室内反应不进外部探测器，外部产气也不进气室内探测器。
+    const chamber = this.emitChamber();
+    const reactGas = chamber ? (chamber._reactGas ??= {}) : this._reactGas;
+    reactGas[id] = (reactGas[id] ?? 0) + mass;
+    // 导气管截留：输入端罩住范围内产出的气体 → 均分给所有开启的输出支路
     // （输入端不冒气泡柱、气体不进大气）。_tubeBusy：输送途中输出端吸收本身
     // 再产气（如 NO2 溶水放 NO）时走正常管线，不再被管道截留（防 A→B→A 环）。
     if (!this._tubeBusy) {
@@ -921,50 +1099,84 @@ export class Scene {
         return mass; // 全部截留（引擎按返回值扣掉输入端的吸收/大气份额）
       }
     }
-    return this._gasPlume(id, mass, { origin: ctx ? { kind: 'reaction', text: ctx.lastRxText ?? '' } : null });
+    return this._gasPlume(id, mass, {
+      chamber, // 气室内产气：气泡柱/气泡限制在气室内
+      origin: ctx ? { kind: 'reaction', text: ctx.lastRxText ?? '' } : null,
+    });
   }
 
-  /** 导气管采集：本次产气来源在输入端罩住范围内 → 该管道截留全部气体 */
+  /** 导气管采集：本次产气来源在输入端罩住范围内 → 该管道截留全部气体。
+   *  所有输出阀门都关闭 = 管道暂时断开：不截留，气体照常走正常管线（用户定案）。 */
   _gasTubeForEmission() {
     if (!this.gasTubes.length) return null;
     const emit = this._emitCtx;
     if (!emit) return null;
-    for (const tube of this.gasTubes) if (tube.captures(this, emit)) return tube;
+    for (const tube of this.gasTubes) {
+      if (typeof tube.openBranches === 'function') {
+        const open = tube.openBranches(this);
+        if (!open || open.length === 0) continue; // 阀门全关：不截留
+      }
+      if (tube.captures(this, emit)) return tube;
+    }
     return null;
   }
 
   /**
-   * 导气管输送：输入端截留的气体全部按"主动鼓入"管线送进输出端药品池
-   * （碱吸收 → 水溶解，与集气瓶通气同一条管线；之后溶液内的反应照常进行）。
-   * 输出端吸收不完的多余气体才在管口生成气泡柱并进入大气——输入端永远不冒柱。
+   * 导气管输送：输入端截留的气体**平均分配**给所有开启的输出支路。
+   * 输出端=药品池：按"主动鼓入"管线（碱吸收 → 水溶解），吸收不完的多余气体
+   *   在该支路管口冒气泡柱，再进入输出端所在区域的大气；
+   * 输出端=气室：气体直接进入气室内部大气（不冒泡、不进入外部大气）。
    */
   _routeTubeGas(tube, id, mass, ctx) {
     const g = tube.geometry(this);
     if (!g) return;
+    const branches = typeof tube.openBranches === 'function'
+      ? tube.openBranches(this)
+      : (g.branches ?? []);
+    if (!branches.length) return;
     const dt = ctx && ctx.dt > 0 ? ctx.dt : this.dt;
     const cause = this.atmosphere._cause; // 产气反应（下面的吸收会盖章别的原因，留作气体变化溯源）
-    tube.noteFlow(id); // 管内颜色/管口气泡（吸收不完也照样"有气体通过"）
+    const share = mass / branches.length; // 多个开启支路：平均分配
     const saved = this._emitCtx;
-    this._emitCtx = { obj: null, container: g.outPool, player: this.player, point: g.mouth, spread: 14 };
     try {
-      const env = this.makeEnv(g.outPool);
-      const outCtx = this.chem._ctxOf(g.outPool.solutionMat, g.outPool.solutionMat, dt, env);
-      const leftover = this.chem._emitGas(id, mass, outCtx, {
-        forceDissolve: true, // 主动鼓入（同集气瓶通气）
-        skipOnGas: true, // 吸收阶段不冒气泡柱：只有"没反应完的多余气体"才冒柱
-        deferAtmosphere: true, // 多余部分交回本方法（先在管口冒柱、再入大气）
-      });
-      if (leftover > 1e-9) {
-        const captured = this._gasPlume(id, leftover, {
-          bubbleDir: -1, // 管口多余气体：冒柱（液下气泡上浮）
-          width: 56, // 管口冒出的气柱比"池面反应柱"窄（像一股气流从管口升起）
-          source: tube, // 柱归属该管道（多根同种气体的管子各冒各的柱，不合并）
-          origin: cause ? { kind: 'reaction', text: cause } : null,
+      for (const b of branches) {
+        const target = b.target;
+        if (!target) continue;
+        if (typeof tube.noteFlow === 'function') tube.noteFlow(b.outId, id); // 管内颜色/管口气泡
+        // 输出端=气室：气体直接进入其内部大气（外部大气不受影响）
+        if (b.targetKind === 'chamber' || target.isGasChamber) {
+          const atm = target.atmosphere;
+          atm._cause = cause;
+          atm.add(id, share);
+          target._reactGas = target._reactGas ?? {};
+          target._reactGas[id] = (target._reactGas[id] ?? 0) + share; // 主动充入的气体，气室内探测器可见
+          continue;
+        }
+        // 输出端=药品池：先吸收，多余部分在该支路管口冒柱
+        this._emitCtx = { obj: null, container: target, player: this.player, point: b.mouth, spread: 14 };
+        const env = this.makeEnv(target);
+        const outCtx = this.chem._ctxOf(target.solutionMat, target.solutionMat, dt, env);
+        const leftover = this.chem._emitGas(id, share, outCtx, {
+          forceDissolve: true, // 主动鼓入（同集气瓶通气）
+          skipOnGas: true, // 吸收阶段不冒气泡柱：只有"没反应完的多余气体"才冒柱
+          deferAtmosphere: true, // 多余部分交回本方法（先在管口冒柱、再入大气）
         });
-        const rest = leftover - captured;
-        if (rest > 1e-9) {
-          this.atmosphere._cause = cause;
-          this.atmosphere.add(id, rest);
+        if (leftover > 1e-9) {
+          const region = this.gasChamberFor(target);
+          const captured = this._gasPlume(id, leftover, {
+            bubbleDir: -1, // 管口多余气体：冒柱（液下气泡上浮）
+            width: 56, // 管口冒出的气柱比"池面反应柱"窄（像一股气流从管口升起）
+            // 柱归属=该支路（多条同种气体的支路各冒各的柱，不合并）
+            source: (typeof tube.branchSource === 'function' ? tube.branchSource(b.outId) : tube),
+            chamber: region,
+            origin: cause ? { kind: 'reaction', text: cause } : null,
+          });
+          const rest = leftover - captured;
+          if (rest > 1e-9) {
+            const atm = region ? region.atmosphere : this.atmosphere;
+            atm._cause = cause;
+            atm.add(id, rest);
+          }
         }
       }
     } finally {
@@ -976,19 +1188,36 @@ export class Scene {
    * 产气视觉：气泡柱 + 气泡 + 集气瓶截留。返回"已截留质量"（按住 C 用集气瓶收集）。
    * opts.bubbleDir：气泡方向（默认随气体轻重——输出端鼓入池内传 -1，池内气泡一律上浮）。
    * opts.width：气泡柱宽度（默认按反应面/容器宽推算；导气管管口用窄柱像"一股气"）。
-   * opts.source：气泡柱归属（默认=产气源对象；导气管传自己，多根同气体管各冒各的柱）。
+   * opts.source：气泡柱归属（默认=产气源对象；导气管每个支路一个归属，同气体各冒各的柱）。
+   * opts.chamber：气室内产气时传入该气室，气泡柱/气泡被限制在气室内部（视觉不外泄）。
    * opts.origin：气泡柱来源（调试悬停显示的方程式）。
    */
   _gasPlume(id, mass, opts = {}) {
-    const point = this._emitCtx ? this._emitCtx.point : { x: this.worldW / 2, y: this.worldH / 2 };
+    let point = this._emitCtx ? this._emitCtx.point : { x: this.worldW / 2, y: this.worldH / 2 };
     const sub = getSubstance(id);
     const dir = sub.mm < 29 ? -1 : 1;
     const bubbleDir = opts.bubbleDir ?? dir;
+    // 气室内部产气：柱/气泡限制在气室内，视觉上不冒出气室（气体账本已在 onGas 归入气室大气）
+    const chamber = opts.chamber === undefined ? this.emitChamber() : opts.chamber;
+    const fit = (cx, wy, ww, hh) => {
+      if (!chamber) return { x: cx - ww / 2, y: wy, w: ww, h: hh };
+      const W = Math.min(ww, Math.max(8, chamber.w - 4));
+      const H = Math.min(hh, Math.max(8, chamber.h - 4));
+      const cx2 = Math.max(chamber.x + W / 2 + 2, Math.min(cx, chamber.x + chamber.w - W / 2 - 2));
+      const y2 = Math.max(chamber.y + 2, Math.min(wy, chamber.y + chamber.h - H - 2));
+      return { x: cx2 - W / 2, y: y2, w: W, h: H };
+    };
     // 气流强度随产气量增强（基础 > 重力，使小反应也有明显上浮/下沉）
     const accel = Math.max(1300, 1100 + mass * 130);
     const maxSpeed = Math.min(300, 150 + mass * 18);
     const emit = this._emitCtx ?? {};
     const srcObj = emit.obj ?? null;
+    // 产气点重定向：电解池等装置可指定"该气体应在哪个电极冒出"
+    // （H2 → 阴极、O2/Cl2 → 阳极；见 objects/poolvariants.js gasOriginPoint）。
+    if (srcObj && typeof srcObj.gasOriginPoint === 'function') {
+      const gp = srcObj.gasOriginPoint(id);
+      if (gp) point = gp;
+    }
     const plumeKey = opts.source ?? srcObj; // 柱归属（同归属+同方向+同气体才共柱）
     // 柱的位置=**反应暴露面外包**（合并成一条稳定大柱：覆盖整个反应面，不再每条
     // 小柱四处跳——用户反馈"零零散散"）；微观点位（气泡/标签/产物）仍按热点走。
@@ -1009,8 +1238,9 @@ export class Scene {
       // 柱宽 = 反应面（暴露面）宽 × 0.6（36~130px）——覆盖反应面但不过分宽大
       const faceW = eb ? eb.x1 - eb.x0 : (srcObj?.w ?? emit.container?.w ?? 48) * 0.6;
       const w = Math.max(36, Math.min(130, opts.width ?? faceW * 0.6));
+      const pos = fit(center.x, point.y - gh, w, gh);
       plume = new GasColumn({
-        x: center.x - w / 2, y: point.y - gh, w, h: gh,
+        x: pos.x, y: pos.y, w: pos.w, h: pos.h,
         dir, accel, maxSpeed, life: 2.5, gasId: id,
         source: plumeKey, // 产气源（自身不被自己的气流托起；导气管=该管道）
         origin: opts.origin ?? null, // 来源方程式（调试悬停显示；由调用方盖章）
@@ -1026,15 +1256,20 @@ export class Scene {
     const gh = (srcObj && srcObj.gasHeight) || (emit.container && emit.container.gasHeight) || 80;
     const faceW = eb ? eb.x1 - eb.x0 : (srcObj?.w ?? emit.container?.w ?? 48) * 0.6;
     const w = Math.max(36, Math.min(130, opts.width ?? faceW * 0.6));
-    plume.x = center.x - w / 2;
-    plume.y = point.y - gh;
-    plume.w = w;
-    plume.h = gh;
+    const pos = fit(center.x, point.y - gh, w, gh);
+    plume.x = pos.x;
+    plume.y = pos.y;
+    plume.w = pos.w;
+    plume.h = pos.h;
     // 气泡视觉：在**当前反应热点**冒出（每 tick 热点在暴露面随机换位 → 气泡沿整个反应面分布）
     const n = Math.max(1, Math.min(6, Math.round(mass * 1.2)));
     for (let i = 0; i < n; i++) {
-      const x = point.x + (Math.random() - 0.5) * 22;
-      const y = point.y + (bubbleDir < 0 ? -(3 + i * 4) : 3 + i * 4);
+      let x = point.x + (Math.random() - 0.5) * 22;
+      let y = point.y + (bubbleDir < 0 ? -(3 + i * 4) : 3 + i * 4);
+      if (chamber) {
+        x = Math.max(chamber.x + 3, Math.min(chamber.x + chamber.w - 3, x));
+        y = Math.max(chamber.y + 3, Math.min(chamber.y + chamber.h - 3, y));
+      }
       this.addObject(new Bubble({ x, y, dir: bubbleDir }));
     }
     // 集气瓶截留：按住 C 且背包选中集气瓶时，**距离玩家最近的一处气泡柱**产生的
@@ -1044,6 +1279,13 @@ export class Scene {
     const bottle = this._gasHold;
     if (bottle && this.player && bottle.totalGas() < bottle.capacity - 1e-9 && this._nearestPlume() === plume) {
       captured = bottle.addGas(id, mass);
+      // 集气反馈：吸入涡旋 + 短闪（0.22s 限频；气瓶在背包里，起点取气泡柱处）
+      if (captured > 1e-9 && this.time - (this._fxCollectT ?? -10) >= 0.22) {
+        this._fxCollectT = this.time;
+        const gc = getSubstance(id).gasColor ?? '#9fd8ff';
+        swirlFx(this, point.x, point.y, { color: gc, r: 18, life: 0.36 });
+        flashFx(this, point.x, point.y, { color: gc, r: 16, life: 0.2, rays: 4 });
+      }
     }
     return captured;
   }
@@ -1087,12 +1329,19 @@ export class Scene {
     return 1;
   }
 
-  /** 接触对 env：条件取双方并集（任一方受热即视为接触处受热） */
+  /** 接触对 env：条件取双方并集（任一方受热/通电即视为接触处满足；变种池条件同样并入）。
+   *  大气取"任一方所在气室"：跨气室边界的接触也不会把产物漏进外部大气。 */
   makePairEnv(a, b) {
     const env = this.makeEnv(a);
+    const region = this.gasChamberFor(a) ?? this.gasChamberFor(b);
+    if (region) {
+      env.atmosphere = region.atmosphere;
+      env.globalIgnited = this._litLampsIn(region).length > 0;
+    }
     const cb = this.conditionsFor(b);
     env.conditions.heat = env.conditions.heat || cb.heat;
     env.conditions.highTemp = env.conditions.highTemp || cb.highTemp;
+    env.conditions.electric = env.conditions.electric || cb.electric;
     env.conditions.ignited = env.conditions.ignited || cb.ignited;
     env.conditions.light = env.conditions.light || cb.light;
     return env;
@@ -1124,9 +1373,27 @@ export class Scene {
       // 光照条件：灯在 lightRange 内提供"光照"（见光分解如 HClO）
       if (obj && this.dist(obj, lamp) <= (lamp.lightRange ?? CFG.lampLightRange)) light = true;
     }
+    // 变种池（电解池/加热池/高温池）：池自身与浸在池内的物体获得对应反应条件
+    const vp = this.variantPoolFor(obj);
+    let electric = false;
+    if (vp) {
+      if (vp.mode === 'highTemp') highTemp = true;
+      else if (vp.mode === 'heat') heat = true;
+      else if (vp.mode === 'electric') electric = true;
+    }
     const ignited = heat || highTemp || (obj && obj.isBurning);
     const hasCatalyst = (id) => this.catalystNear(obj, id);
-    return { heat, highTemp, ignited, light, hasCatalyst };
+    return { heat, highTemp, electric, ignited, light, hasCatalyst };
+  }
+
+  /** 给某物体提供条件的变种池：自身或浸在池内（只认已开启的池；常开/开关由池判断） */
+  variantPoolFor(obj) {
+    if (!obj || !this.containers) return null;
+    for (const c of this.containers) {
+      if (!c.isVariantPool || typeof c.active !== 'function' || !c.active(this)) continue;
+      if (c === obj || (typeof c.containsObj === 'function' && c.containsObj(obj))) return c;
+    }
+    return null;
   }
 
   /** 物体是否在灯上（重叠，或贴在灯顶的火焰位置） */
@@ -1188,10 +1455,25 @@ export class Scene {
         // 产物落点成为容器"最近落点"——后续反应/气泡/沉淀围绕它（不再回池中央）
         if (ctx.point) cont.depositAt = { x: ctx.point.x, y: ctx.point.y };
         cont.addPrecipitate(product.id, product.mass, ctx.point, origin);
+        this._precipFx(product.id, ctx.point); // 沉淀生成：物色尘雾（限频，视觉反馈）
         return;
       }
     }
-    this.spawnParticles(product.id, product.mass, ctx.point, !isSoluble(product.id), false, origin);
+    // 游离固体产物：落到干燥地面/灯面/玩家身上的是**可拾取粉末**，与它是否溶于水无关
+    // （Na2CO3 等可溶盐也会先以固体掉出来；溶解只影响遇水后的行为，不影响 Q 拾取）。
+    // 旧逻辑用 !isSoluble 当 collectible，导致 NaHCO3 受热生成的 Na2CO3 掉在地上捡不起来。
+    this.spawnParticles(product.id, product.mass, ctx.point, true, false, origin);
+    this._precipFx(product.id, ctx.point); // 游离沉淀：同款尘雾反馈
+  }
+
+  /** 沉淀生成时的物色尘雾（纯视觉；0.22s 限频，避免每 tick 刷对象） */
+  _precipFx(id, point) {
+    if (!point) return;
+    if (this.time - (this._fxPrecipT ?? -10) < 0.22) return;
+    this._fxPrecipT = this.time;
+    const solid = getSubstance(id).solid?.[0] ?? '#c9c0b0';
+    const c = hexToRgb(solid);
+    puffFx(this, point.x, point.y, { color: `${c.r},${c.g},${c.b}`, r: 3.2, spread: 9, life: 0.32, n: 3 });
   }
 
   /** placed=true 的粒子有碰撞箱（放置的沉淀可垫脚）；origin 记录产物来源（调试悬停显示）。
@@ -1317,6 +1599,7 @@ export class Scene {
     if (this.status === this._firedStatus) return;
     this._firedStatus = this.status;
     if (this.status === 'win') {
+      sfx('win');
       this.fire('win');
       // 再直接喊一声页面钩子：关卡页忘写 bind / 事件被覆盖时也能记录进度与弹浮层
       try {
@@ -1324,11 +1607,63 @@ export class Scene {
         if (r && typeof r.onWin === 'function') r.onWin(this);
       } catch (e) { /* 页面钩子出错不影响游戏 */ }
     }
-    else if (this.status === 'died') this.fire('died');
+    else if (this.status === 'died') {
+      sfx('died');
+      this.fire('died');
+    }
+  }
+
+  /** 打开重开选择菜单（HUD 画布弹层）：暂停模拟、清空按住/拖拽状态。
+   *  菜单里提供「回到存档点」与「整局重开」；Esc / 点空白处关闭。
+   *  返回 false = 当前状态不允许打开（死亡/通关/鸟瞰中）。 */
+  openRestartMenu() {
+    if (this.restartMenuOpen) return false;
+    if (this.status !== 'running' || this.overview) return false;
+    this.restartMenuOpen = true;
+    this._menuOpenedAt = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    this.control.clear();
+    this.pressed.clear();
+    this._pressCand = null;
+    this._pressTap = null;
+    this._pressTapT = 0;
+    this._pressHome = null;
+    this._drag = null;
+    this._holdSuck = null;
+    this._gasHold = null;
+    if (!this._menuKeyUnsub) {
+      this._menuKeyUnsub = this.onKeyDown((e) => {
+        if (e && e.code === 'Escape' && this.restartMenuOpen) {
+          this.closeRestartMenu();
+          return true;
+        }
+        return false;
+      });
+    }
+    return true;
+  }
+
+  /** 关闭重开菜单（恢复模拟） */
+  closeRestartMenu() {
+    if (!this.restartMenuOpen) return false;
+    this.restartMenuOpen = false;
+    this.control.clear();
+    this.pressed.clear();
+    if (this._menuKeyUnsub) {
+      this._menuKeyUnsub();
+      this._menuKeyUnsub = null;
+    }
+    return true;
   }
 
   restart() {
-    if (typeof location !== 'undefined') location.reload();
+    // 重开音：键盘 R / 触屏轻触 / 调试重开都走这里，只在此处响一次。
+    // 音效真的排进了音频图时，稍等它响完再重载——否则 location.reload() 会立刻
+    // 掐断音频（听感上只剩"咔"一声）；静音/音频未解锁时保持原来的立即重载。
+    const ringing = sfx('restart');
+    if (typeof location !== 'undefined') {
+      if (ringing) setTimeout(() => location.reload(), 180);
+      else location.reload();
+    }
   }
 }
 

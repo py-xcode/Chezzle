@@ -6,9 +6,16 @@
 // ============================================================================
 
 import { Container } from './container.js';
-import { THEME, rr, drawFlame } from '../render/theme.js';
+import { rr, drawFlame } from '../render/theme.js';
 import { flameColorOf } from '../chem/substances.js';
 import { CFG } from '../core/config.js';
+import { sfx } from '../core/audio.js';
+
+/** 墙钟秒（音效限频用：灯的点燃/熄灭入口没有 scene 引用） */
+function sfxNow() {
+  if (typeof performance !== 'undefined' && typeof performance.now === 'function') return performance.now() / 1000;
+  return Date.now() / 1000;
+}
 
 export class Lamp extends Container {
   constructor({ x, y, w = 40, h = 40, autoOn = false, range = CFG.lampRange, lightRange = CFG.lampLightRange, highTemp = false, ...rest } = {}) {
@@ -45,11 +52,24 @@ export class Lamp extends Container {
   }
 
   ignite() {
+    if (this.lit) return; // 已点着 → 不是状态变化
     this.lit = true;
+    // 点火音：0.12s 限频（防止同一帧被反复熄灭/点燃时刷屏）
+    const now = sfxNow();
+    if (now - (this._sfxT ?? -1) >= 0.12) {
+      this._sfxT = now;
+      sfx('chem.ignite');
+    }
   }
 
   extinguish() {
+    if (!this.lit) return; // 已熄灭 → 不是状态变化
     this.lit = false;
+    const now = sfxNow();
+    if (now - (this._sfxT ?? -1) >= 0.12) {
+      this._sfxT = now;
+      sfx('chem.extinguish');
+    }
   }
 
   /** 灯面可容纳的沉淀质量上限（g）：按灯面区域面积估算，防止粉末全部挤在灯框里 */
@@ -58,11 +78,11 @@ export class Lamp extends Container {
     return Math.max(2, (r.w * r.h) / 36 * 0.2); // 约每 36px² 放一颗（0.2g）
   }
 
-  /** 火焰动画：点燃快速淡入、熄灭缓慢淡出；灯上沉淀颗粒照常沉降（不再滑落） */
+  /** 火焰动画：点燃 0.3s 渐强、熄灭 ~0.33s 渐弱；灯上沉淀颗粒照常沉降（不再滑落） */
   update(dt, scene) {
     super.update(dt, scene);
     const target = this.lit ? 1 : 0;
-    const k = this.lit ? 11 : 4.5;
+    const k = this.lit ? 3.6 : 3.2; // 指数趋近：点燃约 0.3s 到稳定、熄灭渐弱
     this.flameLevel += (target - this.flameLevel) * Math.min(1, k * dt);
     if (Math.abs(this.flameLevel - target) < 0.01) this.flameLevel = target;
     // 焰色反应检测：火焰区域物体的表层物质（灯上沉淀 → 灯焰上物块/玩家）
@@ -128,75 +148,89 @@ export class Lamp extends Container {
     return { x: bx - w / 2, y: fy - h + 2, w, h };
   }
 
+  // ---------------------------------------------------------------------------
+  // 渲染（简洁版）：酒精灯 = 黄铜灯身 + 灯芯 + 火焰；宽炉条 = 铜条 + 一排火焰。
+  //   保留点燃 0.3s 渐强 / 熄灭渐弱 + 轻微摇曳；不加灯罩/加强筋/底座铆钉等装饰。
+  // ---------------------------------------------------------------------------
   render(ctx, opts) {
     const t = opts?.time ?? 0;
     const thin = this.h < 20;
     const bx = this.x + this.w / 2;
     const fy = this.flameY();
+    const x = this.x;
+    const y = this.y;
+    const w = this.w;
+    const h = this.h;
+    const fl = this.flameLevel;
     if (thin) {
-      // 喷灯：青铜炉条 + 一排火焰
+      // 宽炉条：一块铜条 + 一排火焰（原版轮廓）
       ctx.save();
-      const g = ctx.createLinearGradient(this.x, this.y, this.x, this.y + this.h);
+      const g = ctx.createLinearGradient(x, y, x, y + h);
       g.addColorStop(0, '#8a6420');
       g.addColorStop(1, '#4a3410');
       ctx.fillStyle = g;
-      rr(ctx, this.x, this.y, this.w, this.h, 4);
+      rr(ctx, x, y, w, h, Math.max(2, Math.min(4, h * 0.3)));
       ctx.fill();
       ctx.strokeStyle = '#2a1c08';
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 1.4;
       ctx.stroke();
-      // 炉口纹
+      // 炉口纹（几道暗槽，原版样式）
       ctx.fillStyle = 'rgba(0,0,0,0.25)';
-      for (let i = 0; i < Math.floor(this.w / 12); i++) {
-        ctx.fillRect(this.x + 4 + i * 12, this.y + 2, 5, this.h - 4);
+      for (let i = 0; i < Math.max(2, Math.floor(w / 12)); i++) {
+        ctx.fillRect(x + 4 + i * 12, y + 2, 5, h - 4);
       }
       ctx.restore();
-      if (this.flameLevel > 0.01) {
+      if (fl > 0.01) {
         const fc = this.flameTintCur ?? (this.highTemp ? '#4fb6ff' : '#ff7a3d');
         const inner = this.flameTintCur ? lightenHex(fc, 0.55) : (this.highTemp ? '#d8f6ff' : '#fff3c4');
-        const n = Math.max(2, Math.floor(this.w / 26));
-        const grow = 0.25 + 0.75 * this.flameLevel;
+        const n = Math.max(2, Math.floor(w / 26));
+        const grow = 0.25 + 0.75 * fl;
         for (let i = 0; i < n; i++) {
-          const fx = this.x + (i + 0.5) * (this.w / n);
+          const fx = x + (i + 0.5) * (w / n);
           ctx.save();
-          ctx.globalAlpha = this.flameLevel;
+          ctx.globalAlpha = fl;
           drawFlame(ctx, fx, fy + 2, (17 + Math.sin(t * 11 + i * 1.9) * 2) * grow, fc, inner, t + i * 1.7);
           ctx.restore();
         }
       }
     } else {
-      // 酒精灯：青铜灯身
+      // 酒精灯：黄铜灯身（简单梯形罐，接近原版轮廓）+ 灯芯 + 火焰
+      const bodyTop = y + h - 22;
+      const bodyBottom = y + h;
       ctx.save();
-      const g = ctx.createLinearGradient(this.x, this.y, this.x, this.y + this.h);
+      const g = ctx.createLinearGradient(x, y, x, y + h);
       g.addColorStop(0, '#c9932f');
       g.addColorStop(0.5, '#8a6420');
       g.addColorStop(1, '#4a3410');
       ctx.fillStyle = g;
       ctx.beginPath();
-      ctx.moveTo(this.x + 5, this.y + this.h - 6);
-      ctx.lineTo(this.x + this.w - 5, this.y + this.h - 6);
-      ctx.lineTo(this.x + this.w - 10, this.y + this.h - 22);
-      ctx.lineTo(this.x + 10, this.y + this.h - 22);
+      ctx.moveTo(x + 5, bodyBottom - 6);
+      ctx.lineTo(x + w - 5, bodyBottom - 6);
+      ctx.lineTo(x + w - 10, bodyTop);
+      ctx.lineTo(x + 10, bodyTop);
       ctx.closePath();
       ctx.fill();
       ctx.strokeStyle = '#2a1c08';
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 1.4;
       ctx.stroke();
       // 灯芯
       ctx.fillStyle = '#2a2418';
-      ctx.fillRect(bx - 2, this.y + this.h - 27, 4, 8);
+      ctx.fillRect(bx - 2, bodyTop - 5, 4, 8);
       ctx.restore();
-      if (this.flameLevel > 0.01) {
+      if (fl > 0.01) {
         const fc = this.flameTintCur ?? (this.highTemp ? '#4fb6ff' : '#ff7a3d');
         const inner = this.flameTintCur ? lightenHex(fc, 0.55) : (this.highTemp ? '#d8f6ff' : '#fff3c4');
-        const grow = 0.25 + 0.75 * this.flameLevel;
+        const grow = 0.25 + 0.75 * fl;
+        // 火苗轻微摇曳（确定性 sin；保住点燃渐强/熄灭渐弱的手感）
+        const sway = Math.sin(t * 8.5) * 0.6 + Math.sin(t * 13.7 + 1.3) * 0.35;
         ctx.save();
-        ctx.globalAlpha = this.flameLevel;
+        ctx.globalAlpha = fl;
+        ctx.translate(sway * grow, 0);
         drawFlame(ctx, bx, fy + 2, (20 + Math.sin(t * 13) * 2) * grow, fc, inner, t);
         ctx.restore();
       }
     }
-    // 焰色反应：火焰区域铺一层特征色柔光（物体也在光里，视觉上"发同色的光"）
+    // 焰色反应：火焰区域铺一层特征色柔光（原有玩法视觉，保留）
     if (this.flameTintCur && this.flameLevel > 0.01) {
       ctx.save();
       const g = ctx.createRadialGradient(bx, fy, 4, bx, fy, 56);

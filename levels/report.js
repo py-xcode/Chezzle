@@ -162,6 +162,7 @@
     } catch (e) { /* 忽略 */ }
     const a = document.createElement('a');
     a.id = 'czl-back';
+    a.dataset.sfx = 'ui.back'; // audio.js 的 UI 点击自动接线（返回选关音）
     // SPA 外壳的选关路由（hash 直达；`../#/select` 从 /levels/ 解析到根路由，
     // 绕开 Cloudflare 的 .html → clean URL 301 链）
     a.href = BASE + '#/select';
@@ -344,7 +345,7 @@
         '<div class="czw-meta">关卡 <b>' + esc(id || '未识别') + '</b>' +
         '<span class="czw-dot"></span>累计 <b>' + (total ?? 0) + '</b> 关</div>' +
         note +
-        '<button class="czw-btn" data-act="select" type="button">返回选关</button>' +
+        '<button class="czw-btn" data-act="select" type="button" data-sfx="ui.back">返回选关</button>' +
         '</div>';
       document.body.appendChild(d);
       // 进场：遮罩淡入 + 面板上浮（CSS transition；勾线用 keyframes）

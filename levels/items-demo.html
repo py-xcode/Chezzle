@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Chezzle · 物品演示</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0e28; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { background: #0b0e28; box-shadow: 0 0 60px rgba(120,90,220,0.25); }
+</style>
+</head>
+<body>
+<!-- 启动/加载动画：与选关页"进入关卡"过场同款（见 levels/boot.js） -->
+<script src="boot.js"></script>
+<canvas id="game"></canvas>
+<script src="../prefs.js?vmvmdw3n4"></script>
+<script src="../audio.js?vmvmdw3n4"></script>
+<script src="../dist/chezzle.js?vmvmdw3n4"></script>
+<script src="report.js"></script>
+<script>
+// ============================================================================
+// 物品演示关：烧杯 / 滴管 / 集气瓶（Q 拾取；选中物品后 C/X 使用物品操作）
+//   - 烧杯：吸液/倒出（演示把 CuSO4 溶液从一只杯搬到另一只杯）
+//   - 滴管：吸液/滴加（把 HCl 逐滴加入含酚酞的 NaOH 溶液，红色褪去）
+//   - 集气瓶：按住 C 集气 / 按住 X 通气（踩开关产生 CO2，收集后通入石灰水）
+// ============================================================================
+const canvas = document.getElementById('game');
+Chezzle.fitCanvasToWindow(canvas);
+window.addEventListener('resize', () => Chezzle.fitCanvasToWindow(canvas));
+const L = new Chezzle.LevelBuilder(canvas, { worldW: 1900, worldH: 800 });
+L
+  .floor(0, 720, 1900, 80, { id: 'ground' })
+  .player(100, 560, { substance: 'NaOH', mass: 30, id: 'player' })
+
+  // ---- 起点 ----
+  .sign(80, 560, '物品演示\nQ 拾取 · Shift 放置', { id: 'sign-title' })
+
+  // ---- ① 烧杯：Q 拾取 → C 吸液 → X 倒出 ----
+  .beaker(260, 650, 70, 70, { volume: 300, water: 280, id: 'beaker-water' })
+  .beaker(430, 650, 70, 70, { volume: 300, water: 0, id: 'beaker-empty' })
+  .beaker(600, 650, 70, 70, { volume: 300, water: 270, solutes: { CuSO4: 30 }, id: 'beaker-cuso4' })
+  .sign(260, 545, '烧杯\nQ 拾取 / C 吸液 / X 倒出', { id: 'sign-beaker' })
+
+  // ---- ② 滴管：C 吸液 → X 逐滴滴加 ----
+  .beaker(760, 650, 70, 70, { volume: 200, water: 150, solutes: { NaOH: 5, C20H14O4: 1 }, id: 'beaker-pink' })
+  .dropper(870, 650, { substance: 'HCl', capacity: 50, liquid: 40, drop: 0.5, id: 'dropper-hcl' })
+  .beaker(980, 650, 70, 70, { volume: 300, water: 280, solutes: { HCl: 20 }, id: 'beaker-hcl' })
+  .sign(760, 535, '滴管\nC 吸液 / X 滴加\n放下后点胶头也能滴', { id: 'sign-dropper' })
+
+  // ---- ③ 集气瓶：瓶内预置 CO2；踩开关可再产 CO2；按住 C 集气 / 按住 X 通入石灰水 ----
+  .beaker(1250, 645, 90, 75, { volume: 300, water: 280, solutes: { 'Ca(OH)2': 3 }, id: 'beaker-lime' })
+  .beaker(1520, 630, 140, 90, { volume: 400, water: 360, solutes: { HCl: 40 }, id: 'beaker-gas' })
+  .gasbottle(1380, 650, { capacity: 5, gases: { CO2: 2 }, id: 'gasbottle' })
+  .switch(1440, 698, { mode: 'pressure', showId: 'deposit-gas', id: 'switch-gas' })
+  .deposit(1560, 560, { substance: 'CaCO3', mass: 40, hidden: true, id: 'deposit-gas' })
+  .sign(1250, 525, '集气瓶\nQ 拾取 / 按住 C 集气\n按住 X 通入石灰水', { id: 'sign-bottle' })
+
+  .sign(1720, 560, '演示结束', { id: 'sign-end' })
+;
+
+const scene = L.build();
+L.start();
+</script>
+</body>
+</html>

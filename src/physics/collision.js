@@ -83,6 +83,36 @@ function penSides(b, o) {
 }
 
 /**
+ * 形状级"脚踩在 o 顶面"度量（integrateX 的 standing 判定用）。
+ * 遍历 b×o 的形状对，只统计**水平方向有重叠（含 eps 相切）**的对（脚落在 o 上方/边缘），
+ * 取 gap = b 形状底 - o 形状顶 的最小值（负值 = 悬在顶面上方 eps 内，正值 = 脚底嵌进顶面），
+ * 并记录该对的水平重叠宽 hov。
+ *
+ * 为什么不能只看整个 AABB 的 b.bottom：玩家网格被腐蚀后底面会不规则——AABB 底边可能是
+ * 另一块挂在物块**侧下方**的格子（真正的"龙骨"），而踩在物块顶面上的只是较高的一列。
+ * 只看 b.bottom 会把这种"脚已踩在顶面、身体另一处更低"的接触误判成侧面碰撞，随后
+ * tryPushX 把玩家脚下的物块横向推走（用户反馈：站在窄物块上向右走，物块跟着走）。
+ *
+ * 候选只收 gap ∈ [-2, cap]（cap = min(8, b.h*0.15, o.h*0.5)，至少 1.5 保旧语义）：
+ * 再深就属于侧面交点（交给推挤/阻挡），-2 覆盖 overlaps(eps=2) 的相切接触。
+ * 返回 { gap, hov } 或 null。
+ */
+function topContactOf(b, o) {
+  const cap = Math.max(1.5, Math.min(8, b.h * 0.15, o.h * 0.5));
+  let best = null;
+  for (const a of shapesOf(b)) {
+    for (const c of shapesOf(o)) {
+      const hov = Math.min(a.right, c.right) - Math.max(a.left, c.left);
+      if (hov <= -2) continue; // 水平方向也要在 eps 内（脚在物块上方/边缘）
+      const gap = a.bottom - c.top;
+      if (gap < -2 || gap > cap) continue;
+      if (!best || gap < best.gap || (gap === best.gap && hov > best.hov)) best = { gap, hov };
+    }
+  }
+  return best;
+}
+
+/**
  * X 轴是否应该做横向解算？
  * 垂直面接触（正在落地/撞顶，或深嵌但 MTV 会选垂直轴）时返回 false，把体交给
  * Y 轴/MTV——否则横向解算会把刚落到表面的体横着甩出去（"落地瞬移"），或在深嵌
@@ -366,7 +396,8 @@ export class CollisionSystem {
         }
         const p = penSides(b, o);
         if (!xShouldResolve(b, p)) continue;
-        // 站在物块顶上（接触来自上方，只差亚像素）：把 b 顶回表面即可，不横向推/挡
+        // 站在可站物块顶上（接触来自上方）：把 b 顶回表面即可，不横向推/挡。
+        // ① 常规（旧规则，矩形玩家/既有手感不变）：AABB 底边贴住或略高于顶面。
         if (b.y < o.y && b.bottom <= o.top + 1.5 && supportsStanding(o)) {
           // 推动中的玩家站到小沉淀上 → 优先推开沉淀（推动优先于上台阶/踮脚）
           if (o.amount !== undefined && o.pushable && Math.abs(b.vel.x) > 50) {
@@ -375,6 +406,21 @@ export class CollisionSystem {
           }
           b.setBottom(o.top);
           continue;
+        }
+        // ② 不规则底面（玩家网格被腐蚀出缺口）：AABB 底可能挂在物块侧下方，真正踩在
+        //    顶面上的只是较高的那列格子（形状级接触）。只看 b.bottom 会误判成侧碰 →
+        //    下面的 tryPushX 会把物块横向推走（"骑物块"回归）。对齐接触形状的脚底即可。
+        if (b.y < o.y && supportsStanding(o)) {
+          const stand = topContactOf(b, o);
+          // 脚踩在顶面而非侧面：脚底与顶面齐平/悬在 eps 内（gap ≤ 1.5）时，水平方向只要
+          // 在 eps 容差内（贴着物块角/边缘擦过）就按踩住处理、不横推；脚已嵌入较深
+          //（1.5 < gap ≤ cap）时，要求水平重叠大于嵌入深度-2px（避免把侧面浅推/上台阶
+          // 误判成站立）。cap 与 eps 见 topContactOf。
+          const footOnTop = stand && (stand.gap <= 1.5 ? stand.hov > -2 : stand.hov > stand.gap - 2);
+          if (footOnTop) {
+            b.y -= stand.gap; // 嵌入时抬升、悬在 eps 内时轻放（对矩形玩家等价于 setBottom）
+            continue;
+          }
         }
         if (o.pushable && this.tryPushX(o, dir, dynamics, statics, b, 0)) {
           continue; // 推开了，继续本子步的移动

@@ -19,6 +19,8 @@ Object.assign(exports, __require('src/core/input.js'));;
 Object.assign(exports, __require('src/core/loop.js'));;
 Object.assign(exports, __require('src/core/touch.js'));;
 Object.assign(exports, __require('src/core/fullscreen.js'));;
+Object.assign(exports, __require('src/core/audio.js'));;
+Object.assign(exports, __require('src/core/savepoint.js'));;
 Object.assign(exports, __require('src/core/overview.js'));;
 Object.assign(exports, __require('src/core/recorder.js'));;
 
@@ -34,6 +36,8 @@ Object.assign(exports, __require('src/objects/particle.js'));;
 Object.assign(exports, __require('src/objects/floor.js'));;
 Object.assign(exports, __require('src/objects/container.js'));;
 Object.assign(exports, __require('src/objects/pool.js'));;
+Object.assign(exports, __require('src/objects/poolvariants.js'));;
+Object.assign(exports, __require('src/objects/gaschamber.js'));;
 Object.assign(exports, __require('src/objects/block.js'));;
 Object.assign(exports, __require('src/objects/deposit.js'));;
 Object.assign(exports, __require('src/objects/player.js'));;
@@ -124,17 +128,17 @@ const CFG = {
   placeAmount: 0.5, // g/次
   collectRadius: 70, // px
 
-  // 可携带物品（集气瓶/烧杯/滴管）交互参数（距离一律为**边缘间隙**：贴边就算，宽池不显远）
+  // 可拾取物品（集气瓶/烧杯/滴管）交互参数（距离一律为**边缘间隙**：贴边就算，宽池不显远）
   item: {
-    collectRange: 90,      // C 拾取物品半径
-    liquidRange: 80,       // C 吸液 / X 倒出 / 通入气体的目标容器距离
+    collectRange: 90,      // Q 拾取物品半径
+    liquidRange: 80,       // 物品操作（吸液/倒出/滴加/通气）的目标容器距离
     dragRange: 480,        // 可拖动滴管的玩家最大距离（中心距离；用户反馈 130 太小 —— 扩大）
     dragSlack: 14,         // 回抓宽限：拖到边界后再抓，允许超出 dragRange 一点也能重新抓住
     beakerCapacity: 200,   // 标准烧杯容量（g；与编辑器烧杯默认 volume 一致）
-    beakerTransfer: 20,    // 烧杯每次 C 吸液量（g）
-    pourStep: 10,          // 烧杯每次 X 倒出量（g）——分次倒，不再一次全倒
+    beakerTransfer: 20,    // 烧杯每次「吸液」量（g）
+    pourStep: 10,          // 烧杯每次「倒出」量（g）——分次倒，不再一次全倒
     dropperCapacity: 50,   // 滴管容量（g）
-    dropperTransfer: 5,    // 滴管每次 C 吸液量（g）
+    dropperTransfer: 5,    // 滴管每次「吸液」量（g）
     bottleCapacity: 5,     // 集气瓶最大集气量（g）
     gasCollectRange: 100,  // 按住 C 集气：找最近气泡柱的距离
     gasRate: 0.05,         // 通入气体速率（g/s）
@@ -231,23 +235,24 @@ const { ReactionLabel } = __require('src/objects/reactionlabel.js');;
 const { Container } = __require('src/objects/container.js');;
 const { Portal } = __require('src/objects/portal.js');;
 const { Rope } = __require('src/objects/rope.js');;
+const { puffFx, swirlFx, flashFx } = __require('src/objects/fx.js');;
+const { hexToRgb } = __require('src/render/color.js');;
 const { CFG } = __require('src/core/config.js');;
 const { stepPressTap } = __require('src/level/click.js');;
 const { deathQuip } = __require('src/render/hud.js');;
+const { sfx } = __require('src/core/audio.js');;
 
 class Scene {
-  constructor({ worldW = CFG.worldW, worldH = CFG.worldH, physics = {}, hideTouchGrab = false } = {}) {
+  constructor({ worldW = CFG.worldW, worldH = CFG.worldH, physics = {} } = {}) {
     this.worldW = worldW;
     this.worldH = worldH;
-    // 移动端"拾取/吸液"按钮（=电脑端 C 键：拾烧杯/吸液/集气）开关：
-    // 很多关卡用不到它，默认收起防误导（true=隐藏）；桌面端无影响
-    this.hideTouchGrab = !!hideTouchGrab;
     this.objects = [];
     this.dynamics = [];
     this.statics = [];
     this.containers = [];
     this.lamps = [];
-    this.gasTubes = []; // 导气管（输入端产气 → 输出端；见 objects/gastube.js）
+    this.gasTubes = []; // 导气管（输入端产气 → 多个输出端；见 objects/gastube.js）
+    this.gasChambers = []; // 气室（内部独立大气区域；见 objects/gaschamber.js）
     this.doors = [];
     this.portals = [];
     this.particles = [];
@@ -286,6 +291,9 @@ class Scene {
     this.debugPaused = false; // 暂停 tick 推进
     this.debugStepOnce = false; // 手动步进一 tick
     this.overview = false; // 鸟瞰模式（灵魂出窍）：暂停模拟，相机自由缩放/平移看整关
+    this.restartMenuOpen = false; // 重开选择菜单（HUD 画布弹层）：打开时暂停模拟
+    this._menuKeyUnsub = null;    // Esc 关闭菜单的键盘钩子
+    this._saveToast = null;       // 左上角"已存档/已回到存档点"提示（HUD 渲染）
 
     this.control = new Set(); // 长按（left/right/jump/place/collect/grab/use）
     this.pressed = new Set(); // 本刻刚按下（边缘触发）
@@ -305,6 +313,8 @@ class Scene {
 
     // ---- 运行时钩子（插件/关卡脚本用）：全部走"游戏时间"，受调试暂停(F5)控制 ----
     this._tickFns = [];    // 每帧执行: fn(dt, time)，返回 true 自动卸载
+    this._hooksRunning = false; // 正在执行 _runHooks（钩子里存档必须延后到本刻结束）
+    this._postStepFns = [];     // 本刻结束后执行一次（在 _runHooks 之外）
     this._timers = [];     // 一次性延迟: {at, fn}（游戏时间）
     this._intervals = [];  // 周期: {next, period, fn}
     this._afterFns = [];   // 下一帧开头执行一次
@@ -316,6 +326,17 @@ class Scene {
   // 运行时钩子 API：wait/after/interval 基于游戏时间（scene.time，暂停即停），
   // 与 setTimeout（墙钟时间）不同——调试暂停时不会"偷偷"继续走。
   // ---------------------------------------------------------------------------
+
+  /** 本刻结束后执行一次（在 _runHooks 之外）。
+   *  存档等"需要完整调度表"的操作若发生在 tick/wait 回调里，必须用这个延后一帧：
+   *  _runHooks 期间 _tickFns/_timers 正在边跑边重建，此刻快照会丢钩子。 */
+  postStep(fn) {
+    this._postStepFns.push(fn);
+    return () => {
+      const i = this._postStepFns.indexOf(fn);
+      if (i >= 0) this._postStepFns.splice(i, 1);
+    };
+  }
 
   /** 每帧执行 fn(dt, time)：返回 true 则卸载；返回 deregister 函数可手动卸载 */
   onTick(fn) {
@@ -388,6 +409,8 @@ class Scene {
 
   /** 每帧推进运行时钩子（在 step 的时间推进后、对象 update 前） */
   _runHooks(dt) {
+    this._hooksRunning = true;
+    try {
     const after = this._afterFns;
     this._afterFns = [];
     for (const fn of after) fn();
@@ -432,6 +455,9 @@ class Scene {
         if (this.time >= t.next) t.next = this.time + t.period;
       }
     }
+    } finally {
+      this._hooksRunning = false;
+    }
   }
 
   on(name, fn) {
@@ -441,6 +467,14 @@ class Scene {
 
   fire(name, ...args) {
     for (const fn of this._events[name] ?? []) fn(...args);
+  }
+
+  /** 世界坐标 → 声像（-1..1；无坐标/无世界宽 → 0，不做声像） */
+  _sfxPan(point) {
+    if (!point || !(this.worldW > 0)) return 0;
+    const x = Number(point.x);
+    if (!Number.isFinite(x)) return 0;
+    return Math.max(-1, Math.min(1, (x / this.worldW) * 2 - 1));
   }
 
   // ---------------------------------------------------------------------------
@@ -466,6 +500,7 @@ class Scene {
       if (v) this.camera.enterOverview();
       else this.camera.exitOverview();
     }
+    sfx(v ? 'overview.on' : 'overview.off');
     this.fire('overview', { on: v });
     return v;
   }
@@ -514,6 +549,7 @@ class Scene {
       text: t, t: this.time, dur: Math.max(0.6, Number(dur) || 4),
       wall: (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0,
     };
+    sfx('banner');
     this.fire('banner', this.banner);
     return this.banner;
   }
@@ -525,6 +561,7 @@ class Scene {
     this.tipSeq++;
     this.tipActive = t;
     this.tip = t.text;
+    sfx('tip');
     this.fire('tip', { tip: t, seq: this.tipSeq, source: 'button' });
     return t.text;
   }
@@ -550,6 +587,7 @@ class Scene {
     if (obj instanceof Container) this.containers.push(obj);
     if (obj.isLamp) this.lamps.push(obj);
     if (obj.isGasTube) this.gasTubes.push(obj);
+    if (obj.isGasChamber) this.gasChambers.push(obj); // 气室：独立大气区域
     if (obj.isDoor) this.doors.push(obj);
     if (obj instanceof Portal) this.portals.push(obj);
     if (obj instanceof Particle) this.particles.push(obj);
@@ -580,7 +618,7 @@ class Scene {
    *  延迟出现/开关隐藏的物体必须**物理也不计算**：半空摆的玩家隐身时不能坠地。 */
   _deindex(obj) {
     const arrays = [this.objects, this.dynamics, this.statics, this.particles,
-      this.containers, this.lamps, this.gasTubes, this.doors, this.portals, this.hidden];
+      this.containers, this.lamps, this.gasTubes, this.gasChambers, this.doors, this.portals, this.hidden];
     for (const arr of arrays) {
       const i = arr.indexOf(obj);
       if (i >= 0) arr.splice(i, 1);
@@ -629,9 +667,10 @@ class Scene {
   // 主刻
   // ===========================================================================
   step(dt) {
-    if (this.status !== 'running') return;
+    if (this.status !== 'running' || this.restartMenuOpen) return; // 菜单打开 = 暂停整局模拟
     this.time += dt;
     this.dt = dt;
+    this._seedChambers(); // 气室初始大气（第一次 step 时复制外部大气/应用配置成分）
     this._runHooks(dt); // 运行时钩子（插件/关卡脚本的 onTick/wait/interval/after）
     this._updateTipReady(); // 条件提示：只求值"可点击展示"（不自动出现，纯读安全）
     // 页面不在前台（切走/最小化）时清空输入：失焦时 keyup/blur 可能不触发，
@@ -704,6 +743,15 @@ class Scene {
     // 8. 清空边缘触发
     this.pressed.clear();
     this._gasHold = null; // 集气瓶按住的标记只在本 tick 有效（Player.update 每帧重设）
+
+    // 9. 本刻结束钩子（钩子里排队的存档在这执行：此刻 _tickFns/_timers 已重建完整）
+    if (this._postStepFns.length) {
+      const fns = this._postStepFns;
+      this._postStepFns = [];
+      for (const fn of fns) {
+        try { fn(); } catch (err) { /* 插件/存档回调异常不拖垮游戏循环 */ }
+      }
+    }
   }
 
   updateContainment() {
@@ -723,7 +771,9 @@ class Scene {
   // 化学反应调度
   // ===========================================================================
   stepChemistry(dt) {
+    this._seedChambers(); // 气室在第一次参与化学前必须有独立大气
     this.atmosphere._cause = null; // 复位大气变化原因（由引擎按反应盖章）
+    for (const c of this.gasChambers) c.atmosphere._cause = null; // 气室内大气同样每刻复位
     // 自反应（分解/催化/燃烧/溶解/气态还原）
     for (const obj of this.objects) {
       if (!obj.material) continue;
@@ -779,25 +829,43 @@ class Scene {
       this.chem._tryDissolution(obj.material, dt, ctx);
     }
 
-    // 含碱容器吸收大气酸性气体（CO2/SO2）
+    // 含碱容器吸收大气酸性气体（CO2/SO2）：容器在气室内时吸气室内大气
     for (const c of this.containers) {
       if (c.solution.ids().some((id) => getSubstance(id).kind === 'base')) {
         this.chem.absorbAtmosphereGas(c.material, dt, this.makeEnv(c));
       }
     }
-    // 大气中可燃气体燃烧
+    // 大气中可燃气体燃烧：外部大气 + 每个气室的内部大气各自独立结算
+    // （气室内的反应产物/消耗不影响外部，外部同理不影响内部）
     this.chem.reactAtmosphere(this.makeEnv(null), dt);
+    for (const c of this.gasChambers) {
+      if (c.hidden) continue;
+      const savedEmit = this._emitCtx;
+      // 气室内大气反应的产物（如 NH4Cl 白烟颗粒）落在气室内，不飘到外部场景
+      this._emitCtx = {
+        obj: null,
+        container: null,
+        player: this.player,
+        point: { x: c.x + c.w / 2, y: c.y + c.h / 2 },
+        spread: Math.min(c.w, c.h) * 0.5,
+      };
+      try { this.chem.reactAtmosphere(this.makeEnv(c), dt); } finally { this._emitCtx = savedEmit; }
+    }
 
-    // 收集本 tick 大气气体变化（产生/消耗原因，调试面板显示）
+    // 收集本 tick 大气气体变化（产生/消耗原因，调试面板显示）：外部 + 各气室分别收集
     const glog = this.atmosphere.flushLog();
+    for (const c of this.gasChambers) {
+      if (c.hidden) continue;
+      for (const g of c.atmosphere.flushLog()) glog.push({ ...g, region: c.id });
+    }
     if (glog.length) {
       if (!this.gasLog) this.gasLog = [];
-      // 合并同一 tick 内同气体+同原因的变化
+      // 合并同一 tick 内同气体+同原因（+同区域）的变化
       const merged = new Map();
       for (const g of glog) {
-        const k = `${g.id}|${g.cause ?? ''}`;
+        const k = `${g.id}|${g.cause ?? ''}|${g.region ?? ''}`;
         if (merged.has(k)) merged.get(k).delta += g.delta;
-        else merged.set(k, { id: g.id, delta: g.delta, cause: g.cause ?? null, t: this.time });
+        else merged.set(k, { id: g.id, delta: g.delta, cause: g.cause ?? null, region: g.region ?? null, t: this.time });
       }
       for (const m of merged.values()) this.gasLog.unshift(m);
       if (this.gasLog.length > 60) this.gasLog.length = 60;
@@ -845,6 +913,85 @@ class Scene {
     return base ?? { x: this.worldW / 2, y: this.worldH / 2 };
   }
 
+  // ===========================================================================
+  // 气室（内部独立大气区域）
+  // ---------------------------------------------------------------------------
+  // 气室无碰撞箱、不进物理；与矩形有任何重叠的物体/玩家/反应点算"在内部"。
+  // 内部大气与外部完全独立：产气、吸气、大气燃烧、气体探测器、白烟颗粒都按区域隔离。
+  // ===========================================================================
+
+  /** 某对象所在的气室（无 → null = 外部大气；多个气室重叠时取先加入的） */
+  gasChamberFor(obj) {
+    if (!obj || !this.gasChambers || !this.gasChambers.length) return null;
+    for (const c of this.gasChambers) {
+      if (c.hidden) continue;
+      if (c === obj) return c;
+      if (typeof c.containsObj === 'function' && c.containsObj(obj)) return c;
+    }
+    return null;
+  }
+
+  /** 某点所在的气室（点位产气/白烟/爆炸等用） */
+  gasChamberAtPoint(x, y) {
+    if (!this.gasChambers || !this.gasChambers.length) return null;
+    for (const c of this.gasChambers) {
+      if (c.hidden) continue;
+      if (typeof c.containsPoint === 'function'
+        ? c.containsPoint(x, y)
+        : (x >= c.x && x <= c.x + c.w && y >= c.y && y <= c.y + c.h)) return c;
+    }
+    return null;
+  }
+
+  /** 本次产气属于哪个气室（按产物上下文：容器 > 物体 > 反应点）；null=外部大气 */
+  emitChamber() {
+    const emit = this._emitCtx;
+    if (!emit || !this.gasChambers || !this.gasChambers.length) return null;
+    if (emit.container) {
+      const c = this.gasChamberFor(emit.container);
+      if (c) return c;
+    }
+    if (emit.obj) {
+      const c = this.gasChamberFor(emit.obj);
+      if (c) return c;
+    }
+    if (emit.point) return this.gasChamberAtPoint(emit.point.x, emit.point.y);
+    return null;
+  }
+
+  /** 某对象所在区域的大气（气室内 → 气室内部大气；外部 → 场景大气） */
+  atmosphereAt(obj) {
+    const c = this.gasChamberFor(obj);
+    return c ? c.atmosphere : this.atmosphere;
+  }
+
+  /** HUD 大气面板：玩家在气室内时显示气室内大气 */
+  atmosphereForPlayer() {
+    return this.player ? this.atmosphereAt(this.player) : this.atmosphere;
+  }
+
+  /** 气体探测器：对象所在区域的"反应产气"累积表（气室内探测器看不到外部产气，反之亦然） */
+  reactGasFor(obj) {
+    const c = this.gasChamberFor(obj);
+    return c ? (c._reactGas ??= {}) : this._reactGas;
+  }
+
+  /** 某区域的点燃源：气室只认与它重叠的灯；外部不认气室内的灯（大气互不影响） */
+  _litLampsIn(chamber) {
+    return this.lamps.filter((l) => {
+      if (!l.lit) return false;
+      return this.gasChamberFor(l) === chamber;
+    });
+  }
+
+  /** 气室第一次参与化学前，seed 内部大气（复制外部大气或应用配置成分） */
+  _seedChambers() {
+    if (!this.gasChambers) return;
+    for (const c of this.gasChambers) {
+      if (!c.hidden && typeof c.seed === 'function') c.seed(this);
+    }
+  }
+
   _setEmitCtx(obj, container) {
     // 容器自身的反应（如灯上沉淀分解）：产物回到容器自己，而不是当开阔地粒子撒出去
     const selfContainer = obj && obj.material && obj.material.owner === obj ? obj : null;
@@ -859,12 +1006,13 @@ class Scene {
     };
   }
 
-  /** 构造化学引擎 env：大气 + 该对象的环境条件 + 产物路由 + 产气气泡 + 爆炸 */
+  /** 构造化学引擎 env：所在区域大气 + 该对象的环境条件 + 产物路由 + 产气气泡 + 爆炸 */
   makeEnv(obj) {
+    const chamber = this.gasChamberFor(obj);
     return {
-      atmosphere: this.atmosphere,
+      atmosphere: chamber ? chamber.atmosphere : this.atmosphere,
       conditions: this.conditionsFor(obj),
-      globalIgnited: this.lamps.some((l) => l.lit),
+      globalIgnited: this._litLampsIn(chamber).length > 0,
       emit: (product, origin) => this.routeProduct(product, origin),
       onGas: (id, mass, ctx) => this.onGas(id, mass, ctx),
       onReaction: (text) => this.onReaction(text),
@@ -872,11 +1020,11 @@ class Scene {
       customReactions: this.customReactions, // 关卡自定义反应（L0 最高优先级）
       debugMode: this.debugMode,
       explode: (point, strength, cause) => this.explode(point ?? null, strength, cause),
-      // 爆炸中心：当前反应点；大气爆炸（无反应点）取第一个点燃灯的火苗位置
+      // 爆炸中心：当前反应点；大气爆炸（无反应点）取该区域第一个点燃灯的火苗位置
       explodePoint: this._emitCtx
         ? this._emitCtx.point
         : (() => {
-            const lit = this.lamps.find((l) => l.lit);
+            const lit = this._litLampsIn(chamber)[0];
             return lit ? { x: lit.x + lit.w / 2, y: lit.flameY() } : null;
           })(),
     };
@@ -911,6 +1059,11 @@ class Scene {
     const cap = 36;
     let n = 0;
     for (const o of this.objects) if (o instanceof Spark && ++n >= cap) return;
+    // 火星声：金属燃烧每 tick 只加 2 颗火星，0.2s 限频
+    if (this.time - (this._sfxSparkT ?? -10) >= 0.2) {
+      this._sfxSparkT = this.time;
+      sfx('chem.spark', { pan: this._sfxPan(pt) });
+    }
     const spread = this._emitCtx.spread ?? 20;
     for (let i = 0; i < 2; i++) {
       this.addObject(new Spark({
@@ -935,6 +1088,12 @@ class Scene {
     const point = this._emitCtx ? this._emitCtx.point : null;
     const key = this._rxKey(text);
     const now = this.time;
+    // 反应音效：同一规范化反应 0.5s 内只响一次（反应每 tick 都可能发生，不限频会爆音）
+    const rxSfxT = (this._rxSfxT ??= {});
+    if (now - (rxSfxT[key] ?? -10) >= 0.5) {
+      rxSfxT[key] = now;
+      sfx('chem.react', { pan: this._sfxPan(point) });
+    }
     // 死亡原因记录：**涉及玩家**的反应才更新记录（伙伴物质 + 酸/碱分类）。
     // 酸/碱致死只认**反应文本里的伙伴**（玩家确实与该物质反应）——碱性/酸性
     // **环境**不算对手（把池子反应烧成 KOH 的不是碱攻击，是水反应）；
@@ -952,6 +1111,12 @@ class Scene {
         const sub = partner ? getSubstance(partner) : null;
         this.player.lastRxAcid = sub ? sub.kind === 'acid' : false;
         this.player.lastRxBase = sub ? sub.kind === 'base' : false;
+        // 玩家参与反应：受伤/腐蚀反馈音（0.6s 限频；音量随剩余玩家物质）
+        if (now - (this._rxHurtT ?? -10) >= 0.6) {
+          this._rxHurtT = now;
+          const m = Number(this.player.hp);
+          sfx('player.hurt', { gain: Math.max(0.5, Math.min(1.2, Number.isFinite(m) ? m / 30 : 1)) });
+        }
       }
     }
     // 防"反应抖动"：同一反应（规范化键：反应物排序后）在 0.5s 内只进一次
@@ -1017,6 +1182,11 @@ class Scene {
 
   explode(point, strength, cause = null, flames = null) {
     const p = point ?? (this._emitCtx ? this._emitCtx.point : { x: this.worldW / 2, y: this.worldH / 2 });
+    // 爆炸音：预设本身够响，强度只做 0.7..1.2 的微调
+    sfx('chem.explode', {
+      gain: Math.max(0.7, Math.min(1.2, Number(strength) > 0 ? Number(strength) / 10 : 1)),
+      pan: this._sfxPan(p),
+    });
     const R = 150; // 爆炸半径（衰减基准）
     // 视觉 + 屏幕震动；记录最近爆炸原因（HUD 调试面板显示）
     const flip = (this._explosionSeq = (this._explosionSeq ?? 0) + 1) % 2 === 0; // 连续爆炸相位交替，不雷同
@@ -1115,9 +1285,21 @@ class Scene {
   }
 
   onGas(id, mass, ctx) {
-    // 记录"反应产生的气体"（气体探测器只检测这个，不检测预置大气气体）
-    this._reactGas[id] = (this._reactGas[id] ?? 0) + mass;
-    // 导气管截留：输入端罩住范围内产出的气体 → 全部经管道鼓入输出端
+    // 产气音：每个产气源每 tick 都在冒气，0.15s 限频；音量随气量小幅变化
+    if (this.time - (this._sfxGasT ?? -10) >= 0.15) {
+      this._sfxGasT = this.time;
+      const pt = this._emitCtx ? this._emitCtx.point : null;
+      sfx('chem.bubble', {
+        gain: Math.max(0.3, Math.min(1, Number(mass) > 0 ? Number(mass) : 0.3)),
+        pan: this._sfxPan(pt),
+      });
+    }
+    // 记录"反应产生的气体"（气体探测器只检测这个，不检测预置大气气体）：
+    // ★ 按产气所在区域分别记录——气室内反应不进外部探测器，外部产气也不进气室内探测器。
+    const chamber = this.emitChamber();
+    const reactGas = chamber ? (chamber._reactGas ??= {}) : this._reactGas;
+    reactGas[id] = (reactGas[id] ?? 0) + mass;
+    // 导气管截留：输入端罩住范围内产出的气体 → 均分给所有开启的输出支路
     // （输入端不冒气泡柱、气体不进大气）。_tubeBusy：输送途中输出端吸收本身
     // 再产气（如 NO2 溶水放 NO）时走正常管线，不再被管道截留（防 A→B→A 环）。
     if (!this._tubeBusy) {
@@ -1132,50 +1314,84 @@ class Scene {
         return mass; // 全部截留（引擎按返回值扣掉输入端的吸收/大气份额）
       }
     }
-    return this._gasPlume(id, mass, { origin: ctx ? { kind: 'reaction', text: ctx.lastRxText ?? '' } : null });
+    return this._gasPlume(id, mass, {
+      chamber, // 气室内产气：气泡柱/气泡限制在气室内
+      origin: ctx ? { kind: 'reaction', text: ctx.lastRxText ?? '' } : null,
+    });
   }
 
-  /** 导气管采集：本次产气来源在输入端罩住范围内 → 该管道截留全部气体 */
+  /** 导气管采集：本次产气来源在输入端罩住范围内 → 该管道截留全部气体。
+   *  所有输出阀门都关闭 = 管道暂时断开：不截留，气体照常走正常管线（用户定案）。 */
   _gasTubeForEmission() {
     if (!this.gasTubes.length) return null;
     const emit = this._emitCtx;
     if (!emit) return null;
-    for (const tube of this.gasTubes) if (tube.captures(this, emit)) return tube;
+    for (const tube of this.gasTubes) {
+      if (typeof tube.openBranches === 'function') {
+        const open = tube.openBranches(this);
+        if (!open || open.length === 0) continue; // 阀门全关：不截留
+      }
+      if (tube.captures(this, emit)) return tube;
+    }
     return null;
   }
 
   /**
-   * 导气管输送：输入端截留的气体全部按"主动鼓入"管线送进输出端药品池
-   * （碱吸收 → 水溶解，与集气瓶通气同一条管线；之后溶液内的反应照常进行）。
-   * 输出端吸收不完的多余气体才在管口生成气泡柱并进入大气——输入端永远不冒柱。
+   * 导气管输送：输入端截留的气体**平均分配**给所有开启的输出支路。
+   * 输出端=药品池：按"主动鼓入"管线（碱吸收 → 水溶解），吸收不完的多余气体
+   *   在该支路管口冒气泡柱，再进入输出端所在区域的大气；
+   * 输出端=气室：气体直接进入气室内部大气（不冒泡、不进入外部大气）。
    */
   _routeTubeGas(tube, id, mass, ctx) {
     const g = tube.geometry(this);
     if (!g) return;
+    const branches = typeof tube.openBranches === 'function'
+      ? tube.openBranches(this)
+      : (g.branches ?? []);
+    if (!branches.length) return;
     const dt = ctx && ctx.dt > 0 ? ctx.dt : this.dt;
     const cause = this.atmosphere._cause; // 产气反应（下面的吸收会盖章别的原因，留作气体变化溯源）
-    tube.noteFlow(id); // 管内颜色/管口气泡（吸收不完也照样"有气体通过"）
+    const share = mass / branches.length; // 多个开启支路：平均分配
     const saved = this._emitCtx;
-    this._emitCtx = { obj: null, container: g.outPool, player: this.player, point: g.mouth, spread: 14 };
     try {
-      const env = this.makeEnv(g.outPool);
-      const outCtx = this.chem._ctxOf(g.outPool.solutionMat, g.outPool.solutionMat, dt, env);
-      const leftover = this.chem._emitGas(id, mass, outCtx, {
-        forceDissolve: true, // 主动鼓入（同集气瓶通气）
-        skipOnGas: true, // 吸收阶段不冒气泡柱：只有"没反应完的多余气体"才冒柱
-        deferAtmosphere: true, // 多余部分交回本方法（先在管口冒柱、再入大气）
-      });
-      if (leftover > 1e-9) {
-        const captured = this._gasPlume(id, leftover, {
-          bubbleDir: -1, // 管口多余气体：冒柱（液下气泡上浮）
-          width: 56, // 管口冒出的气柱比"池面反应柱"窄（像一股气流从管口升起）
-          source: tube, // 柱归属该管道（多根同种气体的管子各冒各的柱，不合并）
-          origin: cause ? { kind: 'reaction', text: cause } : null,
+      for (const b of branches) {
+        const target = b.target;
+        if (!target) continue;
+        if (typeof tube.noteFlow === 'function') tube.noteFlow(b.outId, id); // 管内颜色/管口气泡
+        // 输出端=气室：气体直接进入其内部大气（外部大气不受影响）
+        if (b.targetKind === 'chamber' || target.isGasChamber) {
+          const atm = target.atmosphere;
+          atm._cause = cause;
+          atm.add(id, share);
+          target._reactGas = target._reactGas ?? {};
+          target._reactGas[id] = (target._reactGas[id] ?? 0) + share; // 主动充入的气体，气室内探测器可见
+          continue;
+        }
+        // 输出端=药品池：先吸收，多余部分在该支路管口冒柱
+        this._emitCtx = { obj: null, container: target, player: this.player, point: b.mouth, spread: 14 };
+        const env = this.makeEnv(target);
+        const outCtx = this.chem._ctxOf(target.solutionMat, target.solutionMat, dt, env);
+        const leftover = this.chem._emitGas(id, share, outCtx, {
+          forceDissolve: true, // 主动鼓入（同集气瓶通气）
+          skipOnGas: true, // 吸收阶段不冒气泡柱：只有"没反应完的多余气体"才冒柱
+          deferAtmosphere: true, // 多余部分交回本方法（先在管口冒柱、再入大气）
         });
-        const rest = leftover - captured;
-        if (rest > 1e-9) {
-          this.atmosphere._cause = cause;
-          this.atmosphere.add(id, rest);
+        if (leftover > 1e-9) {
+          const region = this.gasChamberFor(target);
+          const captured = this._gasPlume(id, leftover, {
+            bubbleDir: -1, // 管口多余气体：冒柱（液下气泡上浮）
+            width: 56, // 管口冒出的气柱比"池面反应柱"窄（像一股气流从管口升起）
+            // 柱归属=该支路（多条同种气体的支路各冒各的柱，不合并）
+            source: (typeof tube.branchSource === 'function' ? tube.branchSource(b.outId) : tube),
+            chamber: region,
+            origin: cause ? { kind: 'reaction', text: cause } : null,
+          });
+          const rest = leftover - captured;
+          if (rest > 1e-9) {
+            const atm = region ? region.atmosphere : this.atmosphere;
+            atm._cause = cause;
+            atm.add(id, rest);
+          }
         }
       }
     } finally {
@@ -1187,19 +1403,36 @@ class Scene {
    * 产气视觉：气泡柱 + 气泡 + 集气瓶截留。返回"已截留质量"（按住 C 用集气瓶收集）。
    * opts.bubbleDir：气泡方向（默认随气体轻重——输出端鼓入池内传 -1，池内气泡一律上浮）。
    * opts.width：气泡柱宽度（默认按反应面/容器宽推算；导气管管口用窄柱像"一股气"）。
-   * opts.source：气泡柱归属（默认=产气源对象；导气管传自己，多根同气体管各冒各的柱）。
+   * opts.source：气泡柱归属（默认=产气源对象；导气管每个支路一个归属，同气体各冒各的柱）。
+   * opts.chamber：气室内产气时传入该气室，气泡柱/气泡被限制在气室内部（视觉不外泄）。
    * opts.origin：气泡柱来源（调试悬停显示的方程式）。
    */
   _gasPlume(id, mass, opts = {}) {
-    const point = this._emitCtx ? this._emitCtx.point : { x: this.worldW / 2, y: this.worldH / 2 };
+    let point = this._emitCtx ? this._emitCtx.point : { x: this.worldW / 2, y: this.worldH / 2 };
     const sub = getSubstance(id);
     const dir = sub.mm < 29 ? -1 : 1;
     const bubbleDir = opts.bubbleDir ?? dir;
+    // 气室内部产气：柱/气泡限制在气室内，视觉上不冒出气室（气体账本已在 onGas 归入气室大气）
+    const chamber = opts.chamber === undefined ? this.emitChamber() : opts.chamber;
+    const fit = (cx, wy, ww, hh) => {
+      if (!chamber) return { x: cx - ww / 2, y: wy, w: ww, h: hh };
+      const W = Math.min(ww, Math.max(8, chamber.w - 4));
+      const H = Math.min(hh, Math.max(8, chamber.h - 4));
+      const cx2 = Math.max(chamber.x + W / 2 + 2, Math.min(cx, chamber.x + chamber.w - W / 2 - 2));
+      const y2 = Math.max(chamber.y + 2, Math.min(wy, chamber.y + chamber.h - H - 2));
+      return { x: cx2 - W / 2, y: y2, w: W, h: H };
+    };
     // 气流强度随产气量增强（基础 > 重力，使小反应也有明显上浮/下沉）
     const accel = Math.max(1300, 1100 + mass * 130);
     const maxSpeed = Math.min(300, 150 + mass * 18);
     const emit = this._emitCtx ?? {};
     const srcObj = emit.obj ?? null;
+    // 产气点重定向：电解池等装置可指定"该气体应在哪个电极冒出"
+    // （H2 → 阴极、O2/Cl2 → 阳极；见 objects/poolvariants.js gasOriginPoint）。
+    if (srcObj && typeof srcObj.gasOriginPoint === 'function') {
+      const gp = srcObj.gasOriginPoint(id);
+      if (gp) point = gp;
+    }
     const plumeKey = opts.source ?? srcObj; // 柱归属（同归属+同方向+同气体才共柱）
     // 柱的位置=**反应暴露面外包**（合并成一条稳定大柱：覆盖整个反应面，不再每条
     // 小柱四处跳——用户反馈"零零散散"）；微观点位（气泡/标签/产物）仍按热点走。
@@ -1220,8 +1453,9 @@ class Scene {
       // 柱宽 = 反应面（暴露面）宽 × 0.6（36~130px）——覆盖反应面但不过分宽大
       const faceW = eb ? eb.x1 - eb.x0 : (srcObj?.w ?? emit.container?.w ?? 48) * 0.6;
       const w = Math.max(36, Math.min(130, opts.width ?? faceW * 0.6));
+      const pos = fit(center.x, point.y - gh, w, gh);
       plume = new GasColumn({
-        x: center.x - w / 2, y: point.y - gh, w, h: gh,
+        x: pos.x, y: pos.y, w: pos.w, h: pos.h,
         dir, accel, maxSpeed, life: 2.5, gasId: id,
         source: plumeKey, // 产气源（自身不被自己的气流托起；导气管=该管道）
         origin: opts.origin ?? null, // 来源方程式（调试悬停显示；由调用方盖章）
@@ -1237,15 +1471,20 @@ class Scene {
     const gh = (srcObj && srcObj.gasHeight) || (emit.container && emit.container.gasHeight) || 80;
     const faceW = eb ? eb.x1 - eb.x0 : (srcObj?.w ?? emit.container?.w ?? 48) * 0.6;
     const w = Math.max(36, Math.min(130, opts.width ?? faceW * 0.6));
-    plume.x = center.x - w / 2;
-    plume.y = point.y - gh;
-    plume.w = w;
-    plume.h = gh;
+    const pos = fit(center.x, point.y - gh, w, gh);
+    plume.x = pos.x;
+    plume.y = pos.y;
+    plume.w = pos.w;
+    plume.h = pos.h;
     // 气泡视觉：在**当前反应热点**冒出（每 tick 热点在暴露面随机换位 → 气泡沿整个反应面分布）
     const n = Math.max(1, Math.min(6, Math.round(mass * 1.2)));
     for (let i = 0; i < n; i++) {
-      const x = point.x + (Math.random() - 0.5) * 22;
-      const y = point.y + (bubbleDir < 0 ? -(3 + i * 4) : 3 + i * 4);
+      let x = point.x + (Math.random() - 0.5) * 22;
+      let y = point.y + (bubbleDir < 0 ? -(3 + i * 4) : 3 + i * 4);
+      if (chamber) {
+        x = Math.max(chamber.x + 3, Math.min(chamber.x + chamber.w - 3, x));
+        y = Math.max(chamber.y + 3, Math.min(chamber.y + chamber.h - 3, y));
+      }
       this.addObject(new Bubble({ x, y, dir: bubbleDir }));
     }
     // 集气瓶截留：按住 C 且背包选中集气瓶时，**距离玩家最近的一处气泡柱**产生的
@@ -1255,6 +1494,13 @@ class Scene {
     const bottle = this._gasHold;
     if (bottle && this.player && bottle.totalGas() < bottle.capacity - 1e-9 && this._nearestPlume() === plume) {
       captured = bottle.addGas(id, mass);
+      // 集气反馈：吸入涡旋 + 短闪（0.22s 限频；气瓶在背包里，起点取气泡柱处）
+      if (captured > 1e-9 && this.time - (this._fxCollectT ?? -10) >= 0.22) {
+        this._fxCollectT = this.time;
+        const gc = getSubstance(id).gasColor ?? '#9fd8ff';
+        swirlFx(this, point.x, point.y, { color: gc, r: 18, life: 0.36 });
+        flashFx(this, point.x, point.y, { color: gc, r: 16, life: 0.2, rays: 4 });
+      }
     }
     return captured;
   }
@@ -1298,12 +1544,19 @@ class Scene {
     return 1;
   }
 
-  /** 接触对 env：条件取双方并集（任一方受热即视为接触处受热） */
+  /** 接触对 env：条件取双方并集（任一方受热/通电即视为接触处满足；变种池条件同样并入）。
+   *  大气取"任一方所在气室"：跨气室边界的接触也不会把产物漏进外部大气。 */
   makePairEnv(a, b) {
     const env = this.makeEnv(a);
+    const region = this.gasChamberFor(a) ?? this.gasChamberFor(b);
+    if (region) {
+      env.atmosphere = region.atmosphere;
+      env.globalIgnited = this._litLampsIn(region).length > 0;
+    }
     const cb = this.conditionsFor(b);
     env.conditions.heat = env.conditions.heat || cb.heat;
     env.conditions.highTemp = env.conditions.highTemp || cb.highTemp;
+    env.conditions.electric = env.conditions.electric || cb.electric;
     env.conditions.ignited = env.conditions.ignited || cb.ignited;
     env.conditions.light = env.conditions.light || cb.light;
     return env;
@@ -1335,9 +1588,27 @@ class Scene {
       // 光照条件：灯在 lightRange 内提供"光照"（见光分解如 HClO）
       if (obj && this.dist(obj, lamp) <= (lamp.lightRange ?? CFG.lampLightRange)) light = true;
     }
+    // 变种池（电解池/加热池/高温池）：池自身与浸在池内的物体获得对应反应条件
+    const vp = this.variantPoolFor(obj);
+    let electric = false;
+    if (vp) {
+      if (vp.mode === 'highTemp') highTemp = true;
+      else if (vp.mode === 'heat') heat = true;
+      else if (vp.mode === 'electric') electric = true;
+    }
     const ignited = heat || highTemp || (obj && obj.isBurning);
     const hasCatalyst = (id) => this.catalystNear(obj, id);
-    return { heat, highTemp, ignited, light, hasCatalyst };
+    return { heat, highTemp, electric, ignited, light, hasCatalyst };
+  }
+
+  /** 给某物体提供条件的变种池：自身或浸在池内（只认已开启的池；常开/开关由池判断） */
+  variantPoolFor(obj) {
+    if (!obj || !this.containers) return null;
+    for (const c of this.containers) {
+      if (!c.isVariantPool || typeof c.active !== 'function' || !c.active(this)) continue;
+      if (c === obj || (typeof c.containsObj === 'function' && c.containsObj(obj))) return c;
+    }
+    return null;
   }
 
   /** 物体是否在灯上（重叠，或贴在灯顶的火焰位置） */
@@ -1399,10 +1670,25 @@ class Scene {
         // 产物落点成为容器"最近落点"——后续反应/气泡/沉淀围绕它（不再回池中央）
         if (ctx.point) cont.depositAt = { x: ctx.point.x, y: ctx.point.y };
         cont.addPrecipitate(product.id, product.mass, ctx.point, origin);
+        this._precipFx(product.id, ctx.point); // 沉淀生成：物色尘雾（限频，视觉反馈）
         return;
       }
     }
-    this.spawnParticles(product.id, product.mass, ctx.point, !isSoluble(product.id), false, origin);
+    // 游离固体产物：落到干燥地面/灯面/玩家身上的是**可拾取粉末**，与它是否溶于水无关
+    // （Na2CO3 等可溶盐也会先以固体掉出来；溶解只影响遇水后的行为，不影响 Q 拾取）。
+    // 旧逻辑用 !isSoluble 当 collectible，导致 NaHCO3 受热生成的 Na2CO3 掉在地上捡不起来。
+    this.spawnParticles(product.id, product.mass, ctx.point, true, false, origin);
+    this._precipFx(product.id, ctx.point); // 游离沉淀：同款尘雾反馈
+  }
+
+  /** 沉淀生成时的物色尘雾（纯视觉；0.22s 限频，避免每 tick 刷对象） */
+  _precipFx(id, point) {
+    if (!point) return;
+    if (this.time - (this._fxPrecipT ?? -10) < 0.22) return;
+    this._fxPrecipT = this.time;
+    const solid = getSubstance(id).solid?.[0] ?? '#c9c0b0';
+    const c = hexToRgb(solid);
+    puffFx(this, point.x, point.y, { color: `${c.r},${c.g},${c.b}`, r: 3.2, spread: 9, life: 0.32, n: 3 });
   }
 
   /** placed=true 的粒子有碰撞箱（放置的沉淀可垫脚）；origin 记录产物来源（调试悬停显示）。
@@ -1528,6 +1814,7 @@ class Scene {
     if (this.status === this._firedStatus) return;
     this._firedStatus = this.status;
     if (this.status === 'win') {
+      sfx('win');
       this.fire('win');
       // 再直接喊一声页面钩子：关卡页忘写 bind / 事件被覆盖时也能记录进度与弹浮层
       try {
@@ -1535,11 +1822,63 @@ class Scene {
         if (r && typeof r.onWin === 'function') r.onWin(this);
       } catch (e) { /* 页面钩子出错不影响游戏 */ }
     }
-    else if (this.status === 'died') this.fire('died');
+    else if (this.status === 'died') {
+      sfx('died');
+      this.fire('died');
+    }
+  }
+
+  /** 打开重开选择菜单（HUD 画布弹层）：暂停模拟、清空按住/拖拽状态。
+   *  菜单里提供「回到存档点」与「整局重开」；Esc / 点空白处关闭。
+   *  返回 false = 当前状态不允许打开（死亡/通关/鸟瞰中）。 */
+  openRestartMenu() {
+    if (this.restartMenuOpen) return false;
+    if (this.status !== 'running' || this.overview) return false;
+    this.restartMenuOpen = true;
+    this._menuOpenedAt = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    this.control.clear();
+    this.pressed.clear();
+    this._pressCand = null;
+    this._pressTap = null;
+    this._pressTapT = 0;
+    this._pressHome = null;
+    this._drag = null;
+    this._holdSuck = null;
+    this._gasHold = null;
+    if (!this._menuKeyUnsub) {
+      this._menuKeyUnsub = this.onKeyDown((e) => {
+        if (e && e.code === 'Escape' && this.restartMenuOpen) {
+          this.closeRestartMenu();
+          return true;
+        }
+        return false;
+      });
+    }
+    return true;
+  }
+
+  /** 关闭重开菜单（恢复模拟） */
+  closeRestartMenu() {
+    if (!this.restartMenuOpen) return false;
+    this.restartMenuOpen = false;
+    this.control.clear();
+    this.pressed.clear();
+    if (this._menuKeyUnsub) {
+      this._menuKeyUnsub();
+      this._menuKeyUnsub = null;
+    }
+    return true;
   }
 
   restart() {
-    if (typeof location !== 'undefined') location.reload();
+    // 重开音：键盘 R / 触屏轻触 / 调试重开都走这里，只在此处响一次。
+    // 音效真的排进了音频图时，稍等它响完再重载——否则 location.reload() 会立刻
+    // 掐断音频（听感上只剩"咔"一声）；静音/音频未解锁时保持原来的立即重载。
+    const ringing = sfx('restart');
+    if (typeof location !== 'undefined') {
+      if (ringing) setTimeout(() => location.reload(), 180);
+      else location.reload();
+    }
   }
 }
 
@@ -1648,7 +1987,7 @@ exports.reactionPartnerOf = reactionPartnerOf;
 
 const { IONS, ensureSalt, getSubstance, isMoreActive, isSoluble, normId, CONC_HIGH, PASSIVATION_CONC } = __require('src/chem/substances.js');;
 const { MIN_ENTRY } = __require('src/chem/solution.js');;
-const { RATE, THERMAL_RULES, CATALYTIC_RULES, COMBUSTION_RULES, AUTO_DECOMP_RULES, GAS_REDUCTION_RULES, SOLID_REDUCTION_RULES, SPECIAL_PAIR_RULES, METAL_NONMETAL_RULES, ACID_GAS_RULES, GAS_WATER_RULES, ATMOSPHERE_COMBUSTION_RULES, ATMOSPHERE_SPECIAL_RULES, acidGasRuleFor } = __require('src/chem/rules.js');;
+const { RATE, THERMAL_RULES, CATALYTIC_RULES, COMBUSTION_RULES, AUTO_DECOMP_RULES, ELECTROLYSIS_RULES, GAS_REDUCTION_RULES, SOLID_REDUCTION_RULES, SPECIAL_PAIR_RULES, METAL_NONMETAL_RULES, ACID_GAS_RULES, GAS_WATER_RULES, ATMOSPHERE_COMBUSTION_RULES, ATMOSPHERE_SPECIAL_RULES, acidGasRuleFor } = __require('src/chem/rules.js');;
 const { OXIDIZERS, REDUCERS, balanceRedox, mediaInfo, STRONG_OXIDIZER } = __require('src/chem/redox.js');;
 const { AtmosphereMaterial } = __require('src/chem/atmosphere.js');;
 
@@ -1689,6 +2028,7 @@ function conditionMet(cond, env, ctx) {
   if (cond === 'normal') return true;
   if (cond === 'heat') return !!env.conditions.heat || !!env.conditions.highTemp;
   if (cond === 'highTemp') return !!env.conditions.highTemp;
+  if (cond === 'electric') return !!env.conditions.electric; // 电解（池变种"电解池"提供）
   if (cond === 'ignited') {
     return !!env.conditions.ignited && env.atmosphere.o2Fraction() > COMBUSTION_MIN_O2;
   }
@@ -1696,6 +2036,7 @@ function conditionMet(cond, env, ctx) {
     if (cond.catalyst !== undefined && !env.conditions.hasCatalyst(cond.catalyst)) return false;
     if (cond.heat !== undefined && !(env.conditions.heat || env.conditions.highTemp)) return false;
     if (cond.highTemp !== undefined && !env.conditions.highTemp) return false;
+    if (cond.electric !== undefined && !env.conditions.electric) return false; // 电解（电解池）
     if (cond.ignited !== undefined && !(env.conditions.ignited && env.atmosphere.o2Fraction() > COMBUSTION_MIN_O2)) return false;
     if (cond.light !== undefined && !env.conditions.light) return false; // 见光反应（HClO 分解等）
     if (cond.o2 !== undefined) {
@@ -1790,6 +2131,13 @@ class ChemistryEngine {
       return s;
     };
 
+    // 电解：电解液规则在前、水规则在最后（见 rules.js ELECTROLYSIS_RULES）。
+    // 同刻只跑第一条"真反应"的规则：有电解液先电解电解液，耗尽（reactedMass=0）
+    // 才轮到水——否则食盐水会同时被两条规则消耗，H2/Cl2/O2 比例与质量守恒都对不上。
+    for (const rule of ELECTROLYSIS_RULES) {
+      if (rule.reactants.every((r) => mat.avail(r.id) > 0)
+          && this._runRule(rule, sources(rule), dt, env, ctx) > 0) break;
+    }
     for (const rule of THERMAL_RULES) {
       if (mat.avail(rule.reactants[0].id) > 0) this._runRule(rule, sources(rule), dt, env, ctx);
     }
@@ -2519,18 +2867,20 @@ class ChemistryEngine {
   /**
    * 执行一条规则：按 rate 与限域试剂推进一个 tick，消耗并产出。
    * 规则带 explosive 标签 → 推进后触发爆炸。
+   * @returns {number} 实际反应质量（g，全部反应物实际消耗量之和；0 = 本刻未反应）。
+   *   电解互斥循环依赖它判断"这条规则本刻真的推进了"，耗尽/条件不满足都返回 0。
    */
   _runRule(rule, sources, dt, env, ctx) {
     // ★ 分步质子化闸门（放在这里 = 所有执行路径统一生效：成对路径 _runPairDataRule
     //   与同材料路径 reactSelf 都走 _runRule，不会有一条路绕过闸门）
-    if (this._ruleBlockedByCarbonate(rule, ctx, ...Object.values(sources))) return;
-    if (!conditionMet(rule.condition, env, ctx)) return;
+    if (this._ruleBlockedByCarbonate(rule, ctx, ...Object.values(sources))) return 0;
+    if (!conditionMet(rule.condition, env, ctx)) return 0;
     const ref = rule.reactants[0];
     const refMM = getSubstance(ref.id).mm;
     let rate = rule.rate;
     for (const r of rule.reactants) {
       const m = sources[r.id];
-      if (!m) return;
+      if (!m) return 0;
       rate *= this._concFactorFor(m, r.id);
     }
     let units = (rate * dt) / refMM;
@@ -2541,7 +2891,7 @@ class ChemistryEngine {
       units = Math.min(units, this._availFor(m, r.id) / (mm * r.coeff));
     }
     // !(units > 0) 同时拦截 NaN/负值（NaN 比较恒 false，旧写法 units<=0 会放行 NaN）
-    if (!(units > 1e-12)) return;
+    if (!(units > 1e-12)) return 0;
     // 盖章大气原因（燃烧会消耗大气 O2/燃料，须在消耗前盖章）
     this._stamp(ctx, reactionEquation(rule.reactants.map((r) => r.id), rule.products.map((p) => p.id)));
 
@@ -2556,10 +2906,12 @@ class ChemistryEngine {
       reactedMass += removed;
       if (take > 1e-12) scale = Math.min(scale, removed / take);
     }
-    if (!(scale > 1e-9)) return;
+    if (!(scale > 1e-9)) return 0;
     const act = units * scale;
+    // skipAbsorb：产物气体不在本池被碱吸收（电解的阳极气体直接逸出，见 rules.js）
+    const emitOpts = rule.skipAbsorb ? { skipAbsorb: true } : undefined;
     for (const p of rule.products) {
-      this._emit(p.id, act * p.coeff * getSubstance(p.id).mm, ctx);
+      this._emit(p.id, act * p.coeff * getSubstance(p.id).mm, ctx, emitOpts);
     }
     this._logReaction(ctx, rule.reactants.map((r) => r.id), rule.products.map((p) => p.id));
     // 反应现象：金属燃烧迸发火星（火星四射——铁/镁/铝等在氧中燃烧的标志现象）
@@ -2568,6 +2920,7 @@ class ChemistryEngine {
     if (rule.explosive && env.explode) {
       env.explode(env.explodePoint ?? null, 4 + reactedMass * 1.2, ctx.lastRxText || '剧烈反应');
     }
+    return reactedMass;
   }
 
   /**
@@ -2651,13 +3004,17 @@ class ChemistryEngine {
     };
   }
 
-  _emit(id, mass, ctx) {
+  /**
+   * 产物路由（opts 透传给气体管线，见 _emitGas）：
+   *   opts.skipAbsorb = 气体产物不在本容器被碱吸收（电解的阳极气体直接逸出）。
+   */
+  _emit(id, mass, ctx, opts = {}) {
     // 挡住 NaN/非法质量（反应数学异常时避免生成 NaN 粒子 → 物品栏质量变 NaN）
     if (!Number.isFinite(mass) || mass <= 1e-9) return;
     const sub = getSubstance(id);
 
     if (sub.state === 'gas') {
-      this._emitGas(id, mass, ctx);
+      this._emitGas(id, mass, ctx, opts);
       return;
     }
     if (id === 'H2O') {
@@ -2741,6 +3098,9 @@ class ChemistryEngine {
    *  onGas 返回"已截留质量"（集气瓶收集 / 导气管输送）——截留部分不再走吸收/水溶/大气；
    *  opts.forceDissolve（向溶液通入气体）：CO2/SO2/NO2/Cl2 也能溶进水（主动鼓泡）。
    *  opts.skipOnGas：跳过 onGas 钩子（导气管先把气体鼓入输出池吸收，多余部分再另行冒柱）。
+   *  opts.skipAbsorb：跳过"本容器的碱/酸吸收"——电解阳极气体（Cl2 等）从电极直接
+   *   逸出，不该被同池刚生成的 NaOH 尾气吸收（否则食盐水电解看不到黄绿色氯气，
+   *   产物还会变回 NaCl/NaClO）。
    *  opts.deferAtmosphere：剩余气体不直接进大气、作为返回值交还调用方（导气管先在输出端
    *  管口冒气泡柱、再入大气）。
    *  返回：因 deferAtmosphere 未入大气的剩余质量（普通调用返回 0）。 */
@@ -2753,8 +3113,9 @@ class ChemistryEngine {
     }
     let leftover = mass;
     const baseMat = ctx.inContainer ? ctx.containerMat : null;
-    // 1. 碱吸收酸性气体 / 酸吸收 NH3（尾气处理、石灰水检验等）
-    if (baseMat) {
+    // 1. 碱吸收酸性气体 / 酸吸收 NH3（尾气处理、石灰水检验等）；skipAbsorb=电解
+    //    阳极气体直接逸出（不被本池 NaOH 吸收）
+    if (baseMat && !opts.skipAbsorb) {
       for (const base of baseMat.ids()) {
         const rule = acidGasRuleFor(id, base);
         if (!rule) continue;
@@ -3699,6 +4060,7 @@ const RATE = {
   displace: 12,       // 金属置换
   redox: 3,           // 氧化还原（自动配平，整体较慢便于观察）
   thermal: 5,         // 加热/高温分解
+  electrolysis: 6,    // 电解（g/s，按方程式首个反应物计；由"电解池"提供 electric 条件）
   catalytic: 5,       // 催化/加热制氧
   combustion: 5,      // 燃烧
   reduction: 5,       // 固还原
@@ -3788,6 +4150,24 @@ const AUTO_DECOMP_RULES = [
   { type: 'autoDecomp', reactants: [{ id: 'HClO', coeff: 2 }], products: [{ id: 'HCl', coeff: 2 }, { id: 'O2', coeff: 1 }], condition: { light: true }, rate: RATE.autoDecomp * 0.05 },
   // 4Fe(OH)2 + O2 + 2H2O → 4Fe(OH)3（白色→红棕色，需大气 O2）
   { type: 'autoDecomp', reactants: [{ id: 'Fe(OH)2', coeff: 4 }, { id: 'O2', coeff: 1 }, { id: 'H2O', coeff: 2 }], products: [{ id: 'Fe(OH)3', coeff: 4 }], condition: 'normal', rate: RATE.autoDecomp * 0.01 },
+];
+
+// ---- 自反应：电解（"电解池"变种提供 electric 条件；见 engine.reactSelf）----
+// 顺序即优先级：**电解液规则在前、水规则在最后**——reactSelf 的同刻循环保证
+// "有电解液先电解它，耗尽才轮到水"（否则食盐水池会同时按电解水和电解食盐水
+// 两条规则消耗，产量对不上）。condition 用 {electric:true, solution:true} 表示
+// 必须通电且在真实溶液介质中（干池/固相不电离）；水规则只要求通电。
+// skipAbsorb：阳极气体（Cl2 等）从电极直接成泡逸出，不在**本池**被刚生成的
+// NaOH 尾气吸收（否则电解食盐水得到的 Cl2 立刻变回 NaCl/NaClO，看不到黄绿色）。
+const ELECTROLYSIS_RULES = [
+  // CuCl2 --通电--> Cu + Cl2↑（阴极析出铜、阳极放氯气）
+  { type: 'electrolysis', reactants: [{ id: 'CuCl2', coeff: 1 }], products: [{ id: 'Cl2', coeff: 1 }, { id: 'Cu', coeff: 1 }], condition: { electric: true, solution: true }, rate: RATE.electrolysis * 0.5, skipAbsorb: true },
+  // 2HCl --通电--> H2↑ + Cl2↑（电解盐酸：阴极氢气、阳极氯气）
+  { type: 'electrolysis', reactants: [{ id: 'HCl', coeff: 2 }], products: [{ id: 'H2', coeff: 1 }, { id: 'Cl2', coeff: 1 }], condition: { electric: true, solution: true }, rate: RATE.electrolysis * 0.5, skipAbsorb: true },
+  // 2NaCl + 2H2O --通电--> 2NaOH + H2↑ + Cl2↑（氯碱工业：阴极氢气、阳极氯气、溶液留碱）
+  { type: 'electrolysis', reactants: [{ id: 'NaCl', coeff: 2 }, { id: 'H2O', coeff: 2 }], products: [{ id: 'H2', coeff: 1 }, { id: 'Cl2', coeff: 1 }, { id: 'NaOH', coeff: 2 }], condition: { electric: true, solution: true }, rate: RATE.electrolysis, skipAbsorb: true },
+  // 2H2O --通电--> 2H2↑ + O2↑（电解水：放在最后 = 电解液耗尽后才轮到水）
+  { type: 'electrolysis', reactants: [{ id: 'H2O', coeff: 2 }], products: [{ id: 'H2', coeff: 2 }, { id: 'O2', coeff: 1 }], condition: 'electric', rate: RATE.electrolysis * 0.5 },
 ];
 
 // ---- 自反应：气态还原（氧化物 + 大气 CO/H2，高温）----
@@ -3949,6 +4329,7 @@ exports.THERMAL_RULES = THERMAL_RULES;
 exports.CATALYTIC_RULES = CATALYTIC_RULES;
 exports.COMBUSTION_RULES = COMBUSTION_RULES;
 exports.AUTO_DECOMP_RULES = AUTO_DECOMP_RULES;
+exports.ELECTROLYSIS_RULES = ELECTROLYSIS_RULES;
 exports.GAS_REDUCTION_RULES = GAS_REDUCTION_RULES;
 exports.SOLID_REDUCTION_RULES = SOLID_REDUCTION_RULES;
 exports.SPECIAL_PAIR_RULES = SPECIAL_PAIR_RULES;
@@ -4521,6 +4902,36 @@ function penSides(b, o) {
 }
 
 /**
+ * 形状级"脚踩在 o 顶面"度量（integrateX 的 standing 判定用）。
+ * 遍历 b×o 的形状对，只统计**水平方向有重叠（含 eps 相切）**的对（脚落在 o 上方/边缘），
+ * 取 gap = b 形状底 - o 形状顶 的最小值（负值 = 悬在顶面上方 eps 内，正值 = 脚底嵌进顶面），
+ * 并记录该对的水平重叠宽 hov。
+ *
+ * 为什么不能只看整个 AABB 的 b.bottom：玩家网格被腐蚀后底面会不规则——AABB 底边可能是
+ * 另一块挂在物块**侧下方**的格子（真正的"龙骨"），而踩在物块顶面上的只是较高的一列。
+ * 只看 b.bottom 会把这种"脚已踩在顶面、身体另一处更低"的接触误判成侧面碰撞，随后
+ * tryPushX 把玩家脚下的物块横向推走（用户反馈：站在窄物块上向右走，物块跟着走）。
+ *
+ * 候选只收 gap ∈ [-2, cap]（cap = min(8, b.h*0.15, o.h*0.5)，至少 1.5 保旧语义）：
+ * 再深就属于侧面交点（交给推挤/阻挡），-2 覆盖 overlaps(eps=2) 的相切接触。
+ * 返回 { gap, hov } 或 null。
+ */
+function topContactOf(b, o) {
+  const cap = Math.max(1.5, Math.min(8, b.h * 0.15, o.h * 0.5));
+  let best = null;
+  for (const a of shapesOf(b)) {
+    for (const c of shapesOf(o)) {
+      const hov = Math.min(a.right, c.right) - Math.max(a.left, c.left);
+      if (hov <= -2) continue; // 水平方向也要在 eps 内（脚在物块上方/边缘）
+      const gap = a.bottom - c.top;
+      if (gap < -2 || gap > cap) continue;
+      if (!best || gap < best.gap || (gap === best.gap && hov > best.hov)) best = { gap, hov };
+    }
+  }
+  return best;
+}
+
+/**
  * X 轴是否应该做横向解算？
  * 垂直面接触（正在落地/撞顶，或深嵌但 MTV 会选垂直轴）时返回 false，把体交给
  * Y 轴/MTV——否则横向解算会把刚落到表面的体横着甩出去（"落地瞬移"），或在深嵌
@@ -4804,7 +5215,8 @@ class CollisionSystem {
         }
         const p = penSides(b, o);
         if (!xShouldResolve(b, p)) continue;
-        // 站在物块顶上（接触来自上方，只差亚像素）：把 b 顶回表面即可，不横向推/挡
+        // 站在可站物块顶上（接触来自上方）：把 b 顶回表面即可，不横向推/挡。
+        // ① 常规（旧规则，矩形玩家/既有手感不变）：AABB 底边贴住或略高于顶面。
         if (b.y < o.y && b.bottom <= o.top + 1.5 && supportsStanding(o)) {
           // 推动中的玩家站到小沉淀上 → 优先推开沉淀（推动优先于上台阶/踮脚）
           if (o.amount !== undefined && o.pushable && Math.abs(b.vel.x) > 50) {
@@ -4813,6 +5225,21 @@ class CollisionSystem {
           }
           b.setBottom(o.top);
           continue;
+        }
+        // ② 不规则底面（玩家网格被腐蚀出缺口）：AABB 底可能挂在物块侧下方，真正踩在
+        //    顶面上的只是较高的那列格子（形状级接触）。只看 b.bottom 会误判成侧碰 →
+        //    下面的 tryPushX 会把物块横向推走（"骑物块"回归）。对齐接触形状的脚底即可。
+        if (b.y < o.y && supportsStanding(o)) {
+          const stand = topContactOf(b, o);
+          // 脚踩在顶面而非侧面：脚底与顶面齐平/悬在 eps 内（gap ≤ 1.5）时，水平方向只要
+          // 在 eps 容差内（贴着物块角/边缘擦过）就按踩住处理、不横推；脚已嵌入较深
+          //（1.5 < gap ≤ cap）时，要求水平重叠大于嵌入深度-2px（避免把侧面浅推/上台阶
+          // 误判成站立）。cap 与 eps 见 topContactOf。
+          const footOnTop = stand && (stand.gap <= 1.5 ? stand.hov > -2 : stand.hov > stand.gap - 2);
+          if (footOnTop) {
+            b.y -= stand.gap; // 嵌入时抬升、悬在 eps 内时轻放（对矩形玩家等价于 setBottom）
+            continue;
+          }
         }
         if (o.pushable && this.tryPushX(o, dir, dynamics, statics, b, 0)) {
           continue; // 推开了，继续本子步的移动
@@ -7043,9 +7470,19 @@ exports.mix = mix;
 //   dir = -1  轻于空气的气体 → 上升气泡柱
 //   dir = +1  重于空气的气体 → 下沉气泡柱
 // 上升/下沉过程中被实心静态体（地板/顶板）阻断时立即消失。
+// 视觉：玻璃质感小泡——半透明淡青球体 + 亮外环 + 左上高光 + 底部反光；
+//   渲染层轻微摇摆/呼吸（确定性 sin，仅视觉；物理位置口径不变）。
 // ============================================================================
 
 const { Obj } = __require('src/objects/obj.js');;
+
+const TAU = Math.PI * 2;
+
+/** 确定性相位（由出生位置决定；同一位置的气泡摆动相位一致，可回放） */
+function phaseOf(x, y) {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return 0;
+  return ((x * 12.9898 + y * 78.233) % 6.283185307179586 + 6.283185307179586) % 6.283185307179586;
+}
 
 class Bubble extends Obj {
   constructor({ x, y, dir = -1, speed = 80, ...rest } = {}) {
@@ -7053,6 +7490,7 @@ class Bubble extends Obj {
     this.dir = dir;
     this.speed = speed;
     this.life = 2.0;
+    this._seed = phaseOf(x, y);
   }
 
   update(dt, scene) {
@@ -7070,23 +7508,39 @@ class Bubble extends Obj {
     if (this.life <= 0) scene.removeObject(this);
   }
 
-  render(ctx) {
+  render(ctx, opts = {}) {
+    const time = opts?.time ?? 0;
     const a = Math.max(0, Math.min(1, this.life * 0.7));
-    const x = this.x + this.w / 2;
-    const y = this.y + this.h / 2;
+    const px = this.x + this.w / 2 + Math.sin(time * 3.4 + this._seed) * 0.6; // 渲染层轻摆
+    const py = this.y + this.h / 2;
+    const r = (this.w / 2) * (1 + 0.07 * Math.sin(time * 4.6 + this._seed));
     ctx.save();
     ctx.globalAlpha = a;
-    ctx.shadowColor = 'rgba(150,225,255,0.9)';
-    ctx.shadowBlur = 8;
-    ctx.fillStyle = 'rgba(205,238,255,0.85)';
+    // 玻璃球体：极淡的淡青填充（能看到下层的液体/背景）
+    ctx.fillStyle = 'rgba(150,220,255,0.14)';
     ctx.beginPath();
-    ctx.arc(x, y, this.w / 2, 0, Math.PI * 2);
+    ctx.arc(px, py, r, 0, TAU);
     ctx.fill();
-    ctx.shadowBlur = 0;
-    // 高光
-    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    // 外环亮边（玻璃壁）
+    ctx.strokeStyle = 'rgba(196,238,255,0.78)';
+    ctx.lineWidth = 1.1;
     ctx.beginPath();
-    ctx.arc(x - this.w * 0.2, y - this.h * 0.2, this.w * 0.14, 0, Math.PI * 2);
+    ctx.arc(px, py, r, 0, TAU);
+    ctx.stroke();
+    // 底部内侧反光弧（泡壁的厚度感）
+    ctx.strokeStyle = 'rgba(130,205,250,0.42)';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(px, py, r * 0.74, Math.PI * 0.15, Math.PI * 0.85);
+    ctx.stroke();
+    // 左上高光（主亮斑 + 次亮斑）
+    ctx.fillStyle = 'rgba(255,255,255,0.88)';
+    ctx.beginPath();
+    ctx.arc(px - r * 0.34, py - r * 0.36, Math.max(0.7, r * 0.26), 0, TAU);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.42)';
+    ctx.beginPath();
+    ctx.arc(px + r * 0.26, py + r * 0.4, Math.max(0.5, r * 0.14), 0, TAU);
     ctx.fill();
     ctx.restore();
   }
@@ -7100,9 +7554,19 @@ exports.Bubble = Bubble;
 // 火星：金属燃烧（铁/镁/铝/钠/钾等在点燃条件下氧化）迸发的视觉粒子。
 // 无碰撞、短寿命：橙金亮点 + 辉光，随机初速上抛后受"重力"回落并闪烁消失。
 // 纯视觉（不参与化学/物理解算），由 scene.onSpark 在反应点生成。
+// 视觉：白热头部 + 沿速度反方向的三段渐隐拖尾（火星轨迹）+ 少量星芒；
+//   闪烁相位由出生位置哈希决定（确定性，可回放）。
 // ============================================================================
 
 const { Obj } = __require('src/objects/obj.js');;
+
+const TAU = Math.PI * 2;
+
+/** 确定性闪烁相位（出生位置哈希；不用随机数） */
+function phaseOf(x, y) {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return 0;
+  return ((x * 37.719 + y * 91.337) % 6.283185307179586 + 6.283185307179586) % 6.283185307179586;
+}
 
 class Spark extends Obj {
   constructor({ x, y, vx = 0, vy = 0, life = 0.8, color = '#ffb340', ...rest } = {}) {
@@ -7112,7 +7576,7 @@ class Spark extends Obj {
     this.life = life;
     this.maxLife = life;
     this.color = color;
-    this._seed = Math.random() * 10;
+    this._seed = phaseOf(x, y);
   }
 
   get hoverLabel() {
@@ -7132,19 +7596,53 @@ class Spark extends Obj {
     this.vx *= 1 - 2.5 * dt;
   }
 
-  render(ctx) {
+  render(ctx, opts = {}) {
     const t = 1 - this.life / this.maxLife; // 0..1 老化
-    const blink = 0.55 + 0.45 * Math.sin((this._seed + t * 24) * 3);
+    const time = opts?.time ?? 0;
+    const blink = 0.6 + 0.4 * Math.sin(this._seed + t * 24 + time * 3);
     const a = Math.max(0, 1 - t) * blink;
-    const R = 2.2 * (1 - t * 0.5);
+    const R = 2.3 * (1 - t * 0.5);
+    const cx = this.x + this.w / 2;
+    const cy = this.y + this.h / 2;
+    // 拖尾方向 = 速度反方向（速度过小时按竖直向上）
+    const sp = Math.hypot(this.vx, this.vy);
+    const dx = sp > 1 ? -this.vx / sp : 0;
+    const dy = sp > 1 ? -this.vy / sp : 1;
     ctx.save();
+    // 拖尾：三段由亮到暗渐隐，长度随速度/老化变化
+    const len = Math.min(16, 3 + sp * 0.035) * (1 - t * 0.55);
+    for (let i = 0; i < 3; i++) {
+      const k0 = (i / 3) * len;
+      const k1 = ((i + 1) / 3) * len;
+      ctx.globalAlpha = a * (0.5 - i * 0.14);
+      ctx.strokeStyle = i === 0 ? '#fff3c8' : i === 1 ? this.color : '#ff7a2d';
+      ctx.lineWidth = Math.max(0.6, R * (0.9 - i * 0.25));
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(cx + dx * k0, cy + dy * k0);
+      ctx.lineTo(cx + dx * k1, cy + dy * k1);
+      ctx.stroke();
+    }
+    // 火点头部（老化前段白热，之后回到焰色）
     ctx.globalAlpha = a;
     ctx.shadowColor = this.color;
     ctx.shadowBlur = 7;
-    ctx.fillStyle = t < 0.2 ? '#fff3c8' : this.color;
+    ctx.fillStyle = t < 0.2 ? '#fff7d6' : this.color;
     ctx.beginPath();
-    ctx.arc(this.x + this.w / 2, this.y + this.h / 2, R, 0, Math.PI * 2);
+    ctx.arc(cx, cy, R, 0, TAU);
     ctx.fill();
+    // 大颗火花带一点星芒（十字）
+    if (R > 1.4) {
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = 'rgba(255,244,205,0.85)';
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.moveTo(cx - R * 2.2, cy);
+      ctx.lineTo(cx + R * 2.2, cy);
+      ctx.moveTo(cx, cy - R * 2.2);
+      ctx.lineTo(cx, cy + R * 2.2);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 }
@@ -7158,12 +7656,16 @@ exports.Spark = Spark;
 //   dir = -1  上升气流（轻气体 H2/O2，把玩家/物块托起）
 //   dir = +1  下沉气流（重气体 CO2，把玩家/物块往下压）
 //   life > 0 时为临时气流（反应产气产生，到期消失）；0 表示常驻（关卡 ⑦）。
+// 视觉（新 Chezzle 语言）：气体色柔光柱（边缘柔化、顶部/底部淡出）+ 内部漂移
+//   气团 + 浮尘微光 + 暗紫金边小标签。动画全部确定性 sin 相位，物理口径不变。
 // ============================================================================
 
 const { Obj } = __require('src/objects/obj.js');;
 const { overlaps } = __require('src/physics/collision.js');;
 const { getSubstance } = __require('src/chem/substances.js');;
-const { luminance } = __require('src/render/theme.js');;
+const { luminance, rr } = __require('src/render/theme.js');;
+
+const TAU = Math.PI * 2;
 
 class GasColumn extends Obj {
   constructor({ x, y, w, h, accel = 1300, maxSpeed = 260, dir = -1, life = 0, gasId = null, label = null, source = null, ...rest } = {}) {
@@ -7199,49 +7701,97 @@ class GasColumn extends Obj {
     }
   }
 
-  render(ctx, scene) {
-    const t = scene.time ?? 0;
+  render(ctx, opts = {}) {
+    const t = (opts && opts.time) ?? 0;
+    const { x, y, w, h } = this;
+    if (!(w > 0 && h > 0)) return;
     ctx.save();
     // 柱体微光（按气体颜色；无气体信息用青色）
     const sub = this.gasId ? getSubstance(this.gasId) : null;
     const tint = sub?.gasColor ?? '#78dcff';
     const { r, g, b } = hexToRgb(tint);
-    const grad = ctx.createLinearGradient(this.x, this.y, this.x, this.y + this.h);
-    grad.addColorStop(0, `rgba(${r},${g},${b},0)`);
-    grad.addColorStop(0.5, `rgba(${r},${g},${b},0.12)`);
-    grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
-    ctx.fillStyle = grad;
-    ctx.fillRect(this.x, this.y, this.w, this.h);
-    // 气流发光粒子（方向按 dir：上浮或下沉）
-    const n = Math.min(30, Math.max(1, Math.round((this.w * this.h) / 600)));
-    for (let i = 0; i < n; i++) {
-      const bx = this.x + ((i * 7919) % 997) / 997 * this.w;
-      const phase = (t * 40 + i * 53) % (this.h + 30);
-      const by = this.dir < 0 ? this.y + this.h - phase : this.y + phase;
-      ctx.fillStyle = 'rgba(205,242,255,0.6)';
-      ctx.shadowColor = 'rgba(120,220,255,0.9)';
-      ctx.shadowBlur = 7;
-      ctx.beginPath();
-      ctx.arc(bx, by, 3, 0, Math.PI * 2);
-      ctx.fill();
+    const rgba = (a) => `rgba(${r},${g},${b},${a})`;
+    // 边缘柔化：外层宽而淡 + 内层窄而浓（两层同向渐变叠出"中间实、边缘虚"）
+    const fade = (a0, a1) => {
+      const grad = ctx.createLinearGradient(x, y, x, y + h);
+      grad.addColorStop(0, rgba(0));
+      grad.addColorStop(0.22, rgba(a0));
+      grad.addColorStop(0.55, rgba(a1));
+      grad.addColorStop(0.82, rgba(a0));
+      grad.addColorStop(1, rgba(0));
+      return grad;
+    };
+    ctx.fillStyle = fade(0.05, 0.12);
+    ctx.fillRect(x, y, w, h);
+    const innerW = w * 0.62;
+    ctx.fillStyle = fade(0.06, 0.16);
+    ctx.fillRect(x + (w - innerW) / 2, y + h * 0.06, innerW, h * 0.88);
+    // 内部漂移气团（2 缕径向柔光；确定性 sin）
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, w, h);
+    ctx.clip();
+    const minSide = Math.min(w, h);
+    for (let i = 0; i < 2; i++) {
+      const phase = t * (0.35 + i * 0.17) + i * 2.1;
+      const px = x + w * (0.5 + 0.24 * Math.sin(phase));
+      const py = y + h * (0.35 + 0.3 * Math.sin(phase * 0.8 + i * 1.7));
+      const pr = Math.max(6, minSide * (0.24 + i * 0.08));
+      const pg = ctx.createRadialGradient(px, py, 1, px, py, pr);
+      pg.addColorStop(0, rgba(0.10));
+      pg.addColorStop(1, rgba(0));
+      ctx.fillStyle = pg;
+      ctx.fillRect(px - pr, py - pr, pr * 2, pr * 2);
     }
+    // 浮尘微光：沿气流方向流动的小光点（确定性相位；数量按面积自适应并封顶）
+    const n = Math.min(16, Math.max(2, Math.round((w * h) / 1100)));
+    for (let i = 0; i < n; i++) {
+      const sx = x + ((i * 7919) % 997) / 997 * w; // 固定横向分布
+      const span = h + 26;
+      const phase = ((t * 40 + i * 53) % span + span) % span;
+      const sy = this.dir < 0 ? y + h - phase : y + phase;
+      const sway = Math.sin(t * 2.6 + i * 1.9) * Math.min(4, w * 0.08);
+      const edge = Math.min(1, Math.min(sy - y, y + h - sy) / 10); // 两端淡出
+      ctx.globalAlpha = 0.55 * (0.4 + 0.6 * ((i % 3) / 2)) * edge;
+      ctx.fillStyle = i % 2 ? 'rgba(215,245,255,0.85)' : rgba(0.75);
+      ctx.shadowColor = rgba(0.9);
+      ctx.shadowBlur = 5;
+      ctx.beginPath();
+      ctx.arc(sx + sway, sy, 1.3 + (i % 3) * 0.55, 0, TAU);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
     // 气体标签：反应产气的气流显示气体种类（NO2 红棕、Cl2 黄绿、H2/CO2 淡青…）
+    // 暗紫玻璃小面板 + 细金边（不写额外说明文字）
     const label = this.label ?? this.gasId;
     if (label) {
-      ctx.font = 'bold 11px "Segoe UI", "Microsoft YaHei", sans-serif';
+      const size = 11;
+      ctx.font = `bold ${size}px "Segoe UI", "Microsoft YaHei", sans-serif`;
       const tw = ctx.measureText(label).width;
       const lx = this.x + this.w / 2;
-      const ly = this.dir < 0 ? this.y - 6 : this.y + this.h + 16;
-      const pad = 4;
-      ctx.fillStyle = 'rgba(8,18,32,0.72)';
-      ctx.beginPath();
-      ctx.roundRect(lx - tw / 2 - pad, ly - 12, tw + pad * 2, 15, 4);
+      const ly = this.dir < 0 ? this.y - 4 : this.y + this.h + 14;
+      const pad = 5;
+      const boxW = tw + pad * 2;
+      const boxH = size + 5;
+      rr(ctx, lx - boxW / 2, ly - boxH + 2, boxW, boxH, 4);
+      const bg = ctx.createLinearGradient(0, ly - boxH + 2, 0, ly + 2);
+      bg.addColorStop(0, 'rgba(40,32,80,0.9)');
+      bg.addColorStop(1, 'rgba(14,10,36,0.9)');
+      ctx.fillStyle = bg;
       ctx.fill();
+      ctx.strokeStyle = 'rgba(232,184,75,0.5)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
       const dark = luminance(tint) < 110;
       ctx.fillStyle = dark ? '#eaf6ff' : tint;
+      ctx.shadowColor = dark ? 'rgba(255,255,255,0.4)' : tint;
+      ctx.shadowBlur = 4;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(label, lx, ly - 4);
+      ctx.fillText(label, lx, ly - boxH * 0.42 + 1);
+      ctx.shadowBlur = 0;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'alphabetic';
     }
@@ -7263,15 +7813,16 @@ exports.GasColumn = GasColumn;
   };
   __modules["src/objects/explosion.js"] = function (module, exports, __require) {
 // ============================================================================
-// 爆炸视觉 v3：
-//  白热闪核 → 14 瓣火团（翻涌边缘+二级甩出火团）→ 撕裂冲击环+径向光纹
-//  → 带下坠拖尾火星（1/3 按焰色反应上色）→ 碎片/余烬/烟尘 → 焰色残余辉光。
+// 爆炸视觉 v3（Chezzle 暗紫+金配色版）：
+//  白热闪核 → 14 瓣火团（翻涌边缘+二级甩出火团）→ 撕裂冲击环+金色外环+径向光纹
+//  → 带下坠拖尾火星（1/3 按焰色反应上色）→ 碎片/余烬/紫烟尘 → 焰色残余辉光。
 //  0.5s 后移除；每实例用确定性随机种子（连续爆炸不雷同）。
 // 物理冲击（炸飞/碎裂）由 Scene.explode 处理；本对象只负责视觉反馈。
 // ============================================================================
 
 const { Obj } = __require('src/objects/obj.js');;
 const { mix } = __require('src/render/color.js');;
+const { THEME } = __require('src/render/theme.js');;
 
 /** 确定性伪随机（mulberry32）：同一 Explosion 实例内每次渲染形状一致；不同实例不同形 */
 function mulberry32(seed) {
@@ -7396,6 +7947,20 @@ class Explosion extends Obj {
     ctx.beginPath();
     ctx.arc(x, y, R * (0.75 + 1.05 * ease), gapB, gapA + Math.PI * 2);
     ctx.stroke();
+    // 金色外环（Chezzle 金色冲击波：慢半拍扩张的细环，呼应细金边语言）
+    ctx.strokeStyle = rgbaOf(THEME.gold.base, 0.55);
+    ctx.lineWidth = 1.2;
+    ctx.shadowColor = rgbaOf(THEME.gold.light, 0.65);
+    ctx.shadowBlur = 7;
+    ctx.beginPath();
+    ctx.arc(x, y, R * (0.95 + 1.3 * ease), 0, Math.PI * 2);
+    ctx.stroke();
+    // 贴地压扁的冲击环（爆炸有重量感；椭圆而非正圆）
+    ctx.strokeStyle = rgbaOf(THEME.gold.light, 0.35);
+    ctx.lineWidth = (1 - t) * 2.4 + 0.6;
+    ctx.beginPath();
+    ctx.ellipse(x, y + R * 0.16, R * (0.65 + 1.15 * ease), R * (0.22 + 0.36 * ease), 0, 0, Math.PI * 2);
+    ctx.stroke();
     ctx.shadowBlur = 0;
     // ---- 径向光纹（前 35%"刀光"） ----
     if (t < 0.35) {
@@ -7468,12 +8033,12 @@ class Explosion extends Obj {
         ctx.fill();
       }
     }
-    // ---- 烟尘：深灰蓝团上升 + 余烬小亮点 ----
+    // ---- 烟尘：暗紫烟雾团上升（Chezzle 暗紫语言；外深内浅）+ 余烬小亮点 ----
     for (let i = 0; i < 5; i++) {
       const px = x + Math.sin(rnd[5 + i] * 9 + t * 1.5) * R * (0.5 + rnd[10 + i] * 0.4);
       const py = y - (4 + i * 8) * (0.4 + t * 1.2);
       ctx.globalAlpha = alpha * 0.3 * (1 - t * 0.55);
-      ctx.fillStyle = '#54596b';
+      ctx.fillStyle = i < 2 ? 'rgba(42,35,80,0.95)' : 'rgba(70,72,104,0.9)';
       ctx.beginPath();
       ctx.arc(px, py, 2.6 + t * 8.5 + rnd[i] * 2, 0, Math.PI * 2);
       ctx.fill();
@@ -7487,23 +8052,35 @@ class Explosion extends Obj {
       ctx.arc(ex, ey, Math.max(0.6, 1.8 - t), 0, Math.PI * 2);
       ctx.fill();
     }
-    // ---- 爆炸原因文本（调试）：炸点上方弹出，逐帧上浮淡出 ----
+    // ---- 爆炸原因文本（调试）：炸点上方弹出，逐帧上浮淡出；暗紫面板 + 细金边 ----
     if (this.cause && this.age < 0.32) {
       ctx.globalAlpha = Math.min(1, (0.32 - this.age) * 4);
       ctx.font = 'bold 12px "Segoe UI", "Microsoft YaHei", monospace';
       ctx.textAlign = 'center';
-      ctx.fillStyle = 'rgba(8,14,26,0.72)';
       const ty = y - R * 0.9 - 10;
       const tw = ctx.measureText(this.cause).width;
+      ctx.fillStyle = 'rgba(18,14,46,0.9)';
       ctx.beginPath();
       ctx.roundRect(x - tw / 2 - 6, ty - 14, tw + 12, 20, 6);
       ctx.fill();
+      ctx.strokeStyle = rgbaOf(THEME.gold.base, 0.55);
+      ctx.lineWidth = 1;
+      ctx.stroke();
       ctx.fillStyle = '#ffe9b0';
       ctx.fillText(this.cause, x, ty - 1);
       ctx.textAlign = 'left';
     }
     ctx.restore();
   }
+}
+
+/** 十六进制色 + 透明度 → rgba 字符串 */
+function rgbaOf(hex, a) {
+  const h = String(hex ?? '#ffffff').replace('#', '');
+  const n = h.length === 3
+    ? [parseInt(h[0] + h[0], 16), parseInt(h[1] + h[1], 16), parseInt(h[2] + h[2], 16)]
+    : [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  return `rgba(${n[0]},${n[1]},${n[2]},${Math.max(0, Math.min(1, a))})`;
 }
 
 exports.Explosion = Explosion;
@@ -7513,9 +8090,12 @@ exports.Explosion = Explosion;
 // ============================================================================
 // 反应标签（调试模式）：在反应发生的位置飘出"反应式"，缓慢上浮后淡出。
 // 调试模式下 scene.onReaction 在反应点生成。
+// 视觉：暗紫玻璃小面板 + 细金边（新 Chezzle 语言）+ 发光字；入场 0.14s 内
+//   从下往上轻推一点并淡入（确定性），不遮挡/不改反应逻辑。
 // ============================================================================
 
 const { Obj } = __require('src/objects/obj.js');;
+const { rr, screenTextScale, clearText } = __require('src/render/theme.js');;
 
 class ReactionLabel extends Obj {
   constructor({ x, y, text, color = '#9fd8ff' }) {
@@ -7532,29 +8112,57 @@ class ReactionLabel extends Obj {
     if (this.age >= this.life) scene.removeObject(this);
   }
 
-  render(ctx, scene) {
+  render(ctx, opts = {}) {
     const a = Math.max(0, 1 - this.age / this.life);
+    if (a <= 0.01) return;
     ctx.save();
     ctx.globalAlpha = a;
     // 字号按"屏幕实际像素"保证（低分辨率手机上世界字号被相机缩小后糊）
-    let size = 11;
-    try {
-      const m = ctx.getTransform ? ctx.getTransform() : null;
-      const s = m ? Math.hypot(m.a, m.b) : 1;
-      if (s > 0.01) size = Math.max(11, Math.min(24, Math.round(12 / s)));
-    } catch (e) { /* 老浏览器：基准字号 */ }
+    const k = screenTextScale(ctx, 11, 11, 1.6);
+    const size = Math.round(Math.max(11, 11 * k));
     ctx.font = `bold ${size}px "Segoe UI", "Microsoft YaHei", monospace`;
     const w = ctx.measureText(this.text).width;
-    // 深色圆角底（保证在任意背景可读）
-    ctx.fillStyle = 'rgba(6,14,28,0.72)';
-    ctx.beginPath();
-    ctx.roundRect(this.x - w / 2 - 6, this.y - size, w + 12, size + 6, 5);
+    // 入场：前 0.16s 从下方 5px 轻推到位（确定性 easeOut）
+    const enter = Math.min(1, this.age / 0.16);
+    const dy = (1 - (1 - Math.pow(1 - enter, 2))) * 5;
+    const cx = this.x;
+    const cy = this.y + dy;
+    const padX = Math.max(6, size * 0.5);
+    const boxW = w + padX * 2;
+    const boxH = size + 8;
+    // 面板：暗紫玻璃渐变 + 细金边 + 外发光
+    rr(ctx, cx - boxW / 2, cy - boxH + 2, boxW, boxH, boxH * 0.32);
+    const bg = ctx.createLinearGradient(0, cy - boxH + 2, 0, cy + 2);
+    bg.addColorStop(0, 'rgba(40,32,80,0.92)');
+    bg.addColorStop(1, 'rgba(14,10,36,0.92)');
+    ctx.fillStyle = bg;
     ctx.fill();
-    // 反应式文本
+    ctx.strokeStyle = 'rgba(232,184,75,0.55)';
+    ctx.lineWidth = 1;
+    ctx.shadowColor = 'rgba(232,184,75,0.35)';
+    ctx.shadowBlur = 4;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // 左侧色标（反应/物质色）——一小段竖线，不写文字
+    ctx.strokeStyle = this.color;
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(cx - boxW / 2 + 3.5, cy - boxH * 0.62);
+    ctx.lineTo(cx - boxW / 2 + 3.5, cy - boxH * 0.2);
+    ctx.stroke();
+    // 发光字
+    ctx.save();
+    ctx.font = `bold ${size}px "Segoe UI", "Microsoft YaHei", monospace`;
     ctx.fillStyle = this.color;
+    ctx.shadowColor = this.color;
+    ctx.shadowBlur = 5;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(this.text, this.x, this.y - size / 2 + 3);
+    ctx.fillText(this.text, cx, cy - boxH * 0.42 + 1);
+    ctx.restore();
+    // 暗色描边保证亮底/亮液体上也可读（clearText 自带细暗描边）
+    clearText(ctx, this.text, cx, cy - boxH * 0.42 + 1, this.color, `bold ${size}px "Segoe UI", "Microsoft YaHei", monospace`);
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
     ctx.restore();
@@ -7599,6 +8207,15 @@ class Container extends Obj {
     this.clipGrains = true; // 是否按 grainRegion 裁剪渲染（酒精灯关掉，让颗粒自然堆成小山）
     this.formulaVisible = true; // 是否显示化学式
     this.spillSides = false; // 灯等开放平台：颗粒可滚出左右边缘（堆不下从两侧滚落）
+    // ---- 通用视觉计时字段（非枚举：不进存档快照，只驱动渲染动画）----
+    // _liquidPulse：液量突变脉冲 0..1（update 检测 totalMass 突变触发；Pool/Beaker 传给 renderLiquid）
+    // _precipPulse：新增沉淀脉冲 0..1（addPrecipitate 触发；renderGrains 画扩散微光/亮边）
+    Object.defineProperty(this, '_liquidPulse', { value: 0, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, '_precipPulse', { value: 0, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, '_precipPulseColor', { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, '_precipPulseX', { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, '_precipPulseY', { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, '_prevLiquidMass', { value: null, writable: true, enumerable: false, configurable: true });
   }
 
   get hoverLabel() {
@@ -7649,12 +8266,22 @@ class Container extends Obj {
   /**
    * 增加沉淀（g）。point 为反应/放置位置（世界坐标）+ 生成宽幅；
    * 之后把颗粒数对账到与质量一致（避免逐次舍入导致收集后残留）。
+   * 同时点亮 `_precipPulse`（新增沉淀的扩散微光，renderGrains 读取；视觉专用，非枚举不进存档）。
    */
   addPrecipitate(id, mass, point, origin = null) {
     this.precipitates.set(id, (this.precipitates.get(id) ?? 0) + mass);
     // 记录该沉淀的生成来源（反应/放置/关卡预设），供调试悬停显示；未指明时保留已有来源或默认关卡生成
     if (origin) this.precipOrigins.set(id, origin);
     else if (!this.precipOrigins.has(id)) this.precipOrigins.set(id, { kind: 'level' });
+    if (mass > 0) {
+      const sub = getSubstance(id);
+      this._precipPulse = Math.max(this._precipPulse, Math.min(1, 0.45 + mass * 0.5));
+      this._precipPulseColor = (sub.solid && sub.solid.length) ? sub.solid[0] : '#c9b46a';
+      if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) {
+        this._precipPulseX = point.x;
+        this._precipPulseY = point.y;
+      }
+    }
     if (this.useGrains && mass > 0) this._syncGrains(id, point);
   }
 
@@ -7749,7 +8376,34 @@ class Container extends Obj {
     return obj.right > r.x && obj.left < r.x + r.w && obj.bottom > r.y && obj.top < r.y + r.h;
   }
 
+  /**
+   * 通用视觉计时（只驱动渲染动画，不参与物理/化学账本；字段非枚举，不进存档快照）：
+   *  - 液量突变：本刻 totalMass 与上一刻比较，超阈值（容量 1%，夹 0.8~8g）→
+   *    `_liquidPulse` 置高，由 Pool/Beaker 传给 renderLiquid 做涟漪/表面高光；
+   *  - 沉淀闪光：`addPrecipitate` 已置 `_precipPulse`，这里按 dt 线性衰减。
+   * 放在 update 顶部（先于颗粒物理）：容器当前没有颗粒时也照常计时。
+   */
+  _updateFx(dt) {
+    const total = this.solution.totalMass();
+    if (this._prevLiquidMass == null) {
+      this._prevLiquidMass = total;
+    } else {
+      const delta = Math.abs(total - this._prevLiquidMass);
+      const vol = this.solution.volume > 0 ? this.solution.volume : 0;
+      const trigger = Math.max(0.8, Math.min(8, vol * 0.01));
+      if (delta >= trigger) {
+        this._liquidPulse = Math.min(1, Math.max(this._liquidPulse, 0.45 + Math.min(0.55, delta / (trigger * 4))));
+      }
+      this._prevLiquidMass = total;
+    }
+    const lDecay = dt * 2.2;
+    if (this._liquidPulse > 0) this._liquidPulse = this._liquidPulse > lDecay ? this._liquidPulse - lDecay : 0;
+    const pDecay = dt * 2.6;
+    if (this._precipPulse > 0) this._precipPulse = this._precipPulse > pDecay ? this._precipPulse - pDecay : 0;
+  }
+
   update(dt, scene) {
+    this._updateFx(dt); // 视觉计时（与颗粒物理解耦：无颗粒容器也照常衰减/检测）
     // 颗粒 = 圆形沙粒的接触动力学（冲量 + 摩擦 + 少量位置修正）：
     //  重力全程作用；接触时速度冲量抵消法向（不反弹、不抖），摩擦阻尼切向（堆能立住）；
     //  位置修正只处理重叠的一小部分（≤5px/帧），不整量瞬移；
@@ -8056,10 +8710,23 @@ class Container extends Obj {
   }
 
   /** 渲染视觉颗粒：与自由沉淀粒子同一绘制（辉光/高光/深色白色光晕），
-   *  按 grainClip 裁剪（clipGrains=false 时不裁剪）——两套沉淀外观完全一致 */
+   *  按 grainClip 裁剪（clipGrains=false 时不裁剪）——两套沉淀外观完全一致。
+   *  额外加：堆底环境阴影（沉在池底更实）、新增沉淀的扩散微光（_precipPulse）。 */
   renderGrains(ctx) {
     if (!this.useGrains) return;
     const rg = this.grainRegion();
+    // 堆底环境阴影（一次渐变；开放平台/灯不画，避免压暗火焰）
+    if (this.clipGrains && rg.w > 0 && rg.h > 0) {
+      ctx.save();
+      const sg = ctx.createLinearGradient(rg.x, rg.y + rg.h * 0.7, rg.x, rg.y + rg.h);
+      sg.addColorStop(0, 'rgba(0,0,0,0)');
+      sg.addColorStop(1, 'rgba(0,0,0,0.26)');
+      this.grainClip(ctx, rg);
+      ctx.clip();
+      ctx.fillStyle = sg;
+      ctx.fillRect(rg.x, rg.y + rg.h * 0.7, rg.w, rg.h * 0.3);
+      ctx.restore();
+    }
     ctx.save();
     if (this.clipGrains) {
       this.grainClip(ctx, rg);
@@ -8069,6 +8736,38 @@ class Container extends Obj {
       const sub = getSubstance(g.id);
       const c = sub.solid && sub.solid.length ? sub.solid[0] : '#c9b46a';
       renderPrecipitateBall(ctx, g.x, g.y, g.r * 2, c);
+    }
+    ctx.restore();
+    // 沉淀新增脉冲：一圈扩散微光 + 亮边（确定性衰减，不改变化学/物理）
+    this._renderPrecipPulse(ctx, rg);
+  }
+
+  /** 沉淀新增反馈：扩散光环（由 _precipPulse 驱动，材质色；无脉冲时不画） */
+  _renderPrecipPulse(ctx, rg) {
+    const p = this._precipPulse;
+    if (!(p > 0.01) || !rg || rg.w <= 0 || rg.h <= 0) return;
+    const hasPos = Number.isFinite(this._precipPulseX) && Number.isFinite(this._precipPulseY);
+    const cx = hasPos ? this._precipPulseX : rg.x + rg.w / 2;
+    const cy = hasPos ? this._precipPulseY : rg.y + rg.h * 0.82;
+    const maxR = Math.max(14, Math.min(48, Math.max(rg.w, rg.h) * 0.5));
+    const r = 5 + (1 - p) * maxR;
+    const color = this._precipPulseColor || '#e8b84b';
+    ctx.save();
+    ctx.globalAlpha = p * 0.55;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2 + p * 2;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    if (p > 0.35) {
+      ctx.globalAlpha = (p - 0.35) * 0.6;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r * 0.62, 0, Math.PI * 2);
+      ctx.stroke();
     }
     ctx.restore();
   }
@@ -8112,6 +8811,7 @@ function flushLabels(ctx) {
     const bx = Math.max(4, Math.min(W - 4 - c.bw, c.bx));
     const by = Math.max(4, Math.min(H - 4 - c.bh, c.by));
     ctx.font = `bold ${c.fs}px monospace`;
+    // 简洁标签：暗底圆角 + 细边框 + 清晰描边字（无角标/色条等装饰）
     ctx.fillStyle = 'rgba(12,9,34,0.72)';
     rr(ctx, bx, by, c.bw, c.bh, 5);
     ctx.fill();
@@ -8329,7 +9029,15 @@ exports.fitCanvasToWindow = fitCanvasToWindow;
 const { Obj } = __require('src/objects/obj.js');;
 const { overlaps } = __require('src/physics/collision.js');;
 const { applyInventorySetup } = __require('src/level/items.js');;
-const { screenTextScale } = __require('src/render/theme.js');;
+const { rr, screenTextScale } = __require('src/render/theme.js');;
+const { hexToRgb } = __require('src/render/color.js');;
+const { sfx } = __require('src/core/audio.js');;
+
+/** 十六进制色 + 透明度 → rgba 字符串（装置组视觉共用） */
+function rgbaOf(hex, a) {
+  const c = hexToRgb(hex);
+  return `rgba(${c.r},${c.g},${c.b},${a})`;
+}
 
 const EMBED_TOL = 8; // 落点嵌入实心体多少 px 以内仍可落（物理一帧即可温柔推开）
 function overlapsBox(box, o, m = EMBED_TOL) {
@@ -8407,6 +9115,9 @@ class Portal extends Obj {
     this.inventory = inventory ?? null;
     this.clearInventory = !!clearInventory;
     this.pair = null; // 对侧门（惰性解析）
+    // 纯视觉：通过脉冲（0..1 衰减 ~0.5s）+ 能量幕开关渐变（确定性，不参与传送判定）
+    this._passPulse = 0;
+    this._gate = 0;
   }
 
   get hoverLabel() {
@@ -8480,9 +9191,13 @@ class Portal extends Obj {
   }
 
   update(dt, scene) {
+    // ---- 纯视觉计时先推进（没有配对门也要流动/衰减；不影响传送逻辑）----
+    if (this._passPulse > 0) this._passPulse = Math.max(0, this._passPulse - dt / 0.5);
+    const activeNow = scene ? this._isActive(scene) : false;
+    this._gate += ((activeNow ? 1 : 0) - this._gate) * (1 - Math.exp(-8 * dt)); // 能量幕开关渐变
     const pair = this._resolvePair(scene);
     if (!pair) return;
-    const active = this._isActive(scene); // 绑定开关时只有开关开启才传送
+    const active = activeNow; // 绑定开关时只有开关开启才传送
     const crossScene = this.pairScene && this.pairScene !== scene;
     // 候选：动态体（玩家/物块）+ 自由沉淀粒子
     for (const obj of [...scene.dynamics, ...scene.particles]) {
@@ -8506,6 +9221,9 @@ class Portal extends Obj {
             });
             this._applyInventory(obj);
             this._consumeUse(scene, pair);
+            // 视觉：两端门各闪一下（通过脉冲；纯表现层）
+            this._passPulse = 1;
+            if (pair) pair._passPulse = 1;
           }
           continue;
         }
@@ -8516,6 +9234,10 @@ class Portal extends Obj {
         obj._portalLast = pair; // 站在对侧门内：本门不重复触发；离开本门后才能再进本门
         this._applyInventory(obj);
         this._consumeUse(scene, pair);
+        // 视觉：两端门各闪一下（通过脉冲；纯表现层）
+        this._passPulse = 1;
+        if (pair) pair._passPulse = 1;
+        sfx('portal'); // 同场景传送：真正移动的那一刻
       } else if (!inside && obj._portalLast === this) {
         // 已走出本门：允许下次再进本门
         obj._portalLast = null;
@@ -8550,59 +9272,93 @@ class Portal extends Obj {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // 渲染（简洁版）：深紫石/钢拱门框 + 一条细金内缘 + 门色能量幕（单层流动漩涡）+
+  //   通过时的克制涟漪脉冲（_passPulse）；绑定开关关闭时能量幕平滑变暗（_gate）。
+  //   无星点/多层弧线/符文/拱心石装饰。
+  // ---------------------------------------------------------------------------
   render(ctx, opts) {
-    // 渲染器传的是 opts（{ scene, time, ... }），必须先解出 scene 再访问 scene.byId
     const scene = opts?.scene ?? null;
-    const t = scene?.time ?? 0;
+    const t = opts?.time ?? 0;
     const cx = this.x + this.w / 2;
     const cy = this.y + this.h / 2;
     const active = this._isActive(scene); // 绑定开关未开 → 熄灭
+    const gate = Math.max(0, Math.min(1, Number.isFinite(this._gate) ? this._gate : (active ? 1 : 0)));
+    const pulse = Math.max(0, Math.min(1, this._passPulse ?? 0));
     const col = active ? this.color : '#4a4f70';
-    const blur = active ? 14 : 0;
+    const W = this.w;
+    const H = this.h;
+    if (!(W > 0 && H > 0)) return;
+    const frame = Math.max(2, Math.min(5, Math.floor(Math.min(W, H) * 0.12)));
     ctx.save();
-    // 外框（同色发光；未激活时熄灭）
-    ctx.strokeStyle = col;
-    ctx.lineWidth = 2;
-    ctx.shadowColor = active ? this.color : 'transparent';
-    ctx.shadowBlur = blur;
-    this._arch(ctx, 0);
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-    // 内部漩涡（径向渐变 + 旋转符文粒子）
-    const g = ctx.createRadialGradient(cx, cy, 2, cx, cy, this.w * 0.55);
-    g.addColorStop(0, active ? '#f2e6ff' : '#5a5f74');
-    g.addColorStop(0.45, col);
-    g.addColorStop(1, active ? 'rgba(90,42,154,0)' : 'rgba(60,60,80,0)');
+    // ---- 1) 门洞能量幕（裁剪在拱内）----
     ctx.save();
-    this._arch(ctx, 3);
+    this._arch(ctx, frame);
     ctx.clip();
-    ctx.fillStyle = g;
-    ctx.fillRect(this.x, this.y, this.w, this.h);
-    const n = 10;
-    for (let i = 0; i < n; i++) {
-      const a = t * 1.6 + (i / n) * Math.PI * 2;
-      const rr = 4 + ((i * 37) % (this.w / 2));
-      const px = cx + Math.cos(a) * rr;
-      const py = cy + Math.sin(a) * rr * 0.8;
-      ctx.fillStyle = 'rgba(242,230,255,0.85)';
+    // 暗腔
+    ctx.fillStyle = 'rgba(5,4,16,0.94)';
+    ctx.fillRect(this.x, this.y, W, H);
+    if (gate > 0.01) {
+      // 能量幕：径向亮核 + 门色渐变（单层）
+      const rg = ctx.createRadialGradient(cx, cy, 1, cx, cy, H * 0.72);
+      rg.addColorStop(0, `rgba(255,255,255,${(0.32 * gate).toFixed(3)})`);
+      rg.addColorStop(0.3, rgbaOf(col, 0.52 * gate));
+      rg.addColorStop(0.75, rgbaOf(col, 0.2 * gate));
+      rg.addColorStop(1, 'rgba(40,20,80,0)');
+      ctx.fillStyle = rg;
+      ctx.fillRect(this.x, this.y, W, H);
+      // 单条缓慢旋转的能量流（确定性）
+      ctx.strokeStyle = rgbaOf('#f2e6ff', 0.24 * gate);
+      ctx.lineWidth = Math.max(1, W * 0.03);
+      const rot = t * 1.1;
       ctx.beginPath();
-      ctx.arc(px, py, 1.8, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.ellipse(cx, cy, W * 0.3, H * 0.29, rot * 0.3, rot, rot + Math.PI * 1.25);
+      ctx.stroke();
+      // 通过脉冲：一圈克制的涟漪光
+      if (pulse > 0.01) {
+        const pr = H * (0.2 + 0.55 * (1 - pulse));
+        ctx.strokeStyle = rgbaOf('#fff2d0', 0.55 * pulse);
+        ctx.lineWidth = 1.2 + 1.2 * pulse;
+        ctx.beginPath();
+        ctx.arc(cx, cy, pr, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    } else {
+      // 未激活：暗腔里极淡的余辉
+      ctx.fillStyle = rgbaOf(col, 0.06);
+      ctx.fillRect(this.x, this.y, W, H);
     }
     ctx.restore();
-    // 顶部不再显示分组（组色圆点 + 「组N」标签都按用户要求去掉）：
-    // 门的配对关系由颜色本身表达；剩余次数徽标照旧显示。
-    // n次门：顶部显示剩余次数（无限次数不显示）——大号数字 + 深色底板（任何背景下可读）
+    // ---- 2) 门框：深紫石/钢拱环 + 一条细金内缘（无符文/拱心石）----
+    ctx.beginPath();
+    this._archTrail(ctx, 0);
+    this._archTrail(ctx, frame);
+    const stone = ctx.createLinearGradient(this.x, this.y, this.x + W, this.y + H);
+    stone.addColorStop(0, '#4a5180');
+    stone.addColorStop(0.5, '#33385a');
+    stone.addColorStop(1, '#1b2038');
+    ctx.fillStyle = stone;
+    ctx.fill('evenodd');
+    ctx.strokeStyle = 'rgba(8,6,22,0.92)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    this._archTrail(ctx, 0);
+    ctx.stroke();
+    // 细金内缘（激活稍亮，无辉光）
+    ctx.beginPath();
+    this._arch(ctx, frame + 0.6);
+    ctx.strokeStyle = gate > 0.05 ? 'rgba(255,233,176,0.72)' : 'rgba(169,120,42,0.6)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    // ---- 3) 剩余次数徽标（原版样式：大号数字 + 深色底板；无限次数不显示）----
     if (Number.isFinite(this.usesLeft)) {
-      ctx.shadowBlur = 0;
-      const kn = screenTextScale(ctx, 16, 12); // 次数数字保底 12px、上限 1.15（别盖过组号）
+      const kn = screenTextScale(ctx, 16, 12);
       ctx.font = `bold ${Math.round(16 * kn * 10) / 10}px monospace`;
       ctx.textAlign = 'center';
       const txt = String(this.usesLeft);
       const tw = ctx.measureText(txt).width;
-      ctx.fillStyle = 'rgba(16,20,40,0.78)';
-      ctx.beginPath();
-      ctx.roundRect(cx - tw / 2 - 5 * kn, this.y - 31 * kn, tw + 10 * kn, 21 * kn, 6 * kn);
+      rr(ctx, cx - tw / 2 - 5 * kn, this.y - 31 * kn, tw + 10 * kn, 21 * kn, 6 * kn);
+      ctx.fillStyle = 'rgba(16,20,40,0.82)';
       ctx.fill();
       ctx.fillStyle = active ? '#ffffff' : '#9fb2c8';
       ctx.fillText(txt, cx, this.y - 16 * kn);
@@ -8611,14 +9367,20 @@ class Portal extends Obj {
     ctx.restore();
   }
 
-  /** 拱形门路径 */
+  /** 拱形路径（独立 beginPath；inset 为向内缩进） */
   _arch(ctx, inset) {
+    ctx.beginPath();
+    this._archTrail(ctx, inset);
+    ctx.closePath();
+  }
+
+  /** 向当前路径追加拱形轮廓（不自开路径：供 even-odd「门框环」组合子路径用） */
+  _archTrail(ctx, inset) {
     const x = this.x + inset;
     const y = this.y + inset;
     const w = this.w - inset * 2;
     const h = this.h - inset * 2;
     const r = w / 2;
-    ctx.beginPath();
     ctx.moveTo(x, y + h);
     ctx.lineTo(x, y + r);
     ctx.arcTo(x, y, x + r, y, r);
@@ -8633,37 +9395,88 @@ exports.Portal = Portal;
   };
   __modules["src/level/items.js"] = function (module, exports, __require) {
 // ============================================================================
-// 可携带物品（集气瓶 / 烧杯 / 滴管）互动逻辑
+// 可拾取物品（集气瓶 / 烧杯 / 滴管）互动逻辑
 // ----------------------------------------------------------------------------
-// 按键语义（全部基于"选中的物品栏格子"）：
-//  - C（选中空格）：拾取附近最近的一个可携带物品（一物一格，不堆叠）；
-//  - C（选中烧杯/滴管）：从最近的液体容器（药品池/烧杯）吸液——烧杯 20g/次
-//    （可混合、直到满），滴管 5g/次（**同种液体可反复续吸至容量上限 50g**，
-//    装着别的液体则不能续吸）；
-//  - C（按住，选中集气瓶）：把最近气泡柱产生的气体直接截留进瓶（5g 封顶）；
-//  - X（选中烧杯）：把烧杯里的液体倒入最近的烧杯/药品池，**每次倒 10g**
-//    （滴管不行）；
-//  - X（按住，选中集气瓶）：向最近的液体容器通入气体（0.05g/s）；
-//  - Shift：把选中格里的物品放到玩家身旁（集气瓶与烧杯一样有碰撞箱可推动，
-//    滴管无碰撞箱可拖动）。
+// 通用操作（所有物品/沉淀一样）：
+//  - Q：拾取附近最近的一个可拾取物品（一物一格，不堆叠；物品格满则收不了）；
+//       附近没有物品时按原语义收集沉淀；
+//  - Shift：把选中格里的物品放到玩家身旁（集气瓶与烧杯有碰撞箱可推动，滴管无碰撞箱可拖动）。
+//
+// 物品自定义操作（见 carryActionsOf：选中物品后才出现，最多两个，绑定可改键动作
+// grab/use——设置里显示为「物品操作 1/2」；名称/图标由物品自己定义）：
+//  - 烧杯：C 吸液（20g/次，可混合到满） / X 倒出（10g/次）；
+//  - 滴管：C 吸液（5g/次，只能装同一种液体） / X 滴加（向最近容器滴一滴，默认 0.5g；
+//          世界里的滴管仍可点胶头/长按/拖动做精细操作）；
+//  - 集气瓶：C 按住集气（截留最近气泡柱产气，5g 封顶） / X 按住通气（0.05g/s）。
 // ============================================================================
 
 const { CFG } = __require('src/core/config.js');;
 const { solutionColor } = __require('src/render/liquidrender.js');;
-const { puffFx, flowFx } = __require('src/objects/fx.js');;
+const { puffFx, flowFx, sparkleFx, rippleFx, arcFx, swirlFx } = __require('src/objects/fx.js');;
+const { getSubstance } = __require('src/chem/substances.js');;
 const { Bubble } = __require('src/objects/bubble.js');;
 const { Beaker } = __require('src/objects/beaker.js');;
 const { Dropper } = __require('src/objects/dropper.js');;
 const { GasBottle } = __require('src/objects/gasbottle.js');;
+const { Drip } = __require('src/objects/drip.js');;
+const { sfx } = __require('src/core/audio.js');;
 
 let FX_SEQ = 0; // 特效对象 id 序号（fx.js 的计数器不跨模块共享）
+
+/** 可拾取物品的"物品栏操作"定义（数据驱动；HUD/触屏/玩家共用）。
+ *  action = 输入动作 id（grab/use，即设置里的物品操作 1/2）；id = 语义；
+ *  label/icon = 按钮与键位提示显示；press = 按一下执行；hold+holdFn = 按住每 tick 执行。
+ *  以后新增可拾取物品只需在这里加一条（不用改 HUD/输入）。 */
+const CARRY_ACTIONS = {
+  beaker: [
+    { action: 'grab', id: 'suck', label: '吸液', icon: 'beakerSuck', press: (p, s) => drawLiquid(p, s) },
+    { action: 'use', id: 'pour', label: '倒出', icon: 'beakerPour', press: (p, s) => pourBeaker(p, s) },
+  ],
+  dropper: [
+    { action: 'grab', id: 'suck', label: '吸液', icon: 'dropperSuck', press: (p, s) => drawLiquid(p, s) },
+    { action: 'use', id: 'drip', label: '滴加', icon: 'dropperDrip', press: (p, s) => dripCarriedDropper(p, s) },
+  ],
+  bottle: [
+    { action: 'grab', id: 'gasCollect', label: '集气', icon: 'bottleCollect', hold: true,
+      holdFn: (p, s) => { s._gasHold = p.inventory.selectedItem(); } },
+    { action: 'use', id: 'gasInject', label: '通气', icon: 'bottleInject', hold: true,
+      holdFn: (p, s, dt) => injectBottleGas(p, s, dt) },
+  ],
+};
+
+/** 选中某个可拾取物品时提供的操作（无物品/未知物品 = []） */
+function carryActionsOf(item) {
+  const kind = item && item.isCarryItem;
+  return (kind && CARRY_ACTIONS[kind]) || [];
+}
+
+
+/** 十六进制色 → 'r,g,b' 三元组（PuffDust 的 color 参数格式） */
+function rgbTripleOf(hex) {
+  const h = String(hex ?? '#9fd8ff').replace('#', '');
+  const n = h.length === 3
+    ? [parseInt(h[0] + h[0], 16), parseInt(h[1] + h[1], 16), parseInt(h[2] + h[2], 16)]
+    : [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  return `${n[0]},${n[1]},${n[2]}`;
+}
+
+/** 气体显示色（集气瓶通气/分页视觉取色；气体未声明 gasColor → 通用气流青） */
+function gasTintOf(id) {
+  return getSubstance(id)?.gasColor ?? '#78dcff';
+}
 
 /** 放置落点是否被占用：与其它可携带物品、实心动态体（装置壁）、实心放置粒子重叠 */
 function spotBlocked(scene, o, x, y) {
   const m = 3; // 收缩容差：贴边不算
   const l = x + m, r = x + o.w - m, t = y + m, b = y + o.h - m;
+  // 玩家自身也占位：物品不能放到玩家身上（否则烧杯会把玩家包进去，物理互相挤压，
+  // 玩家还会被判定为"在杯内"而与杯里的液体反应）。拥挤时宁可不放下、留在物品栏。
+  const p = scene.player;
+  if (p && !p.hidden
+    && r > p.x + m && l < p.x + p.w - m
+    && b > p.y + m && t < p.y + p.h - m) return true;
   for (const s of scene.objects) {
-    if (s === scene.player || !s || s.hidden) continue;
+    if (s === p || !s || s.hidden) continue;
     if (typeof s.amount === 'number' && !s.solid) continue; // 软体自由粒子不挡
     const isCarry = !!s.isCarryItem;
     if (!(isCarry || s.solid)) continue; // 只看实体类；区域容器（池等）允许浸入
@@ -8698,18 +9511,30 @@ function nearestCarryItem(scene, player) {
 }
 
 /**
- * C 拾取：选中格必须**为空**，把最近的可携带物品收进该格（连同其内容物）。
- * 物品不堆叠：一物一格，重复拾取需要依次选空格。
+ * Q 拾取：把最近的可拾取物品收进物品栏（连同其内容物）。
+ * 优先放进当前选中的空格；选中格不是空时找第一个空格——与收集沉淀一样跨格收集。
+ * 物品不堆叠：一物一格，重复拾取会依次占用空格；物品格满则收不了。
  */
 function pickupItem(player, scene) {
   const inv = player.inventory;
-  if (inv.selectedSlot() !== null) return false;
+  const slot = inv.selectedSlot() === null ? inv.selected : inv.slots.findIndex((s) => s === null);
+  if (slot < 0) return false;
   const o = nearestCarryItem(scene, player);
   if (!o) return false;
-  // 吸入特效：物品位置一圈尘雾（先于移除取坐标）
-  puffFx(scene, o.x + o.w / 2, o.y + o.h * 0.4);
+  // 吸入特效：物品位置一圈尘雾（先于移除取坐标）+ 金色闪光 + 短弧光（物品 → 手边）
+  const fx = o.x + o.w / 2;
+  const fy = o.y + o.h * 0.4;
+  puffFx(scene, fx, fy);
+  sparkleFx(scene, fx, fy, { color: '#ffd76a', n: 7, spread: 20, rise: 14, life: 0.42, size: 2.2 });
+  swirlFx(scene, fx, fy, { color: '#ffd76a', r: 13, life: 0.3, arms: 3 });
+  arcFx(scene, {
+    x0: fx, y0: fy,
+    x1: player.x + player.w / 2, y1: player.y + player.h * 0.42,
+    color: 'rgba(255,215,106,0.85)', life: 0.28, bend: 0.3, width: 1.8,
+  });
   scene.removeItem(o); // 深度移除（烧杯含杯壁子体）
-  inv.slots[inv.selected] = { item: o.isCarryItem, obj: o };
+  inv.slots[slot] = { item: o.isCarryItem, obj: o };
+  sfx('item.pickup');
   return true;
 }
 
@@ -8744,14 +9569,28 @@ function placeCarriedItem(player, scene) {
         break;
       }
     }
-    if (!found && !spotBlocked(scene, o, player.x, y)) x = player.x; // 最后兜底：正下方
+    // 所有探测位都堵死（含玩家自身/地形）：不放下，物品留在物品栏，并给一句 HUD 提示。
+    // 旧逻辑最后兜底放到玩家正下方 → 与玩家重叠，玩家被算作"在杯内"，两者互相挤压。
+    if (!found) {
+      scene._notice = { text: '这里放不下', t: scene.time ?? 0 };
+      return false;
+    }
   }
   o.x = x;
   o.y = y;
   if (Number.isFinite(o.rx)) { o.rx = o.x; o.ry = o.y; } // 滴管渲染平滑坐标同步（防放置瞬移残影）
   scene.addItem(o);
-  puffFx(scene, x + o.w / 2, y + o.h - 3); // 落地尘雾
+  // 落地反馈：尘雾 + 金色细闪 + 地面涟漪；物品 0.22s 缩放入场（Renderer 的
+  // appearFade 淡入机制，不改放置逻辑/位置）
+  const cx = x + o.w / 2;
+  const fy = y + o.h - 3;
+  puffFx(scene, cx, fy);
+  sparkleFx(scene, cx, fy - 2, { color: '#ffd76a', n: 6, spread: 18, rise: 12, life: 0.38, size: 2 });
+  rippleFx(scene, cx, y + o.h, { color: 'rgba(210,222,248,0.7)', r0: 4, r1: Math.max(18, o.w * 0.9), life: 0.38, width: 1.6, flat: 0.32 });
+  o.appearTime = scene.time;
+  o.appearFade = 0.22;
   inv.slots[inv.selected] = null;
+  sfx('item.place');
   return true;
 }
 
@@ -8793,14 +9632,16 @@ function nearestLiquidTarget(scene, player, range = CFG.item.liquidRange, needWa
   return best && bd <= range ? best : null;
 }
 
-/** 吸液特效：从容器液面到玩家的一串上行液滴（纯视觉） */
+/** 吸液特效：从容器液面到玩家的一串上行液滴 + 液面涟漪（纯视觉） */
 function _suckFx(scene, src, player) {
   const r = src.innerRect ? src.innerRect() : { x: src.x + 4, y: src.y + 6, w: src.w - 8, h: src.h - 12 };
   // 液面近似：按容器高度中点取上沿区域即可（视觉用途，无需精确）
   const col = solutionColor(src.solution).color;
+  const sx = Math.max(r.x + 4, Math.min(r.x + r.w - 4, player.x + player.w / 2));
+  const sy = r.y + Math.min(10, r.h * 0.3);
   flowFx(scene, {
-    x0: Math.max(r.x + 4, Math.min(r.x + r.w - 4, player.x + player.w / 2)),
-    y0: r.y + Math.min(10, r.h * 0.3),
+    x0: sx,
+    y0: sy,
     x1: player.x + player.w / 2,
     y1: player.y + player.h * 0.35,
     color: col,
@@ -8808,6 +9649,9 @@ function _suckFx(scene, src, player) {
     n: 8,
     bend: 0.3,
   });
+  // 液面被吸起的涟漪 + 少量水花（"有东西被抽走"）
+  rippleFx(scene, sx, r.y + 4, { color: col, r0: 3, r1: Math.max(14, r.w * 0.35), life: 0.4, width: 1.4, flat: 0.28 });
+  puffFx(scene, sx, r.y + 4, { color: rgbTripleOf(col), r: 2.6, spread: 9, life: 0.3, n: 4 });
 }
 
 /**
@@ -8833,6 +9677,7 @@ function drawLiquid(player, scene) {
       if (v > 1e-9) o.noteSolOrigin?.(id, { kind: 'fill', text: '吸液入杯' });
     }
     _suckFx(scene, src, player); // 吸液液流动画
+    sfx('item.suck');
     return true;
   }
   if (slot.item === 'dropper') {
@@ -8861,9 +9706,49 @@ function drawLiquid(player, scene) {
       o.liquid += got;
     }
     _suckFx(scene, src, player); // 吸液液流动画
+    sfx('item.suck');
     return true;
   }
   return false;
+}
+
+/**
+ * X 滴加：选中背包里的滴管时，向最近的容器滴一滴（默认 0.5g）。
+ * 世界里放下的滴管仍可用"点胶头 / 长按 / 拖动"做精细操作；这里给物品栏操作一个快捷方式。
+ * 目标与吸液/倒出同一套距离（边缘 80px），跳过已满的烧杯。
+ */
+function dripCarriedDropper(player, scene) {
+  const slot = player.inventory.selectedSlot();
+  if (!slot || slot.item !== 'dropper') return false;
+  const o = slot.obj;
+  if (o.liquid <= 1e-9) return false;
+  const target = nearestLiquidTarget(scene, player, CFG.item.liquidRange, false, true);
+  if (!target) return false;
+  const take = Math.min(o.drop, o.liquid);
+  if (take <= 1e-9) return false;
+  target.solutionMat.add(o.substance, take);
+  if (o.substance !== 'H2O') target.noteSolOrigin?.(o.substance, { kind: 'dropper', text: '滴管滴入' });
+  o.liquid -= take;
+  // 落点：目标口沿附近（化学/气泡围绕滴入点发生）
+  const ir = target.innerRect();
+  const dx = Math.max(ir.x + 4, Math.min(ir.x + ir.w - 4, player.x + player.w / 2));
+  const dy = Math.max(ir.y + 4, Math.min(ir.y + ir.h - 6, ir.y + 8));
+  target.depositAt = { x: dx, y: dy };
+  // 视觉：手边一束细液流 + 一颗液滴从容器口上方落到液面
+  const { color } = o.liquidColor();
+  const hx = player.x + player.w / 2;
+  const hy = player.y + player.h * 0.38;
+  flowFx(scene, { x0: hx, y0: hy, x1: dx, y1: ir.y + 5, color, life: 0.3, n: 6, bend: 0.25 });
+  rippleFx(scene, dx, ir.y + 4, { color, r0: 3, r1: Math.max(14, ir.w * 0.3), life: 0.35, width: 1.3, flat: 0.3 });
+  scene.addObject(new Drip({
+    x: dx - 2,
+    y: ir.y - 18,
+    targetY: ir.y + 6,
+    color,
+    id: `drip${++FX_SEQ}`,
+  }));
+  sfx('item.drip');
+  return true;
 }
 
 /**
@@ -8893,6 +9778,19 @@ function pourBeaker(player, scene) {
   for (const [id, v] of Object.entries(sample.solutes ?? {})) {
     if (v > 1e-9) target.noteSolOrigin?.(id, { kind: 'pour', text: '烧杯倒入' });
   }
+  // 倒出反馈：杯口 → 目标液面的液流弧 + 落点涟漪/水花（"看得见液真的倒进去"）
+  const ir = target.innerRect();
+  const bx = o.x + o.w / 2;
+  const towardRight = (target.x + (target.w ?? 0) / 2) >= bx;
+  const lipX = bx + (towardRight ? 1 : -1) * Math.max(6, o.w / 2 - 5);
+  const lipY = o.y + 10;
+  const tx = Math.max(ir.x + 6, Math.min(ir.x + ir.w - 6, lipX + (towardRight ? -10 : 10)));
+  const ty = ir.y + 5;
+  const col = solutionColor(o.solution).color;
+  flowFx(scene, { x0: lipX, y0: lipY, x1: tx, y1: ty, color: col, life: 0.45, n: 8, bend: 0.22 });
+  rippleFx(scene, tx, ir.y + 4, { color: col, r0: 4, r1: Math.max(16, ir.w * 0.4), life: 0.42, width: 1.5, flat: 0.3 });
+  puffFx(scene, tx, ir.y + 4, { color: rgbTripleOf(col), r: 3, spread: 10, life: 0.3, n: 4 });
+  sfx('item.pour');
   return true;
 }
 
@@ -8913,6 +9811,20 @@ function injectBottleGas(player, scene, dt) {
   if (amount <= 1e-9) return false;
   o.removeGas(d[0], amount);
   scene.bubbleGas(target, d[0], amount, dt);
+  // 通气流反馈：手边 → 注入点的气体细流 + 注入点涟漪 + 手边小涡环（纯视觉）。
+  // 集气瓶在背包里（世界里没有瓶身），所以视觉起点取玩家手边位置。
+  const tint = gasTintOf(d[0]);
+  o._fxAcc = (o._fxAcc ?? 0) + dt;
+  if (o._fxAcc >= 0.32 && target.depositAt) {
+    o._fxAcc = 0;
+    const dp = target.depositAt;
+    const hx = player.x + player.w / 2;
+    const hy = player.y + player.h * 0.35;
+    flowFx(scene, { x0: hx, y0: hy, x1: dp.x, y1: dp.y - 2, color: tint, life: 0.4, n: 7, bend: 0.2 });
+    rippleFx(scene, dp.x, dp.y + 2, { color: tint, r0: 3, r1: 20, life: 0.4, width: 1.4, flat: 0.26 });
+    // 手边（瓶口方向）的喷射小涡旋：气体从瓶里被压出的反馈
+    swirlFx(scene, hx, hy, { color: tint, r: 12, life: 0.32, arms: 3 });
+  }
   // 通气气泡特效：注入点（bubbleGas 更新过的 depositAt）每 ~0.16s 冒一颗上升泡
   o._injAcc = (o._injAcc ?? 0) + dt;
   if (o._injAcc >= 0.16 && target.depositAt) {
@@ -8923,8 +9835,13 @@ function injectBottleGas(player, scene, dt) {
       y: target.depositAt.y - 6,
       dir: -1,
       speed: 62,
-      id: `fx${++FX_SEQ}`,
+      id: `ifx${++FX_SEQ}`,
     }));
+  }
+  // 通气声：按住 X 持续通气，0.3s 限频（与 item.gas 音色的 gap 一致）
+  if (scene.time - (o._sfxGasT ?? -10) >= 0.3) {
+    o._sfxGasT = scene.time;
+    sfx('item.gas');
   }
   return true;
 }
@@ -9035,12 +9952,14 @@ function createSetupItem(name, opts = {}, player = null) {
   return null;
 }
 
+exports.carryActionsOf = carryActionsOf;
 exports.nearestCarryItem = nearestCarryItem;
 exports.pickupItem = pickupItem;
 exports.placeCarriedItem = placeCarriedItem;
 exports.nearestLiquidSource = nearestLiquidSource;
 exports.nearestLiquidTarget = nearestLiquidTarget;
 exports.drawLiquid = drawLiquid;
+exports.dripCarriedDropper = dripCarriedDropper;
 exports.pourBeaker = pourBeaker;
 exports.injectBottleGas = injectBottleGas;
 exports.ITEM_NAMES = ITEM_NAMES;
@@ -9196,9 +10115,16 @@ function mixToward(cur, target, k) {
 // 模块级：最近渲染时间（frameK 计算帧间流逝用）
 let solution_frameT = null;
 
-/** 渲染一个矩形液面（灵动：起伏波浪 + 持续上升的气泡 + 辉光） */
-function renderLiquid(ctx, x, y, w, h, solution, time = 0) {
+/**
+ * 渲染一个矩形液面（灵动：起伏波浪 + 持续上升气泡 + 辉光）。
+ * time：动画时间（秒，确定性 sin）。
+ * pulse：0..1 液量突变脉冲（**可选**，默认 0，向后兼容旧调用）——只让波幅与
+ *   液面高光短暂增强（短暂涟漪），不引入额外光纹/多层渐变；由调用方
+ *   （Pool/Beaker）按 `_liquidPulse` 传入并自行衰减。
+ */
+function renderLiquid(ctx, x, y, w, h, solution, time = 0, pulse = 0) {
   if (w <= 0 || h <= 0) return;
+  const p = Math.max(0, Math.min(1, Number.isFinite(pulse) ? pulse : 0));
   const { color, alpha } = solutionColor(solution, time);
   ctx.save();
   // 主体：纵向渐变（底部更深）
@@ -9209,9 +10135,9 @@ function renderLiquid(ctx, x, y, w, h, solution, time = 0) {
   ctx.fillStyle = g;
   ctx.fillRect(x, y, w, h);
   ctx.globalAlpha = 1;
-  // 起伏波浪表面（随时间推进，不是死线）
-  const waveAmp = 2.4;
-  ctx.globalAlpha = Math.min(1, alpha + 0.35);
+  // 起伏波浪表面（随时间推进，不是死线；pulse 仅让波幅略大、表面略亮）
+  const waveAmp = 2.4 + p * 2.4;
+  ctx.globalAlpha = Math.min(1, alpha + 0.35 + p * 0.15);
   ctx.fillStyle = mix(color, '#ffffff', 0.5);
   ctx.shadowColor = color;
   ctx.shadowBlur = 10;
@@ -9228,7 +10154,7 @@ function renderLiquid(ctx, x, y, w, h, solution, time = 0) {
   ctx.closePath();
   ctx.fill();
   ctx.shadowBlur = 0;
-  // 上升的气泡（从底部持续冒出，速度不一，随时间循环）
+  // 上升的气泡（原版动画：从底部持续冒出，速度不一，随时间循环）
   const n = Math.min(22, Math.max(1, Math.round((w * h) / 900)));
   for (let i = 0; i < n; i++) {
     const bx = x + ((i * 7919) % 997) / 997 * w;
@@ -9253,15 +10179,35 @@ exports.renderLiquid = renderLiquid;
   };
   __modules["src/objects/fx.js"] = function (module, exports, __require) {
 // ============================================================================
-// 特效小件（fx）：可携带物品交互的动画点缀——全部纯视觉、无碰撞、自销毁。
-//   PuffDust  尘雾/水花圈（拾取物品、放置落地、吸液液面）
-//   FlowArc   液流弧线（吸液从容器飞向玩家 / 倒出从杯口落入目标，沿贝塞尔流动）
-// 配套快捷函数 puffFx / flowFx 负责生成唯一 id 并 addObject 进场景。
+// 特效小件（fx）：交互/动作/环境反馈的动画点缀——全部纯视觉、无碰撞、自销毁。
+// ----------------------------------------------------------------------------
+// 既有（签名保持不变）：
+//   PuffDust    尘雾/水花圈（拾取、放置落地、吸液液面、落地）
+//   FlowArc     液流弧线（吸液/倒出，沿贝塞尔流动的液滴串）
+// 通用小特效（供 Scene 与各物件/动作调用；全部确定性相位，无随机闪烁）：
+//   SparkleBurst  金色闪光点向外扩散 + 轻微上浮（拾取/产物/达成）
+//   RippleRing    平面涟漪环（液面落点/放置落点/冲击；椭圆压扁表现俯视液面）
+//   FlashBurst    短促高光爆闪（新物体出现/集气完成/关键反馈；0.2s 内熄灭）
+//   ShockRing     冲击波环（带缺口 + 回声环；爆炸/重落地/强反应）
+//   ArcBeam       短促弧形光束（拾取短弧光/注入连线/引导线）
+// 快捷函数（puffFx/flowFx/sparkleFx/rippleFx/flashFx/shockFx/arcFx）负责生成
+// 唯一 id 并 addObject 进场景；scene 无效时返回 null（编辑器/测试安全）。
+// 动画约定：对象 update(dt) 内部累计 age + render 读取；只做 0.15~0.6s 的短促
+// 缓动，不画说明性文字，不用随机数（固定黄金角/相位散布，可回放）。
 // ============================================================================
 
 const { Obj } = __require('src/objects/obj.js');;
 
 let FX_SEQ = 0;
+
+const GOLDEN = 2.399963229728653; // 黄金角（确定性散布）
+const TAU = Math.PI * 2;
+
+/** 缓动：easeOutCubic（0→1，快出慢收） */
+const easeOut = (p) => 1 - Math.pow(1 - Math.max(0, Math.min(1, p)), 3);
+
+/** 确定性 0..1 散布（同一 i 恒定；替代随机） */
+const scatter = (i) => ((i * 2654435761) % 997) / 997;
 
 /** 尘雾圈：n 团渐扩渐隐的小圆（确定性散布，不用随机数保可回放） */
 class PuffDust extends Obj {
@@ -9269,31 +10215,51 @@ class PuffDust extends Obj {
     super({ x, y, w: 2, h: 2, solid: false, physicsKind: 'none', noLift: true, ...rest });
     this.r = r;
     this.spread = spread;
-    this.color = color;
+    this.color = color; // 'r,g,b' 三元组（与既有调用方一致）
     this.life = life;
     this.maxLife = life;
-    this.n = n;
+    this.n = Math.max(1, Math.min(10, n | 0));
+    this.age = 0;
   }
 
   update(dt, scene) {
+    this.age += dt;
     this.life -= dt;
     if (this.life <= 0) scene.removeObject(this);
   }
 
   render(ctx) {
     const t = 1 - this.life / this.maxLife; // 0→1 扩散进度
+    const fade = Math.max(0, 1 - t);
     ctx.save();
+    // 外圈柔光弧（扩散的"气环"）
+    if (t > 0.12) {
+      ctx.globalAlpha = fade * 0.22;
+      ctx.strokeStyle = `rgb(${this.color})`;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.ellipse(this.x, this.y, this.spread * t + this.r, (this.spread * t + this.r) * 0.55, 0, 0, TAU);
+      ctx.stroke();
+    }
     for (let i = 0; i < this.n; i++) {
-      const ang = (i / this.n) * Math.PI * 2 + i * 1.7;
-      const d = this.spread * t * (0.55 + 0.45 * ((i % 3) / 2));
+      const ang = (i / this.n) * TAU + i * 1.7;
+      const d = this.spread * t * (0.55 + 0.45 * scatter(i));
       const px = this.x + Math.cos(ang) * d;
-      const py = this.y + Math.sin(ang) * d - 2.5 * t; // 微微上飘
-      const rr = Math.max(0.6, this.r * (0.5 + t));
-      ctx.globalAlpha = Math.max(0, (1 - t)) * 0.55;
+      const py = this.y + Math.sin(ang) * d * 0.8 - 2.5 * t; // 微微一飘
+      const rr = Math.max(0.6, this.r * (0.5 + t) * (0.8 + 0.4 * scatter(i + 3)));
+      ctx.globalAlpha = fade * (0.5 - 0.18 * (i / this.n));
       ctx.fillStyle = `rgb(${this.color})`;
       ctx.beginPath();
-      ctx.arc(px, py, rr, 0, Math.PI * 2);
+      ctx.arc(px, py, rr, 0, TAU);
       ctx.fill();
+      // 亮点高光（每团左上一小点）：雾气里的一点光
+      if (rr > 2) {
+        ctx.globalAlpha = fade * 0.5;
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        ctx.beginPath();
+        ctx.arc(px - rr * 0.3, py - rr * 0.3, rr * 0.28, 0, TAU);
+        ctx.fill();
+      }
     }
     ctx.restore();
   }
@@ -9311,12 +10277,14 @@ class FlowArc extends Obj {
     this.life = life;
     this.maxLife = life;
     this.n = n;
+    this.age = 0;
     // 控制点：中点上抬 bend*距离（吸液向上拱、倒出也用小拱更自然）
     this.cx = (x0 + x1) / 2;
     this.cy = (y0 + y1) / 2 - bend * Math.hypot(x1 - x0, y1 - y0);
   }
 
   update(dt, scene) {
+    this.age += dt;
     this.life -= dt;
     if (this.life <= 0) scene.removeObject(this);
   }
@@ -9331,24 +10299,417 @@ class FlowArc extends Obj {
 
   render(ctx) {
     const T = 1 - this.life / this.maxLife; // 全局进度
+    const fadeEnd = Math.sin(Math.min(1, Math.max(0, T)) * Math.PI); // 起止整体淡入淡出
     ctx.save();
+    // 细流线：整条弧的淡色连线（让液滴串读作"一股液流"而不是散点）
+    ctx.globalAlpha = 0.16 * fadeEnd;
+    ctx.strokeStyle = this.color;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    for (let k = 0; k <= 10; k++) {
+      const p = this._at(k / 10);
+      if (k === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    }
+    ctx.stroke();
     for (let i = 0; i < this.n; i++) {
       const off = i / this.n;
       const u = (T * 1.4 + off) % 1; // 循环流动
       const p = this._at(u);
-      const fadeEnd = Math.sin(Math.min(1, Math.max(0, T)) * Math.PI); // 起止整体淡入淡出
       const size = 2.6 - 1.4 * u; // 飞行中微缩
       ctx.globalAlpha = 0.85 * fadeEnd * (0.35 + 0.65 * (1 - u * 0.5));
       ctx.fillStyle = this.color;
       ctx.shadowColor = this.color;
       ctx.shadowBlur = 5;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, Math.max(0.8, size), 0, Math.PI * 2);
+      ctx.arc(p.x, p.y, Math.max(0.8, size), 0, TAU);
+      ctx.fill();
+      // 液滴高光（左上一小点）：玻璃质感
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 0.55 * fadeEnd;
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.beginPath();
+      ctx.arc(p.x - size * 0.32, p.y - size * 0.32, Math.max(0.4, size * 0.32), 0, TAU);
       ctx.fill();
     }
     ctx.restore();
   }
 }
+
+// ---------------------------------------------------------------------------
+// 通用小特效（供 Scene / 物件 / 动作反馈共用）
+// ---------------------------------------------------------------------------
+
+/**
+ * 金色闪光点爆发：n 个星芒/光点沿黄金角向外扩散并微微上浮。
+ * opts: color / n / spread / rise / life / size
+ */
+class SparkleBurst extends Obj {
+  constructor({ x, y, color = '#ffd76a', n = 8, spread = 24, rise = 16, life = 0.5, size = 2.4, ...rest }) {
+    super({ x, y, w: 2, h: 2, solid: false, physicsKind: 'none', noLift: true, ...rest });
+    this.x = x; this.y = y;
+    this.color = color;
+    this.n = Math.max(1, Math.min(16, n | 0));
+    this.spread = spread;
+    this.rise = rise;
+    this.life = Math.max(0.1, life);
+    this.maxLife = this.life;
+    this.size = size;
+    this.age = 0;
+  }
+
+  update(dt, scene) {
+    this.age += dt;
+    this.life -= dt;
+    if (this.life <= 0) scene.removeObject(this);
+  }
+
+  render(ctx) {
+    const P = Math.min(1, this.age / this.maxLife);
+    const fade = 1 - P;
+    const e = easeOut(P);
+    const cx = this.x;
+    const cy = this.y;
+    ctx.save();
+    // 中心短促光核（前 35%）
+    const core = Math.max(0, 1 - P / 0.35);
+    if (core > 0.02) {
+      ctx.globalAlpha = core * 0.8;
+      ctx.fillStyle = this.color;
+      ctx.shadowColor = this.color;
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.arc(cx, cy, this.size * 2.2 * (1 - P * 0.5), 0, TAU);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+    for (let i = 0; i < this.n; i++) {
+      const ang = i * GOLDEN + 0.4;
+      const d = this.spread * e * (0.45 + 0.55 * scatter(i));
+      const px = cx + Math.cos(ang) * d;
+      const py = cy + Math.sin(ang) * d * 0.72 - this.rise * e;
+      const s = this.size * (0.55 + 0.65 * scatter(i + 7)) * (1 - P * 0.55);
+      ctx.globalAlpha = fade * (0.55 + 0.45 * scatter(i + 2));
+      ctx.fillStyle = i % 3 === 0 ? '#fff6d8' : this.color;
+      ctx.shadowColor = this.color;
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.arc(px, py, Math.max(0.6, s), 0, TAU);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      // 星芒十字（较亮的粒子）
+      if (i % 3 === 0 && s > 1.2) {
+        ctx.strokeStyle = '#fffbe8';
+        ctx.lineWidth = 0.9;
+        ctx.beginPath();
+        ctx.moveTo(px - s * 2, py);
+        ctx.lineTo(px + s * 2, py);
+        ctx.moveTo(px, py - s * 2);
+        ctx.lineTo(px, py + s * 2);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+}
+
+/**
+ * 平面涟漪环：椭圆压扁的扩散环（俯视液面/落点）。带一道更慢的内环。
+ * opts: color / r0 / r1 / life / width / flat（0..1，纵向压扁比例）
+ */
+class RippleRing extends Obj {
+  constructor({ x, y, color = 'rgba(190,235,255,0.85)', r0 = 5, r1 = 34, life = 0.45, width = 2, flat = 0.42, ...rest }) {
+    super({ x, y, w: 2, h: 2, solid: false, physicsKind: 'none', noLift: true, ...rest });
+    this.x = x; this.y = y;
+    this.color = color;
+    this.r0 = r0;
+    this.r1 = r1;
+    this.life = Math.max(0.1, life);
+    this.maxLife = this.life;
+    this.width = width;
+    this.flat = Math.max(0.12, Math.min(1, flat));
+    this.age = 0;
+  }
+
+  update(dt, scene) {
+    this.age += dt;
+    this.life -= dt;
+    if (this.life <= 0) scene.removeObject(this);
+  }
+
+  _ring(ctx, r, alpha, lw) {
+    if (r <= 0.2 || alpha <= 0) return;
+    ctx.globalAlpha = alpha;
+    ctx.lineWidth = Math.max(0.6, lw);
+    ctx.beginPath();
+    ctx.ellipse(this.x, this.y, r, r * this.flat, 0, 0, TAU);
+    ctx.stroke();
+  }
+
+  render(ctx) {
+    const P = Math.min(1, this.age / this.maxLife);
+    const fade = 1 - P;
+    ctx.save();
+    ctx.strokeStyle = this.color;
+    // 主环：快出慢收，逐渐变细
+    const r = this.r0 + (this.r1 - this.r0) * easeOut(P);
+    this._ring(ctx, r, fade * 0.85, this.width * (1 - P * 0.6));
+    // 内环：更慢、更细的一道（水面双圈）
+    this._ring(ctx, this.r0 + (this.r1 - this.r0) * easeOut(P * 0.72) * 0.72, fade * 0.4, 1);
+    // 环上几点反光（确定性角度）
+    for (let i = 0; i < 5; i++) {
+      const ang = i * GOLDEN + 1.1;
+      const px = this.x + Math.cos(ang) * r;
+      const py = this.y + Math.sin(ang) * r * this.flat;
+      ctx.globalAlpha = fade * 0.55;
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.beginPath();
+      ctx.arc(px, py, 1.1 * (1 - P * 0.5), 0, TAU);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
+/**
+ * 短促高光爆闪：柔光核 + 十字光针（新物体出现/集气完成/关键反馈）。
+ * opts: color / r / life / rays
+ */
+class FlashBurst extends Obj {
+  constructor({ x, y, color = '#ffe9b0', r = 28, life = 0.24, rays = 6, ...rest }) {
+    super({ x, y, w: 2, h: 2, solid: false, physicsKind: 'none', noLift: true, ...rest });
+    this.x = x; this.y = y;
+    this.color = color;
+    this.r = r;
+    this.life = Math.max(0.08, life);
+    this.maxLife = this.life;
+    this.rays = Math.max(0, Math.min(12, rays | 0));
+    this.age = 0;
+  }
+
+  update(dt, scene) {
+    this.age += dt;
+    this.life -= dt;
+    if (this.life <= 0) scene.removeObject(this);
+  }
+
+  render(ctx) {
+    const P = Math.min(1, this.age / this.maxLife);
+    const fade = Math.max(0, 1 - P);
+    const r = this.r * (0.45 + 0.55 * easeOut(P));
+    ctx.save();
+    // 柔光核（径向渐变：中心近白 → 颜色 → 透明）
+    const g = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, Math.max(1, r));
+    g.addColorStop(0, `rgba(255,255,255,${(fade * 0.95).toFixed(3)})`);
+    g.addColorStop(0.35, `${colorWithAlpha(this.color, fade * 0.6)}`);
+    g.addColorStop(1, colorWithAlpha(this.color, 0));
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, Math.max(1, r), 0, TAU);
+    ctx.fill();
+    // 十字/放射光针（短促，随进度收细）
+    if (this.rays > 0 && fade > 0.05) {
+      ctx.strokeStyle = colorWithAlpha(this.color, fade * 0.85);
+      ctx.lineWidth = Math.max(0.7, 2.2 * fade);
+      ctx.lineCap = 'round';
+      const spin = this.age * 1.6;
+      for (let i = 0; i < this.rays; i++) {
+        const ang = (i / this.rays) * TAU + spin;
+        const d0 = r * 0.55;
+        const d1 = r * (1.05 + 0.35 * scatter(i));
+        ctx.beginPath();
+        ctx.moveTo(this.x + Math.cos(ang) * d0, this.y + Math.sin(ang) * d0);
+        ctx.lineTo(this.x + Math.cos(ang) * d1, this.y + Math.sin(ang) * d1);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+}
+
+/**
+ * 冲击波环：撕裂断口的主环 + 一层回声环（爆炸/重落地/强反应）。
+ * opts: color / r0 / r1 / life / width / flat / echo
+ */
+class ShockRing extends Obj {
+  constructor({ x, y, color = 'rgba(255,240,215,0.9)', r0 = 10, r1 = 92, life = 0.4, width = 3, flat = 0.9, echo = true, ...rest }) {
+    super({ x, y, w: 2, h: 2, solid: false, physicsKind: 'none', noLift: true, ...rest });
+    this.x = x; this.y = y;
+    this.color = color;
+    this.r0 = r0;
+    this.r1 = r1;
+    this.life = Math.max(0.1, life);
+    this.maxLife = this.life;
+    this.width = width;
+    this.flat = Math.max(0.15, Math.min(1, flat));
+    this.echo = !!echo;
+    this.age = 0;
+  }
+
+  update(dt, scene) {
+    this.age += dt;
+    this.life -= dt;
+    if (this.life <= 0) scene.removeObject(this);
+  }
+
+  render(ctx) {
+    const P = Math.min(1, this.age / this.maxLife);
+    const e = 1 - Math.pow(1 - P, 2.4);
+    const fade = Math.max(0, 1 - P);
+    const r = this.r0 + (this.r1 - this.r0) * e;
+    const gapA = 0.5 + this.age * 1.4;
+    ctx.save();
+    ctx.strokeStyle = this.color;
+    ctx.lineCap = 'round';
+    ctx.globalAlpha = fade;
+    ctx.lineWidth = Math.max(0.7, this.width * (1 - P * 0.65));
+    ctx.beginPath();
+    // 主环留一道缺口（撕裂感）
+    ctx.ellipse(this.x, this.y, r, r * this.flat, 0, gapA, gapA + TAU - 0.9);
+    ctx.stroke();
+    if (this.echo) {
+      // 回声环（半速、更细）
+      ctx.globalAlpha = fade * 0.45;
+      ctx.lineWidth = Math.max(0.6, this.width * 0.5 * (1 - P * 0.5));
+      ctx.beginPath();
+      ctx.ellipse(this.x, this.y, r * 0.68, r * 0.68 * this.flat, 0, gapA + 2.1, gapA + 2.1 + TAU - 1.2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+/**
+ * 短促弧形光束：贝塞尔弧按进度"画出来"（拾取短弧光/注入连线）。
+ * opts: x0/y0/x1/y1（必填）/ color / life / bend / width
+ */
+class ArcBeam extends Obj {
+  constructor({ x0 = 0, y0 = 0, x1 = 0, y1 = 0, color = '#ffd76a', life = 0.32, bend = 0.3, width = 2.2, ...rest }) {
+    super({ x: 0, y: 0, w: 2, h: 2, solid: false, physicsKind: 'none', noLift: true, ...rest });
+    this.x0 = x0; this.y0 = y0; this.x1 = x1; this.y1 = y1;
+    this.color = color;
+    this.life = Math.max(0.1, life);
+    this.maxLife = this.life;
+    this.width = width;
+    this.age = 0;
+    const dist = Math.hypot(x1 - x0, y1 - y0);
+    this.cx = (x0 + x1) / 2;
+    this.cy = (y0 + y1) / 2 - bend * dist;
+  }
+
+  update(dt, scene) {
+    this.age += dt;
+    this.life -= dt;
+    if (this.life <= 0) scene.removeObject(this);
+  }
+
+  _at(u) {
+    const a = (1 - u) * (1 - u), b = 2 * (1 - u) * u, c = u * u;
+    return {
+      x: a * this.x0 + b * this.cx + c * this.x1,
+      y: a * this.y0 + b * this.cy + c * this.y1,
+    };
+  }
+
+  render(ctx) {
+    const P = Math.min(1, this.age / this.maxLife);
+    const draw = easeOut(Math.min(1, P / 0.45)); // 前 45% 画完整条弧
+    const fade = Math.sin(P * Math.PI); // 起止淡入淡出
+    if (fade <= 0.02) return;
+    ctx.save();
+    ctx.strokeStyle = this.color;
+    ctx.lineCap = 'round';
+    ctx.shadowColor = this.color;
+    ctx.shadowBlur = 8;
+    ctx.globalAlpha = fade * 0.9;
+    ctx.lineWidth = this.width * (1 - P * 0.35);
+    ctx.beginPath();
+    const N = 16;
+    let head = null;
+    for (let k = 0; k <= N; k++) {
+      const u = (k / N) * draw;
+      const p = this._at(u);
+      head = p;
+      if (k === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    }
+    ctx.stroke();
+    // 弧光头部亮点
+    if (head) {
+      ctx.globalAlpha = fade;
+      ctx.fillStyle = '#fffbe8';
+      ctx.beginPath();
+      ctx.arc(head.x, head.y, Math.max(0.8, 2.4 * (1 - P)), 0, TAU);
+      ctx.fill();
+    }
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+}
+
+/**
+ * 吸入/喷出涡旋：几条向内收拢的螺旋弧 + 中心小光核（集气瓶收气/通气的手边反馈）。
+ * opts: color / r / life / arms
+ */
+class SwirlIn extends Obj {
+  constructor({ x, y, color = '#78dcff', r = 16, life = 0.36, arms = 3, ...rest }) {
+    super({ x, y, w: 2, h: 2, solid: false, physicsKind: 'none', noLift: true, ...rest });
+    this.x = x; this.y = y;
+    this.color = color;
+    this.r = r;
+    this.life = Math.max(0.1, life);
+    this.maxLife = this.life;
+    this.arms = Math.max(1, Math.min(6, arms | 0));
+    this.age = 0;
+  }
+
+  update(dt, scene) {
+    this.age += dt;
+    this.life -= dt;
+    if (this.life <= 0) scene.removeObject(this);
+  }
+
+  render(ctx) {
+    const P = Math.min(1, this.age / this.maxLife);
+    const fade = Math.max(0, 1 - P) * Math.min(1, P * 8); // 快速淡入、缓慢淡出
+    if (fade <= 0.02) return;
+    ctx.save();
+    ctx.strokeStyle = this.color;
+    ctx.lineCap = 'round';
+    ctx.shadowColor = this.color;
+    ctx.shadowBlur = 5;
+    for (let a = 0; a < this.arms; a++) {
+      const base = (a / this.arms) * TAU + P * 2.4;
+      ctx.globalAlpha = fade * 0.8;
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      // 螺旋弧：半径由外向内收（随进度收得更紧）
+      const steps = 9;
+      for (let k = 0; k <= steps; k++) {
+        const q = k / steps;
+        const ang = base + q * 1.9; // 弧长（约 110°）
+        const rad = this.r * (1 - P * 0.55) * (1 - q * 0.72);
+        const px = this.x + Math.cos(ang) * rad;
+        const py = this.y + Math.sin(ang) * rad * 0.8;
+        if (k === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    }
+    // 中心小光核（收束点）
+    ctx.globalAlpha = fade;
+    ctx.fillStyle = '#eaf9ff';
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, Math.max(0.8, 2.6 * (1 - P)), 0, TAU);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 快捷生成函数（返回生成的特效对象；scene 无效 → null）
+// ---------------------------------------------------------------------------
 
 /** 快捷生成：尘雾 */
 function puffFx(scene, x, y, opts = {}) {
@@ -9362,10 +10723,77 @@ function flowFx(scene, opts = {}) {
   return scene.addObject(new FlowArc({ id: `fx${++FX_SEQ}`, ...opts }));
 }
 
+/** 快捷生成：金色闪光爆发（拾取/产物/达成） */
+function sparkleFx(scene, x, y, opts = {}) {
+  if (!scene || typeof scene.addObject !== 'function') return null;
+  return scene.addObject(new SparkleBurst({ x, y, id: `fx${++FX_SEQ}`, ...opts }));
+}
+
+/** 快捷生成：平面涟漪环（液面/落点） */
+function rippleFx(scene, x, y, opts = {}) {
+  if (!scene || typeof scene.addObject !== 'function') return null;
+  return scene.addObject(new RippleRing({ x, y, id: `fx${++FX_SEQ}`, ...opts }));
+}
+
+/** 快捷生成：短促高光爆闪 */
+function flashFx(scene, x, y, opts = {}) {
+  if (!scene || typeof scene.addObject !== 'function') return null;
+  return scene.addObject(new FlashBurst({ x, y, id: `fx${++FX_SEQ}`, ...opts }));
+}
+
+/** 快捷生成：冲击波环 */
+function shockFx(scene, x, y, opts = {}) {
+  if (!scene || typeof scene.addObject !== 'function') return null;
+  return scene.addObject(new ShockRing({ x, y, id: `fx${++FX_SEQ}`, ...opts }));
+}
+
+/** 快捷生成：短弧光（opts 需含 x0/y0/x1/y1） */
+function arcFx(scene, opts = {}) {
+  if (!scene || typeof scene.addObject !== 'function') return null;
+  return scene.addObject(new ArcBeam({ id: `fx${++FX_SEQ}`, ...opts }));
+}
+
+/** 快捷生成：吸入/喷出涡旋（集气/通气的手边反馈） */
+function swirlFx(scene, x, y, opts = {}) {
+  if (!scene || typeof scene.addObject !== 'function') return null;
+  return scene.addObject(new SwirlIn({ x, y, id: `fx${++FX_SEQ}`, ...opts }));
+}
+
+/** 颜色 + 透明度 → rgba 字符串（支持 '#rgb' / '#rrggbb' / 'rgba(...)' / 'r,g,b'） */
+function colorWithAlpha(color, alpha) {
+  const a = Math.max(0, Math.min(1, alpha));
+  const c = String(color ?? '').trim();
+  if (c.startsWith('rgba(') || c.startsWith('rgb(')) {
+    // 既有 rgba/rgb：替换/补上 alpha
+    const nums = c.replace(/^rgba?\(|\)$/g, '').split(',').map((s) => s.trim());
+    if (nums.length >= 3) return `rgba(${nums[0]},${nums[1]},${nums[2]},${a})`;
+    return `rgba(255,255,255,${a})`;
+  }
+  if (c.includes(',')) return `rgba(${c},${a})`; // 'r,g,b' 三元组
+  const h = c.replace('#', '');
+  const n = h.length === 3
+    ? [parseInt(h[0] + h[0], 16), parseInt(h[1] + h[1], 16), parseInt(h[2] + h[2], 16)]
+    : [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  if (!Number.isFinite(n[0]) || !Number.isFinite(n[1]) || !Number.isFinite(n[2])) return `rgba(255,255,255,${a})`;
+  return `rgba(${n[0]},${n[1]},${n[2]},${a})`;
+}
+
 exports.PuffDust = PuffDust;
 exports.FlowArc = FlowArc;
+exports.SparkleBurst = SparkleBurst;
+exports.RippleRing = RippleRing;
+exports.FlashBurst = FlashBurst;
+exports.ShockRing = ShockRing;
+exports.ArcBeam = ArcBeam;
+exports.SwirlIn = SwirlIn;
 exports.puffFx = puffFx;
 exports.flowFx = flowFx;
+exports.sparkleFx = sparkleFx;
+exports.rippleFx = rippleFx;
+exports.flashFx = flashFx;
+exports.shockFx = shockFx;
+exports.arcFx = arcFx;
+exports.swirlFx = swirlFx;
 
   };
   __modules["src/objects/beaker.js"] = function (module, exports, __require) {
@@ -9405,6 +10833,9 @@ class Beaker extends Container {
     super({ x, y, w, h, ...rest });
     this.wall = wall;
     this.vy = 0;
+    // 纯视觉：被放置/瞬移时杯身轻晃（_swayKick 1→0 衰减约 0.5s），液体涟漪走 pulse
+    this._prevX = null;
+    this._swayKick = 0;
     // 实心杯壁（左/右/底），跟随烧杯移动；顶口敞开（可跳入）
     // static：壁是"与杯身联动的死墙"——不参与动量交换（玩家推杯时靠 update 驱动杯身，
     // 壁只跟随；动态壁会被玩家撞飞再被 syncWalls 拉回 → 推动强烈震动——用户反馈）。
@@ -9534,6 +10965,10 @@ class Beaker extends Container {
     this.applyGravity(dt, scene);
     // 冰面惯性滑行在 pushContainers（Player.update）里驱动（推动/滑行不双算）
     this.updatePour(dt, scene);
+    // 纯视觉：被放置/位置突变（>6px）→ 杯身轻晃一下（确定性衰减，物理坐标不变）
+    if (this._prevX != null && Math.abs(this.x - this._prevX) > 6) this._swayKick = 1;
+    this._prevX = this.x;
+    if (this._swayKick > 0) this._swayKick = Math.max(0, this._swayKick - dt / 0.55);
     // 玩家贴壁推动已挪到 Player.update（pushContainers——时序要求：玩家重设 vel 之后、
     // 物理步之前：吸附+清 vel，否则推-弹交替"一卡一卡"——用户反馈）
   }
@@ -9570,50 +11005,109 @@ class Beaker extends Container {
     this.syncWalls();
   }
 
-  render(ctx, scene) {
+  // ---------------------------------------------------------------------------
+  // 渲染：暗紫玻璃杯身 + 黄铜口沿/刻度线 + 杯底高光；液体沿用 renderLiquid
+  //   （可传 A 组 Container 的 _liquidPulse 做涟漪）；被放置时杯身轻晃（纯视觉，
+  //   不改物理/几何）。倒出会话的平移+倾斜变换保持不变。
+  // ---------------------------------------------------------------------------
+  render(ctx, opts) {
+    const t = opts?.time ?? 0;
+    const pulse = this._liquidPulse ?? 0; // 液量突变脉冲（0..1，A 组 Container 提供）
+    const x = this.x;
+    const y = this.y;
+    const w = this.w;
+    const h = this.h;
     // 倒出会话变换：平移到目标旁 + 轻微抬升 + 倾斜（液体/颗粒/杯体整体）
     ctx.save();
     const vp = this._visPour;
     if (vp && (Math.abs(vp.offX) > 0.01 || vp.ang > 0.001)) {
-      const cx = this.x + vp.offX + this.w / 2;
-      const cy = this.y + this.h;
+      const cx = x + vp.offX + w / 2;
+      const cy = y + h;
       ctx.translate(cx, cy);
       ctx.rotate(vp.aSign * vp.ang);
       ctx.translate(-cx, -cy - vp.liftY);
+    } else if (this._swayKick > 0) {
+      // 放置/瞬移后的杯身轻晃（绕杯底中心小幅摆动，确定性衰减）
+      const sway = Math.sin((1 - this._swayKick) * Math.PI * 5) * this._swayKick * 0.035;
+      if (Math.abs(sway) > 1e-4) {
+        const cx = x + w / 2;
+        const cy = y + h;
+        ctx.translate(cx, cy);
+        ctx.rotate(sway);
+        ctx.translate(-cx, -cy);
+      }
     }
     // 液体（元素发光液面；液面高度 = 实际液体量/容量——吸液/倒出后可见升降）
     const inner = this.innerRect();
     if (inner.w > 0 && inner.h > 0) {
       const vol = this.solution.volume > 0 ? this.solution.volume : Infinity;
       const lh = inner.h * Math.max(0, Math.min(1, this.solution.totalMass() / vol));
-      if (lh > 2) renderLiquid(ctx, inner.x, inner.y + inner.h - lh, inner.w, lh, this.solution, scene.time ?? 0);
+      if (lh > 2) {
+        // 裁到杯身内轮廓：液体不越过杯底圆角/杯壁（视觉，不动液体几何）
+        ctx.save();
+        rr(ctx, this.x + 1, this.y + 1, this.w - 2, this.h - 2, Math.max(3, this.w * 0.1));
+        ctx.clip();
+        renderLiquid(ctx, inner.x, inner.y + inner.h - lh, inner.w, lh, this.solution, t, pulse);
+        ctx.restore();
+      }
     }
     // 沉淀：从反应位置生成的视觉颗粒，物理堆叠成堆
     this.renderGrains(ctx);
-    // 玻璃杯（U 形，半透明 + 亮边 + 高光）
+    // ---- 玻璃杯（简洁版）：暗紫玻璃杯身 + 敞开杯口（没有盖子/横梁）----
+    const botR = Math.max(3, Math.min(9, w * 0.13));
+    const lip = Math.max(1.4, Math.min(3.2, w * 0.05));
+    const glassPath = () => {
+      ctx.beginPath();
+      ctx.moveTo(x, y + lip * 0.5);
+      ctx.lineTo(x, y + h - botR);
+      ctx.arcTo(x, y + h, x + botR, y + h, botR);
+      ctx.lineTo(x + w - botR, y + h);
+      ctx.arcTo(x + w, y + h, x + w, y + h - botR, botR);
+      ctx.lineTo(x + w, y + lip * 0.5);
+      ctx.closePath();
+    };
     ctx.save();
-    ctx.fillStyle = 'rgba(210,240,255,0.12)';
-    rr(ctx, this.x, this.y, this.w, this.h, 7);
+    // 玻璃体（暗紫玻璃，半透明）
+    glassPath();
+    const glass = ctx.createLinearGradient(x, y, x + w, y + h);
+    glass.addColorStop(0, 'rgba(150,130,230,0.16)');
+    glass.addColorStop(0.45, 'rgba(80,70,150,0.09)');
+    glass.addColorStop(1, 'rgba(120,110,200,0.14)');
+    ctx.fillStyle = glass;
     ctx.fill();
-    ctx.strokeStyle = 'rgba(225,245,255,0.8)';
-    ctx.lineWidth = 2;
-    ctx.shadowColor = 'rgba(180,230,255,0.6)';
-    ctx.shadowBlur = 6;
-    ctx.beginPath();
-    ctx.moveTo(this.x, this.y);
-    ctx.lineTo(this.x, this.y + this.h - 7);
-    ctx.arcTo(this.x, this.y + this.h, this.x + 7, this.y + this.h, 7);
-    ctx.lineTo(this.x + this.w - 7, this.y + this.h);
-    ctx.arcTo(this.x + this.w, this.y + this.h, this.x + this.w, this.y + this.h - 7, 7);
-    ctx.lineTo(this.x + this.w, this.y);
+    // 玻璃细边（浅冷色，细）
+    ctx.strokeStyle = 'rgba(205,225,255,0.62)';
+    ctx.lineWidth = 1.3;
     ctx.stroke();
-    ctx.shadowBlur = 0;
-    // 左侧高光
-    ctx.fillStyle = 'rgba(255,255,255,0.16)';
-    ctx.fillRect(this.x + 1, this.y + 2, 2, this.h - 4);
-    ctx.restore();
-    ctx.restore(); // 倾旋包裹结束
-    this.renderContentsLabel(ctx, scene);
+    ctx.restore(); // 玻璃杯身层结束（保留外层倒出/晃动变换）
+    // 杯口：扁椭圆开口（深色口内 + 细玻璃口沿）——不是盖在杯口的横梁
+    const mouthY = y + 1.2;
+    const mouthRx = w / 2 - 0.8;
+    const mouthRy = Math.max(1.6, w * 0.05);
+    ctx.beginPath();
+    ctx.ellipse(x + w / 2, mouthY, mouthRx, mouthRy, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(7,10,26,0.62)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(205,225,255,0.66)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // 两侧极短的黄铜口沿（保留金属语言，但中间敞开）
+    const tickW = Math.max(2.2, w * 0.11);
+    const tickH = Math.max(2, lip * 1.7);
+    for (const sx of [x - 0.3, x + w - tickW + 0.3]) {
+      rr(ctx, sx, y, tickW, tickH, 0.8);
+      const brass = ctx.createLinearGradient(0, y, 0, y + tickH);
+      brass.addColorStop(0, '#ffe6a8');
+      brass.addColorStop(0.45, '#c9932f');
+      brass.addColorStop(1, '#6b4a18');
+      ctx.fillStyle = brass;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(30,20,6,0.8)';
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+    }
+    ctx.restore(); // 倾旋/晃动包裹结束
+    this.renderContentsLabel(ctx, opts);
   }
 }
 
@@ -9624,9 +11118,13 @@ exports.Beaker = Beaker;
 // ============================================================================
 // 液滴（Drip）：滴管滴液的下坠视觉（带滴管液体颜色；到达液面即消失）。
 // 只有视觉反馈——化学由溶液模型处理（落点记录在容器 depositAt）。
+// 视觉：玻璃质感的泪滴——上尖下圆、液体色半透明主体 + 内部高光 + 底部反光，
+//   下坠时上端拖一条渐隐细尾（速度越快越长）。纯视觉，不参与物理。
 // ============================================================================
 
 const { Obj } = __require('src/objects/obj.js');;
+
+const TAU = Math.PI * 2;
 
 class Drip extends Obj {
   constructor({ x, y, targetY, color = '#9fd8ff', ...rest }) {
@@ -9650,9 +11148,28 @@ class Drip extends Obj {
     const bottom = this.y + this.h;
     const r = Math.max(3, this.h * 0.62); // 下部圆球半径
     ctx.save();
+    // 下坠尾迹（速度越快越长；渐隐的液丝）
+    const tail = Math.min(14, 2 + this.vy * 0.018);
+    if (tail > 3) {
+      const tg = ctx.createLinearGradient(cx, top - tail, cx, top + r * 0.6);
+      tg.addColorStop(0, withAlpha(this.color, 0));
+      tg.addColorStop(1, withAlpha(this.color, 0.32));
+      ctx.strokeStyle = tg;
+      ctx.lineWidth = Math.max(1, r * 0.4);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(cx, top - tail);
+      ctx.lineTo(cx, top + r * 0.5);
+      ctx.stroke();
+    }
+    // 主体：液体色 + 上亮下暗的玻璃渐变
+    const body = ctx.createLinearGradient(cx, top, cx, bottom);
+    body.addColorStop(0, withAlpha(this.color, 0.55));
+    body.addColorStop(0.55, this.color);
+    body.addColorStop(1, withAlpha(this.color, 0.88));
+    ctx.fillStyle = body;
     ctx.shadowColor = this.color;
-    ctx.shadowBlur = 7;
-    ctx.fillStyle = this.color;
+    ctx.shadowBlur = 6;
     ctx.beginPath();
     ctx.moveTo(cx, top); // 尖端
     ctx.bezierCurveTo(cx + r * 0.5, top + r * 0.8, cx + r, bottom - r * 0.7, cx, bottom);
@@ -9660,13 +11177,29 @@ class Drip extends Obj {
     ctx.closePath();
     ctx.fill();
     ctx.shadowBlur = 0;
-    // 下部高光（左上方）
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    // 玻璃边缘高光（左侧一道亮弧）
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.lineWidth = 0.9;
     ctx.beginPath();
-    ctx.ellipse(cx - r * 0.28, bottom - r * 0.62, r * 0.2, r * 0.32, -0.5, 0, Math.PI * 2);
+    ctx.moveTo(cx - r * 0.42, top + r * 0.9);
+    ctx.quadraticCurveTo(cx - r * 0.72, bottom - r * 0.8, cx - r * 0.1, bottom - 0.6);
+    ctx.stroke();
+    // 下部高光（左上方亮斑）
+    ctx.fillStyle = 'rgba(255,255,255,0.62)';
+    ctx.beginPath();
+    ctx.ellipse(cx - r * 0.28, bottom - r * 0.62, r * 0.2, r * 0.32, -0.5, 0, TAU);
     ctx.fill();
     ctx.restore();
   }
+}
+
+/** 颜色 + 透明度 → rgba（支持 #rgb/#rrggbb） */
+function withAlpha(hex, a) {
+  const h = String(hex ?? '#9fd8ff').replace('#', '');
+  const n = h.length === 3
+    ? [parseInt(h[0] + h[0], 16), parseInt(h[1] + h[1], 16), parseInt(h[2] + h[2], 16)]
+    : [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  return `rgba(${n[0]},${n[1]},${n[2]},${Math.max(0, Math.min(1, a))})`;
 }
 
 exports.Drip = Drip;
@@ -9856,10 +11389,12 @@ const { Obj } = __require('src/objects/obj.js');;
 const { getSubstance } = __require('src/chem/substances.js');;
 const { Solution } = __require('src/chem/solution.js');;
 const { solutionColor } = __require('src/render/liquidrender.js');;
+const { rr } = __require('src/render/theme.js');;
 const { Drip } = __require('src/objects/drip.js');;
 const { flowFx, puffFx } = __require('src/objects/fx.js');;
 const { CFG } = __require('src/core/config.js');;
 const { pushNotice } = __require('src/level/click.js');;
+const { sfx } = __require('src/core/audio.js');;
 
 const DROPPER_W = 11;
 const DROPPER_H = 52;
@@ -9877,13 +11412,19 @@ class Dropper extends Obj {
     this.liquid = liquid == null ? this.capacity : Math.min(this.capacity, liquid);
     this.rx = x; // 渲染坐标（追赶 x/y，拖动时产生平滑滑行感）
     this.ry = y;
+    // 纯视觉：胶头压缩（滴液时）/ 拉伸（吸液时）脉冲，0..1 短促衰减
+    this._squish = 0;
+    this._suckKick = 0;
   }
 
-  /** 渲染坐标每 tick 向真实坐标收敛（指数趋近，帧率无关） */
+  /** 渲染坐标每 tick 向真实坐标收敛（指数趋近，帧率无关）+ 胶头动画衰减 */
   update(dt) {
     const k = 1 - Math.exp(-14 * dt);
     this.rx += (this.x - this.rx) * k;
     this.ry += (this.y - this.ry) * k;
+    // 胶头压缩/回弹（约 0.18s）与吸液拉伸（约 0.25s）——纯视觉，确定性衰减
+    if (this._squish > 0) this._squish = Math.max(0, this._squish - dt / 0.18);
+    if (this._suckKick > 0) this._suckKick = Math.max(0, this._suckKick - dt / 0.25);
   }
 
   get hoverLabel() {
@@ -9984,6 +11525,7 @@ class Dropper extends Obj {
     }
     this.substance = id;
     this.liquid += got;
+    this._suckKick = 1; // 视觉：吸液时胶头轻拉（纯表现）
     c.noteSolOrigin?.(id, { kind: 'fill', text: '液下吸取' });
     // 特效：表面涟漪尘雾 + 一串上行液滴飞进管口
     const r = c.innerRect();
@@ -9995,6 +11537,7 @@ class Dropper extends Obj {
       color: solutionColor(new Solution({ volume: this.capacity, water: this.liquid > 0 ? 1 : 0, solutes: this.substance === 'H2O' ? {} : { [this.substance]: this.liquid } })).color,
       life: 0.4, n: 6, bend: 0.25,
     });
+    sfx('item.suck');
     return true;
   }
 
@@ -10023,6 +11566,7 @@ class Dropper extends Obj {
     const dx = Math.max(r.x + 4, Math.min(r.x + r.w - 4, this.x + this.w / 2));
     const dy = Math.max(r.y + 4, Math.min(r.y + r.h - 6, this.bottom + 30));
     c.depositAt = { x: dx, y: dy };
+    this._squish = 1; // 视觉：胶头压缩回弹（纯表现，不影响滴加逻辑）
     // 液滴下坠动画（从滴管口到液面；带滴管液体颜色）
     if (typeof scene.addObject === 'function') {
       const { color } = this.liquidColor();
@@ -10035,6 +11579,7 @@ class Dropper extends Obj {
         id: `drip${scene._dripSeq}`,
       }));
     }
+    sfx('item.drip');
     return true;
   }
 
@@ -10057,64 +11602,98 @@ class Dropper extends Obj {
     return best;
   }
 
+  // ---------------------------------------------------------------------------
+  // 渲染（简洁版）：暗紫玻璃细管 + 黄铜卡箍 + 红橡胶胶头 + 管内液面；
+  //   滴液时胶头压缩回弹、尖端口形成液珠（Drip 粒子由物品管线生成）；
+  //   吸液时胶头反向轻拉。纯视觉动画，不影响点击/拖动与 onBulb 命中区。
+  // ---------------------------------------------------------------------------
   render(ctx) {
     const x = Number.isFinite(this.rx) ? this.rx : this.x;
     const y = Number.isFinite(this.ry) ? this.ry : this.y;
     const w = this.w;
     const h = this.h;
-    // 橡皮胶头（红色泪滴形：大头在上，下缘收进管口）——参照真实胶头滴管
     const hx = x + w / 2;
-    const bulbY = y + 4.5;
-    ctx.fillStyle = '#c0303a';
+    const squish = this._squish ?? 0; // 滴液压缩 0..1
+    const stretch = this._suckKick ?? 0; // 吸液拉伸 0..1
+    // ---- 1) 红橡胶胶头（泪滴形：圆肩 → 收腰进卡箍；滴液压扁 / 吸液拉长）----
+    const neckY = y + 9.2;
+    const bulbTopY = y + 0.6 - squish * 0.5 + stretch * 0.4;
+    const bulbRX = w * 0.46 * (1 + 0.30 * squish + 0.10 * stretch);
+    const bulbRY = Math.max(2.2, 4.7 * (1 - 0.30 * squish + 0.16 * stretch));
+    const bulgeY = bulbTopY + bulbRY;
+    ctx.save();
+    const bulbGrad = ctx.createLinearGradient(hx - bulbRX, bulbTopY, hx + bulbRX, neckY);
+    bulbGrad.addColorStop(0, '#ff9298');
+    bulbGrad.addColorStop(0.5, '#d23a46');
+    bulbGrad.addColorStop(1, '#8e1f2a');
+    ctx.fillStyle = bulbGrad;
     ctx.beginPath();
-    ctx.ellipse(hx, bulbY, w * 0.44, 6.5, 0, 0, Math.PI * 2);
+    ctx.moveTo(hx - bulbRX * 0.38, neckY);
+    ctx.bezierCurveTo(hx - bulbRX * 1.12, bulgeY + bulbRY * 0.3, hx - bulbRX * 0.94, bulbTopY, hx, bulbTopY);
+    ctx.bezierCurveTo(hx + bulbRX * 0.94, bulbTopY, hx + bulbRX * 1.12, bulgeY + bulbRY * 0.3, hx + bulbRX * 0.38, neckY);
+    ctx.closePath();
     ctx.fill();
-    // 胶头高光（左上亮斑 + 下棱线）
-    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.strokeStyle = 'rgba(70,12,18,0.5)';
+    ctx.lineWidth = 0.9;
+    ctx.stroke();
+    // 高光（左上亮斑，静态）
+    ctx.fillStyle = 'rgba(255,255,255,0.38)';
     ctx.beginPath();
-    ctx.ellipse(hx - 1.6, bulbY - 2, 1.6, 2.6, -0.5, 0, Math.PI * 2);
+    ctx.ellipse(hx - bulbRX * 0.34, bulbTopY + bulbRY * 0.55, bulbRX * 0.26, bulbRY * 0.34, -0.5, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = 'rgba(120,20,24,0.5)';
+    // 胶头下缘棱线（与卡箍衔接）
+    ctx.strokeStyle = 'rgba(90,16,22,0.55)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(hx - 3.4, bulbY + 5.4);
-    ctx.quadraticCurveTo(hx, bulbY + 6.8, hx + 3.4, bulbY + 5.4);
+    ctx.moveTo(hx - bulbRX * 0.42, neckY - 1.2);
+    ctx.quadraticCurveTo(hx, neckY + 0.4, hx + bulbRX * 0.42, neckY - 1.2);
     ctx.stroke();
-    // 玻璃管（细长）：管口从胶头垂到细管口
-    const gx = hx - w * 0.14;
-    const gw = w * 0.28;
-    const gy = y + 10;
-    const gh = h - 14 - 8; // 上到锥尖
-    ctx.fillStyle = 'rgba(215,235,255,0.16)';
+    ctx.restore();
+    // ---- 2) 黄铜卡箍（胶头/玻璃管交界）----
+    const collarY = y + 9.4;
+    const collarW = w * 0.62;
+    rr(ctx, hx - collarW / 2, collarY, collarW, 2.2, 1);
+    const cg = ctx.createLinearGradient(0, collarY, 0, collarY + 2.2);
+    cg.addColorStop(0, '#ffe6a8');
+    cg.addColorStop(0.5, '#b98a3a');
+    cg.addColorStop(1, '#6b4a18');
+    ctx.fillStyle = cg;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(40,26,8,0.7)';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+    // ---- 3) 玻璃细管（暗紫玻璃 + 左侧高光）+ 管内液体 ----
+    const gx = hx - w * 0.15;
+    const gw = w * 0.3;
+    const gy = y + 10.5;
+    const gh = h - 20; // 管长（下接锥形滴嘴）
+    const glass = ctx.createLinearGradient(gx, 0, gx + gw, 0);
+    glass.addColorStop(0, 'rgba(200,225,255,0.34)');
+    glass.addColorStop(0.35, 'rgba(120,110,190,0.14)');
+    glass.addColorStop(1, 'rgba(200,225,255,0.26)');
+    ctx.fillStyle = glass;
     ctx.fillRect(gx, gy, gw, gh);
-    ctx.strokeStyle = 'rgba(215,235,255,0.85)';
-    ctx.lineWidth = 1.2;
-    ctx.strokeRect(gx, gy, gw, gh);
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.fillRect(gx + 0.6, gy, 0.7, gh); // 左侧玻璃高光
-    // 管内液体（颜色与溶液取色一致；液面随剩余比例下降；液体**贯穿到锥形滴嘴**——
-    // 滴嘴也是玻璃腔的一部分，装的是同一管液体，不该是空的）
+    // 管内液体（颜色与溶液取色一致；液面随剩余比例下降；贯穿锥形滴嘴）
     const frac = Math.max(0, Math.min(1, this.liquid / this.capacity));
     const innerY = gy + 1;
     const innerH = gh - 2;
     const lh = innerH * frac;
     if (lh > 0.6) {
       const { color, alpha } = this.liquidColor();
-      const bodyTop = innerY + innerH - lh; // 液面 y（管内部）
-      const tipBase = gy + gh; // 管底 → 滴嘴起
-      ctx.globalAlpha = Math.max(alpha, 0.45);
+      const bodyTop = innerY + innerH - lh;
+      const tipBase = gy + gh;
+      ctx.globalAlpha = Math.max(alpha, 0.5);
       ctx.fillStyle = color;
       ctx.beginPath();
       ctx.moveTo(gx + 0.6, bodyTop);
       ctx.lineTo(gx + gw - 0.6, bodyTop);
-      // 沿管向下 → 两侧收进锥形滴嘴（液体充满到尖端）
       ctx.lineTo(gx + gw - 0.6, tipBase);
       ctx.lineTo(hx, y + h - 1);
       ctx.lineTo(gx + 0.6, tipBase);
       ctx.closePath();
       ctx.fill();
       ctx.globalAlpha = 1;
-      // 液面线（只在管内部分显示）
+      // 液面线
       if (bodyTop >= innerY + 1) {
         ctx.strokeStyle = 'rgba(255,255,255,0.7)';
         ctx.lineWidth = 0.8;
@@ -10123,27 +11702,39 @@ class Dropper extends Obj {
         ctx.lineTo(gx + gw - 0.8, bodyTop);
         ctx.stroke();
       }
-      // 液面下"尖嘴"与管交界的光泽（液体连贯感）
-      ctx.fillStyle = 'rgba(255,255,255,0.18)';
-      ctx.beginPath();
-      ctx.moveTo(gx + 0.6, tipBase - 1);
-      ctx.lineTo(gx + gw - 0.6, tipBase - 1);
-      ctx.lineTo(hx + 0.5, y + h - 2.5);
-      ctx.lineTo(hx - 0.5, y + h - 2.5);
-      ctx.closePath();
-      ctx.fill();
     }
-    // 锥形滴嘴（细管下端收尖）
-    ctx.fillStyle = 'rgba(215,235,255,0.2)';
+    // 玻璃管描边（细冷色）+ 左缘高光（静态）
+    ctx.strokeStyle = 'rgba(215,235,255,0.85)';
+    ctx.lineWidth = 0.9;
+    ctx.strokeRect(gx, gy, gw, gh);
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.fillRect(gx + 0.5, gy, 0.6, gh);
+    // ---- 4) 锥形滴嘴（玻璃收尖 + 尖端高光）----
     ctx.beginPath();
     ctx.moveTo(gx, gy + gh);
     ctx.lineTo(hx, y + h);
     ctx.lineTo(gx + gw, gy + gh);
     ctx.closePath();
+    ctx.fillStyle = 'rgba(180,205,245,0.20)';
     ctx.fill();
-    ctx.strokeStyle = 'rgba(215,235,255,0.7)';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(215,235,255,0.72)';
+    ctx.lineWidth = 0.9;
     ctx.stroke();
+    // ---- 5) 滴液瞬间：尖端口形成的液珠（压缩后出现，随回弹淡出）----
+    if (squish > 0.18 && this.liquid > 1e-9) {
+      const { color, alpha } = this.liquidColor();
+      const dr = 0.9 + 1.3 * squish;
+      ctx.globalAlpha = Math.max(0.25, alpha) * squish;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.ellipse(hx, y + h + dr * 0.7, dr * 0.72, dr, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = 'rgba(255,255,255,0.75)';
+      ctx.beginPath();
+      ctx.arc(hx - dr * 0.2, y + h + dr * 0.4, dr * 0.18, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 }
 
@@ -10168,6 +11759,8 @@ exports.Dropper = Dropper;
 const { CFG } = __require('src/core/config.js');;
 const { toggleFullscreen, fullscreenSupported, isFullscreen } = __require('src/core/fullscreen.js');;
 const { canvasLW, canvasLH, uiScaleOf } = __require('src/render/canvas.js');;
+const { sfx } = __require('src/core/audio.js');;
+const { Savepoint } = __require('src/core/savepoint.js');;
 
 /** 屏幕坐标 → 世界坐标（与 Renderer.frame 同口径：跟随玩家/聚焦内容；鸟瞰时走鸟瞰视图）。
  *  输入/输出均为**逻辑像素**（canvas 缓冲 ×dpr，UI/命中统一逻辑系）。 */
@@ -10258,6 +11851,47 @@ function fullscreenButtonRect(W, top = 10, right = 0) {
   return { x: W - right - 214, y: top, w: 52, h: 34 };
 }
 
+/** 重开按钮（右上按钮排最左；图标 = 环形箭头）：与全屏/鸟瞰按钮同一排。
+ *  withFs = 本端是否真的画了全屏按钮（触屏 且 设备支持全屏，见 hud._drawNormal）——
+ *  带全屏时让出它的位置，否则左移一格贴住鸟瞰按钮。绘制（hud.js）与命中同源。 */
+function restartButtonRect(W, top = 10, right = 0, withFs = false) {
+  return { x: W - right - (withFs ? 272 : 222), y: top, w: 52, h: 34 };
+}
+
+/** 重开按钮双击判定阈值（ms）：单次点击只记时刻，两次内才打开重开菜单 */
+const RESTART_DOUBLE_MS = 400;
+
+/** 重开选择菜单布局（面板 + 两个按钮；绘制 hud.restartMenu 与命中同源）：
+ *  面板居中，宽 min(400, W×0.84)、高 214；按钮竖排（主「回到存档点」在上、
+ *  次「整局重开」在下），高 46、左右留 28。 */
+function restartMenuLayout(W, H) {
+  const w = Math.min(400, W * 0.84);
+  const h = 214;
+  const x = (W - w) / 2;
+  const y = (H - h) / 2;
+  const bx = x + 28;
+  const bw = w - 56;
+  return {
+    panel: { x, y, w, h },
+    checkpoint: { x: bx, y: y + 92, w: bw, h: 46 },
+    full: { x: bx, y: y + 148, w: bw, h: 46 },
+  };
+}
+
+/** 墙钟毫秒（双击阈值用真实时间：菜单/死亡时游戏时钟可能暂停） */
+function wallNow() {
+  try {
+    if (typeof performance !== 'undefined' && typeof performance.now === 'function') return performance.now();
+  } catch (e) { /* 老内核没有 performance */ }
+  return Date.now();
+}
+
+/** 世界按下管线是否应冻结（重开菜单打开 / 已死亡）：此时点击属于 UI 语义
+ *  （重开菜单操作、死亡后重开），不能穿透到场景物体上。 */
+function worldPaused(scene) {
+  return !!(scene && (scene.restartMenuOpen || scene.status === 'died'));
+}
+
 function inRect(r, sx, sy) {
   return sx >= r.x && sx <= r.x + r.w && sy >= r.y && sy <= r.y + r.h;
 }
@@ -10305,17 +11939,30 @@ function uiMargins(scene, uiK = 1) {
 }
 
 /** 命中可点击物体（onTap；bbox ±pad 宽容——滴管等细长物体好点中；
- *   desktop 默认 6，触屏手指传 14（由 touchui 管线传入）） */
+ *   desktop 默认 6，触屏手指传 14（由 touchui 管线传入）。
+ *   物体可提供 tapHit(world) 做细粒度命中（如导气管只认阀门圆，整台装置 bbox 不抢滴管）。 */
 function hitTap(scene, canvas, sx, sy, pad = 6) {
   const w = screenToWorld(scene, canvas, sx, sy);
   for (let i = scene.objects.length - 1; i >= 0; i--) {
     const o = scene.objects[i];
     if (typeof o.onTap !== 'function') continue;
+    if (typeof o.tapHit === 'function') {
+      if (o.tapHit(w)) return { obj: o, world: w };
+      continue; // 细粒度命中未中：继续找下层可点物体（不被大包围盒截胡）
+    }
     if (w.x >= o.x - pad && w.x <= o.x + o.w + pad && w.y >= o.y - pad && w.y <= o.y + o.h + pad) {
       return { obj: o, world: w };
     }
   }
   return null;
+}
+
+/** 鼠标悬停是否指在可点击物体上（与点击同源的命中规则）：桌面端手型指针提示用。
+ *  暂停/选单/死亡/鸟瞰时不提示（此时点击语义已被暂停或改为别处处理）。 */
+function hoverTapAt(scene, canvas, sx, sy, pad = 6) {
+  if (!scene || !canvas || scene.status !== 'running') return null;
+  if (scene.restartMenuOpen || scene.overview || scene.debugPaused) return null;
+  return hitTap(scene, canvas, sx, sy, pad);
 }
 
 /** 中心距离 */
@@ -10341,8 +11988,9 @@ function tipPanelRect(W, top = 10, right = 0, H = null) {
 }
 
 /**
- * 处理一次"点击"（提示按钮 / 物品栏选格 / 鸟瞰与全屏按钮）。
- * hud 可为空。返回 true = 已消费。onInfo（可选）诊断回调。
+ * 处理一次"点击"（重开菜单 / 死亡重开 / 重开按钮双击 / 全屏/鸟瞰/提示按钮 / 物品栏选格）。
+ * 死亡时点击屏幕 = 回存档点（有存档）或整局重开（无存档）；重开按钮双击 = 打开
+ * 重开选择菜单（单次点击只记时刻）。hud 可为空。返回 true = 已消费。onInfo（可选）诊断回调。
  */
 function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   if (!scene || portraitScene(scene)) return false;
@@ -10355,7 +12003,39 @@ function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   const y = sy / kUi;
   const top = hudTopOffset(scene, kUi);
   const right = touchInsetsOf(scene, kUi).right || 0;
-  // 0) 鸟瞰模式：只认"返回"按钮（暂停态；未中 → 交给鸟瞰拖动/缩放管线）
+  const touchOn = !!(scene._touchUI && typeof scene._touchUI.enabled === 'function' && scene._touchUI.enabled());
+  // 全屏按钮只在"触屏端且设备真的支持全屏"时才画（见 hud._drawNormal）——重开按钮
+  // 的排位必须与绘制同源：带全屏时让出全屏按钮位，否则左移一格。
+  const withFs = touchOn && fullscreenSupported();
+
+  // ⓪ 重开选择菜单（画布弹层；打开时 Scene.step 已暂停）：只认面板内两个按钮，
+  //    点面板外 = 关闭；永远吞掉本次点击（不穿透到世界/其它 HUD）。
+  if (scene.restartMenuOpen) {
+    const L = restartMenuLayout(W, H);
+    if (inRect(L.checkpoint, x, y)) {
+      // 无存档 → 按钮禁用：不响应（菜单保持打开，玩家可改选「整局重开」）
+      if (Savepoint.has(scene)) {
+        Savepoint.restore(scene);
+        onInfo?.({ type: 'restart-checkpoint' });
+      }
+      return true;
+    }
+    if (inRect(L.full, x, y)) {
+      Savepoint.fullRestart(scene);
+      onInfo?.({ type: 'restart-full' });
+      return true;
+    }
+    if (!inRect(L.panel, x, y)) scene.closeRestartMenu();
+    onInfo?.({ type: 'restart-menu' });
+    return true;
+  }
+  // ① 死亡：点击屏幕 = 有存档回存档点 / 无存档整局重开（电脑端鼠标同样生效）
+  if (scene.status === 'died') {
+    Savepoint.retryAfterDeath(scene);
+    onInfo?.({ type: 'died-retry' });
+    return true;
+  }
+  // ② 鸟瞰模式：只认"返回"按钮（暂停态；未中 → 交给鸟瞰拖动/缩放管线）
   if (scene.overview) {
     if (inRect(overviewButtonRect(W, top, right), x, y)) {
       scene.toggleOverview();
@@ -10363,30 +12043,50 @@ function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
     }
     return false;
   }
-  // 1) 全屏按钮（仅触屏端显示；click/触点都在用户手势内，可请求全屏）。
+  // ③ 重开按钮（右上按钮排最左）：单击只记录时刻（播点击音），400ms 内双击才
+  //    打开重开菜单（单次点击不重开）。★ 必须在全屏按钮之前判定：iOS 不支持
+  //    元素全屏时 HUD 不画全屏按钮、重开按钮左移到它的位置，两者命中区重叠。
+  if (inRect(restartButtonRect(W, top, right, withFs), x, y)) {
+    const now = wallNow();
+    const last = Number(scene._restartTapAt) || 0;
+    if (last > 0 && now - last <= RESTART_DOUBLE_MS
+        && typeof scene.openRestartMenu === 'function' && scene.openRestartMenu()) {
+      scene._restartTapAt = 0;
+      sfx('ui.open');
+      onInfo?.({ type: 'restart-menu-open' });
+    } else {
+      scene._restartTapAt = now;
+      sfx('ui.click');
+      onInfo?.({ type: 'restart-tap' });
+    }
+    return true;
+  }
+  // ④ 全屏按钮（仅触屏端显示；click/触点都在用户手势内，可请求全屏）。
   //    老设备/浏览器不支持元素全屏 API → 明确提示（不静默失效）
-  if (scene._touchUI && typeof scene._touchUI.enabled === 'function' && scene._touchUI.enabled()) {
+  if (touchOn) {
     if (inRect(fullscreenButtonRect(W, top, right), x, y)) {
       if (fullscreenSupported()) toggleFullscreen();
       else pushNotice(scene, '此浏览器不支持全屏');
+      sfx('ui.click');
       onInfo?.({ type: 'fullscreen' });
       return true;
     }
   }
-  // 2) 鸟瞰按钮（双端）
+  // ⑤ 鸟瞰按钮（双端）
   if (inRect(overviewButtonRect(W, top, right), x, y)) {
     scene.toggleOverview();
     onInfo?.({ type: 'overview' });
     return true;
   }
-  // 3) 提示按钮（右上；hud.tipButton 同几何：top..top+34）
+  // ⑥ 提示按钮（右上；hud.tipButton 同几何：top..top+34）
   //    点击 = 展示下一条可用提示（没有则俏皮话/收起）——面板/文案由 hud.onTipClick 管理
   if (x > W - right - 84 && x < W - right - 8 && y > top && y < top + 34) {
+    sfx('ui.click');
     if (hud && typeof hud.onTipClick === 'function') hud.onTipClick(scene);
     onInfo?.({ type: 'tip' });
     return true;
   }
-  // 3.5) 提示面板（展开中）：面板上点击 = 消费（不穿透到场景）；右上 ✕ = 关闭
+  // ⑦ 提示面板（展开中）：面板上点击 = 消费（不穿透到场景）；右上 ✕ = 关闭
   if (hud && hud.showTip) {
     // ★ 以 HUD **实际绘制**的矩形为准（面板高度随文案行数变化，只有它知道）；
     //   没画过（刚展开那一帧）才退回共享布局几何。两边不同源 = 点面板穿透到场景。
@@ -10395,6 +12095,7 @@ function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
       if (x >= pr.x + pr.w - 32 && y <= pr.y + 32) {
         if (typeof hud.closeTip === 'function') hud.closeTip();
         else hud.showTip = false;
+        sfx('ui.close');
         onInfo?.({ type: 'tip-close' });
       } else {
         onInfo?.({ type: 'tip-panel' });
@@ -10402,13 +12103,14 @@ function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
       return true;
     }
   }
-  // 4) 物品栏选格（右下；几何与 HUD 渲染共用 inventorySlotRects）
+  // ⑧ 物品栏选格（右下；几何与 HUD 渲染共用 inventorySlotRects）
   const p = scene.player;
   if (p && p.inventory) {
     const rects = inventorySlotRects(W, H, p.inventory.slots, uiMargins(scene, kUi));
     for (let i = 0; i < rects.length; i++) {
       const r = rects[i];
       if (x >= r.x && x <= r.x + r.size && y >= r.y && y <= r.y + r.size) {
+        sfx('ui.click');
         p.inventory.selected = i;
         onInfo?.({ type: 'slot' });
         return true;
@@ -10459,7 +12161,8 @@ function handleSceneTapUp(scene) {
  * 落在滴管玻璃段但玩家太远 / 无容器等 → 未命中（不滴也不拖）。
  */
 function handleScenePressDown(scene, canvas, sx, sy, onInfo = null, pad = 6) {
-  if (!scene || scene.overview || portraitScene(scene)) return false; // 鸟瞰/竖屏：场景管线冻结
+  // 鸟瞰/竖屏/菜单打开/已死亡：场景管线冻结（后两者点击属于 UI 语义，不能穿透到物体）
+  if (!scene || scene.overview || portraitScene(scene) || worldPaused(scene)) return false;
   scene._pressHome = null;
   const hit = hitTap(scene, canvas, sx, sy, pad);
   if (!hit) {
@@ -10496,7 +12199,7 @@ function handleScenePressDown(scene, canvas, sx, sy, onInfo = null, pad = 6) {
 /** 移动（按住期间）：拖动 = 移动滴管位置；胶头/玻璃段都允许拖。
  *  候选期拖出 dragStartPx → 拖动（不滴）；已开滴/开吸再拖出 dragAbortPx → 停转拖动 */
 function handleScenePressMove(scene, canvas, sx, sy) {
-  if (!scene || scene.overview || portraitScene(scene)) return;
+  if (!scene || scene.overview || portraitScene(scene) || worldPaused(scene)) return;
   const c = scene._pressCand;
   if (c && !c.moved && Math.hypot(sx - c.startX, sy - c.startY) > CFG.item.dragStartPx) {
     c.moved = true;
@@ -10553,6 +12256,15 @@ function handleScenePressMove(scene, canvas, sx, sy) {
  *  玻璃段候选不滴（松开即完成，仅拖动会移动位置）；结束一切按住状态 */
 function handleScenePressUp(scene, canvas = null, pad = 6) {
   if (!scene || scene.overview || portraitScene(scene)) return;
+  // 菜单打开/已死亡：只清按住态（不触发滴液等世界交互——该点击是 UI 语义）
+  if (worldPaused(scene)) {
+    scene._pressCand = null;
+    scene._drag = null;
+    scene._holdSuck = null;
+    scene._pressHome = null;
+    handleSceneTapUp(scene);
+    return;
+  }
   const c = scene._pressCand;
   if (c && c.mode === 'bulb' && !c.moved && c.downT < CFG.item.dripArmDelay && canvas) {
     scene._pressCand = null;
@@ -10660,9 +12372,12 @@ exports.compactK = compactK;
 exports.touchInsetsOf = touchInsetsOf;
 exports.overviewButtonRect = overviewButtonRect;
 exports.fullscreenButtonRect = fullscreenButtonRect;
+exports.restartButtonRect = restartButtonRect;
+exports.restartMenuLayout = restartMenuLayout;
 exports.pushNotice = pushNotice;
 exports.inventorySlotRects = inventorySlotRects;
 exports.uiMargins = uiMargins;
+exports.hoverTapAt = hoverTapAt;
 exports.tipPanelRect = tipPanelRect;
 exports.handleSceneClick = handleSceneClick;
 exports.handleSceneTapDown = handleSceneTapDown;
@@ -10741,32 +12456,923 @@ exports.toggleFullscreen = toggleFullscreen;
 exports.requestFullscreenOnce = requestFullscreenOnce;
 
   };
+  __modules["src/core/audio.js"] = function (module, exports, __require) {
+// ============================================================================
+// 引擎侧音效入口（薄封装）
+// ----------------------------------------------------------------------------
+// 真正的合成器在根目录经典脚本 audio.js（window.ChezzleAudio）：它同时服务
+// 关卡页与 SPA 外壳（index/select/about），避免两套音色。本模块只做：
+//   ① 无 window / 无 audio.js（Node 测试、编辑器等）→ 返回 false，不报错；
+//   ② 统一 try/catch，音效异常绝不影响游戏循环；
+//   ③ 供关卡脚本/插件使用的 Chezzle.sfx（src/index.js re-export）；
+//   ④ setSfxEnabled(false)：首页角落小舞台这类"装饰性 Scene"会一直 step()，
+//      传送门/落地/焰色反应等音效会变成背景噪音 —— 外壳关掉引擎音效，
+//      UI 点击音（window.ChezzleAudio 的自动接线）不受影响。
+//
+// 音色名（与 audio.js 的 PRESETS 一一对应；拼错只是没声音，不会抛错）：
+//   UI     ui.click / ui.tick / ui.open / ui.close / ui.back / ui.toggle / ui.deny
+//   页面   page.enter / page.leave / level.enter / level.leave
+//   玩家   player.jump / player.land / player.hurt
+//   物品   item.pickup / item.place / item.suck / item.pour / item.drip / item.gas
+//   化学   chem.react / chem.bubble / chem.spark / chem.explode / chem.ignite / chem.extinguish
+//   机关   switch.open / switch.close / key.open / door.open / door.close
+//          portal / rope.break / extractor.pump
+//   状态   win / died / restart / overview.on / overview.off / tip / banner
+// ============================================================================
+
+/** 引擎音效总开关（默认开；装饰性场景/无 UI 的回放环境可关掉） */
+let ENGINE_SFX_ON = true;
+
+/** 开关引擎音效（不影响 audio.js 的 UI 点击音；返回当前状态） */
+function setSfxEnabled(on) {
+  ENGINE_SFX_ON = !!on;
+  return ENGINE_SFX_ON;
+}
+
+/** 当前是否允许引擎音效 */
+function sfxEnabled() {
+  return ENGINE_SFX_ON;
+}
+
+/** 播放一次音效（安全封装）。返回 true = 真的排进了音频图。 */
+function sfx(name, opts) {
+  if (!ENGINE_SFX_ON || typeof window === 'undefined') return false;
+  try {
+    const a = window.ChezzleAudio;
+    if (!a || typeof a.play !== 'function') return false;
+    return a.play(name, opts) === true;
+  } catch (e) {
+    return false; // 音频异常不拖垮游戏循环（与插件回调同策略）
+  }
+}
+
+/** 音频是否可用（audio.js 已加载且用户手势已解锁/可解锁） */
+function audioAvailable() {
+  if (!ENGINE_SFX_ON || typeof window === 'undefined') return false;
+  try {
+    return !!(window.ChezzleAudio && typeof window.ChezzleAudio.play === 'function');
+  } catch (e) {
+    return false;
+  }
+}
+
+exports.setSfxEnabled = setSfxEnabled;
+exports.sfxEnabled = sfxEnabled;
+exports.sfx = sfx;
+exports.audioAvailable = audioAvailable;
+
+  };
+  __modules["src/core/savepoint.js"] = function (module, exports, __require) {
+// ============================================================================
+// 存档点 / 读档（Savepoint）
+// ----------------------------------------------------------------------------
+// 目标：死亡后不是整局重开，而是回到最近一次"存档点"；重开按钮双击时可以让玩家
+// 选择「回到存档点」或「整局重开」。
+//
+// 快照方案（关键设计）：**内存内快照 + 原地恢复**，不做页面刷新、不做序列化。
+//   · 存档时记录：场景的各类对象索引数组（引用）、每个对象的"数据字段"深拷贝、
+//     玩家物品栏（含烧杯/滴管/集气瓶内容）、大气、场景的计时/提示/运行钩子状态、
+//     多场景（Multiscene）的全部场景状态与当前场景；
+//   · 读档时把同一批对象引用重新挂回场景，并把数据状态写回去 —— 对象身份不变，
+//     所以关卡脚本/插件里保存的对象引用、事件回调、渲染器/相机都不用重建；
+//   · 快照只在本页内存里（整局重开会刷新页面，快照自然清空），不写 localStorage。
+//
+// 对象状态捕获规则：只拷贝"纯数据"（数字/字符串/布尔/数组/Map/Set/纯对象），
+// 材质网格（MaterialGrid）、溶液（Solution）、物品栏（Inventory）用专用编解码；
+// 引擎适配器（mat/material）、DOM/渲染器引用、函数一律跳过（保持原引用）。
+// ============================================================================
+
+const { MaterialGrid } = __require('src/render/gridrender.js');;
+const { Solution } = __require('src/chem/solution.js');;
+const { ContactTracker } = __require('src/physics/collision.js');;
+const { bindKeyboard } = __require('src/core/input.js');;
+const { sfx } = __require('src/core/audio.js');;
+
+const SKIP_KEYS = new Set([
+  'scene', 'multiscene', 'camera', 'renderer', 'hud', 'game',
+  'mat', 'material', 'subBodies', 'handlers', '_handlers', '_events',
+  '_touchUI', '_menuKeyUnsub', '_layer',
+  '_geom', // 导气管装置几何缓存：每帧由 _layout 重算，快照里含对象引用（半物化残体）
+]);
+
+const MARK = '__czSave';
+const MAX_DEPTH = 8;
+
+/** 当前快照：{ owner, id, at, data }；owner = Scene 或 Multiscene */
+let current = null;
+let restoring = false;
+let lastRestoreAt = 0;
+
+function nowMs() {
+  try {
+    if (typeof performance !== 'undefined' && typeof performance.now === 'function') return performance.now();
+  } catch (e) { /* 忽略 */ }
+  return Date.now();
+}
+
+function ownerOf(scene) {
+  return (scene && scene.multiscene) || scene || null;
+}
+
+// ---------------------------------------------------------------------------
+// 数据捕获：纯数据深拷贝（无法安全拷贝的值返回 SKIP）
+// ---------------------------------------------------------------------------
+const SKIP = Symbol('skip');
+
+function isPlainObject(v) {
+  const p = Object.getPrototypeOf(v);
+  return p === Object.prototype || p === null;
+}
+
+function captureGrid(grid) {
+  return {
+    rows: grid.rows, cols: grid.cols,
+    cells: grid.cells.map((row) => row.map((cell) => (cell ? [...cell.entries()] : null))),
+  };
+}
+
+function applyGrid(grid, snap) {
+  if (!grid || !snap) return;
+  grid.rows = snap.rows;
+  grid.cols = snap.cols;
+  grid.cells = snap.cells.map((row) => row.map((cell) => (cell ? new Map(cell.map(([id, m]) => [id, m])) : null)));
+  // 派生缓存全部失效（避免读到旧网格的 AABB/总量/暴露面缓存）
+  grid._dirty = false;
+  grid._lastConsume = [];
+  grid._prevTargets = [];
+  grid._addAccum = 0;
+  grid._batchUsed = false;
+  grid._aabb = null;
+  grid._aabbVer = -1;
+  grid._exposedMemo = new Map();
+  if (typeof grid._invalidateTotals === 'function') grid._invalidateTotals();
+  else { grid._totals = {}; grid._totalsValid = false; }
+}
+
+function captureSolution(sol) {
+  return { volume: sol.volume, water: sol.water, solutes: [...sol.solutes.entries()] };
+}
+
+function applySolution(sol, snap) {
+  if (!sol || !snap) return;
+  sol.volume = snap.volume;
+  sol.water = snap.water;
+  sol.solutes = new Map(snap.solutes.map(([id, m]) => [id, m]));
+}
+
+function captureInventory(inv) {
+  return {
+    capacity: inv.capacity,
+    selected: inv.selected,
+    slots: inv.slots.map((s) => {
+      if (!s) return null;
+      if (s.obj) return { item: s.item, obj: s.obj, state: captureObjectState(s.obj) };
+      return { substance: s.substance, mass: s.mass };
+    }),
+  };
+}
+
+function applyInventory(inv, snap) {
+  if (!inv || !snap) return;
+  inv.capacity = snap.capacity;
+  inv.selected = snap.selected;
+  inv.slots = snap.slots.map((s) => {
+    if (!s) return null;
+    if (s.obj) return { item: s.item, obj: s.obj };
+    return { substance: s.substance, mass: s.mass };
+  });
+  for (const s of snap.slots) if (s && s.obj) applyObjectState(s.obj, s.state);
+}
+
+/** 纯数据深拷贝（含 Map/Set/数组/纯对象）；遇到类实例/函数引用 → SKIP */
+function cloneData(v, depth, seen) {
+  if (v === null || v === undefined) return v === undefined ? SKIP : null;
+  const t = typeof v;
+  if (t === 'number' || t === 'string' || t === 'boolean') return v;
+  if (t === 'function' || t === 'symbol' || t === 'bigint') return SKIP;
+  if (depth > MAX_DEPTH) return SKIP;
+  if (v instanceof MaterialGrid) return { [MARK]: 'grid', data: captureGrid(v) };
+  if (v instanceof Solution) return { [MARK]: 'solution', data: captureSolution(v) };
+  if (v.constructor && v.constructor.name === 'Inventory' && Array.isArray(v.slots)) {
+    return { [MARK]: 'inventory', data: captureInventory(v) };
+  }
+  if (seen.has(v)) return SKIP; // 循环引用：跳过（保持原引用）
+  seen.add(v);
+  try {
+    if (Array.isArray(v)) {
+      const out = [];
+      for (const x of v) {
+        const c = cloneData(x, depth + 1, seen);
+        if (c === SKIP) return SKIP; // 数组里含引用/类实例：整段跳过（subBodies 等）
+        out.push(c);
+      }
+      return out;
+    }
+    if (v instanceof Map) {
+      const out = [];
+      for (const [k, val] of v) {
+        const ck = cloneData(k, depth + 1, seen);
+        const cv = cloneData(val, depth + 1, seen);
+        if (ck === SKIP || cv === SKIP) return SKIP;
+        out.push([ck, cv]);
+      }
+      return { [MARK]: 'map', data: out };
+    }
+    if (v instanceof Set) {
+      const out = [];
+      for (const x of v) {
+        const c = cloneData(x, depth + 1, seen);
+        if (c === SKIP) return SKIP;
+        out.push(c);
+      }
+      return { [MARK]: 'set', data: out };
+    }
+    if (typeof v === 'object' && isPlainObject(v)) {
+      const out = {};
+      let kept = 0;
+      for (const k of Object.keys(v)) {
+        const c = cloneData(v[k], depth + 1, seen);
+        if (c !== SKIP) { out[k] = c; kept++; }
+      }
+      // 有键但全被跳过（函数/引用对象）→ 整段跳过，绝不清空原对象
+      if (Object.keys(v).length > 0 && kept === 0) return SKIP;
+      return out;
+    }
+    return SKIP; // 其它类实例（引擎适配器/对象引用…）：保持原引用
+  } finally {
+    seen.delete(v);
+  }
+}
+
+/** 把捕获的数据还原成新对象（每次读档都重新生成，保证快照本身不被修改） */
+function materialize(v) {
+  if (v === null || v === undefined) return v;
+  const t = typeof v;
+  if (t === 'number' || t === 'string' || t === 'boolean') return v;
+  if (Array.isArray(v)) return v.map(materialize);
+  if (v && typeof v === 'object' && v[MARK] === 'map') {
+    return new Map(v.data.map(([k, val]) => [materialize(k), materialize(val)]));
+  }
+  if (v && typeof v === 'object' && v[MARK] === 'set') return new Set(v.data.map(materialize));
+  if (v && typeof v === 'object' && isPlainObject(v)) {
+    const out = {};
+    for (const k of Object.keys(v)) out[k] = materialize(v[k]);
+    return out;
+  }
+  return v;
+}
+
+/** materialize 的空值兜底：SKIP（无法安全拷贝）时用 fallback */
+function mat(v, fallback) {
+  return v === SKIP ? fallback : materialize(v);
+}
+
+/** 捕获单个物体的数据状态（引用/函数类字段跳过） */
+function captureObjectState(obj) {
+  const out = {};
+  for (const k of Object.keys(obj)) {
+    if (SKIP_KEYS.has(k)) continue;
+    const v = obj[k];
+    if (v === null || v === undefined) continue;
+    if (typeof v === 'function') continue;
+    if (typeof v === 'object') {
+      if (v === obj) continue; // 自引用
+      if (v.obj === obj || v.owner === obj) continue; // 引擎适配器
+      if (v instanceof MaterialGrid || v instanceof Solution) {
+        out[k] = cloneData(v, 0, new Set());
+        continue;
+      }
+      if (v.constructor && v.constructor.name === 'Inventory' && Array.isArray(v.slots)) {
+        out[k] = cloneData(v, 0, new Set());
+        continue;
+      }
+    }
+    const c = cloneData(v, 0, new Set());
+    if (c !== SKIP) out[k] = c;
+  }
+  return out;
+}
+
+function applyObjectState(obj, state) {
+  if (!obj || !state) return;
+  for (const k of Object.keys(state)) {
+    const v = state[k];
+    if (v && typeof v === 'object' && v[MARK] === 'grid') { applyGrid(obj[k], v.data); continue; }
+    if (v && typeof v === 'object' && v[MARK] === 'solution') { applySolution(obj[k], v.data); continue; }
+    if (v && typeof v === 'object' && v[MARK] === 'inventory') { applyInventory(obj[k], v.data); continue; }
+    obj[k] = materialize(v);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 场景快照
+// ---------------------------------------------------------------------------
+const ARRAY_KEYS = ['objects', 'dynamics', 'statics', 'containers', 'lamps', 'gasTubes', 'gasChambers', 'doors', 'portals', 'particles', 'hidden'];
+
+function captureScene(scene) {
+  const owners = new Set([...scene.objects, ...scene.hidden]);
+  // 物品栏里的物品可能不在场景中（被玩家拿着）：也要先捕获状态（applyInventory 会再写一次）
+  if (scene.player && scene.player.inventory) {
+    for (const s of scene.player.inventory.slots) if (s && s.obj) owners.add(s.obj);
+  }
+  const states = [];
+  for (const o of owners) states.push([o, captureObjectState(o)]);
+  const arrays = {};
+  for (const k of ARRAY_KEYS) arrays[k] = scene[k].slice();
+  arrays.byId = Object.assign({}, scene.byId);
+  return {
+    arrays,
+    player: scene.player,
+    states,
+    atmosphere: {
+      gas: [...scene.atmosphere.gas.entries()],
+      _baseTotal: scene.atmosphere._baseTotal,
+    },
+    // 气室内部大气（与外部独立）：每个气室分别快照，读档时逐气室还原
+    chambers: (scene.gasChambers ?? []).map((c) => ({
+      obj: c, // 保持对象引用（原位恢复对象身份不变）
+      gas: [...c.atmosphere.gas.entries()],
+      _baseTotal: c.atmosphere._baseTotal,
+      reactGas: cloneData(c._reactGas, 0, new Set()),
+    })),
+    fields: {
+      time: scene.time,
+      dt: scene.dt,
+      tip: scene.tip,
+      tipSeq: scene.tipSeq,
+      banner: cloneData(scene.banner, 0, new Set()),
+      deathQuip: scene.deathQuip,
+      _reactGas: cloneData(scene._reactGas, 0, new Set()),
+      _rxLogT: cloneData(scene._rxLogT, 0, new Set()),
+      _lastLabelT: cloneData(scene._lastLabelT, 0, new Set()),
+      _plumeSeq: scene._plumeSeq,
+      _tubeBusy: scene._tubeBusy,
+      _explosionSeq: scene._explosionSeq,
+      _lastExplosion: cloneData(scene._lastExplosion, 0, new Set()),
+      gasLog: cloneData(scene.gasLog, 0, new Set()),
+      debugReactions: cloneData(scene.debugReactions, 0, new Set()),
+      cameraFocus: cloneData(scene.cameraFocus, 0, new Set()),
+      notice: cloneData(scene._notice, 0, new Set()),
+      _sfxGasT: scene._sfxGasT,
+      _sfxSparkT: scene._sfxSparkT,
+      _rxSfxT: cloneData(scene._rxSfxT, 0, new Set()),
+      _rxHurtT: scene._rxHurtT,
+      timers: scene._timers.slice(),
+      intervals: scene._intervals.slice(),
+      tickFns: scene._tickFns.slice(),
+      afterFns: scene._afterFns.slice(),
+    },
+  };
+}
+
+function applyScene(scene, snap) {
+  // 1) 对象索引数组整体还原（引用同一批对象：身份不变）
+  for (const k of ARRAY_KEYS) scene[k] = snap.arrays[k].slice();
+  scene.byId = Object.assign({}, snap.arrays.byId);
+  scene.player = snap.player || null;
+
+  // 2) 每个物体的数据状态写回
+  for (const [obj, state] of snap.states) {
+    try { applyObjectState(obj, state); } catch (e) { /* 单个对象状态异常不拖垮读档 */ }
+  }
+
+  // 3) 大气
+  scene.atmosphere.gas = new Map(snap.atmosphere.gas.map(([id, m]) => [id, m]));
+  scene.atmosphere._baseTotal = snap.atmosphere._baseTotal;
+  scene.atmosphere._cause = null;
+  scene.atmosphere._log = [];
+
+  // 3.1) 气室内部大气（内部独立：每个气室恢复自己的气体账本/反应产气）
+  for (const s of snap.chambers ?? []) {
+    const c = s.obj;
+    if (!c || !c.atmosphere) continue;
+    c.atmosphere.gas = new Map(s.gas.map(([id, m]) => [id, m]));
+    c.atmosphere._baseTotal = s._baseTotal;
+    c.atmosphere._cause = null;
+    c.atmosphere._log = [];
+    c._reactGas = mat(s.reactGas, {});
+  }
+
+  // 4) 场景运行状态
+  const f = snap.fields;
+  scene.time = f.time;
+  scene.dt = f.dt;
+  scene.status = 'running';
+  scene.tip = f.tip;
+  scene.tipSeq = f.tipSeq;
+  scene.tipReady = null;   // 下一 tick 会按条件重算（避免引用旧 tips 对象）
+  scene.tipActive = null;
+  scene.banner = mat(f.banner, scene.banner);
+  scene.deathCause = null;
+  scene.deathQuip = null;
+  scene._reactGas = mat(f._reactGas, {});
+  scene._rxLogT = mat(f._rxLogT, {});
+  scene._lastLabelT = mat(f._lastLabelT, {});
+  scene._plumeSeq = f._plumeSeq ?? 0;
+  scene._tubeBusy = false;
+  scene._explosionSeq = f._explosionSeq ?? 0;
+  scene._lastExplosion = mat(f._lastExplosion, null);
+  scene.gasLog = mat(f.gasLog, null) || [];
+  scene.debugReactions = mat(f.debugReactions, null);
+  scene.cameraFocus = mat(f.cameraFocus, null);
+  scene._notice = mat(f.notice, null);
+  scene._sfxGasT = f._sfxGasT;
+  scene._sfxSparkT = f._sfxSparkT;
+  scene._rxSfxT = mat(f._rxSfxT, {});
+  scene._rxHurtT = f._rxHurtT;
+  if (scene.camera) {
+    scene.camera._shake = 0;
+    if (scene.camera.overview) {
+      try { scene.camera.exitOverview(); } catch (e) { /* 忽略 */ }
+    }
+  }
+
+  // 5) 运行时钩子（wait/interval/onTick）：恢复存档时刻的调度表
+  scene._timers = f.timers.slice();
+  scene._intervals = f.intervals.slice();
+  scene._tickFns = f.tickFns.slice();
+  scene._afterFns = f.afterFns.slice();
+
+  // 6) 瞬时交互态清空（否则死亡那一下的拖拽/长按/按键会带进新生命）
+  scene.control.clear();
+  scene.pressed.clear();
+  scene._pressCand = null;
+  scene._pressTap = null;
+  scene._pressTapT = 0;
+  scene._pressHome = null;
+  scene._drag = null;
+  scene._holdSuck = null;
+  scene._gasHold = null;
+  scene._emitCtx = null;
+  scene.mouse = null;
+  scene.overview = false;
+  scene.debugPaused = false;
+  scene.debugStepOnce = false;
+  scene._firedStatus = undefined;
+  scene.contactPairs = [];
+  scene.contacts = new ContactTracker();
+
+  // 7) 网格形状按还原后的材料重算（碰撞箱/血量尺寸与存档一致）
+  for (const obj of scene.objects) {
+    if (typeof obj.syncGrid === 'function') {
+      try { obj.syncGrid(); } catch (e) { /* 忽略单个对象 */ }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 多场景快照
+// ---------------------------------------------------------------------------
+function cloneMultisceneHold(hold) {
+  const out = {};
+  if (!hold || typeof hold !== 'object') return out;
+  for (const k of Object.keys(hold)) out[k] = hold[k]; // 跨场景共享状态：浅拷贝保留引用
+  return out;
+}
+
+function captureMultiscene(M) {
+  const scenes = [];
+  for (const [name, e] of M.scenes) {
+    if (!e.scene) continue;
+    scenes.push([name, captureScene(e.scene)]);
+  }
+  return {
+    scenes,
+    current: M.current,
+    switches: M.switches,
+    hold: cloneMultisceneHold(M.hold),
+  };
+}
+
+function applyMultiscene(M, snap) {
+  for (const [name, s] of snap.scenes) {
+    const e = M.scenes.get(name);
+    if (!e || !e.scene) continue;
+    applyScene(e.scene, s);
+  }
+  // 先解绑旧场景键盘，再按存档时场景重新绑定
+  if (M._unbindKeys) { try { M._unbindKeys(); } catch (e) { /* 忽略 */ } M._unbindKeys = null; }
+  M.current = snap.current;
+  M.switches = snap.switches ?? 0;
+  // hold：清空后写回（跨场景共享对象保持引用）
+  if (M.hold && typeof M.hold === 'object') {
+    for (const k of Object.keys(M.hold)) delete M.hold[k];
+    Object.assign(M.hold, cloneMultisceneHold(snap.hold));
+  }
+  for (const [name, e] of M.scenes) {
+    const on = name === snap.current;
+    e.active = on;
+    if (e.canvas && e.canvas.style) e.canvas.style.display = on ? 'block' : 'none';
+  }
+  const cur = M.scenes.get(snap.current);
+  if (cur && cur.scene && typeof window !== 'undefined') M._unbindKeys = bindKeyboard(cur.scene);
+}
+
+// ---------------------------------------------------------------------------
+// 对外 API
+// ---------------------------------------------------------------------------
+function activeSceneOf(scene) {
+  if (!scene) return null;
+  if (scene.multiscene) {
+    const e = scene.multiscene.scenes.get(scene.multiscene.current);
+    return e && e.scene ? e.scene : scene;
+  }
+  return scene;
+}
+
+/** 真正拍摄快照（Savepoint.save 的同步路径；钩子里调用会被延后到 postStep） */
+function captureNow(scene, opts = {}) {
+  if (!scene || restoring) return false;
+  if (scene.status && scene.status !== 'running') return false; // 死亡/通关瞬间不存新档
+  const owner = ownerOf(scene);
+  if (!owner) return false;
+  // 极短时间内的重复存档直接忽略（插件按"进入区域"触发，不会重复；这里兜底防连点）
+  if (current && current.owner === owner && !opts.force && nowMs() - current.at < 200) return false;
+  try {
+    const data = scene.multiscene ? captureMultiscene(scene.multiscene) : captureScene(scene);
+    current = { owner, id: opts.id ?? null, label: opts.label ?? null, at: nowMs(), data };
+  } catch (e) {
+    if (typeof console !== 'undefined') console.warn('[Savepoint] 存档失败：', e);
+    return false;
+  }
+  Savepoint.toast(activeSceneOf(scene), '已存档');
+  sfx('checkpoint.save');
+  return true;
+}
+
+const Savepoint = {
+  /** 当前页面是否有存档点（存档快照属于该场景/该多场景管理器） */
+  has(scene) {
+    if (!current) return false;
+    return current.owner === ownerOf(scene);
+  },
+
+  /** 存档信息（调试/UI 用）：{ id, at, age } */
+  info() {
+    if (!current) return null;
+    return { id: current.id, at: current.at, age: nowMs() - current.at };
+  },
+
+  /** 是否正在执行读档（插件在恢复瞬间应跳过"进入区域就存档"） */
+  isRestoring() { return restoring; },
+
+  /** 最近一次读档的墙钟时间（插件用来跳过一次自动存档） */
+  restoredRecently(ms = 1200) { return lastRestoreAt > 0 && nowMs() - lastRestoreAt < ms; },
+
+  /** 存档：scene 可以是当前场景（会自动带上整个 Multiscene 的状态）。
+   *  ★ 在 tick / wait / after 等 scene 钩子回调里调用时，会**延后到本刻结束**
+   *  （Scene.postStep）再真正拍快照：_runHooks 期间 _tickFns/_timers 正在边跑边
+   *  重建，此刻快照会漏掉钩子（读档后插件 onTick 全丢）。提示音/“已存档”立即给。 */
+  save(scene, opts = {}) {
+    if (!scene || restoring) return false;
+    if (scene._hooksRunning) {
+      scene._savepointReq = { id: opts.id ?? null, label: opts.label ?? null, force: !!opts.force };
+      if (!scene._savepointQueued) {
+        scene._savepointQueued = true;
+        const queue = () => {
+          scene._savepointQueued = false;
+          const req = scene._savepointReq;
+          scene._savepointReq = null;
+          if (req) captureNow(scene, req);
+        };
+        if (typeof scene.postStep === 'function') scene.postStep(queue);
+        else if (typeof scene.after === 'function') scene.after(queue);
+        else queue();
+      }
+      Savepoint.toast(activeSceneOf(scene), '已存档');
+      return true;
+    }
+    return captureNow(scene, opts) ? true : false;
+  },
+
+  /** 读档（原地恢复）；没有存档或不属于本关 → false */
+  restore(scene) {
+    if (!scene || !Savepoint.has(scene)) return false;
+    if (restoring) return false;
+    const target = activeSceneOf(scene);
+    if (target && typeof target.closeRestartMenu === 'function') target.closeRestartMenu();
+    restoring = true;
+    try {
+      if (current.data.scenes) {
+        const M = scene.multiscene || (scene.scenes ? scene : null);
+        if (!M) return false;
+        applyMultiscene(M, current.data);
+      } else {
+        if (scene.multiscene) return false;
+        applyScene(scene, current.data);
+      }
+    } catch (e) {
+      if (typeof console !== 'undefined') console.warn('[Savepoint] 读档失败：', e);
+      return false;
+    } finally {
+      restoring = false;
+    }
+    lastRestoreAt = nowMs();
+    // 通知插件（检查点插件据此把"当前区域"设成存档所在区域，避免立刻重复存档）
+    const scenes = scene.multiscene
+      ? [...scene.multiscene.scenes.values()].map((e) => e.scene).filter(Boolean)
+      : [scene];
+    for (const s of scenes) {
+      try { s.fire('checkpointRestored', { id: current.id }); } catch (e) { /* 插件异常不影响 */ }
+    }
+    Savepoint.toast(activeSceneOf(scene), '已回到存档点');
+    sfx('checkpoint.restore');
+    return true;
+  },
+
+  /** 死亡后点屏幕：有存档 → 回存档点；没有 → 整局重开（保持旧行为） */
+  retryAfterDeath(scene) {
+    if (Savepoint.restore(scene)) return 'restored';
+    if (scene && typeof scene.restart === 'function') scene.restart();
+    return 'restart';
+  },
+
+  /** 整局重开：清空存档并刷新页面 */
+  fullRestart(scene) {
+    current = null;
+    if (scene && scene.multiscene) {
+      const e = scene.multiscene.scenes.get(scene.multiscene.current);
+      if (e && e.scene && typeof e.scene.closeRestartMenu === 'function') e.scene.closeRestartMenu();
+    } else if (scene && typeof scene.closeRestartMenu === 'function') {
+      scene.closeRestartMenu();
+    }
+    if (scene && typeof scene.restart === 'function') scene.restart();
+  },
+
+  /** 清空存档（整局重开 / 离开关卡时用） */
+  clear() { current = null; },
+
+  /** 左上角提示（"已存档"/"已回到存档点"），由 HUD 渲染 */
+  toast(scene, text) {
+    if (!scene) return;
+    scene._saveToast = { text: String(text || ''), at: nowMs(), dur: 1600 };
+  },
+
+  // 供测试/调试使用（不对外文档化）
+  _captureScene: captureScene,
+  _applyScene: applyScene,
+  _captureMultiscene: captureMultiscene,
+  _applyMultiscene: applyMultiscene,
+};
+
+exports.Savepoint = Savepoint;
+
+  };
+  __modules["src/core/input.js"] = function (module, exports, __require) {
+// ============================================================================
+// 键盘输入 → Scene.control（长按）/ Scene.pressed（本刻刚按下）
+// 键位来自设置（src/core/prefs.js ← 首页设置面板写入的 localStorage）：
+//   左移/右移/跳跃/放置/拾取/抓取/使用/重开/鸟瞰 均可改键；
+//   调试键 F5/F6 与"悬停查源 X"是开发用固定键，不参与改键。
+// ============================================================================
+
+const { actionOfCode } = __require('src/core/prefs.js');;
+
+// 物理按住的键（window 级）：bindKeyboard 随场景切换重绑后，把"仍按住的键"恢复进新
+// 场景 control——否则按住方向键走过传送门/切场景会停下（keydown 只发一次，新绑定
+// 拿不到按住态；浏览器 auto-repeat 不可依赖）。pressed 不恢复（那是"刚按下"语义，
+// 恢复会导致跳跃/放置被误触发）。
+const HELD = new Set();
+
+/** 只写入 scene.control 的动作（重开/鸟瞰是即时动作，不进长按集合） */
+function isControlAction(a) {
+  return a === 'left' || a === 'right' || a === 'jump' || a === 'place' ||
+    a === 'collect' || a === 'grab' || a === 'use';
+}
+
+function bindKeyboard(scene) {
+  // 立即清空：右键菜单、焦点切换、页面隐藏等会吞掉 keyup 的场景
+  const onClear = () => {
+    HELD.clear();
+    scene.control.clear();
+    scene.pressed.clear();
+  };
+  const onDown = (e) => {
+    // 页面不在前台时忽略按键
+    if (typeof document !== 'undefined' && !document.hasFocus()) return;
+    // 运行时钩子：任意键都可被插件/关卡脚本监听（返回 true 表示已处理）
+    scene._fireKey('down', e);
+    HELD.add(e.code); // 先记物理态（非方向键 keyup 也要精确释放）
+    const action = actionOfCode(e.code);
+    if (action === 'restart') {
+      scene.restart();
+      e.preventDefault();
+      return;
+    }
+    // 鸟瞰模式（灵魂出窍）：暂停模拟，自由缩放/平移看整关
+    if (action === 'overview' && typeof scene.toggleOverview === 'function') {
+      scene.toggleOverview();
+      e.preventDefault();
+      return;
+    }
+    // 调试模式：F5 暂停/继续，F6 步进一 tick，X 循环切换悬停重叠目标（固定键）
+    if (scene.debugMode) {
+      if (e.code === 'F5') {
+        scene.debugPaused = !scene.debugPaused;
+        e.preventDefault();
+        return;
+      }
+      if (e.code === 'F6') {
+        scene.debugStepOnce = true;
+        e.preventDefault();
+        return;
+      }
+      if (e.code === 'KeyX') {
+        // 选中格是可携带物品时，X = 倒出/通气（物品交互优先）；仅普通物质时
+        // 才用作"悬停重叠循环"调试键（试玩常开调试模式，不能抢玩家的 X）
+        const slot = scene.player?.inventory?.selectedSlot?.();
+        if (!slot || !slot.item) {
+          scene.debugHoverCycle = true;
+          e.preventDefault();
+          return;
+        }
+      }
+    }
+    if (!action) return;
+    e.preventDefault();
+    if (!scene.control.has(action)) scene.pressed.add(action);
+    scene.control.add(action);
+  };
+  const onUp = (e) => {
+    HELD.delete(e.code);
+    scene._fireKey('up', e);
+    const action = actionOfCode(e.code);
+    if (action) scene.control.delete(action);
+  };
+  window.addEventListener('keydown', onDown);
+  window.addEventListener('keyup', onUp);
+  window.addEventListener('blur', onClear);
+  window.addEventListener('contextmenu', onClear); // 右键菜单会吞 keyup
+  window.addEventListener('focusout', onClear); // 焦点移出（点击别处、切换焦点）
+  document.addEventListener('visibilitychange', onClear);
+  // ★ 恢复仍按住的键（Multiscene.switchTo 重绑时会调 bindKeyboard——按住方向键
+  //   走过传送门，切场景后继续走，不用松开重按）
+  for (const code of HELD) {
+    const action = actionOfCode(code);
+    if (action && isControlAction(action)) scene.control.add(action);
+  }
+  return () => {
+    window.removeEventListener('keydown', onDown);
+    window.removeEventListener('keyup', onUp);
+    window.removeEventListener('blur', onClear);
+    window.removeEventListener('contextmenu', onClear);
+    window.removeEventListener('focusout', onClear);
+    document.removeEventListener('visibilitychange', onClear);
+    // 只移除监听器——HELD 是"物理按住态"，由 keyup/blur/contextmenu 清除；
+    // 解绑（Multiscene.switchTo 先 unbind 再 bind）若清掉 HELD，重绑就恢复不了
+    // 仍按住的键（按住方向键走传送门会停下）。
+  };
+}
+
+exports.bindKeyboard = bindKeyboard;
+
+  };
+  __modules["src/core/prefs.js"] = function (module, exports, __require) {
+// ============================================================================
+// 引擎侧偏好读取（设置面板写入的 localStorage → 相机 / 触控几何 / 键位）
+// ----------------------------------------------------------------------------
+// 数据本身由经典脚本 prefs.js 维护（window.ChezzlePrefs）；这里只读并做默认兜底
+// （Node 测试、编辑器等没有 prefs.js 的场景 → 全默认，行为与以前完全一致）。
+// ============================================================================
+
+/** 可改键的动作（与 prefs.js 的 ACTIONS 一一对应）。
+ *  grab/use 现在是「物品操作 1/2」：具体作用由当前选中的可拾取物品定义
+ *  （烧杯=吸液/倒出，滴管=吸液/滴加，集气瓶=集气/通气）。 */
+const KEY_ACTIONS = [
+  { id: 'left', label: '左移', def: 'KeyA' },
+  { id: 'right', label: '右移', def: 'KeyD' },
+  { id: 'jump', label: '跳跃', def: 'Space' },
+  { id: 'place', label: '放置', def: 'ShiftLeft' },
+  { id: 'collect', label: '拾取 / 收集', def: 'KeyQ' },
+  { id: 'grab', label: '物品操作 1', def: 'KeyC' },
+  { id: 'use', label: '物品操作 2', def: 'KeyX' },
+  { id: 'restart', label: '重开', def: 'KeyR' },
+  { id: 'overview', label: '鸟瞰', def: 'KeyV' },
+];
+
+const DEFAULT_KEYS = (() => {
+  const k = {};
+  for (const a of KEY_ACTIONS) k[a.id] = a.def;
+  return k;
+})();
+
+const FALLBACK = Object.freeze({
+  viewScale: 1, joyScale: 1, btnScale: 1,
+  sfxVolume: 0.7, sfxMuted: false,
+  keys: DEFAULT_KEYS,
+});
+
+function api() {
+  if (typeof window === 'undefined') return null;
+  return window.ChezzlePrefs && typeof window.ChezzlePrefs.get === 'function' ? window.ChezzlePrefs : null;
+}
+
+/** 当前偏好（无 prefs.js 时返回默认值） */
+function getPrefs() {
+  const p = api();
+  if (!p) return FALLBACK;
+  try { return p.get(); } catch (e) { return FALLBACK; }
+}
+
+/** 某个动作当前绑定的 KeyboardEvent.code */
+function keyOf(action) {
+  const keys = getPrefs().keys || DEFAULT_KEYS;
+  return keys[action] || DEFAULT_KEYS[action] || '';
+}
+
+/** 键位显示名（键盘键帽/操作提示用）：优先用 prefs.js 的 keyLabel（与设置面板一致），
+ *  没有 prefs.js（Node 测试/编辑器内嵌）时退回本地映射。 */
+const KEY_NAMES = {
+  Space: '空格', ShiftLeft: 'Shift', ShiftRight: 'Shift', ControlLeft: 'Ctrl', ControlRight: 'Ctrl',
+  AltLeft: 'Alt', AltRight: 'Alt', MetaLeft: 'Win/Cmd', MetaRight: 'Win/Cmd',
+  ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓',
+  Tab: 'Tab', Escape: 'Esc', Enter: '回车', Backspace: '退格', CapsLock: 'Caps',
+  Comma: '，', Period: '。', Slash: '/', Semicolon: '；', Quote: '’', BracketLeft: '[', BracketRight: ']',
+  Minus: '-', Equal: '=', Backquote: '`', Backslash: '\\',
+};
+
+function keyLabel(code) {
+  if (!code) return '—';
+  const p = typeof window !== 'undefined' ? window.ChezzlePrefs : null;
+  if (p && typeof p.keyLabel === 'function') return p.keyLabel(code);
+  if (KEY_NAMES[code]) return KEY_NAMES[code];
+  let m = /^Key([A-Z])$/.exec(code);
+  if (m) return m[1];
+  m = /^Digit([0-9])$/.exec(code);
+  if (m) return m[1];
+  m = /^Numpad([0-9])$/.exec(code);
+  if (m) return '小键盘' + m[1];
+  m = /^F([0-9]{1,2})$/.exec(code);
+  if (m) return 'F' + m[1];
+  return code.replace(/^(Key|Digit)/, '');
+}
+
+/** 动作当前的键帽文字（HUD 操作提示用） */
+function actionKeyLabel(action) {
+  return keyLabel(keyOf(action));
+}
+
+/** 物理键位 → 动作 id（找不到返回 null）。
+ *  ShiftRight 作为 place 的默认别名：默认 place=ShiftLeft 时右 Shift 也能放置（旧行为）。 */
+function actionOfCode(code) {
+  if (!code) return null;
+  const keys = getPrefs().keys || DEFAULT_KEYS;
+  for (const a of KEY_ACTIONS) if (keys[a.id] === code) return a.id;
+  if (code === 'ShiftRight' && keys.place === 'ShiftLeft') return 'place';
+  return null;
+}
+
+/** 订阅设置变更（返回取消函数；无 prefs.js 时是空订阅） */
+function onPrefsChange(fn) {
+  const p = api();
+  if (!p || typeof p.listen !== 'function') return function () {};
+  return p.listen(fn);
+}
+
+exports.KEY_ACTIONS = KEY_ACTIONS;
+exports.getPrefs = getPrefs;
+exports.keyOf = keyOf;
+exports.keyLabel = keyLabel;
+exports.actionKeyLabel = actionKeyLabel;
+exports.actionOfCode = actionOfCode;
+exports.onPrefsChange = onPrefsChange;
+
+  };
   __modules["src/objects/gasbottle.js"] = function (module, exports, __require) {
 // ============================================================================
 // 集气瓶（GasBottle）：可收集气体的玻璃瓶（**有实体**——与烧杯同一套容器物理）。
 // ----------------------------------------------------------------------------
 // - 碰撞箱 = 玻璃瓶身轮廓（左右瓶壁沿**瓶身段** = 瓶口以下 10px → 瓶底；
-//   瓶口/瓶颈区开放——细瓶颈两侧是空气，不该挡人；玻璃盖板贴住瓶口，
-//   与视觉对齐——修"碰撞箱看起来异常偏大（盖板悬空+瓶口假墙挡人）"）
+//   瓶口/瓶颈区开放——细瓶颈两侧是空气，不该挡人；**没有盖板**，瓶口始终敞开）
 // - 可推动：玩家贴外壁行走会推动整只瓶子；受重力，无支撑时下落；
 // - 容量默认 5g：按住 C（背包含集气瓶）时，把最近气泡柱产生的气体直接截留进瓶
-//   （气体不再进大气）；按住 X 向最近液体容器通入气体（0.05g/s）；
-// - 收集/倒出/放置与烧杯、滴管同一套"可携带物品"流程（C 拾取 / Shift 放置），
+//   （气体不再进大气）；按住 X 向最近液体容器（池/烧杯）通入气体（0.05g/s）；
+// - 收集/倒出/放置与烧杯、滴管同一套"可拾取物品"流程（Q 拾取 / Shift 放置），
 //   进背包时瓶壁子体一并移出场景。
+// - 视觉：气体在瓶内**充满整个容积**（气体均匀扩散，不按密度积在底部）；
+//   无色气体（CO2/H2/O2…）只画极淡冷白雾，不套用气体标签色当液体用。
 // ============================================================================
 
 const { Obj } = __require('src/objects/obj.js');;
 const { getSubstance } = __require('src/chem/substances.js');;
 const { CFG } = __require('src/core/config.js');;
 const { shallowestSupportY, settleBodyOnSupport } = __require('src/physics/support.js');;
+const { rr } = __require('src/render/theme.js');;
+const { hexToRgb } = __require('src/render/color.js');;
+
+/** 十六进制色 + 透明度 → rgba 字符串（装置组视觉共用） */
+function rgbaOf(hex, a) {
+  const c = hexToRgb(hex);
+  return `rgba(${c.r},${c.g},${c.b},${a})`;
+}
 
 const BOTTLE_W = 30;
 const BOTTLE_H = 56;
 
 const WALL = 4; // 瓶壁厚（px）
-const LID_H = 4; // 盖板厚（px）
-const LID_LIFT = 2.5; // 装气时盖板被顶起的最大高度（px）
 const NECK_H = 10; // 瓶口/瓶颈区高度（px）：无侧壁，只有透明瓶颈
+const MOUTH_RY = 2.2; // 瓶口椭圆（开口）短半径
+const COLORLESS_FILL = '#e4f2ff'; // 无色气体：极淡冷白，不做成蓝色液体
 
 let SEQ_N = 0; // 无 id 集气瓶的子体命名序号（防 byId 键冲突）
 
@@ -10779,9 +13385,8 @@ class GasBottle extends Obj {
     });
     this.wall = WALL;
     this.vy = 0;
-    this._lidLift = 0; // 0→1 装气顶盖动画进度
     this._fillPulse = 0; // 装气辉光脉冲
-    // 实体子体：左右瓶壁（**瓶身段**：口下 NECK_H → 瓶底）+ 底 + 贴口玻璃盖板。
+    // 实体子体：左右瓶壁（**瓶身段**：口下 NECK_H → 瓶底）+ 底。**没有瓶盖**。
     // static：壁是"与瓶身联动的死墙"——不参与动量交换（动态壁会被玩家撞飞再被
     // syncWalls 拉回 → 推动强烈震动——用户反馈）；noLift：不被气泡柱顶飞。
     // 瓶颈区（顶部 NECK_H）无侧壁——细瓶颈两侧是空气，不该挡人。
@@ -10790,7 +13395,6 @@ class GasBottle extends Obj {
       new Obj({ id: `${pid}_l`, x, y: y + NECK_H, w: WALL, h: BOTTLE_H - NECK_H, solid: true, static: true, physicsKind: 'static', noLift: true }),
       new Obj({ id: `${pid}_r`, x: x + BOTTLE_W - WALL, y: y + NECK_H, w: WALL, h: BOTTLE_H - NECK_H, solid: true, static: true, physicsKind: 'static', noLift: true }),
       new Obj({ id: `${pid}_b`, x, y: y + BOTTLE_H - WALL, w: BOTTLE_W, h: WALL, solid: true, static: true, physicsKind: 'static', noLift: true }),
-      new Obj({ id: `${pid}_lid`, x: x + 4, y: y - 2, w: BOTTLE_W - 8, h: LID_H, solid: true, static: true, physicsKind: 'static', noLift: true }),
     ];
     this.syncWalls();
     this.capacity = Math.max(0.1, capacity);
@@ -10834,14 +13438,13 @@ class GasBottle extends Obj {
     return s;
   }
 
-  /** 装入气体（容量封顶），返回实际装入量；装气时顶一下盖板 + 辉光 */
+  /** 装入气体（容量封顶），返回实际装入量；装气时辉光脉冲一下 */
   addGas(id, mass) {
     if (!(mass > 0)) return 0;
     const room = this.capacity - this.totalGas();
     if (room <= 1e-9) return 0;
     const take = Math.min(room, mass);
     this.gases.set(id, (this.gases.get(id) ?? 0) + take);
-    this._lidLift = 1;
     this._fillPulse = 1;
     return take;
   }
@@ -10857,7 +13460,7 @@ class GasBottle extends Obj {
     return r;
   }
 
-  /** 瓶内气体代表色（占优气体）；空瓶淡青 */
+  /** 瓶内气体代表色（占优气体）；空瓶淡青（用于文字/图标等装饰色） */
   gasColor() {
     const d = this.dominantGas();
     if (!d) return '#78dcff';
@@ -10865,17 +13468,23 @@ class GasBottle extends Obj {
     return sub?.gasColor ?? '#78dcff';
   }
 
-  /** 壁体跟随瓶身位置（含盖板顶起动画位移） */
+  /** 瓶内气体**填充**色：只有本身有颜色的气体才用 substance.gasColor；
+   *  无色气体（CO2/H2/O2/N2…）返回极淡冷白，避免把气体画成蓝色液体。 */
+  gasFillColor() {
+    const d = this.dominantGas();
+    if (!d) return COLORLESS_FILL;
+    return getSubstance(d[0])?.gasColor ?? COLORLESS_FILL;
+  }
+
+  /** 壁体跟随瓶身位置 */
   syncWalls() {
-    const [l, r, b, lid] = this.subBodies;
+    const [l, r, b] = this.subBodies;
     l.x = this.x;
     l.y = this.y + NECK_H;
     r.x = this.x + this.w - this.wall;
     r.y = this.y + NECK_H;
     b.x = this.x;
     b.y = this.y + this.h - this.wall;
-    lid.x = this.x + 4;
-    lid.y = this.y - LID_LIFT * this._lidLift - 2; // 盖板底边贴住瓶口线（装气时顶起微隙）
   }
 
   /** 无支撑时受重力下落，落到**最浅**支撑面停住（与烧杯同款：statics + 实心动态体，
@@ -10891,8 +13500,7 @@ class GasBottle extends Obj {
     // 冰面惯性滑行在 pushContainers（Player.update）里驱动
     // 玩家贴壁推动已挪到 Player.update（pushContainers——时序要求：玩家重设 vel 之后、
     // 物理步之前：吸附+清 vel，否则推-弹交替"一卡一卡"——用户反馈）
-    // 动画计时衰减（盖板回落、辉光消退）
-    if (this._lidLift > 0) this._lidLift = Math.max(0, this._lidLift - dt * 2.6);
+    // 动画计时衰减（装气辉光消退）
     if (this._fillPulse > 0) this._fillPulse = Math.max(0, this._fillPulse - dt * 1.8);
   }
 
@@ -10902,89 +13510,156 @@ class GasBottle extends Obj {
     this.syncWalls();
   }
 
-  render(ctx, scene) {
+  // ---------------------------------------------------------------------------
+  // 渲染（简洁版）：暗紫玻璃瓶身 + 敞开瓶口（**没有盖板**）。
+  //   气体在瓶内充满整个容积：只画低透明度雾气/漂移气团，不画"液面线"，
+  //   也不按密度把气体堆在瓶底；无色气体用极淡冷白，不套用蓝色液体色。
+  // ---------------------------------------------------------------------------
+  render(ctx, opts = {}) {
+    const t = opts?.time ?? 0;
     const x = this.x;
     const y = this.y;
     const w = this.w;
     const h = this.h;
     const frac = Math.max(0, Math.min(1, this.totalGas() / this.capacity));
-    const color = this.gasColor();
+    const fillColor = this.gasFillColor();
+    const labelColor = this.dominantGas() && getSubstance(this.dominantGas()[0])?.gasColor
+      ? fillColor
+      : COLORLESS_FILL;
     const cx = x + w / 2;
-    ctx.save();
-    // 瓶身玻璃（圆柱体：底圆角矩形 + 上口收窄）
     const bodyW = w;
     const bodyH = h - 12; // 上 12px 为颈/口
     const bodyY = y + 12;
-    ctx.fillStyle = 'rgba(210,240,255,0.14)';
-    ctx.beginPath();
-    ctx.roundRect(x, bodyY, bodyW, bodyH, 6);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(225,245,255,0.75)';
-    ctx.lineWidth = 1.6;
-    ctx.beginPath();
-    ctx.roundRect(x, bodyY, bodyW, bodyH, 6);
-    ctx.stroke();
-    // 瓶颈 + 瓶口（宽口：便于集气；口上盖着玻璃板）
-    ctx.strokeStyle = 'rgba(225,245,255,0.75)';
-    ctx.lineWidth = 1.4;
-    ctx.beginPath();
-    ctx.moveTo(x + 5, bodyY);
-    ctx.lineTo(x + 7, y);
-    ctx.lineTo(x + w - 7, y);
-    ctx.lineTo(x + w - 5, bodyY);
-    ctx.stroke();
-    // 气体填充（从瓶底往上按比例；装气时带辉光脉冲）
-    if (frac > 0.01) {
-      const fh = (bodyH - 4) * frac;
-      const fy = bodyY + bodyH - 2 - fh;
-      const hexToRgb = (hex) => {
-        const g = hex.replace('#', '');
-        return { r: parseInt(g.slice(0, 2), 16), g: parseInt(g.slice(2, 4), 16), b: parseInt(g.slice(4, 6), 16) };
-      };
-      const c = hexToRgb(color);
-      ctx.globalAlpha = 0.4 + 0.25 * frac;
-      ctx.fillStyle = `rgb(${c.r},${c.g},${c.b})`;
-      ctx.shadowColor = color;
-      ctx.shadowBlur = 8 + this._fillPulse * 14;
+    const r = Math.max(4, Math.min(7, w * 0.2)); // 瓶身圆角
+    const neckHalfTop = w * 0.23;
+    const neckHalfBot = w * 0.34;
+    const neckTopY = y + 2;
+    const neckBotY = bodyY;
+
+    // 瓶颈梯形路径（与瓶身组合成"瓶内腔"，气体填充/裁剪共用）
+    const neckPath = () => {
       ctx.beginPath();
-      ctx.roundRect(x + 2, fy, w - 4, fh, 4);
-      ctx.fill();
-      ctx.shadowBlur = 0;
+      ctx.moveTo(cx - neckHalfBot, neckBotY);
+      ctx.lineTo(cx - neckHalfTop, neckTopY);
+      ctx.lineTo(cx + neckHalfTop, neckTopY);
+      ctx.lineTo(cx + neckHalfBot, neckBotY);
+      ctx.closePath();
+    };
+
+    ctx.save();
+    // ---- 1) 玻璃瓶身（暗紫玻璃圆柱：底圆角）----
+    ctx.beginPath();
+    ctx.roundRect(x, bodyY, bodyW, bodyH, r);
+    const glass = ctx.createLinearGradient(x, bodyY, x + bodyW, bodyY + bodyH);
+    glass.addColorStop(0, 'rgba(150,130,230,0.20)');
+    glass.addColorStop(0.45, 'rgba(70,60,140,0.10)');
+    glass.addColorStop(1, 'rgba(120,110,200,0.17)');
+    ctx.fillStyle = glass;
+    ctx.fill();
+
+    // ---- 2) 瓶颈玻璃 ----
+    neckPath();
+    const neckGlass = ctx.createLinearGradient(cx - neckHalfBot, 0, cx + neckHalfBot, 0);
+    neckGlass.addColorStop(0, 'rgba(160,140,240,0.22)');
+    neckGlass.addColorStop(0.5, 'rgba(90,80,170,0.12)');
+    neckGlass.addColorStop(1, 'rgba(160,140,240,0.20)');
+    ctx.fillStyle = neckGlass;
+    ctx.fill();
+
+    // ---- 3) 气体：充满整个瓶内腔（含瓶颈），只做低透明度雾气/漂移气团 ----
+    if (frac > 0.01) {
+      ctx.save();
+      // 裁剪到"瓶身 + 瓶颈"内腔：气体铺满整个容积，不按密度积在底部
+      ctx.beginPath();
+      ctx.roundRect(x + 1.4, bodyY + 1.4, bodyW - 2.8, bodyH - 2.8, Math.max(2, r - 1));
+      ctx.moveTo(cx - neckHalfTop + 0.8, neckTopY + 1.2);
+      ctx.lineTo(cx + neckHalfTop - 0.8, neckTopY + 1.2);
+      ctx.lineTo(cx + neckHalfBot - 0.8, neckBotY);
+      ctx.lineTo(cx - neckHalfBot + 0.8, neckBotY);
+      ctx.closePath();
+      ctx.clip();
+      // 整瓶均匀的极淡底色（不是"液面高度"）
+      const baseA = 0.035 + 0.055 * frac; // 无色也保持极淡
+      const tintA = 0.10 + 0.11 * frac;
       ctx.globalAlpha = 1;
+      const bodyGrad = ctx.createLinearGradient(0, neckTopY, 0, bodyY + bodyH);
+      bodyGrad.addColorStop(0, rgbaOf(fillColor, baseA * 0.7));
+      bodyGrad.addColorStop(0.55, rgbaOf(fillColor, baseA));
+      bodyGrad.addColorStop(1, rgbaOf(fillColor, baseA * 1.15));
+      ctx.fillStyle = bodyGrad;
+      ctx.fill();
+      // 漂移气团（确定性 sin；越满越明显）——让"气体"看起来在流动，而不是液体
+      const wisps = 3;
+      for (let i = 0; i < wisps; i++) {
+        const phase = t * (0.28 + i * 0.11) + i * 2.35;
+        const px = x + w * (0.28 + 0.44 * (0.5 + 0.5 * Math.sin(phase)));
+        const py = bodyY + bodyH * (0.22 + 0.56 * (0.5 + 0.5 * Math.sin(phase * 0.82 + i * 1.9)));
+        const pr = Math.max(6, Math.min(bodyW, bodyH) * (0.24 + i * 0.07));
+        const wg = ctx.createRadialGradient(px, py, 1, px, py, pr);
+        wg.addColorStop(0, rgbaOf(fillColor, tintA * (0.55 + 0.25 * this._fillPulse)));
+        wg.addColorStop(1, rgbaOf(fillColor, 0));
+        ctx.fillStyle = wg;
+        ctx.fillRect(px - pr, py - pr, pr * 2, pr * 2);
+      }
+      // 瓶颈里也有一缕很淡的气体
+      const neckGrad = ctx.createLinearGradient(0, neckTopY, 0, neckBotY);
+      neckGrad.addColorStop(0, rgbaOf(fillColor, baseA));
+      neckGrad.addColorStop(1, rgbaOf(fillColor, baseA * 1.4));
+      ctx.fillStyle = neckGrad;
+      ctx.fillRect(cx - neckHalfBot, neckTopY, w * 0.68, NECK_H);
+      ctx.restore();
     }
-    // 玻璃盖板（盖在瓶口上，装气时微微顶起再落下）——与 gb_*_lid 子体同位
-    const [, , , lid] = this.subBodies;
-    const lx = lid ? lid.x : x + 2;
-    const ly = lid ? lid.y : y - LID_LIFT * this._lidLift - LID_H + 2;
-    const lw = lid ? lid.w : w - 4;
-    ctx.fillStyle = 'rgba(225,245,255,0.28)';
+
+    // ---- 4) 玻璃描边 + 左侧高光 ----
     ctx.beginPath();
-    ctx.roundRect(lx, ly, lw, LID_H, 1.5);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(240,250,255,0.9)';
-    ctx.lineWidth = 1.2;
+    ctx.roundRect(x, bodyY, bodyW, bodyH, r);
+    ctx.strokeStyle = 'rgba(210,230,255,0.6)';
+    ctx.lineWidth = 1.3;
     ctx.stroke();
-    // 盖板高光条
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.fillRect(lx + 2, ly + 0.8, lw - 4, 1);
-    // 盖板边缘把手颗粒（两端小圆点，示意"磨砂玻璃片"）
-    ctx.fillStyle = 'rgba(240,250,255,0.55)';
+    neckPath();
+    ctx.strokeStyle = 'rgba(210,230,255,0.62)';
+    ctx.lineWidth = 1.1;
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.24)';
+    ctx.lineWidth = 0.9;
     ctx.beginPath();
-    ctx.arc(lx + lw - 3, ly + LID_H / 2, 1.2, 0, Math.PI * 2);
+    ctx.moveTo(x + 2.2, bodyY + 4);
+    ctx.lineTo(x + 2.2, bodyY + bodyH - 5);
+    ctx.stroke();
+
+    // ---- 5) 瓶肩黄铜卡箍（一条，不是盖子）----
+    const bandY = bodyY - 1.6;
+    const bandH = Math.max(2.4, h * 0.05);
+    rr(ctx, x + w * 0.18, bandY, w * 0.64, bandH, 1.2);
+    const bandG = ctx.createLinearGradient(0, bandY, 0, bandY + bandH);
+    bandG.addColorStop(0, '#ffe6a8');
+    bandG.addColorStop(0.45, '#c9932f');
+    bandG.addColorStop(1, '#6b4a18');
+    ctx.fillStyle = bandG;
     ctx.fill();
-    // 装气闪环（收气成功的一圈扩散光）
+    ctx.strokeStyle = 'rgba(30,20,6,0.75)';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+
+    // ---- 6) 敞开瓶口：暗色瓶口椭圆 + 细玻璃口沿（没有盖板）----
+    ctx.beginPath();
+    ctx.ellipse(cx, neckTopY + 0.6, neckHalfTop, MOUTH_RY, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(7,10,26,0.62)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(210,230,255,0.7)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // ---- 7) 装气闪环（收气成功的一圈扩散光，动画保留）----
     if (this._fillPulse > 0.01) {
       ctx.globalAlpha = this._fillPulse * 0.5;
-      ctx.strokeStyle = color;
+      ctx.strokeStyle = this.gasColor();
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.arc(cx, y + h / 2, w * 0.62 + (1 - this._fillPulse) * 14, 0, Math.PI * 2);
       ctx.stroke();
       ctx.globalAlpha = 1;
     }
-    // 瓶口高光
-    ctx.fillStyle = 'rgba(255,255,255,0.25)';
-    ctx.fillRect(x + 2, bodyY + 1, 2, bodyH - 4);
     ctx.restore();
     // 标签（非空时瓶身下方显示气体种类与量）
     if (frac > 0.01) {
@@ -10995,7 +13670,7 @@ class GasBottle extends Obj {
       const label = `${d[0]} ${this.totalGas().toFixed(1)}g`;
       const tw = ctx.measureText(label).width;
       ctx.fillRect(cx - tw / 2 - 4, this.bottom - 2, tw + 8, 14);
-      ctx.fillStyle = color;
+      ctx.fillStyle = labelColor;
       ctx.fillText(label, cx, this.bottom + 8);
       ctx.textAlign = 'left';
     }
@@ -11013,11 +13688,16 @@ exports.GasBottle = GasBottle;
 // 悬挂物体的位置完全由绳子决定（lateUpdate：物理结算后再定位，避免被推走）。
 // 每刻检查：锚点物体不存在，或悬挂物体目标位置被实心体卡住 → 断绳。
 // 断绳后绳子消失，悬挂物体恢复重力。
+// 视觉：深钢绞绳 + 双股编织纹（交替斜纹）+ 一线暗金侧光 + 黄铜锚环/末端绳结；
+//   只改绘制，绳子长度/锚点/悬挂物理完全不变。
 // ============================================================================
 
 const { Obj } = __require('src/objects/obj.js');;
 const { overlaps } = __require('src/physics/collision.js');;
 const { THEME } = __require('src/render/theme.js');;
+const { sfx } = __require('src/core/audio.js');;
+
+const TAU = Math.PI * 2;
 
 class Rope extends Obj {
   constructor({ x = 0, y = 0, length = 100, anchor, hanging, ...rest } = {}) {
@@ -11083,31 +13763,110 @@ class Rope extends Obj {
   }
 
   break(scene) {
+    if (this.broken) return;
     this.broken = true;
+    sfx('rope.break');
     if (this.hanging) this.hanging.gravity = 1;
     scene.removeObject(this);
   }
 
+  /** 绳子绘制：深钢绞绳 + 编织斜纹 + 暗金侧光 + 黄铜锚环/绳结（纯视觉） */
   render(ctx) {
+    const x = this.x;
+    const y0 = this.y;
+    const len = Math.max(0, this.length);
+    if (len <= 0) return;
     ctx.save();
-    ctx.strokeStyle = THEME.gold.base;
-    ctx.lineWidth = 2;
-    ctx.shadowColor = THEME.gold.light;
-    ctx.shadowBlur = 5;
-    ctx.setLineDash([5, 4]);
+    ctx.lineCap = 'round';
+    // 1) 绳芯：深钢底绳（外深内亮，读得出圆柱体积）
+    ctx.strokeStyle = 'rgba(16,14,34,0.9)';
+    ctx.lineWidth = 4.4;
     ctx.beginPath();
-    ctx.moveTo(this.x, this.y);
-    ctx.lineTo(this.x, this.y + this.length);
+    ctx.moveTo(x, y0 + 2);
+    ctx.lineTo(x, y0 + len - 2);
     ctx.stroke();
-    ctx.setLineDash([]);
-    // 顶端小锚环
-    ctx.strokeStyle = THEME.gold.light;
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#4a5175';
+    ctx.lineWidth = 2.8;
     ctx.beginPath();
-    ctx.arc(this.x, this.y, 3, 0, Math.PI * 2);
+    ctx.moveTo(x, y0 + 2);
+    ctx.lineTo(x, y0 + len - 2);
     ctx.stroke();
+    // 2) 编织纹：交替斜向短纹（双股交织感）。按"偶/奇"两股各批成一条路径 → 每帧只 2 次
+    //    stroke（长绳也不逐个 stroke）；段数按长度封顶（性能）。
+    const step = Math.max(6, len / 50);
+    const yEnd = y0 + len - 3;
+    for (let parity = 0; parity < 2; parity++) {
+      ctx.strokeStyle = parity ? 'rgba(186,200,232,0.72)' : 'rgba(116,128,166,0.72)';
+      ctx.lineWidth = 1.9;
+      ctx.beginPath();
+      for (let i = parity, yy = y0 + 3 + parity * step; yy < yEnd; i += 2, yy += step * 2) {
+        const dir = parity ? 1 : -1;
+        const half = Math.min(step, yEnd - yy);
+        ctx.moveTo(x - 2.3 * dir, yy);
+        ctx.lineTo(x + 2.3 * dir, yy + half);
+      }
+      ctx.stroke();
+    }
+    // 3) 暗金侧光：贴左缘一条细暖金线（新 Chezzle 金语言；微微波动）
+    ctx.strokeStyle = rgbaOf(THEME.gold.base, 0.55);
+    ctx.lineWidth = 1;
+    ctx.shadowColor = rgbaOf(THEME.gold.light, 0.45);
+    ctx.shadowBlur = 3;
+    ctx.beginPath();
+    for (let k = 0; k <= 8; k++) {
+      const yy = y0 + 4 + ((len - 8) * k) / 8;
+      const xx = x - 2.6 + Math.sin(yy * 0.08) * 0.4;
+      if (k === 0) ctx.moveTo(xx, yy);
+      else ctx.lineTo(xx, yy);
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // 4) 顶端黄铜锚环（外圈 + 亮内圈 + 高光点）
+    ctx.beginPath();
+    ctx.arc(x, y0, 3.6, 0, TAU);
+    ctx.fillStyle = '#2a2340';
+    ctx.fill();
+    ctx.strokeStyle = rgbaOf(THEME.gold.base, 0.95);
+    ctx.lineWidth = 1.8;
+    ctx.stroke();
+    ctx.strokeStyle = rgbaOf(THEME.gold.light, 0.7);
+    ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.arc(x, y0, 2.2, 0, TAU);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,246,214,0.85)';
+    ctx.beginPath();
+    ctx.arc(x - 1.1, y0 - 1.2, 0.8, 0, TAU);
+    ctx.fill();
+    // 5) 末端绳结：略粗的一小段缠绳 + 一滴金属坠（挂住悬挂物的视觉交代）
+    const endY = y0 + len;
+    ctx.strokeStyle = '#5a6288';
+    ctx.lineWidth = 3.4;
+    ctx.beginPath();
+    ctx.moveTo(x - 2.6, endY - 5.5);
+    ctx.lineTo(x + 2.6, endY - 2.5);
+    ctx.moveTo(x - 2.6, endY - 2.5);
+    ctx.lineTo(x + 2.6, endY - 5.5);
+    ctx.stroke();
+    ctx.fillStyle = rgbaOf(THEME.gold.deep, 0.95);
+    ctx.beginPath();
+    ctx.arc(x, endY - 1.2, 2.1, 0, TAU);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,240,190,0.55)';
+    ctx.beginPath();
+    ctx.arc(x - 0.6, endY - 1.9, 0.7, 0, TAU);
+    ctx.fill();
     ctx.restore();
   }
+}
+
+/** 十六进制色 + 透明度 → rgba 字符串 */
+function rgbaOf(hex, a) {
+  const h = String(hex ?? '#ffffff').replace('#', '');
+  const n = h.length === 3
+    ? [parseInt(h[0] + h[0], 16), parseInt(h[1] + h[1], 16), parseInt(h[2] + h[2], 16)]
+    : [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  return `rgba(${n[0]},${n[1]},${n[2]},${Math.max(0, Math.min(1, a))})`;
 }
 
 exports.Rope = Rope;
@@ -11129,11 +13888,21 @@ const { solutionColor } = __require('src/render/liquidrender.js');;
 const { CFG } = __require('src/core/config.js');;
 const { GasColumn } = __require('src/objects/gascolumn.js');;
 const { Block } = __require('src/objects/block.js');;
-const { inventorySlotRects, uiMargins, overviewButtonRect, fullscreenButtonRect, hudTopOffset, touchInsetsOf, compactView, tinyView, tipPanelRect } = __require('src/level/click.js');;
+const { inventorySlotRects, uiMargins, overviewButtonRect, fullscreenButtonRect, restartButtonRect, restartMenuLayout, hudTopOffset, touchInsetsOf, compactView, tinyView, tipPanelRect } = __require('src/level/click.js');;
 const { joyGeom, touchButtonRects } = __require('src/core/touch.js');;
 const { fullscreenSupported } = __require('src/core/fullscreen.js');;
+const { Savepoint } = __require('src/core/savepoint.js');;
 const { canvasLW, canvasLH, canvasTransformDpr, uiScaleOf } = __require('src/render/canvas.js');;
 const { drawFaded } = __require('src/render/fade.js');;
+const { hexToRgb } = __require('src/render/color.js');;
+const { carryActionsOf } = __require('src/level/items.js');;
+const { actionKeyLabel } = __require('src/core/prefs.js');;
+
+/** 十六进制色 + 透明度 → rgba 字符串（HUD 物品缩略图共用） */
+function rgbaOf(hex, a) {
+  const c = hexToRgb(hex);
+  return `rgba(${c.r},${c.g},${c.b},${a})`;
+}
 
 // 溯源 kind → 中文（调试悬停显示物体"为何存在"）
 const ORIGIN_LABELS = {
@@ -11247,6 +14016,11 @@ class Hud {
     this.scene = scene;
     this.showTip = false;
     this.slotSize = 46; // 旧版统一槽宽（现为兼容字段；实际几何走 inventorySlotRects）
+    // 选中物品说明面板：切换格子的淡入/淡出动画状态（只存快照，不影响游戏逻辑）
+    this._infoKey = null;   // 当前显示的 "槽位:物品类型"（空 = 没选物品）
+    this._infoCur = null;   // 当前面板快照（数据 + 布局）
+    this._infoPrev = null;  // 切换前旧面板快照（用于淡出）
+    this._infoT = 0;        // 本次切换的起始时间（scene time）
   }
 
   /** 当前是否触屏端（移动端 HUD 压缩/全屏按钮都以它为准） */
@@ -11285,10 +14059,14 @@ class Hud {
     // 不支持（iPhone 上的 Safari 全系不支持元素全屏）时它只会白占一个按钮位，
     // 点下去还弹一句"此浏览器不支持全屏"——极窄屏上寸土寸金，直接不画。
     if (this._isTouch() && fullscreenSupported()) this.fsButton(ctx, W, top, right);
+    // 重开按钮：右上按钮排最左（单击记时刻，400ms 内双击 = 打开重开菜单）
+    this.restartButton(ctx, W, top, right);
     this.tipButton(ctx, W, top, right, time);
     this.notice(ctx, scene, W, H, time);
     this.bigBanner(ctx, scene, W, H, time);
     this.touchControls(ctx, scene, W, H, time);
+    // 存档点提示（Savepoint.toast 写入 scene._saveToast）画在左上信息卡下方
+    this.saveToast(ctx, scene, top);
   }
 
   /** 鸟瞰淡出用的离屏层（尺寸跟随画布；无 DOM 环境返回 null → 直接画，不淡出） */
@@ -11340,6 +14118,7 @@ class Hud {
       // 干净的全局视图——只画返回按钮/操作提示/玩家魂标
       this.overviewUI(ctx, scene, W, H, time);
       this.rotateHint(ctx, scene, W, H);
+      this.restartMenu(ctx, scene, W, H, time);
       this.overlay(ctx, scene, W, H);
       ctx.restore();
       return;
@@ -11367,6 +14146,7 @@ class Hud {
       ctx.restore();
     }
     this.rotateHint(ctx, scene, W, H);
+    this.restartMenu(ctx, scene, W, H, time);
     this.overlay(ctx, scene, W, H);
     ctx.restore();
   }
@@ -11416,6 +14196,135 @@ class Hud {
     ctx.textAlign = 'center';
     ctx.fillText('⛶', r.x + r.w / 2, r.y + 23);
     ctx.textAlign = 'left';
+  }
+
+  /** 重开按钮（右上按钮排最左；图标 = 环形箭头）：斜牌底同全屏按钮（冷色底 +
+   *  细青描边 + 轻辉光），图标用 canvas 矢量画"圆弧 + 金色箭头"的旋转箭头。
+   *  单次点击只记时刻，400ms 内双击才打开重开菜单（见 click.js handleSceneClick）。 */
+  restartButton(ctx, W, top = 10, right = 0) {
+    const withFs = this._isTouch() && fullscreenSupported();
+    const r = restartButtonRect(W, top, right, withFs);
+    ctx.save();
+    para(ctx, r.x, r.y, r.w, r.h, 8);
+    const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
+    g.addColorStop(0, '#2a3a5e');
+    g.addColorStop(1, '#141d38');
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(191,230,255,0.7)';
+    ctx.lineWidth = 1.5;
+    ctx.shadowColor = 'rgba(127,224,255,0.5)';
+    ctx.shadowBlur = 4;
+    ctx.stroke();
+    ctx.restore();
+    this._restartIcon(ctx, r.x + r.w / 2, r.y + r.h / 2 + 0.5);
+  }
+
+  /** 重开图标：约 300° 的圆形弧（缺口在右上）+ 弧端切向的三角箭头。
+   *  弧 = 青色（与全屏/鸟瞰按钮图标同色），箭头 = 金色（HUD 主强调色）。 */
+  _restartIcon(ctx, cx, cy) {
+    const R = 8.6;
+    const a0 = -0.35;
+    const a1 = 4.9; // 顺时针扫过 ≈301°，缺口停在右上方
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    // 外圈轻辉光（让弧在深色斜牌上浮起来）
+    ctx.strokeStyle = 'rgba(127,224,255,0.28)';
+    ctx.lineWidth = 4.4;
+    ctx.beginPath();
+    ctx.arc(0, 0, R, a0, a1);
+    ctx.stroke();
+    // 主弧（青）
+    ctx.strokeStyle = '#bfe6ff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, R, a0, a1);
+    ctx.stroke();
+    // 箭头（金）：弧终点处的切线方向 = 旋转方向（顺时针）
+    const ex = R * Math.cos(a1);
+    const ey = R * Math.sin(a1);
+    const tx = -Math.sin(a1);
+    const ty = Math.cos(a1);
+    const nx = -ty;
+    const ny = tx;
+    ctx.beginPath();
+    ctx.moveTo(ex + tx * 5.4, ey + ty * 5.4);
+    ctx.lineTo(ex - tx * 1.6 + nx * 3.6, ey - ty * 1.6 + ny * 3.6);
+    ctx.lineTo(ex - tx * 1.6 - nx * 3.6, ey - ty * 1.6 - ny * 3.6);
+    ctx.closePath();
+    ctx.fillStyle = '#ffd76a';
+    ctx.shadowColor = 'rgba(255,215,106,0.75)';
+    ctx.shadowBlur = 5;
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /** 存档点提示（"已存档 / 已回到存档点"）：左上信息卡下方的小斜牌，金描边 +
+   *  深紫渐变底 + 小金色对勾。淡入 ~0.16s，1.6s 后淡出；年龄按**墙钟**算
+   *  （菜单/死亡暂停时游戏时钟会停，墙钟不会）。
+   *  scene._saveToast = { text, at:墙钟ms, dur }（Savepoint.toast 写入）。 */
+  saveToast(ctx, scene, top = 10) {
+    const t = scene._saveToast;
+    if (!t) return;
+    const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    const age = now - t.at;
+    const dur = Number(t.dur) > 0 ? Number(t.dur) : 1600;
+    if (!(age >= 0) || age > dur) { // 过期：清掉（下一句提示重新创建）
+      scene._saveToast = null;
+      return;
+    }
+    const fadeIn = Math.min(1, age / 160);
+    const fadeOut = Math.min(1, Math.max(0, (dur - age) / 380));
+    const a = Math.max(0, Math.min(fadeIn, fadeOut));
+    if (a <= 0.01) return;
+    const uiK = this._uiK || 1;
+    // 位置：左上信息卡正下方（信息卡左缘 + 10，卡底 + 8；_leftH 是卡的实际高度）
+    const x = 10 / uiK + (touchInsetsOf(scene, uiK).left || 0) + 10;
+    const leftH = Number.isFinite(this._leftH) && this._leftH > 0 ? this._leftH : 100;
+    const y = top + leftH + 8;
+    ctx.save();
+    ctx.font = 'bold 12px "Segoe UI", "Microsoft YaHei", sans-serif';
+    const tw = ctx.measureText(t.text).width;
+    const h = 24;
+    const w = tw + 26 + 14;
+    ctx.restore();
+    // 透明度走 drawFaded（带辉光的描边在 iPadOS WebKit 上不吃 globalAlpha；
+    // 与 HUD 横幅/路标同一套离屏合成方案）
+    drawFaded(ctx, a, (c) => {
+      c.save();
+      para(c, x, y, w, h, 7);
+      const g = c.createLinearGradient(x, y, x, y + h);
+      g.addColorStop(0, 'rgba(38,32,74,0.94)');
+      g.addColorStop(1, 'rgba(14,11,36,0.94)');
+      c.fillStyle = g;
+      c.fill();
+      c.strokeStyle = 'rgba(232,184,75,0.85)';
+      c.lineWidth = 1.2;
+      c.shadowColor = 'rgba(232,184,75,0.55)';
+      c.shadowBlur = 8;
+      c.stroke();
+      c.shadowBlur = 0;
+      // 小金色对勾（存档成功；不加说明文字）
+      const mx = x + 16;
+      const my = y + h / 2;
+      c.strokeStyle = '#ffd76a';
+      c.lineWidth = 2;
+      c.lineCap = 'round';
+      c.lineJoin = 'round';
+      c.beginPath();
+      c.moveTo(mx - 4, my);
+      c.lineTo(mx - 1, my + 3.5);
+      c.lineTo(mx + 5, my - 4);
+      c.stroke();
+      c.font = 'bold 12px "Segoe UI", "Microsoft YaHei", sans-serif';
+      c.fillStyle = '#ffe9b0';
+      c.textAlign = 'left';
+      c.textBaseline = 'alphabetic';
+      c.fillText(t.text, x + 27, y + 16.5);
+      c.restore();
+    });
   }
 
   // ---- 鸟瞰（灵魂出窍）界面：返回按钮 + 操作提示（干净的全局视图）-----------
@@ -11512,13 +14421,17 @@ class Hud {
     ctx.strokeStyle = ui.joy ? 'rgba(255,215,106,0.85)' : 'rgba(232,184,75,0.4)';
     ctx.lineWidth = ui.joy ? 2 : 1.2;
     ctx.stroke();
-    // —— 右下：四键（按住=长按语义同键盘；无玩家场景不画）。
-    //     键位字母（C/X/Q/⇧）对触屏玩家无意义 → 换成语义 SVG 矢量图标 +
-    //     下方二字说明（拾取/倒出/收集/放置）——
+    // —— 右下：Q 拾取 / ⇧ 放置常驻；选中可拾取物品时上排出现该物品的操作键
+    //     （烧杯=吸液/倒出，滴管=吸液/滴加，集气瓶=集气/通气；名称/图标由物品定义，
+    //       见 level/items.js carryActionsOf）。触屏不用键位字母，用矢量图标+二字说明。
     if (scene.player) {
-      const LABELS = { grab: '拾取', use: '倒出', collect: '收集', place: '放置' };
+      const actions = carryActionsOf(scene.player.inventory.selectedItem());
+      const byKey = new Map(actions.map((a) => [a.action, a]));
+      const BASE = { collect: { label: '拾取', icon: 'pickup' }, place: { label: '放置', icon: 'place' } };
       for (const r of ui.buttonRects()) {
-        const cap = LABELS[r.key] ?? '';
+        const meta = byKey.get(r.key) ?? BASE[r.key];
+        if (!meta) continue;
+        const cap = meta.label ?? '';
         const down = ui.isPressed(r.key);
         ctx.save();
         rr(ctx, r.x, r.y, r.size, r.size, 14);
@@ -11536,7 +14449,7 @@ class Hud {
         ctx.stroke();
         ctx.shadowBlur = 0;
         ctx.textAlign = 'center';
-        this._touchIcon(ctx, r.key, r.x + r.size / 2, r.y + r.size / 2 - 7, down ? '#fff6d8' : '#ffe9b0');
+        this._touchIcon(ctx, meta.icon, r.x + r.size / 2, r.y + r.size / 2 - 7, down ? '#fff6d8' : '#ffe9b0');
         ctx.fillStyle = down ? '#ffd76a' : 'rgba(255,233,176,0.62)';
         ctx.font = '11px "Segoe UI", "Microsoft YaHei", sans-serif';
         ctx.fillText(cap, r.x + r.size / 2, r.y + r.size - 10);
@@ -11547,10 +14460,84 @@ class Hud {
   }
 
   /** 触控按钮矢量图标（canvas 路径画的"SVG 小图"，原点 = 图标中心）：
-   *  grab=上举箭头+烧杯（拾取容器；与"放置"下箭头成对） / use=倾斜烧杯倒液（倒出） /
-   *  collect=马蹄磁铁（吸集） / place=落点箭头（放置到地上）。
-   *  （"手"造型尝试过多版（四指/捏取/握拳）都读不出来，按用户指示改走抽象图标。） */
-  _touchIcon(ctx, key, cx, cy, color) {
+   *  pickup=收进物品栏（托盘+下箭头） / place=落点箭头（放置到地上） /
+   *  beakerSuck=小烧杯+上吸箭头 / beakerPour=倾斜烧杯+液滴 /
+   *  dropperSuck=滴管+上吸箭头 / dropperDrip=滴管+下落液滴 /
+   *  bottleCollect=集气瓶+上升气泡 / bottleInject=集气瓶+注入箭头。
+   *  图标名来自物品的操作定义（items.carryActionsOf），新增物品只加一条即可。 */
+  _touchIcon(ctx, icon, cx, cy, color) {
+    // 小烧杯（白描边 + 青色液体）；(ox,oy) 为杯心偏移，sc 缩放
+    const beaker = (ox, oy, sc = 1) => {
+      ctx.save();
+      ctx.translate(ox, oy);
+      ctx.scale(sc, sc);
+      ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+      ctx.lineWidth = 1.3;
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-2.6, -5.2);
+      ctx.lineTo(-2.6, -0.6);
+      ctx.quadraticCurveTo(-2.6, 4.2, 0, 4.2);
+      ctx.quadraticCurveTo(2.6, 4.2, 2.6, -0.6);
+      ctx.lineTo(2.6, -5.2);
+      ctx.moveTo(-3.3, -5.2);
+      ctx.lineTo(3.3, -5.2);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(122,224,255,0.75)';
+      ctx.beginPath();
+      ctx.moveTo(-2.1, 3.6);
+      ctx.lineTo(-2.1, 1.4);
+      ctx.quadraticCurveTo(-2.1, 3.3, 0, 3.3);
+      ctx.quadraticCurveTo(2.1, 3.3, 2.1, 1.4);
+      ctx.lineTo(2.1, 3.6);
+      ctx.fill();
+      ctx.restore();
+    };
+    // 小滴管（红胶头 + 玻璃细管 + 锥形滴嘴）；(ox,oy) 为管心偏移，sc 缩放
+    const dropper = (oy = 0, sc = 1, ox = 0) => {
+      ctx.save();
+      ctx.translate(ox, oy);
+      ctx.scale(sc, sc);
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.ellipse(0, -6.0, 2.6, 3.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(210,232,255,0.95)';
+      ctx.lineWidth = 1.35;
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-1.3, -2.6);
+      ctx.lineTo(-1.3, 4.4);
+      ctx.lineTo(-0.5, 7.6);
+      ctx.lineTo(0.5, 7.6);
+      ctx.lineTo(1.3, 4.4);
+      ctx.lineTo(1.3, -2.6);
+      ctx.stroke();
+      ctx.restore();
+    };
+    // 小集气瓶（细瓶口 + 玻璃瓶身 + 底部圆角）
+    const bottle = (ox = 0) => {
+      ctx.save();
+      ctx.translate(ox, 0);
+      ctx.strokeStyle = 'rgba(210,240,255,0.95)';
+      ctx.lineWidth = 1.3;
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-2.6, -8.4);
+      ctx.lineTo(-2.6, -5.4);
+      ctx.lineTo(-4.8, -2.6);
+      ctx.lineTo(-4.8, 5.4);
+      ctx.quadraticCurveTo(-4.8, 8.2, -1.8, 8.2);
+      ctx.lineTo(1.8, 8.2);
+      ctx.quadraticCurveTo(4.8, 8.2, 4.8, 5.4);
+      ctx.lineTo(4.8, -2.6);
+      ctx.lineTo(2.6, -5.4);
+      ctx.lineTo(2.6, -8.4);
+      ctx.moveTo(-3.2, -8.4);
+      ctx.lineTo(3.2, -8.4);
+      ctx.stroke();
+      ctx.restore();
+    };
     ctx.save();
     ctx.translate(cx, cy);
     ctx.scale(1.15, 1.15);
@@ -11559,42 +14546,60 @@ class Hud {
     ctx.lineWidth = 2.2;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    ctx.beginPath();
-    if (key === 'grab') {
-      // 拾取：上举箭头（左）+ 小烧杯（右）——"拿起容器"；箭头方向与"放置"（下）成对
-      ctx.lineWidth = 3.0;
-      ctx.moveTo(-5.0, 9.0); ctx.lineTo(-5.0, -2.2); // 箭杆
-      ctx.stroke();
+    if (icon === 'pickup') {
+      // 拾取：原地小物件 + 向上箭头（把物品拿起来）——与"放置"的向下箭头成对
+      ctx.lineWidth = 2.0;
       ctx.beginPath();
-      ctx.moveTo(-7.6, -1.6); ctx.lineTo(-5.0, -6.8); ctx.lineTo(-2.4, -1.6); // 箭头
+      ctx.moveTo(-3.4, 2.8);
+      ctx.lineTo(3.4, 2.8);
+      ctx.lineTo(3.4, 8.4);
+      ctx.lineTo(-3.4, 8.4);
       ctx.closePath();
-      ctx.fill();
-      // 小烧杯（白描边 + 青色液体）
-      ctx.strokeStyle = 'rgba(255,255,255,0.92)';
-      ctx.lineWidth = 1.3;
-      ctx.beginPath();
-      ctx.moveTo(2.6, -4.8); ctx.lineTo(2.6, -0.2);
-      ctx.quadraticCurveTo(2.6, 4.0, 4.6, 4.0);
-      ctx.quadraticCurveTo(6.6, 4.0, 6.6, -0.2);
-      ctx.lineTo(6.6, -4.8);
-      ctx.moveTo(1.9, -4.8); ctx.lineTo(7.3, -4.8); // 杯沿
       ctx.stroke();
-      ctx.fillStyle = 'rgba(122,224,255,0.75)';
       ctx.beginPath();
-      ctx.moveTo(3.2, 3.5); ctx.lineTo(3.2, 1.4);
-      ctx.quadraticCurveTo(3.2, 3.4, 4.6, 3.4);
-      ctx.quadraticCurveTo(6.0, 3.4, 6.0, 1.4);
-      ctx.lineTo(6.0, 3.5);
-      ctx.fill();
-      // 星闪（右下侧)
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 1.1;
-      ctx.beginPath();
-      ctx.moveTo(8.6, -8.0); ctx.lineTo(8.6, -5.6); ctx.moveTo(7.4, -6.8); ctx.lineTo(9.8, -6.8);
+      ctx.moveTo(0, -9.0);
+      ctx.lineTo(0, -0.4);
+      ctx.moveTo(-3.6, -5.4);
+      ctx.lineTo(0, -9.0);
+      ctx.lineTo(3.6, -5.4);
       ctx.stroke();
-    } else if (key === 'use') {
+    } else if (icon === 'place') {
+      // 放置：上方小物件 + 向下箭头落到地面基线
+      ctx.lineWidth = 2.0;
+      ctx.beginPath();
+      ctx.moveTo(-3.4, -8.4);
+      ctx.lineTo(3.4, -8.4);
+      ctx.lineTo(3.4, -2.8);
+      ctx.lineTo(-3.4, -2.8);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0, -1.4);
+      ctx.lineTo(0, 6.2);
+      ctx.moveTo(-3.4, 2.8);
+      ctx.lineTo(0, 6.4);
+      ctx.lineTo(3.4, 2.8);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-8.5, 8.8);
+      ctx.lineTo(8.5, 8.8);
+      ctx.stroke();
+    } else if (icon === 'beakerSuck') {
+      // 上吸箭头（左）+ 小烧杯（右）
+      ctx.lineWidth = 2.8;
+      ctx.beginPath();
+      ctx.moveTo(-5.2, 8.6);
+      ctx.lineTo(-5.2, -2.4);
+      ctx.moveTo(-7.8, -1.8);
+      ctx.lineTo(-5.2, -7.0);
+      ctx.lineTo(-2.6, -1.8);
+      ctx.stroke();
+      beaker(4.4, 1.0, 0.85);
+    } else if (icon === 'beakerPour') {
       // 倾斜小烧杯（顺时针倒向右侧）+ 液滴从口沿洒落
+      ctx.save();
       ctx.rotate(0.55);
+      ctx.beginPath();
       ctx.moveTo(-6, -5);
       ctx.lineTo(-6, 5);
       ctx.quadraticCurveTo(-6, 7.5, -3.5, 7.5);
@@ -11602,32 +14607,43 @@ class Hud {
       ctx.quadraticCurveTo(6, 7.5, 6, 5);
       ctx.lineTo(6, -5);
       ctx.stroke();
-      ctx.rotate(-0.55);
-      ctx.beginPath(); ctx.arc(10.5, -1, 1.6, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(13, 4.5, 1.9, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(11.5, 10.5, 2.2, 0, Math.PI * 2); ctx.fill();
-    } else if (key === 'collect') {
-      // 马蹄磁铁（开口朝下，两极短杠）——"吸集"沉淀
-      ctx.moveTo(-7.5, 5);
-      ctx.lineTo(-7.5, -1);
-      ctx.arc(0, -1, 7.5, Math.PI, 0);
-      ctx.lineTo(7.5, 5);
-      ctx.moveTo(-3, 5);
-      ctx.lineTo(-3, -1);
-      ctx.arc(0, -1, 3, Math.PI, 0);
-      ctx.lineTo(3, 5);
+      ctx.restore();
+      ctx.beginPath(); ctx.arc(9.6, -1.4, 1.5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(11.2, 3.8, 1.8, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(9.8, 9.4, 2.1, 0, Math.PI * 2); ctx.fill();
+    } else if (icon === 'dropperSuck') {
+      // 上吸箭头（右）+ 小滴管（左）
+      dropper(1.2, 0.9, -2.0);
+      ctx.lineWidth = 2.6;
+      ctx.beginPath();
+      ctx.moveTo(7.6, 8.4);
+      ctx.lineTo(7.6, -2.6);
+      ctx.moveTo(5.2, -2.0);
+      ctx.lineTo(7.6, -6.8);
+      ctx.lineTo(10.0, -2.0);
       ctx.stroke();
-      ctx.fillRect(-7.5, 6.6, 4.5, 3);
-      ctx.fillRect(3, 6.6, 4.5, 3);
-    } else if (key === 'place') {
-      // 下落箭头 + 地面基线（"放下去"）
-      ctx.moveTo(0, -10);
-      ctx.lineTo(0, 2);
-      ctx.moveTo(-4.5, -2.5);
-      ctx.lineTo(0, 2);
-      ctx.lineTo(4.5, -2.5);
-      ctx.moveTo(-8.5, 8);
-      ctx.lineTo(8.5, 8);
+    } else if (icon === 'dropperDrip') {
+      // 小滴管（左）+ 右侧一串下落液滴（避免看起来像感叹号）
+      dropper(-2.6, 0.9, -3.2);
+      ctx.beginPath(); ctx.arc(4.2, 8.0, 2.4, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(6.6, 3.2, 1.4, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(5.2, -0.8, 0.9, 0, Math.PI * 2); ctx.fill();
+    } else if (icon === 'bottleCollect') {
+      // 集气瓶 + 上升气泡
+      bottle(-2.4);
+      ctx.beginPath(); ctx.arc(6.6, 5.2, 1.4, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(9.0, 0.6, 1.8, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(6.8, -4.4, 1.2, 0, Math.PI * 2); ctx.fill();
+    } else if (icon === 'bottleInject') {
+      // 集气瓶 + 向瓶内注入的下箭头
+      bottle(-2.4);
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(7.8, -8.0);
+      ctx.lineTo(7.8, 2.4);
+      ctx.moveTo(5.6, 0.2);
+      ctx.lineTo(7.8, 3.0);
+      ctx.lineTo(10.0, 0.2);
       ctx.stroke();
     }
     ctx.restore();
@@ -12085,7 +15101,8 @@ class Hud {
     // 极窄视口（无全屏的手机横屏）再缩一档：0.76 → 0.60
     const k = tinyView(canvasLW(ctx.canvas), canvasLH(ctx.canvas)) ? 0.60
       : compactView(canvasLW(ctx.canvas), canvasLH(ctx.canvas)) ? 0.76 : 1;
-    const atm = scene.atmosphere;
+    // 大气数据源：玩家在气室内时显示气室内部大气（与外部独立），否则显示场景大气
+    const atm = typeof scene.atmosphereForPlayer === 'function' ? scene.atmosphereForPlayer() : scene.atmosphere;
     // 身体组成（多物质才显示，单物质=血量本身）
     const masses = p.grid ? p.grid.masses() : null;
     const entries = masses
@@ -12319,12 +15336,14 @@ class Hud {
     const rects = inventorySlotRects(W, H, slots, uiMargins(this.scene, this._uiK || 1));
     if (!this._pop) this._pop = {}; // 物品格弹跳计时 {i:{sig,t}}
     let minTop = Infinity;
+    let invRight = 0;
     for (let i = 0; i < rects.length; i++) {
       const r = rects[i];
       const x = r.x;
       const sy = r.y;
       const size = r.size;
       minTop = Math.min(minTop, sy);
+      invRight = Math.max(invRight, x + size);
       const sel = i === p.inventory.selected;
       // 弹跳：物品格内容变化（新装/吸液/倒出/收气）时缩放脉冲一下
       const s = slots[i];
@@ -12375,67 +15394,170 @@ class Hud {
       }
       ctx.restore();
     }
-    // 选中物品 → 在物品栏上方显示"名称 + 内容组成 + 质量"（槽内不再挤文字，
-    // 说明文字也撤掉——内容一眼即懂）
+    // 桌面端：只有选中"有自定义操作的可拾取物品"时，才在物品栏上方显示该物品的键位提示
+    // （Q/⇧ 是通用操作，不常驻提示；未选物品/物品没有自定义操作时不显示任何提示条）。
+    const touch = this._isTouch();
     const selItem = p.inventory.selectedItem();
-    if (selItem) {
-      // 注意：selectedItem() 返回的就是物品实例本身（不是槽位条目），直接读它
-      const o = selItem;
-      let title = '';
-      let comp = '';
-      let mass = '';
-      let color = '#fff6dd';
-      if (selItem.isCarryItem === 'beaker') {
-        const total = o.solution ? o.solution.totalMass() : 0;
-        title = '烧杯';
-        comp = this._contentLine(o.solution ? [...o.solution.solutes.entries()] : [], total > 0.05 ? '水' : '空');
-        mass = `${total.toFixed(1)}g`;
-        if (o.solution && comp !== '空' && comp !== '水') color = solutionColor(o.solution).color;
-      } else if (selItem.isCarryItem === 'dropper') {
-        title = '滴管';
-        comp = o.liquid > 1e-9 ? (o.substance === 'H2O' ? '水' : o.substance) : '空';
-        mass = o.liquid > 1e-9 ? `${o.liquid.toFixed(1)}g` : '';
-        if (o.liquid > 1e-9 && o.substance !== 'H2O') color = o.liquidColor().color;
-      } else {
-        title = '集气瓶';
-        comp = o.totalGas() > 1e-9 ? this._contentLine([...o.gases.entries()], '') : '空';
-        mass = o.totalGas() > 1e-9 ? `${o.totalGas().toFixed(2)}g / ${o.capacity.toFixed(0)}g` : '';
-        if (o.totalGas() > 1e-9) color = o.gasColor();
-      }
-      ctx.save();
-      ctx.font = 'bold 12.5px "Segoe UI", "Microsoft YaHei", sans-serif';
-      const w1 = ctx.measureText(`${title}　${mass}`).width;
-      ctx.font = 'bold 11px monospace';
-      const w2 = ctx.measureText(comp).width;
-      const bw = Math.max(w1, w2) + 24;
-      const bx = W - (this._isTouch() ? (this.scene._touchUI.insets.right || 0) : 0) - bw - 12; // 右对齐：贴物品栏右缘上方
-      let by = minTop - 56;
-      // 触屏端：物品栏上方是 C/X/Q/⇧ 按钮块——面板再往上挪，不叠在按钮上
-      if (this._isTouch()) {
-        const ui = this.scene._touchUI;
-        const btns = touchButtonRects(W, H, slots, ui && ui.insets ? ui.insets : {});
-        let btnTop = Infinity;
-        for (const b of btns) btnTop = Math.min(btnTop, b.y);
-        if (btnTop < Infinity) by = btnTop - 50;
-      }
-      rr(ctx, bx, by, bw, 44, 9);
-      const g = ctx.createLinearGradient(bx, by, bx, by + 44);
-      g.addColorStop(0, 'rgba(26,22,52,0.95)');
-      g.addColorStop(1, 'rgba(12,10,30,0.95)');
-      ctx.fillStyle = g;
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(232,184,75,0.5)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      ctx.textAlign = 'left';
-      ctx.font = 'bold 12.5px "Segoe UI", "Microsoft YaHei", sans-serif';
-      ctx.fillStyle = '#ffe9b0';
-      ctx.fillText(`${title}　${mass}`, bx + 12, by + 18);
-      ctx.font = 'bold 11px monospace';
-      ctx.fillStyle = color;
-      ctx.fillText(comp, bx + 12, by + 36);
-      ctx.restore();
+    const actions = carryActionsOf(selItem);
+    let hintY = null;
+    if (!touch && actions.length) {
+      hintY = minTop - 34;
+      this._actionHints(ctx, invRight, hintY, actions);
     }
+    // ---- 选中物品说明面板：切换槽位时旧面板淡出、新面板淡入（不是硬切） ----
+    const selKey = selItem ? `${p.inventory.selected}:${selItem.isCarryItem}` : '';
+    if (this._infoKey !== selKey) {
+      if (this._infoCur) this._infoPrev = this._infoCur;
+      this._infoKey = selKey;
+      this._infoT = time;
+    }
+    const info = selItem ? this._itemInfoData(selItem) : null;
+    if (info) {
+      const layout = this._itemInfoLayout(ctx, W, H, touch, slots, actions, minTop, invRight, hintY, info);
+      this._infoCur = { ...info, ...layout };
+    } else {
+      this._infoCur = null;
+    }
+    const animDur = 0.17;
+    const animK = Math.max(0, Math.min(1, (time - this._infoT) / animDur));
+    const ease = (v) => v * v * (3 - 2 * v);
+    const e = ease(animK);
+    if (this._infoPrev) {
+      const a = 1 - e;
+      if (a > 0.01) this._drawItemInfo(ctx, this._infoPrev, a, -5 * e, 1);
+      if (animK >= 1) this._infoPrev = null;
+    }
+    if (this._infoCur) {
+      this._drawItemInfo(ctx, this._infoCur, e, (1 - e) * 6, 0.97 + 0.03 * e);
+    }
+  }
+
+  /** 选中物品说明面板的数据（名称 / 组成 / 质量 / 颜色） */
+  _itemInfoData(o) {
+    let title = '';
+    let comp = '';
+    let mass = '';
+    let color = '#fff6dd';
+    if (o.isCarryItem === 'beaker') {
+      const total = o.solution ? o.solution.totalMass() : 0;
+      title = '烧杯';
+      comp = this._contentLine(o.solution ? [...o.solution.solutes.entries()] : [], total > 0.05 ? '水' : '空');
+      mass = `${total.toFixed(1)}g`;
+      if (o.solution && comp !== '空' && comp !== '水') color = solutionColor(o.solution).color;
+    } else if (o.isCarryItem === 'dropper') {
+      title = '滴管';
+      comp = o.liquid > 1e-9 ? (o.substance === 'H2O' ? '水' : o.substance) : '空';
+      mass = o.liquid > 1e-9 ? `${o.liquid.toFixed(1)}g` : '';
+      if (o.liquid > 1e-9 && o.substance !== 'H2O') color = o.liquidColor().color;
+    } else {
+      title = '集气瓶';
+      comp = o.totalGas() > 1e-9 ? this._contentLine([...o.gases.entries()], '') : '空';
+      mass = o.totalGas() > 1e-9 ? `${o.totalGas().toFixed(2)}g / ${o.capacity.toFixed(0)}g` : '';
+      if (o.totalGas() > 1e-9) color = o.gasFillColor();
+    }
+    return { title, comp, mass, color };
+  }
+
+  /** 说明面板布局（右对齐物品栏；触屏端让开动态按钮块） */
+  _itemInfoLayout(ctx, W, H, touch, slots, actions, minTop, invRight, hintY, info) {
+    ctx.save();
+    ctx.font = 'bold 12.5px "Segoe UI", "Microsoft YaHei", sans-serif';
+    const w1 = ctx.measureText(`${info.title}　${info.mass}`).width;
+    ctx.font = 'bold 11px monospace';
+    const w2 = ctx.measureText(info.comp).width;
+    ctx.restore();
+    const bw = Math.max(w1, w2) + 24;
+    const bx = Math.max(6, invRight - bw);
+    let by;
+    if (touch) {
+      // 触屏端：物品栏上方是动态按钮块（基础 Q/⇧ + 物品操作）——面板再往上挪
+      const ui = this.scene._touchUI;
+      const btns = touchButtonRects(W, H, slots, ui && ui.insets ? ui.insets : {}, actions);
+      let btnTop = Infinity;
+      for (const b of btns) btnTop = Math.min(btnTop, b.y);
+      by = btnTop - 50;
+    } else {
+      by = hintY != null ? hintY - 6 - 44 : minTop - 56;
+    }
+    return { bx, by, bw };
+  }
+
+  /** 画一帧说明面板（alpha/dy/scale 供切换动画用） */
+  _drawItemInfo(ctx, snap, alpha, dy, scale) {
+    if (alpha <= 0.005) return;
+    const bx = snap.bx;
+    const by = snap.by + dy;
+    const cx = bx + snap.bw / 2;
+    const cy = by + 22;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+    if (Math.abs(scale - 1) > 0.001) {
+      ctx.translate(cx, cy);
+      ctx.scale(scale, scale);
+      ctx.translate(-cx, -cy);
+    }
+    rr(ctx, bx, by, snap.bw, 44, 9);
+    const g = ctx.createLinearGradient(bx, by, bx, by + 44);
+    g.addColorStop(0, 'rgba(26,22,52,0.95)');
+    g.addColorStop(1, 'rgba(12,10,30,0.95)');
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(232,184,75,0.5)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.textAlign = 'left';
+    ctx.font = 'bold 12.5px "Segoe UI", "Microsoft YaHei", sans-serif';
+    ctx.fillStyle = '#ffe9b0';
+    ctx.fillText(`${snap.title}　${snap.mass}`, bx + 12, by + 18);
+    ctx.font = 'bold 11px monospace';
+    ctx.fillStyle = snap.color;
+    ctx.fillText(snap.comp, bx + 12, by + 36);
+    ctx.restore();
+  }
+
+  /** 桌面端物品操作键位提示条（物品栏上方；只在选中物品有自定义操作时显示）：
+   *  只列该物品自己的操作（名称/键位来自 items.carryActionsOf + 设置里的键位；
+   *  按住类加"按住"前缀）。Q/⇧ 是通用操作，不在这里常驻。 */
+  _actionHints(ctx, right, y, actions) {
+    const entries = actions.map((a) => ({ key: a.action, label: a.hold ? `按住${a.label}` : a.label }));
+    const h = 22;
+    ctx.save();
+    ctx.font = '10.5px "Segoe UI", "Microsoft YaHei", sans-serif';
+    const items = entries.map((e) => {
+      const kt = actionKeyLabel(e.key);
+      const kw = Math.max(16, ctx.measureText(kt).width + 10);
+      const lw = ctx.measureText(e.label).width;
+      return { ...e, kt, kw, lw, w: kw + 4 + lw };
+    });
+    const gap = 10;
+    const pad = 10;
+    const total = items.reduce((s, it) => s + it.w, 0) + gap * (items.length - 1) + pad * 2;
+    let x = Math.max(6, right - total);
+    rr(ctx, x, y, total, h, 6);
+    ctx.fillStyle = 'rgba(10,10,26,0.72)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(232,184,75,0.28)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    x += pad;
+    const cy = y + h / 2;
+    for (const it of items) {
+      rr(ctx, x, cy - 8, it.kw, 16, 4);
+      ctx.fillStyle = 'rgba(30,26,60,0.95)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(232,184,75,0.55)';
+      ctx.stroke();
+      ctx.fillStyle = '#ffd76a';
+      ctx.font = 'bold 10px "Segoe UI", "Microsoft YaHei", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(it.kt, x + it.kw / 2, cy + 3.5);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#cfe0ff';
+      ctx.font = '10.5px "Segoe UI", "Microsoft YaHei", sans-serif';
+      ctx.fillText(it.label, x + it.kw + 4, cy + 3.5);
+      x += it.w + gap;
+    }
+    ctx.restore();
   }
 
   /** 物质格：元素色圆点 + 名称 + 质量 */
@@ -12471,172 +15593,317 @@ class Hud {
   }
 
   /** 物品格图标（烧杯/滴管/集气瓶——不堆叠，一物一格）。
-   *  槽内**只画物体本身**（成分/名称挪到上方"选中物品"面板，免得文字糊住造型）；
-   *  仅右下角保留一个小小的质量数字。 */
+   *  小尺寸新风格缩略图：暗紫玻璃 + 黄铜口沿/卡箍 + 液体/气体元素色，只画物体本身；
+   *  右下角保留一个小小的质量数字（成分/名称在上方"选中物品"面板）。
+   *  约 18~24px，细节克制（无随机、无动画）；空槽/选中态由外层 HUD 面板负责。 */
   drawItemIcon(ctx, s, r, time) {
     const o = s.obj;
     const size = r.size;
     const cx = r.x + size / 2;
     const cy = r.y + size / 2 + 1;
+    // 紧凑/极小视口下物品格会缩到 50/41px：图标同比例缩，避免压到质量小字
+    const k = Math.max(0.58, Math.min(1, size / 70));
+    // 小图标共用黄铜渐变（亮铜 → 铜 → 暗铜；竖渐变足够）
+    const brass = (x, y, w, h) => {
+      const g = ctx.createLinearGradient(x, y, x, y + h);
+      g.addColorStop(0, THEME.gold.light);
+      g.addColorStop(0.5, THEME.gold.base);
+      g.addColorStop(1, THEME.gold.deep);
+      return g;
+    };
     ctx.save();
     ctx.textAlign = 'center';
     if (s.item === 'beaker') {
-      // 迷你烧杯：U 形玻璃 + 按液量比例的液面
-      const bw = 21;
-      const bh = 27;
-      const bx = cx - bw / 2;
-      const by = cy - bh / 2 + 3;
+      // ---- 迷你烧杯：暗紫玻璃 U 形 + 黄铜口沿 + 刻度 + 液体 ----
+      const bw = 22;
+      const bh = 26;
+      const botR = 3.5;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.scale(k, k);
+      const bx = -bw / 2;
+      const by = -bh / 2 + 1;
+      const glassPath = () => {
+        ctx.beginPath();
+        ctx.moveTo(bx, by + 1.6);
+        ctx.lineTo(bx, by + bh - botR);
+        ctx.arcTo(bx, by + bh, bx + botR, by + bh, botR);
+        ctx.lineTo(bx + bw - botR, by + bh);
+        ctx.arcTo(bx + bw, by + bh, bx + bw, by + bh - botR, botR);
+        ctx.lineTo(bx + bw, by + 1.6);
+        ctx.closePath();
+      };
+      // 玻璃体（暗紫玻璃）
+      glassPath();
+      const glass = ctx.createLinearGradient(bx, by, bx, by + bh);
+      glass.addColorStop(0, 'rgba(150,130,230,0.26)');
+      glass.addColorStop(0.5, 'rgba(80,70,150,0.16)');
+      glass.addColorStop(1, 'rgba(120,110,200,0.22)');
+      ctx.fillStyle = glass;
+      ctx.fill();
+      // 液体（按液量比例从杯底升起；溶液色沿用世界渲染取色）
       const { color, alpha } = o.solution ? solutionColor(o.solution) : { color: '#9adcff', alpha: 0.2 };
       const vol = o.solution && o.solution.volume > 0 ? o.solution.volume : CFG.item.beakerCapacity;
       const frac = Math.max(0, Math.min(1, (o.solution ? o.solution.totalMass() : 0) / vol));
-      const lh = Math.max(0.01, (bh - 4) * frac);
       if (frac > 0.01) {
-        ctx.globalAlpha = Math.max(alpha, 0.35);
+        ctx.save();
+        glassPath();
+        ctx.clip();
+        const lh = Math.max(1.5, (bh - 4) * frac);
+        const ly = by + bh - 2 - lh;
+        ctx.globalAlpha = Math.max(alpha, 0.42);
         ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.roundRect(bx + 1, by + bh - 1 - lh, bw - 2, lh, 2);
-        ctx.fill();
-        // 液面亮线
-        ctx.globalAlpha = Math.min(1, alpha + 0.25);
-        ctx.fillStyle = 'rgba(255,255,255,0.55)';
-        ctx.fillRect(bx + 1.5, by + bh - 1 - lh, bw - 3, 1);
+        ctx.fillRect(bx + 1, ly, bw - 2, lh + 1.5);
         ctx.globalAlpha = 1;
+        // 液面亮线
+        ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        ctx.fillRect(bx + 1.4, ly, bw - 2.8, 0.9);
+        ctx.restore();
       }
-      ctx.strokeStyle = 'rgba(225,245,255,0.88)';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(bx + 0.5, by);
-      ctx.lineTo(bx + 0.5, by + bh - 3);
-      ctx.quadraticCurveTo(bx + 0.5, by + bh - 0.5, bx + 3, by + bh - 0.5);
-      ctx.lineTo(bx + bw - 3, by + bh - 0.5);
-      ctx.quadraticCurveTo(bx + bw - 0.5, by + bh - 0.5, bx + bw - 0.5, by + bh - 3);
-      ctx.lineTo(bx + bw - 0.5, by);
+      // 玻璃描边 + 左侧高光
+      glassPath();
+      ctx.strokeStyle = 'rgba(205,225,255,0.75)';
+      ctx.lineWidth = 1.1;
       ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.30)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(bx + 1.2, by + 3);
+      ctx.lineTo(bx + 1.2, by + bh - botR - 1);
+      ctx.stroke();
+      // 杯口开口：深色扁椭圆 + 两侧极短铜口沿（不是盖在杯口的横梁）
+      ctx.beginPath();
+      ctx.ellipse(0, by + 1.2, bw / 2 - 0.8, Math.max(1.2, bw * 0.05), 0, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(7,10,26,0.6)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(205,225,255,0.65)';
+      ctx.lineWidth = 0.9;
+      ctx.stroke();
+      const tickW = 2.4;
+      for (const sx of [bx - 0.2, bx + bw - tickW + 0.2]) {
+        rr(ctx, sx, by - 0.4, tickW, 2.0, 0.7);
+        ctx.fillStyle = brass(sx, by - 0.4, tickW, 2.0);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(30,20,6,0.7)';
+        ctx.lineWidth = 0.6;
+        ctx.stroke();
+      }
+      // 右侧刻度（两道短线）
+      ctx.strokeStyle = 'rgba(226,236,255,0.38)';
+      ctx.lineWidth = 0.8;
+      for (const [gy2, len] of [[by + bh * 0.42, 4.5], [by + bh * 0.62, 3.2]]) {
+        ctx.beginPath();
+        ctx.moveTo(bx + bw - 2, gy2);
+        ctx.lineTo(bx + bw - 2 - len, gy2);
+        ctx.stroke();
+      }
+      ctx.restore(); // 图标缩放结束（质量小字用未缩放坐标）
       this._slotGrams(ctx, `${(o.solution ? o.solution.totalMass() : 0).toFixed(0)}g`, cx, r.y + size - 5);
     } else if (s.item === 'dropper') {
-      // 迷你滴管：胶头泪滴 → 颈环 → 锥形玻璃管（内充液体、液面高光）→ 尖嘴 → 刻度线
+      // ---- 迷你滴管：黄铜卡箍 + 暗紫玻璃细管 + 红胶头 + 管内液面 ----
       ctx.save();
-      ctx.translate(cx, cy - 3);
-      const { color } = o.liquid > 1e-9 ? o.liquidColor() : { color: '#9fdcff' };
+      ctx.translate(cx, cy);
+      ctx.scale(k, k);
+      const { color: lcolor, alpha: lalpha } = o.liquid > 1e-9 ? o.liquidColor() : { color: '#9fdcff', alpha: 0.5 };
       const frac = Math.max(0, Math.min(1, o.liquid / o.capacity));
-      // 胶头（红色泪滴：圆肩收腰）
-      const bg = ctx.createRadialGradient(-1.5, -22, 1, 0, -18, 10);
-      bg.addColorStop(0, '#e2596a');
-      bg.addColorStop(1, '#a12634');
-      ctx.fillStyle = bg;
-      ctx.beginPath();
-      ctx.moveTo(-5.2, -11);
-      ctx.bezierCurveTo(-7.5, -19, -4.5, -24.5, 0, -24.5);
-      ctx.bezierCurveTo(4.5, -24.5, 7.5, -19, 5.2, -11);
-      ctx.closePath();
+      const tubeTop = -7;
+      const tubeBot = 12;
+      const tubeHalfTop = 2.8;
+      const tubeHalfBot = 1.4;
+      const tubePath = () => {
+        ctx.beginPath();
+        ctx.moveTo(-tubeHalfTop, tubeTop);
+        ctx.lineTo(tubeHalfTop, tubeTop);
+        ctx.lineTo(tubeHalfBot, tubeBot);
+        ctx.lineTo(-tubeHalfBot, tubeBot);
+        ctx.closePath();
+      };
+      // 玻璃细管（暗紫玻璃）
+      tubePath();
+      const tg = ctx.createLinearGradient(-tubeHalfTop, 0, tubeHalfTop, 0);
+      tg.addColorStop(0, 'rgba(190,215,255,0.34)');
+      tg.addColorStop(0.45, 'rgba(110,95,190,0.20)');
+      tg.addColorStop(1, 'rgba(190,215,255,0.28)');
+      ctx.fillStyle = tg;
       ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,0.45)';
-      ctx.beginPath();
-      ctx.ellipse(-2, -20, 1.5, 2.6, -0.4, 0, Math.PI * 2);
-      ctx.fill();
-      // 颈环（固定胶头的金属箍）
-      ctx.fillStyle = '#d8b45c';
-      ctx.fillRect(-4.4, -11.5, 8.8, 2.4);
-      // 玻璃管（上宽下窄的锥形）
-      const tubeTop = -9;
-      const tubeBot = 13;
-      ctx.beginPath();
-      ctx.moveTo(-2.8, tubeTop);
-      ctx.lineTo(2.8, tubeTop);
-      ctx.lineTo(1.15, tubeBot);
-      ctx.lineTo(-1.15, tubeBot);
-      ctx.closePath();
-      ctx.fillStyle = 'rgba(215,235,255,0.14)';
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(225,245,255,0.85)';
+      // 管内液体（按比例自底向上；液面小椭圆高光）
+      if (frac > 0.01) {
+        ctx.save();
+        tubePath();
+        ctx.clip();
+        const hInner = tubeBot - tubeTop - 1.2;
+        const lh = hInner * frac;
+        const ly = tubeBot - 0.6 - lh;
+        ctx.globalAlpha = Math.max(lalpha, 0.45);
+        ctx.fillStyle = lcolor;
+        ctx.fillRect(-tubeHalfTop - 0.5, ly, tubeHalfTop * 2 + 1, lh + 1.5);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = 'rgba(255,255,255,0.6)';
+        ctx.beginPath();
+        ctx.ellipse(0, ly + 0.5, tubeHalfBot * 0.85, 0.5, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      // 玻璃描边 + 左缘高光
+      tubePath();
+      ctx.strokeStyle = 'rgba(210,230,255,0.8)';
       ctx.lineWidth = 1;
       ctx.stroke();
-      // 管内液体（按比例自底向上；顶部液面小椭圆高光）
-      if (frac > 0.01) {
-        const hInner = tubeBot - tubeTop - 1.6;
-        const lh = hInner * frac;
-        const ly = tubeBot - 0.8 - lh;
-        ctx.save();
+      ctx.strokeStyle = 'rgba(255,255,255,0.42)';
+      ctx.lineWidth = 0.7;
+      ctx.beginPath();
+      ctx.moveTo(-tubeHalfTop + 0.7, tubeTop + 1);
+      ctx.lineTo(-tubeHalfBot + 0.3, tubeBot - 1);
+      ctx.stroke();
+      // 黄铜卡箍（胶头/玻璃管交界）
+      rr(ctx, -4.6, -10.2, 9.2, 2.6, 1.1);
+      ctx.fillStyle = brass(0, -10.2, 9.2, 2.6);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(30,20,6,0.75)';
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+      // 红橡胶胶头（泪滴：圆肩 → 收腰进卡箍；高光）
+      const bg = ctx.createRadialGradient(-2, -17, 0.5, 0, -16, 8);
+      bg.addColorStop(0, '#ff9298');
+      bg.addColorStop(0.55, '#d23a46');
+      bg.addColorStop(1, '#8e1f2a');
+      ctx.fillStyle = bg;
+      ctx.beginPath();
+      ctx.moveTo(-3.3, -10.4);
+      ctx.bezierCurveTo(-6.7, -13.6, -6.2, -20.2, 0, -20.4);
+      ctx.bezierCurveTo(6.2, -20.2, 6.7, -13.6, 3.3, -10.4);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(70,12,18,0.5)';
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.45)';
+      ctx.beginPath();
+      ctx.ellipse(-2.2, -17.2, 1.4, 2.2, -0.5, 0, Math.PI * 2);
+      ctx.fill();
+      // 锥形滴嘴 + 尖端小液珠（有液体时）
+      ctx.beginPath();
+      ctx.moveTo(-tubeHalfBot, tubeBot);
+      ctx.lineTo(0, tubeBot + 6.4);
+      ctx.lineTo(tubeHalfBot, tubeBot);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(190,215,255,0.22)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(210,230,255,0.7)';
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+      if (o.liquid > 1e-9) {
+        ctx.globalAlpha = Math.max(lalpha, 0.5);
+        ctx.fillStyle = lcolor;
         ctx.beginPath();
-        ctx.moveTo(-2.25, tubeTop + 0.6);
-        ctx.lineTo(2.25, tubeTop + 0.6);
-        ctx.lineTo(0.95, tubeBot - 0.8);
-        ctx.lineTo(-0.95, tubeBot - 0.8);
-        ctx.closePath();
-        ctx.clip();
-        ctx.globalAlpha = Math.max(0.42, o.liquidColor().alpha ?? 0.6);
-        ctx.fillStyle = color;
-        ctx.fillRect(-3, ly, 6, lh + 2);
-        ctx.restore();
-        ctx.fillStyle = 'rgba(255,255,255,0.65)';
+        ctx.arc(0, tubeBot + 7.6, 1.15, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = 'rgba(255,255,255,0.7)';
         ctx.beginPath();
-        ctx.ellipse(0, ly + 0.6, 1.9 - (1.05 * (lh / hInner)), 0.55, 0, 0, Math.PI * 2);
+        ctx.arc(-0.35, tubeBot + 7.2, 0.35, 0, Math.PI * 2);
         ctx.fill();
       }
-      // 尖嘴（细口）
-      ctx.beginPath();
-      ctx.moveTo(-1.15, tubeBot);
-      ctx.lineTo(0, tubeBot + 6.5);
-      ctx.lineTo(1.15, tubeBot);
-      ctx.closePath();
-      ctx.fillStyle = 'rgba(215,235,255,0.2)';
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(215,235,255,0.75)';
-      ctx.stroke();
-      // 刻度短线（右侧三道）
-      ctx.strokeStyle = 'rgba(235,245,255,0.55)';
-      ctx.lineWidth = 0.8;
-      for (let i = 1; i <= 3; i++) {
-        const yy = tubeBot - i * 4.5;
-        const half = 2.6 - i * 0.45;
+      // 右侧刻度短线（两道）
+      ctx.strokeStyle = 'rgba(235,245,255,0.5)';
+      ctx.lineWidth = 0.7;
+      for (const yy of [tubeTop + 5, tubeTop + 9]) {
         ctx.beginPath();
-        ctx.moveTo(half, yy);
-        ctx.lineTo(half + 2.4, yy);
+        ctx.moveTo(tubeHalfTop - 1, yy);
+        ctx.lineTo(tubeHalfTop + 1.6, yy);
         ctx.stroke();
       }
       ctx.restore();
       this._slotGrams(ctx, o.liquid > 1e-9 ? `${o.liquid.toFixed(1)}g` : '', cx, r.y + size - 5);
     } else if (s.item === 'bottle') {
-      // 迷你集气瓶：玻璃瓶 + 气体填充 + 盖板横杠
-      const bw = 18;
-      const bh = 26;
-      const bx = cx - bw / 2;
-      const by = cy - bh / 2 + 4;
+      // ---- 迷你集气瓶：瓶口敞开 + 暗紫玻璃瓶身 + 充满瓶内的淡气体雾 ----
+      const bw = 19;
+      const bh = 22;
+      const botR = 3;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.scale(k, k);
+      const bx = -bw / 2;
+      const bodyY = -6;
+      const color = o.gasFillColor();
       const frac = Math.max(0, Math.min(1, o.totalGas() / o.capacity));
-      const color = o.gasColor();
+      // 玻璃瓶身（暗紫玻璃）
+      rr(ctx, bx, bodyY, bw, bh, botR);
+      const glass = ctx.createLinearGradient(bx, bodyY, bx, bodyY + bh);
+      glass.addColorStop(0, 'rgba(150,130,230,0.26)');
+      glass.addColorStop(0.5, 'rgba(80,70,150,0.15)');
+      glass.addColorStop(1, 'rgba(120,110,200,0.22)');
+      ctx.fillStyle = glass;
+      ctx.fill();
+      // 气体：整瓶均匀淡雾（没有液面/没有底部堆积）
       if (frac > 0.01) {
-        const hex = color.replace('#', '');
-        const cr = parseInt(hex.slice(0, 2), 16);
-        const cg = parseInt(hex.slice(2, 4), 16);
-        const cb = parseInt(hex.slice(4, 6), 16);
-        ctx.globalAlpha = 0.45 + 0.2 * frac;
-        ctx.fillStyle = `rgb(${cr},${cg},${cb})`;
-        ctx.shadowColor = color;
-        ctx.shadowBlur = 5;
+        ctx.save();
         ctx.beginPath();
-        ctx.roundRect(bx + 1, by + bh - 13 * frac, bw - 2, 13 * frac, 2);
-        ctx.fill();
-        ctx.shadowBlur = 0;
+        ctx.roundRect(bx + 0.8, bodyY + 0.8, bw - 1.6, bh - 1.6, Math.max(1.5, botR - 1));
+        ctx.clip();
+        ctx.globalAlpha = 0.16 + 0.20 * frac;
+        ctx.fillStyle = color;
+        ctx.fillRect(bx + 1, bodyY + 1, bw - 2, bh - 2);
         ctx.globalAlpha = 1;
+        // 两缕很淡的漂移气团
+        for (const [px, py, pr] of [[bx + bw * 0.36, bodyY + bh * 0.34, bw * 0.34], [bx + bw * 0.64, bodyY + bh * 0.64, bw * 0.3]]) {
+          const g = ctx.createRadialGradient(px, py, 1, px, py, pr);
+          g.addColorStop(0, rgbaOf(color, 0.22 + 0.12 * frac));
+          g.addColorStop(1, rgbaOf(color, 0));
+          ctx.fillStyle = g;
+          ctx.fillRect(px - pr, py - pr, pr * 2, pr * 2);
+        }
+        ctx.restore();
       }
-      ctx.strokeStyle = 'rgba(215,235,255,0.85)';
-      ctx.lineWidth = 1.3;
-      ctx.beginPath();
-      ctx.roundRect(bx, by, bw, bh, 3);
+      // 玻璃描边 + 左侧高光
+      rr(ctx, bx, bodyY, bw, bh, botR);
+      ctx.strokeStyle = 'rgba(205,225,255,0.75)';
+      ctx.lineWidth = 1.1;
       ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+      ctx.lineWidth = 0.9;
       ctx.beginPath();
-      ctx.moveTo(bx + 4, by);
-      ctx.lineTo(bx + 5, by - 4);
-      ctx.lineTo(bx + bw - 5, by - 4);
-      ctx.lineTo(bx + bw - 4, by);
+      ctx.moveTo(bx + 1.3, bodyY + 2);
+      ctx.lineTo(bx + 1.3, bodyY + bh - botR - 1);
       ctx.stroke();
-      // 盖板（横杠盖在瓶口上方）
-      ctx.strokeStyle = 'rgba(240,250,255,0.95)';
-      ctx.lineWidth = 1.5;
+      // 瓶颈（玻璃梯形）
       ctx.beginPath();
-      ctx.moveTo(bx + 1, by - 6);
-      ctx.lineTo(bx + bw - 1, by - 6);
+      ctx.moveTo(bx + 4, bodyY);
+      ctx.lineTo(bx + 5, bodyY - 4);
+      ctx.lineTo(bx + bw - 5, bodyY - 4);
+      ctx.lineTo(bx + bw - 4, bodyY);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(140,120,220,0.20)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(205,225,255,0.7)';
+      ctx.lineWidth = 1;
       ctx.stroke();
+      // 黄铜卡箍（瓶身/瓶颈交界）
+      rr(ctx, bx + 2, bodyY - 1.4, bw - 4, 2.4, 1);
+      ctx.fillStyle = brass(0, bodyY - 1.4, bw, 2.4);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(30,20,6,0.7)';
+      ctx.lineWidth = 0.7;
+      ctx.stroke();
+      // 敞开瓶口：暗色椭圆 + 细玻璃口沿（没有盖板）
+      ctx.beginPath();
+      ctx.ellipse(0, bodyY - 3.8, bw / 2 - 5, 1.2, 0, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(7,10,26,0.62)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(205,225,255,0.7)';
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+      // 下部黄铜卡箍 + 底部暗钢圈
+      rr(ctx, bx + 0.5, bodyY + bh - 7.5, bw - 1, 2, 1);
+      ctx.fillStyle = brass(0, bodyY + bh - 7.5, bw, 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(30,20,6,0.6)';
+      ctx.lineWidth = 0.6;
+      ctx.stroke();
+      rr(ctx, bx, bodyY + bh - 2.4, bw, 2.4, 1);
+      ctx.fillStyle = 'rgba(58,63,92,0.95)';
+      ctx.fill();
+      ctx.restore(); // 图标缩放结束（质量小字用未缩放坐标）
       this._slotGrams(ctx, o.totalGas() > 1e-9 ? `${o.totalGas().toFixed(1)}g` : '', cx, r.y + size - 5);
     }
     ctx.restore();
@@ -12767,6 +16034,121 @@ class Hud {
     ctx.restore();
   }
 
+  // ---- 重开选择菜单（HUD 画布弹层；scene.restartMenuOpen 时绘制，游戏已暂停）----
+
+  /** 重开菜单：全屏暗场 + 居中深紫金边面板（与通关/死亡面板同款），顶部 mono
+   *  kicker「CHEZZLE · RESTART」+ 标题「重开」，两个平行四边形按钮竖排：
+   *  主按钮「回到存档点」（金色渐变深色字；无存档 = 灰暗禁用态）、
+   *  次按钮「整局重开」（冷色斜牌）。几何与命中同源（click.js restartMenuLayout）。 */
+  restartMenu(ctx, scene, W, H, time) {
+    if (!scene.restartMenuOpen) { this._menuAt = null; return; }
+    const L = restartMenuLayout(W, H);
+    const pr = L.panel;
+    const hasSave = Savepoint.has(scene);
+    // 入场淡入（墙钟：菜单打开时游戏时钟已暂停，time 不再前进）
+    const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    if (this._menuAt == null) this._menuAt = now;
+    const t = Math.max(0, (now - this._menuAt) / 1000);
+    const easeOut = (x) => 1 - Math.pow(1 - Math.max(0, Math.min(1, x)), 3);
+    const a = easeOut(t / 0.22);
+    const inY = (1 - a) * 10;
+    // 主按钮轻微呼吸辉光（用墙钟，暂停时仍缓慢脉动）
+    const pulse = 0.5 + 0.5 * Math.sin(now / 420);
+    ctx.save();
+    ctx.globalAlpha = a;
+    // 暗场：与通关/死亡遮罩同一套深紫渐晕
+    const vg = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.12, W / 2, H / 2, Math.max(W, H) * 0.8);
+    vg.addColorStop(0, 'rgba(18,14,46,0.55)');
+    vg.addColorStop(1, 'rgba(5,4,16,0.86)');
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, W, H);
+    // 中央很淡的主题底光
+    const glow = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.min(W, H) * 0.42);
+    glow.addColorStop(0, 'rgba(232,184,75,0.09)');
+    glow.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, W, H);
+    // 面板（深紫渐变 + 金描边 + 8px 辉光，与通关/死亡面板同款）
+    panel(ctx, pr.x, pr.y + inY, pr.w, pr.h, THEME.gold.deep, 12);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    // 顶部 mono kicker
+    ctx.fillStyle = 'rgba(232,184,75,0.75)';
+    ctx.font = 'bold 10px ui-monospace, Consolas, monospace';
+    ctx.fillText('CHEZZLE · RESTART', W / 2, pr.y + inY + 22);
+    // 分隔线（中间亮、两端淡）
+    const lg = ctx.createLinearGradient(pr.x + 40, 0, pr.x + pr.w - 40, 0);
+    lg.addColorStop(0, 'rgba(232,184,75,0)');
+    lg.addColorStop(0.5, 'rgba(232,184,75,0.45)');
+    lg.addColorStop(1, 'rgba(232,184,75,0)');
+    ctx.strokeStyle = lg;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(pr.x + 40, pr.y + inY + 36);
+    ctx.lineTo(pr.x + pr.w - 40, pr.y + inY + 36);
+    ctx.stroke();
+    // 标题「重开」
+    ctx.fillStyle = THEME.gold.text;
+    ctx.font = 'bold 24px "Segoe UI", "Microsoft YaHei", sans-serif';
+    ctx.shadowColor = 'rgba(232,184,75,0.55)';
+    ctx.shadowBlur = 10;
+    ctx.fillText('重开', W / 2, pr.y + inY + 70);
+    ctx.shadowBlur = 0;
+    // 按钮（斜牌）：主按钮金色渐变深色字（无存档 = 灰暗禁用），次按钮冷色斜牌
+    const cp = { ...L.checkpoint, y: L.checkpoint.y + inY };
+    const fl = { ...L.full, y: L.full.y + inY };
+    this._menuButton(ctx, cp, hasSave ? 'gold' : 'disabled', '回到存档点', pulse);
+    this._menuButton(ctx, fl, 'cold', '整局重开', 0);
+    ctx.textBaseline = 'alphabetic';
+    ctx.textAlign = 'left';
+    ctx.restore();
+  }
+
+  /** 重开菜单按钮（平行四边形斜牌）：kind = gold（主按钮）/ disabled（无存档禁用态）/
+   *  cold（次按钮，冷色底 + 青描边）。文字居中、保持正立。 */
+  _menuButton(ctx, r, kind, label, pulse = 0) {
+    const sk = Math.min(12, r.h * 0.26);
+    ctx.save();
+    para(ctx, r.x, r.y, r.w, r.h, sk);
+    const g = ctx.createLinearGradient(0, r.y, 0, r.y + r.h);
+    if (kind === 'gold') {
+      g.addColorStop(0, '#ffd76a');
+      g.addColorStop(0.5, '#e8b84b');
+      g.addColorStop(1, '#b9821f');
+    } else if (kind === 'disabled') {
+      g.addColorStop(0, 'rgba(74,64,52,0.55)');
+      g.addColorStop(1, 'rgba(32,27,25,0.55)');
+    } else {
+      g.addColorStop(0, '#2a3a5e');
+      g.addColorStop(1, '#141d38');
+    }
+    ctx.fillStyle = g;
+    ctx.fill();
+    if (kind === 'gold') {
+      ctx.strokeStyle = 'rgba(255,240,200,0.95)';
+      ctx.lineWidth = 1.6;
+      ctx.shadowColor = 'rgba(255,215,106,0.85)';
+      ctx.shadowBlur = 8 + 4 * pulse;
+    } else if (kind === 'disabled') {
+      ctx.strokeStyle = 'rgba(232,184,75,0.28)';
+      ctx.lineWidth = 1.2;
+      ctx.shadowBlur = 0;
+    } else {
+      ctx.strokeStyle = 'rgba(191,230,255,0.75)';
+      ctx.lineWidth = 1.2;
+      ctx.shadowColor = 'rgba(127,216,255,0.55)';
+      ctx.shadowBlur = 6;
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = kind === 'gold' ? '#221605' : kind === 'disabled' ? 'rgba(255,233,176,0.38)' : '#bfe6ff';
+    ctx.font = 'bold 16px "Segoe UI", "Microsoft YaHei", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, r.x + r.w / 2, r.y + r.h / 2 + 0.5);
+    ctx.restore();
+  }
+
   // ---- 通关 / 死亡遮罩（与 HUD 同一套"神话·元素"面板风格：圆角深紫面板 + 金描边，
   //      入场只做淡入 + 轻推；不再用大红/荧光色或大徽记，避免和游戏整体风格脱节。
   //      通关若已有关卡页 DOM 浮层，画布这边只铺暗场，避免两套 UI 叠一起）----
@@ -12879,8 +16261,12 @@ class Hud {
     ctx.fillText(sub, cx, py + 132);
     // 操作提示：与游戏按钮同款"斜牌 + 冷色底 + 细描边"
     if (!win) {
-      const touch = scene._touchUI && scene._touchUI.enabled();
-      const hintTxt = touch ? '轻触屏幕重新开始' : '按 R 重开';
+      const touch = this._isTouch();
+      // 有存档点：点击/轻触 = 回存档点；R 键 = 整局重开（刷新页面，快照随内存清空）
+      const hasSave = Savepoint.has(scene);
+      const hintTxt = touch
+        ? (hasSave ? '轻触屏幕回到存档点' : '轻触屏幕重新开始')
+        : (hasSave ? '点击屏幕回到存档点 · R 整局重开' : '点击屏幕重新开始 · R 重开');
       ctx.font = 'bold 11px "Segoe UI", "Microsoft YaHei", sans-serif';
       const hw = ctx.measureText(hintTxt).width + 26;
       const hx = cx - hw / 2;
@@ -13055,12 +16441,15 @@ exports.Block = Block;
 //    摇杆语义与键盘完全一致（写入 scene.control 的 left/right/jump）。
 //    起手容错圈：出手点偏离圆心 < joyDead 比例 → 完全不动（防"点歪先朝错方向
 //    跳一步"）；启动后启停阈值不同（joyDeadBack 滞回），边界不抖动。
-//  - 右下：Q 收集 / ⇧ 放置 / C 拾取… / X 倒出… 四键（C/X 支持**按住**：
-//    与键盘 keydown/keyup 完全同语义——C 按住收气、X 按住通气），下方是物品栏。
+//  - 右下：Q 拾取/收集 与 ⇧ 放置常驻；选中可拾取物品（烧杯/滴管/集气瓶）时，
+//    上排出现该物品自己的操作键（吸液/倒出、吸液/滴加、集气/通气；名称与图标由物品定义），
+//    按住语义同键盘（C 按住集气、X 按住通气）。下方是物品栏。
 //  - 场景内：与鼠标同一套"按下/拖动/抬起"管线（滴管点击滴液、长按持续滴、
 //    液下吸取、拖动），触点落在 UI 控件外即进入该管线。
 //  - 鸟瞰（灵魂出窍）：进入后触点改走手势管线——1 指拖动 = 平移、2 指捏合 =
 //    缩放（中点为锚）；"返回"按钮退出（桌面 V 键 / HUD 鸟瞰按钮同效）。
+//  - 重开菜单：HUD 重开按钮双击打开（画布弹层，打开时暂停模拟）；菜单打开时触点
+//    只走菜单命中/关闭，不落到摇杆/按钮/场景。死亡轻触 = 回存档点（无存档整局重开）。
 //  - 全屏：首个触点自动请求全屏（小屏金贵；iOS 不支持元素全屏 → 静默跳过），
 //    HUD ⛶ 按钮可随时切换。
 //  - 竖屏：HUD 层画"请旋转设备"提示（游戏照常运行）。
@@ -13073,8 +16462,11 @@ const { CFG } = __require('src/core/config.js');;
 const { getPrefs } = __require('src/core/prefs.js');;
 const { setupCanvasSize, canvasLW, canvasLH } = __require('src/render/canvas.js');;
 const { compactView, compactK } = __require('src/level/click.js');;
+const { carryActionsOf } = __require('src/level/items.js');;
 const { handleSceneClick, handleScenePressDown, handleScenePressMove, handleScenePressUp, inventorySlotRects, uiMargins, overviewButtonRect, hudTopOffset, touchInsetsOf, tipPanelRect } = __require('src/level/click.js');;
 const { requestFullscreenOnce } = __require('src/core/fullscreen.js');;
+const { sfx } = __require('src/core/audio.js');;
+const { Savepoint } = __require('src/core/savepoint.js');;
 
 // ---------------------------------------------------------------------------
 // 设备检测
@@ -13124,11 +16516,12 @@ function joyGeom(W, H, insets = {}) {
   return { cx, cy, R };
 }
 
-/** 右下按钮：2×2 块（C 上左 / X 上右 / Q 下左 / ⇧ 下右），下方是物品栏。
+/** 右下按钮：Q/⇧ 常驻下排；上排物品操作键只在选中物品定义时出现。
  *  与物品栏几何（inventorySlotRects，触屏边距版）共用坐标，按钮块贴着物品栏上沿。
+ *  actions = carryActionsOf(选中物品)（每项带 action/label/icon，action=grab/use）。
  *  小屏：按钮 72%（68→49px，2×2 总高 ≈104px）。
  *  用户可在设置里调「右下按钮大小」（btnScale 0.8~1.4）。 */
-function touchButtonRects(W, H, slots, insets = {}) {
+function touchButtonRects(W, H, slots, insets = {}, actions = []) {
   if (!slots || slots.length === 0) return [];
   const p = getPrefs();
   const btnScale = Number.isFinite(p.btnScale) ? p.btnScale : 1;
@@ -13146,12 +16539,16 @@ function touchButtonRects(W, H, slots, insets = {}) {
   const bw = btn * 2 + gap;
   const bx = invRight - bw;
   const by = invTop - 12 - (btn * 2 + gap);
-  return [
-    { key: 'grab', x: bx, y: by, size: btn },
-    { key: 'use', x: bx + btn + gap, y: by, size: btn },
-    { key: 'collect', x: bx, y: by + btn + gap, size: btn },
-    { key: 'place', x: bx + btn + gap, y: by + btn + gap, size: btn },
-  ];
+  const out = [];
+  // 上排：物品操作按钮（按各自绑定的动作键放左/右格）；未定义的键不出现
+  for (const a of actions ?? []) {
+    if (!a || (a.action !== 'grab' && a.action !== 'use')) continue;
+    out.push({ key: a.action, x: a.action === 'grab' ? bx : bx + btn + gap, y: by, size: btn, action: a });
+  }
+  // 下排：Q 拾取/收集、⇧ 放置（常驻）
+  out.push({ key: 'collect', x: bx, y: by + btn + gap, size: btn });
+  out.push({ key: 'place', x: bx + btn + gap, y: by + btn + gap, size: btn });
+  return out;
 }
 
 /** 点在矩形内（含手指容差 pad） */
@@ -13315,19 +16712,28 @@ class TouchUI {
     return false;
   }
 
+  /** 右下按钮按下音：40ms 限频（多指同时按不叠成爆音） */
+  _sfxButton() {
+    const now = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+      ? performance.now() : Date.now();
+    if (now - (this._sfxBtnT ?? -1e9) < 40) return;
+    this._sfxBtnT = now;
+    sfx('ui.click');
+  }
+
   /** 摇杆几何（画布坐标） */
   geom() {
     return joyGeom(canvasLW(this.canvas), canvasLH(this.canvas), this.insets);
   }
 
-  /** 按钮矩形（画布坐标）；场景设置了 hideTouchGrab → 不返回/不渲染'grab'（拾取/吸液
-   *  按钮，=电脑端 C 键）。其余按钮位置不变（2×2 留一格空白，手指不会误触）。 */
+  /** 按钮矩形（画布坐标）：基础 Q/⇧ 常驻；上排物品操作由当前选中的可拾取物品定义
+   *  （烧杯/滴管/集气瓶的操作名称/图标见 items.carryActionsOf）。 */
   buttonRects() {
     const act = this.getActive();
     const scene = act && act.scene ? act.scene : null;
-    const slots = act && act.scene && act.scene.player ? act.scene.player.inventory.slots : [];
-    const rs = touchButtonRects(canvasLW(this.canvas), canvasLH(this.canvas), slots, this.insets);
-    return scene && scene.hideTouchGrab ? rs.filter((r) => r.key !== 'grab') : rs;
+    const slots = scene && scene.player ? scene.player.inventory.slots : [];
+    const actions = scene && scene.player ? carryActionsOf(scene.player.inventory.selectedItem()) : [];
+    return touchButtonRects(canvasLW(this.canvas), canvasLH(this.canvas), slots, this.insets, actions);
   }
 
   /** 设备/布局刷新：安全区、画布铺满、相机移动端视野（forceTouch / resize 时调用）。
@@ -13429,9 +16835,16 @@ class TouchUI {
     if (this.isPortrait()) return 'rot';
     const scene = act.scene;
     const hud = act.hud ?? null;
-    // 死亡：轻触重开（桌面按 R）
+    // 重开菜单打开（游戏已暂停）：触点只交给菜单（按钮命中 / 点面板外关闭），
+    // 摇杆/右下按钮/场景按下管线全部不响应
+    if (scene.restartMenuOpen) {
+      handleSceneClick(scene, hud, this.canvas, x, y);
+      this.uiTouches.add(id);
+      return 'ui';
+    }
+    // 死亡：轻触重开（有存档 → 回存档点；无存档 → 整局重开）
     if (scene.status === 'died') {
-      scene.restart();
+      Savepoint.retryAfterDeath(scene);
       return 'died';
     }
     // ⓪ 鸟瞰模式：返回按钮 = 退出；其余触点进手势管线（1指平移 / 2指捏合缩放）
@@ -13454,6 +16867,7 @@ class TouchUI {
     // ② 右下按钮（Q/⇧/C/X）：按下 = keydown（pressed + control），抬起 = keyup
     for (const r of this.buttonRects()) {
       if (hitRect(r, x, y)) {
+        this._sfxButton();
         this.buttons.set(id, r.key);
         scene.pressed.add(r.key);
         scene.control.add(r.key);
@@ -13470,6 +16884,7 @@ class TouchUI {
         if (x >= r.x + r.w - 32 && y <= r.y + 32) {
           if (typeof hud.closeTip === 'function') hud.closeTip();
           else hud.showTip = false;
+          sfx('ui.close');
           return 'ui';
         }
         this.tipSwipe = { id, x0: x };
@@ -13728,77 +17143,6 @@ exports.TouchUI = TouchUI;
 exports.bindTouchUI = bindTouchUI;
 
   };
-  __modules["src/core/prefs.js"] = function (module, exports, __require) {
-// ============================================================================
-// 引擎侧偏好读取（设置面板写入的 localStorage → 相机 / 触控几何 / 键位）
-// ----------------------------------------------------------------------------
-// 数据本身由经典脚本 prefs.js 维护（window.ChezzlePrefs）；这里只读并做默认兜底
-// （Node 测试、编辑器等没有 prefs.js 的场景 → 全默认，行为与以前完全一致）。
-// ============================================================================
-
-/** 可改键的动作（与 prefs.js 的 ACTIONS 一一对应） */
-const KEY_ACTIONS = [
-  { id: 'left', label: '左移', def: 'KeyA' },
-  { id: 'right', label: '右移', def: 'KeyD' },
-  { id: 'jump', label: '跳跃', def: 'Space' },
-  { id: 'place', label: '放置 / 倒出', def: 'ShiftLeft' },
-  { id: 'collect', label: '拾取', def: 'KeyQ' },
-  { id: 'grab', label: '抓取 / 吸取', def: 'KeyC' },
-  { id: 'use', label: '使用 / 通气', def: 'KeyX' },
-  { id: 'restart', label: '重开', def: 'KeyR' },
-  { id: 'overview', label: '鸟瞰', def: 'KeyV' },
-];
-
-const DEFAULT_KEYS = (() => {
-  const k = {};
-  for (const a of KEY_ACTIONS) k[a.id] = a.def;
-  return k;
-})();
-
-const FALLBACK = Object.freeze({ viewScale: 1, joyScale: 1, btnScale: 1, keys: DEFAULT_KEYS });
-
-function api() {
-  if (typeof window === 'undefined') return null;
-  return window.ChezzlePrefs && typeof window.ChezzlePrefs.get === 'function' ? window.ChezzlePrefs : null;
-}
-
-/** 当前偏好（无 prefs.js 时返回默认值） */
-function getPrefs() {
-  const p = api();
-  if (!p) return FALLBACK;
-  try { return p.get(); } catch (e) { return FALLBACK; }
-}
-
-/** 某个动作当前绑定的 KeyboardEvent.code */
-function keyOf(action) {
-  const keys = getPrefs().keys || DEFAULT_KEYS;
-  return keys[action] || DEFAULT_KEYS[action] || '';
-}
-
-/** 物理键位 → 动作 id（找不到返回 null）。
- *  ShiftRight 作为 place 的默认别名：默认 place=ShiftLeft 时右 Shift 也能放置（旧行为）。 */
-function actionOfCode(code) {
-  if (!code) return null;
-  const keys = getPrefs().keys || DEFAULT_KEYS;
-  for (const a of KEY_ACTIONS) if (keys[a.id] === code) return a.id;
-  if (code === 'ShiftRight' && keys.place === 'ShiftLeft') return 'place';
-  return null;
-}
-
-/** 订阅设置变更（返回取消函数；无 prefs.js 时是空订阅） */
-function onPrefsChange(fn) {
-  const p = api();
-  if (!p || typeof p.listen !== 'function') return function () {};
-  return p.listen(fn);
-}
-
-exports.KEY_ACTIONS = KEY_ACTIONS;
-exports.getPrefs = getPrefs;
-exports.keyOf = keyOf;
-exports.actionOfCode = actionOfCode;
-exports.onPrefsChange = onPrefsChange;
-
-  };
   __modules["src/render/fade.js"] = function (module, exports, __require) {
 // ============================================================================
 // 画布淡入/淡出合成：**不要靠 ctx.globalAlpha 直接画带阴影的内容**。
@@ -13857,115 +17201,6 @@ function drawFaded(ctx, alpha, draw) {
 }
 
 exports.drawFaded = drawFaded;
-
-  };
-  __modules["src/core/input.js"] = function (module, exports, __require) {
-// ============================================================================
-// 键盘输入 → Scene.control（长按）/ Scene.pressed（本刻刚按下）
-// 键位来自设置（src/core/prefs.js ← 首页设置面板写入的 localStorage）：
-//   左移/右移/跳跃/放置/拾取/抓取/使用/重开/鸟瞰 均可改键；
-//   调试键 F5/F6 与"悬停查源 X"是开发用固定键，不参与改键。
-// ============================================================================
-
-const { actionOfCode } = __require('src/core/prefs.js');;
-
-// 物理按住的键（window 级）：bindKeyboard 随场景切换重绑后，把"仍按住的键"恢复进新
-// 场景 control——否则按住方向键走过传送门/切场景会停下（keydown 只发一次，新绑定
-// 拿不到按住态；浏览器 auto-repeat 不可依赖）。pressed 不恢复（那是"刚按下"语义，
-// 恢复会导致跳跃/放置被误触发）。
-const HELD = new Set();
-
-/** 只写入 scene.control 的动作（重开/鸟瞰是即时动作，不进长按集合） */
-function isControlAction(a) {
-  return a === 'left' || a === 'right' || a === 'jump' || a === 'place' ||
-    a === 'collect' || a === 'grab' || a === 'use';
-}
-
-function bindKeyboard(scene) {
-  // 立即清空：右键菜单、焦点切换、页面隐藏等会吞掉 keyup 的场景
-  const onClear = () => {
-    HELD.clear();
-    scene.control.clear();
-    scene.pressed.clear();
-  };
-  const onDown = (e) => {
-    // 页面不在前台时忽略按键
-    if (typeof document !== 'undefined' && !document.hasFocus()) return;
-    // 运行时钩子：任意键都可被插件/关卡脚本监听（返回 true 表示已处理）
-    scene._fireKey('down', e);
-    HELD.add(e.code); // 先记物理态（非方向键 keyup 也要精确释放）
-    const action = actionOfCode(e.code);
-    if (action === 'restart') {
-      scene.restart();
-      e.preventDefault();
-      return;
-    }
-    // 鸟瞰模式（灵魂出窍）：暂停模拟，自由缩放/平移看整关
-    if (action === 'overview' && typeof scene.toggleOverview === 'function') {
-      scene.toggleOverview();
-      e.preventDefault();
-      return;
-    }
-    // 调试模式：F5 暂停/继续，F6 步进一 tick，X 循环切换悬停重叠目标（固定键）
-    if (scene.debugMode) {
-      if (e.code === 'F5') {
-        scene.debugPaused = !scene.debugPaused;
-        e.preventDefault();
-        return;
-      }
-      if (e.code === 'F6') {
-        scene.debugStepOnce = true;
-        e.preventDefault();
-        return;
-      }
-      if (e.code === 'KeyX') {
-        // 选中格是可携带物品时，X = 倒出/通气（物品交互优先）；仅普通物质时
-        // 才用作"悬停重叠循环"调试键（试玩常开调试模式，不能抢玩家的 X）
-        const slot = scene.player?.inventory?.selectedSlot?.();
-        if (!slot || !slot.item) {
-          scene.debugHoverCycle = true;
-          e.preventDefault();
-          return;
-        }
-      }
-    }
-    if (!action) return;
-    e.preventDefault();
-    if (!scene.control.has(action)) scene.pressed.add(action);
-    scene.control.add(action);
-  };
-  const onUp = (e) => {
-    HELD.delete(e.code);
-    scene._fireKey('up', e);
-    const action = actionOfCode(e.code);
-    if (action) scene.control.delete(action);
-  };
-  window.addEventListener('keydown', onDown);
-  window.addEventListener('keyup', onUp);
-  window.addEventListener('blur', onClear);
-  window.addEventListener('contextmenu', onClear); // 右键菜单会吞 keyup
-  window.addEventListener('focusout', onClear); // 焦点移出（点击别处、切换焦点）
-  document.addEventListener('visibilitychange', onClear);
-  // ★ 恢复仍按住的键（Multiscene.switchTo 重绑时会调 bindKeyboard——按住方向键
-  //   走过传送门，切场景后继续走，不用松开重按）
-  for (const code of HELD) {
-    const action = actionOfCode(code);
-    if (action && isControlAction(action)) scene.control.add(action);
-  }
-  return () => {
-    window.removeEventListener('keydown', onDown);
-    window.removeEventListener('keyup', onUp);
-    window.removeEventListener('blur', onClear);
-    window.removeEventListener('contextmenu', onClear);
-    window.removeEventListener('focusout', onClear);
-    document.removeEventListener('visibilitychange', onClear);
-    // 只移除监听器——HELD 是"物理按住态"，由 keyup/blur/contextmenu 清除；
-    // 解绑（Multiscene.switchTo 先 unbind 再 bind）若清掉 HELD，重绑就恢复不了
-    // 仍按住的键（按住方向键走传送门会停下）。
-  };
-}
-
-exports.bindKeyboard = bindKeyboard;
 
   };
   __modules["src/core/loop.js"] = function (module, exports, __require) {
@@ -14620,9 +17855,11 @@ const { Portal } = __require('src/objects/portal.js');;
 const { GasDetector } = __require('src/objects/gasdetector.js');;
 const { Extractor } = __require('src/objects/extractor.js');;
 const { GasTube } = __require('src/objects/gastube.js');;
+const { GasChamber } = __require('src/objects/gaschamber.js');;
+const { ElectrolysisPool, HeatingPool, HighTempPool } = __require('src/objects/poolvariants.js');;
 const { Dropper } = __require('src/objects/dropper.js');;
 const { GasBottle } = __require('src/objects/gasbottle.js');;
-const { bindSceneClick } = __require('src/level/click.js');;
+const { bindSceneClick, hoverTapAt } = __require('src/level/click.js');;
 const { bindOverviewInput } = __require('src/core/overview.js');;
 const { bindTouchUI } = __require('src/core/touch.js');;
 const { attachRecorderPanel } = __require('src/core/recorder.js');;
@@ -14705,9 +17942,29 @@ class LevelBuilder {
     return this.add(new Extractor({ x, y, ...opts }));
   }
 
-  /** 导气管（连接两个药品池：输入端罩内产气 → 输出端鼓入；单向、无碰撞箱） */
+  /** 导气管（一个输入池 → 多个输出端药品池/气室；支路可装阀门，单向、无碰撞箱） */
   gastube(x, y, opts = {}) {
     return this.add(new GasTube({ x, y, ...opts }));
+  }
+
+  /** 气室：无碰撞箱的矩形区域，内部大气与外部独立；可作导气管输出端 */
+  gaschamber(x, y, w, h, opts = {}) {
+    return this.add(new GasChamber({ x, y, w, h, ...opts }));
+  }
+
+  /** 电解池：池内反应获得"通电"条件（常开或由开关控制） */
+  elepool(x, y, w, h, opts = {}) {
+    return this.add(new ElectrolysisPool({ x, y, w, h, ...opts }));
+  }
+
+  /** 加热池：池内反应获得"加热"条件（常开或由开关控制） */
+  heatpool(x, y, w, h, opts = {}) {
+    return this.add(new HeatingPool({ x, y, w, h, ...opts }));
+  }
+
+  /** 高温池：池内反应获得"高温"条件（常开或由开关控制） */
+  hotpool(x, y, w, h, opts = {}) {
+    return this.add(new HighTempPool({ x, y, w, h, ...opts }));
   }
 
   dropper(x, y, opts = {}) {
@@ -14830,14 +18087,18 @@ class LevelBuilder {
         y: (e.clientY - rect.top) * (canvasLH(canvas) / rect.height),
       };
     };
-    // 记录鼠标位置（调试模式悬停显示物体来源用）；离开画布清除
+    // 记录鼠标位置（调试模式悬停显示物体来源用）+ 桌面端"可点击物体"手型指针提示
+    // （导气管阀门/滴管等 onTap 物体；与点击同一套命中规则，含 tapHit 细粒度命中）
     const onMove = (e) => {
-      if (!scene.debugMode) return;
       const { x, y } = screenPos(e);
-      scene.mouse = { x, y, on: true };
+      if (scene.debugMode) scene.mouse = { x, y, on: true };
+      const hit = hoverTapAt(scene, canvas, x, y);
+      const cursor = hit ? 'pointer' : '';
+      if (canvas.style.cursor !== cursor) canvas.style.cursor = cursor;
     };
     const onLeave = () => {
       if (scene.mouse) scene.mouse.on = false;
+      canvas.style.cursor = '';
     };
     canvas.addEventListener('mousemove', onMove);
     canvas.addEventListener('mouseleave', onLeave);
@@ -15397,22 +18658,28 @@ exports.renderBackground = renderBackground;
   __modules["src/objects/floor.js"] = function (module, exports, __require) {
 // ============================================================================
 // 地板：静态实心体，无化学性质，不可移动。
-// 渲染为神殿石砖：纵向石色渐变 + 砖缝 + 顶部亮边（可站立面）。
-// 冰面（ice:true）：滑冰场视觉（冰蓝渐变 + 高光斜纹）——物理上极滑
-// （冰摩擦 + 沉淀滑走，见 CollisionSystem/Player 的 ice 分支）。
+// 渲染为神殿石砖：深紫石材/黑曜石砖（纵向明暗渐变 + 简洁砖缝 + 顶部受光亮边 +
+//   底部阴影）。整体回归"干净的地板"——无金缝/雕纹/闪点等装饰。
+// 冰面（ice:true）：冷青渐变 + 简单霜面反光——物理上极滑
+//   （冰摩擦 + 沉淀滑走，见 CollisionSystem/Player 的 ice 分支）。
+// trim：池壁等"安装在池沿的石/钢壁"（'left'|'right'|'bottom'）——
+//   视觉专用（不影响物理/碰撞/几何），深色石/钢壁 + 简洁内缘高光/底部阴影。
 // ============================================================================
 
 const { Obj } = __require('src/objects/obj.js');;
-const { THEME } = __require('src/render/theme.js');;
+
+const STONE_BASE = '#262143'; // 深紫石材（暗紫基调）
+const TILE = 34; // 砖格尺寸（px，世界坐标对齐 → 镜头移动时纹理不漂）
 
 class Floor extends Obj {
   get hoverLabel() {
     return this.ice ? '冰面(滑)' : '地板';
   }
-  constructor({ x, y, w, h, color = null, ice = false, ...rest } = {}) {
+  constructor({ x, y, w, h, color = null, ice = false, trim = null, ...rest } = {}) {
     super({ x, y, w, h, solid: true, static: true, physicsKind: 'static', ...rest });
     this.color = color;
     this.ice = !!ice;
+    this.trim = trim; // 视觉：'left'|'right'|'bottom'（池壁用）；null = 普通地板
   }
 
   render(ctx) {
@@ -15422,62 +18689,118 @@ class Floor extends Obj {
       this._renderIce(ctx, x, y, w, h);
       return;
     }
-    const base = this.color || THEME.stone.base;
+    if (this.trim) {
+      this._renderWall(ctx, x, y, w, h);
+      return;
+    }
+    this._renderStone(ctx, x, y, w, h);
+  }
+
+  /** 深紫石材/黑曜石砖：明暗渐变 + 简洁砖缝 + 顶部亮边 + 底部阴影 */
+  _renderStone(ctx, x, y, w, h) {
+    const base = this.color || STONE_BASE;
     ctx.save();
-    // 基础石色渐变
+    // 基础石色渐变（顶受光 → 底沉暗）
     const g = ctx.createLinearGradient(x, y, x, y + h);
-    g.addColorStop(0, mixHex(base, '#ffffff', 0.16));
-    g.addColorStop(0.5, base);
-    g.addColorStop(1, mixHex(base, '#000000', 0.3));
+    g.addColorStop(0, mixHex(base, '#b9b2e6', 0.13));
+    g.addColorStop(0.45, base);
+    g.addColorStop(1, mixHex(base, '#05040f', 0.48));
     ctx.fillStyle = g;
     ctx.fillRect(x, y, w, h);
-    // 砖缝（确定性，基于世界坐标）
-    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+    // 简洁砖缝（暗色，世界坐标对齐）
+    const startX = Math.floor(x / TILE) * TILE;
+    const startY = Math.floor(y / TILE) * TILE;
+    ctx.strokeStyle = 'rgba(6,5,18,0.45)';
     ctx.lineWidth = 1;
-    const TILE = 34;
-    for (let tx = Math.floor(x / TILE) * TILE + TILE; tx < x + w; tx += TILE) {
+    for (let tx = startX; tx <= x + w; tx += TILE) {
+      const px = tx + 0.5;
+      if (px <= x - 1 || px >= x + w + 1) continue;
       ctx.beginPath();
-      ctx.moveTo(tx, y);
-      ctx.lineTo(tx, y + h);
+      ctx.moveTo(px, y);
+      ctx.lineTo(px, y + h);
       ctx.stroke();
     }
-    for (let ty = Math.floor(y / TILE) * TILE + TILE; ty < y + h; ty += TILE) {
+    for (let ty = startY; ty <= y + h; ty += TILE) {
+      const py = ty + 0.5;
+      if (py <= y - 1 || py >= y + h + 1) continue;
       ctx.beginPath();
-      ctx.moveTo(x, ty);
-      ctx.lineTo(x + w, ty);
+      ctx.moveTo(x, py);
+      ctx.lineTo(x + w, py);
       ctx.stroke();
     }
-    // 顶部亮边（可站立面）
-    ctx.fillStyle = 'rgba(255,255,255,0.16)';
-    ctx.fillRect(x, y, w, 3);
+    // 顶部受光亮边（可站立面）
+    ctx.fillStyle = 'rgba(226,220,255,0.18)';
+    ctx.fillRect(x, y, w, 2.5);
     // 底部暗影
-    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
     ctx.fillRect(x, y + h - 3, w, 3);
     ctx.restore();
   }
 
-  /** 冰面：冰蓝渐变 + 顶部高光（无多余纹理；斜线曾反馈不好看，已移除） */
+  /** 池壁（trim）：深色石/钢壁（纵向明暗渐变）+ 简洁内缘高光/底部阴影 */
+  _renderWall(ctx, x, y, w, h) {
+    const base = this.color || '#332d52';
+    ctx.save();
+    // 壁身：纵向石/钢渐变（顶受光→底沉暗，凹槽内壁感）
+    const g = ctx.createLinearGradient(x, y, x, y + h);
+    g.addColorStop(0, mixHex(base, '#8f87c4', 0.14));
+    g.addColorStop(0.5, base);
+    g.addColorStop(1, mixHex(base, '#04030c', 0.42));
+    ctx.fillStyle = g;
+    ctx.fillRect(x, y, w, h);
+    // 外轮廓（暗）
+    ctx.strokeStyle = 'rgba(6,5,18,0.7)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    // 面向池内的简洁受光细线
+    ctx.fillStyle = 'rgba(226,232,244,0.14)';
+    if (this.trim === 'left') ctx.fillRect(x + w - 1.5, y, 1.5, h);
+    else if (this.trim === 'right') ctx.fillRect(x, y, 1.5, h);
+    else ctx.fillRect(x, y + 1, w, 1.5);
+    // 底部阴影
+    ctx.fillStyle = 'rgba(0,0,0,0.20)';
+    ctx.fillRect(x, y + h - Math.min(3, h * 0.3), w, Math.min(3, h * 0.3));
+    ctx.restore();
+  }
+
+  /** 冰面：冷青渐变 + 简单霜面反光 + 顶部霜光 + 底部深影 */
   _renderIce(ctx, x, y, w, h) {
     ctx.save();
     const g = ctx.createLinearGradient(x, y, x, y + h);
-    g.addColorStop(0, '#e8f7ff');
-    g.addColorStop(0.45, '#a8d8f5');
-    g.addColorStop(1, '#4a8ec8');
+    g.addColorStop(0, '#cdeeff');
+    g.addColorStop(0.42, '#93c8ea');
+    g.addColorStop(1, '#2a5480');
     ctx.fillStyle = g;
     ctx.fillRect(x, y, w, h);
-    // 顶部高光（站立面）
+    // 简单霜面斜向反光（静态、克制）
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, w, h);
+    ctx.clip();
+    ctx.globalAlpha = 0.12;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(x + w * 0.12, y);
+    ctx.lineTo(x + w * 0.3, y);
+    ctx.lineTo(x + w * 0.05, y + h);
+    ctx.lineTo(x - w * 0.05, y + h);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+    // 顶部霜光（站立面）
     ctx.fillStyle = 'rgba(255,255,255,0.55)';
     ctx.fillRect(x, y, w, 2.5);
     // 底部渐深影
-    ctx.fillStyle = 'rgba(20,60,110,0.35)';
+    ctx.fillStyle = 'rgba(12,42,84,0.40)';
     ctx.fillRect(x, y + h - 3, w, 3);
     ctx.restore();
   }
 }
 
+/** 十六进制色混色（t=0→a，t=1→b），Floor 内部共用 */
 function mixHex(a, b, t) {
-  const ca = parseInt(a.slice(1), 16);
-  const cb = parseInt(b.slice(1), 16);
+  const ca = parseInt(String(a).slice(1), 16);
+  const cb = parseInt(String(b).slice(1), 16);
   const r = Math.round(((ca >> 16) & 255) * (1 - t) + ((cb >> 16) & 255) * t);
   const g = Math.round(((ca >> 8) & 255) * (1 - t) + ((cb >> 8) & 255) * t);
   const bl = Math.round((ca & 255) * (1 - t) + (cb & 255) * t);
@@ -15491,6 +18814,8 @@ exports.Floor = Floor;
 // ============================================================================
 // 药品池：地面凹陷的容器。自动生成盆壁/盆底静态体；内部为液体区域。
 // 液体按溶液色渲染 + 浮动小球；沉淀粒子绘制在液体底部。
+// 视觉：盆壁 = 深色石/钢（Floor 的 trim 壁样式，无堆料装饰），池腔内壁只留
+//   简洁的内缘高光/底部阴影；液面用 renderLiquid（含 _liquidPulse 涟漪反馈）。
 // ============================================================================
 
 const { Container } = __require('src/objects/container.js');;
@@ -15498,6 +18823,7 @@ const { Floor } = __require('src/objects/floor.js');;
 const { renderLiquid } = __require('src/render/liquidrender.js');;
 
 const WALL = 8;
+const WALL_COLOR = '#332d52'; // 盆壁石材（深紫，与地板同一语系但略深）
 
 class Pool extends Container {
   get hoverLabel() {
@@ -15508,10 +18834,11 @@ class Pool extends Container {
     this.wall = wall;
     this.isPool = true; // 池子标记（玩家"池边放置自动吸附"用；烧杯等小容器不吸）
     this.gasHeight = gasHeight; // 此池产气的气泡柱高度（px），可配置
+    // 盆壁/盆底：视觉上走 Floor 的 trim 壁样式（深色石/钢；不参与化学）
     this.subBodies = [
-      new Floor({ x, y, w: wall, h, color: '#5c4632' }), // 左壁
-      new Floor({ x: x + w - wall, y, w: wall, h, color: '#5c4632' }), // 右壁
-      new Floor({ x, y: y + h - wall, w, h: wall, color: '#5c4632' }), // 盆底
+      new Floor({ x, y, w: wall, h, color: WALL_COLOR, trim: 'left' }), // 左壁
+      new Floor({ x: x + w - wall, y, w: wall, h, color: WALL_COLOR, trim: 'right' }), // 右壁
+      new Floor({ x, y: y + h - wall, w, h: wall, color: WALL_COLOR, trim: 'bottom' }), // 盆底
     ];
   }
 
@@ -15520,17 +18847,31 @@ class Pool extends Container {
     return { x: this.x + this.wall, y: this.y, w: this.w - 2 * this.wall, h: this.h - this.wall };
   }
 
-  render(ctx, scene) {
+  render(ctx, opts = {}) {
+    const scene = opts?.scene ?? null;
+    const time = opts?.time ?? 0;
     const r = this.innerRect();
     if (r.w <= 0 || r.h <= 0) return;
     // 液面高度 = 实际液体量/容量（吸液后池面下降；默认满池=容积 → 与旧版无异）
     const vol = this.solution.volume > 0 ? this.solution.volume : Infinity;
     const lh = r.h * Math.max(0, Math.min(1, this.solution.totalMass() / vol));
-    if (lh > 2) renderLiquid(ctx, r.x, r.y + r.h - lh, r.w, lh, this.solution, scene.time ?? 0);
+    if (lh > 2) renderLiquid(ctx, r.x, r.y + r.h - lh, r.w, lh, this.solution, time, this._liquidPulse ?? 0);
 
-    // 沉淀：从反应位置生成的视觉颗粒，物理堆叠成堆
+    // 池腔内壁：简洁的左右暗边 + 内侧受光细线 + 底部阴影（纯色填充，池子多时也便宜）
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.16)';
+    ctx.fillRect(r.x, r.y, 2.5, r.h);
+    ctx.fillRect(r.x + r.w - 2.5, r.y, 2.5, r.h);
+    ctx.fillStyle = 'rgba(190,200,228,0.10)';
+    ctx.fillRect(r.x + 2.5, r.y, 1.2, r.h);
+    ctx.fillRect(r.x + r.w - 3.7, r.y, 1.2, r.h);
+    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+    ctx.fillRect(r.x, r.y + r.h - 3, r.w, 3);
+    ctx.restore();
+
+    // 沉淀：从反应位置生成的视觉颗粒，物理堆叠成堆（含堆底阴影 + 新增沉淀脉冲）
     this.renderGrains(ctx);
-    this.renderContentsLabel(ctx, scene);
+    this.renderContentsLabel(ctx, opts);
   }
 }
 
@@ -15688,11 +19029,40 @@ exports.Deposit = Deposit;
 const { Obj } = __require('src/objects/obj.js');;
 const { SolidMaterial } = __require('src/objects/material.js');;
 const { MaterialGrid, renderGrid, CELL_SIZE, CELL_MASS } = __require('src/render/gridrender.js');;
-const { THEME, rr, contrastEdge, luminance } = __require('src/render/theme.js');;
+const { THEME, rr, luminance, contrastEdge } = __require('src/render/theme.js');;
 const { getSubstance, isSoluble, shedCoeffOf } = __require('src/chem/substances.js');;
 const { CFG } = __require('src/core/config.js');;
-const { pickupItem, placeCarriedItem, drawLiquid, pourBeaker, injectBottleGas } = __require('src/level/items.js');;
+const { pickupItem, placeCarriedItem, carryActionsOf, nearestCarryItem } = __require('src/level/items.js');;
 const { pushContainers } = __require('src/physics/support.js');;
+const { sfx } = __require('src/core/audio.js');;
+const { puffFx, rippleFx, sparkleFx, flashFx, shockFx } = __require('src/objects/fx.js');;
+
+const TAU = Math.PI * 2;
+
+/** 物质主色（玩家元素光/金边呼吸的取色；与网格颜色同源） */
+function materialColor(substance) {
+  return getSubstance(substance)?.solid?.[0] ?? '#7fe0ff';
+}
+
+/** 十六进制色 → 'r,g,b' 三元组（PuffDust 的 color 参数格式） */
+function rgbTriple(hex) {
+  const h = String(hex ?? '#7fe0ff').replace('#', '');
+  const n = h.length === 3
+    ? [parseInt(h[0] + h[0], 16), parseInt(h[1] + h[1], 16), parseInt(h[2] + h[2], 16)]
+    : [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  return `${n[0]},${n[1]},${n[2]}`;
+}
+
+/** 十六进制色 + 透明度 → rgba 字符串（视觉层共用） */
+function rgbaOf(hex, a) {
+  const h = String(hex ?? '#ffffff').replace('#', '');
+  const n = h.length === 3
+    ? [parseInt(h[0] + h[0], 16), parseInt(h[1] + h[1], 16), parseInt(h[2] + h[2], 16)]
+    : [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  return `rgba(${n[0]},${n[1]},${n[2]},${Math.max(0, Math.min(1, a))})`;
+}
+
+const easeOutCubic = (p) => 1 - Math.pow(1 - Math.max(0, Math.min(1, p)), 3);
 
 class Inventory {
   constructor({ slots = CFG.inventory.slots, capacity = CFG.inventory.capacity } = {}) {
@@ -15813,6 +19183,14 @@ class Player extends Obj {
     this.burning = false;
     this._grainResist = 0; // 颗粒堆阻力（0..1），由容器 lateUpdate 计算、update 读取
     this.reactions = []; // 最近发生在玩家身上的反应（HUD 日志）
+    // ---- 纯视觉动画状态（非枚举：不参与存档快照、不影响游戏语义）----
+    //   landAt/jumpAt/actAt：最近一次落地/起跳/动作的 scene.time（渲染按时间差算包络，
+    //   确定性）；dustAcc：跑动扬尘节流
+    Object.defineProperty(this, '_anim', {
+      value: { landAt: -99, jumpAt: -99, actAt: -99, dustAcc: 0, breatheOfs: 0 },
+      writable: true,
+      enumerable: false,
+    });
   }
 
   get material() {
@@ -15907,6 +19285,29 @@ class Player extends Obj {
   }
 
   update(dt, scene) {
+    const anim = this._anim; // 纯视觉动画状态（见构造函数）
+    const now = scene.time ?? 0;
+    // 落地音效：update 在物理结算前执行（读到的是上一帧结果）；_fallVy 是上一帧 update
+    // 缓存的下落速度（_landOn 落地时会把 vel.y 清零，只能提前记）。
+    if (this.onGround && !this._wasOnGround && this._fallVy >= 260) {
+      sfx('player.land', { gain: Math.max(0.25, Math.min(1.2, this._fallVy / 650)) });
+      // 落地动画：压扁包络（render 读 landAt）+ 脚底尘雾 + 液面/地面涟漪；
+      // 重落地再加一圈小冲击环（纯视觉，不改变碰撞箱）。
+      anim.landAt = now;
+      const fxp = this.x + this.w / 2;
+      const col = materialColor(this.substance);
+      puffFx(scene, fxp, this.bottom, { color: rgbTriple(col), r: 4, spread: 16, life: 0.38 });
+      rippleFx(scene, fxp, this.bottom, {
+        color: 'rgba(210,222,248,0.7)', r0: 4, r1: Math.max(20, this.w * 0.72), life: 0.4, width: 1.6, flat: 0.3,
+      });
+      if (this._fallVy >= 520) {
+        shockFx(scene, fxp, this.bottom - 2, {
+          color: 'rgba(232,184,75,0.7)', r0: 6, r1: this.w, life: 0.3, width: 2, flat: 0.32,
+        });
+      }
+    }
+    this._wasOnGround = !!this.onGround;
+    this._fallVy = Math.max(0, this.vel.y);
     const c = scene.control;
     // 上一帧沉淀颗粒算出的阻力：命令速度按 (1-阻力) 衰减（密集堆拖慢/挡路，稀疏可穿）
     const resist = Math.min(0.9, this._grainResist ?? 0);
@@ -15925,28 +19326,77 @@ class Player extends Obj {
     // 推动烧杯/集气瓶（必须在本处：玩家重设 vel 之后、物理步之前——吸附+清 vel，
     // 否则"物块推动-玩家不动 / 物块不动-玩家动"推弹交替，用户逐帧确认）
     pushContainers(this, scene, dt);
-    if (c.has('jump') && this.onGround) this.vel.y = -this.jumpVel;
-    if (scene.pressed.has('place')) this.tryPlace(scene);
-    if (scene.pressed.has('collect')) this.tryCollect(scene);
-    // 可携带物品（集气瓶/烧杯/滴管）：
-    //  - C 按下：拾取物品（空格）或从液体容器吸液（烧杯/空滴管）；
-    //  - C 按住（集气瓶格）：标记集气瓶 → Scene.onGas 把最近气泡柱的产气截留进瓶；
-    //  - X 按下：烧杯倒入最近的烧杯/药品池；
-    //  - X 按住（集气瓶格）：向最近液体容器通入气体（连续，0.05g/s）。
-    if (scene.pressed.has('grab')) {
-      if (!pickupItem(this, scene)) drawLiquid(this, scene);
+    if (c.has('jump') && this.onGround) {
+      this.vel.y = -this.jumpVel;
+      sfx('player.jump');
+      // 起跳：拉伸包络（render 读 jumpAt）+ 脚底一小团尘
+      anim.jumpAt = now;
+      puffFx(scene, this.x + this.w / 2, this.bottom, {
+        color: rgbTriple(materialColor(this.substance)), r: 3, spread: 12, life: 0.3, n: 4,
+      });
     }
-    const selSlotNow = this.inventory.selectedSlot();
-    scene._gasHold = scene.control.has('grab') && selSlotNow && selSlotNow.item === 'bottle' ? selSlotNow.obj : null;
-    if (scene.pressed.has('use')) pourBeaker(this, scene);
-    if (scene.control.has('use')) injectBottleGas(this, scene, dt);
+    if (scene.pressed.has('place')) this.tryPlace(scene);
+    if (scene.pressed.has('collect')) {
+      // Q = 拾取可拾取物品（和收集沉淀同一个键）。
+      // ★ 例外：最近的物品是"内有沉淀的烧杯"时，先收杯里的沉淀，避免 Q 直接
+      //   把杯子捡走、里面的沉淀永远拿不出来。收不到沉淀（不在范围内/栏满）才捡杯。
+      const near = nearestCarryItem(scene, this);
+      const prioPrecip = !!(near && near.isCarryItem === 'beaker'
+        && near.precipitates && near.precipitates.size > 0);
+      if (prioPrecip) {
+        if (this.tryCollect(scene) <= 0) pickupItem(this, scene);
+      } else if (!pickupItem(this, scene)) {
+        this.tryCollect(scene);
+      }
+    }
+    // 选中可拾取物品 → 物品自己定义的操作（名称/图标见 items.carryActionsOf；
+    // 键位是设置里的「物品操作 1/2」，默认 C/X）。没选中物品时 C/X 不做事。
+    const selItem = this.inventory.selectedItem();
+    const carryActions = carryActionsOf(selItem);
+    for (const a of carryActions) {
+      if (!a.hold && scene.pressed.has(a.action) && a.press && a.press(this, scene)) anim.actAt = now;
+    }
+    // 按住语义（集气瓶集气：Scene.onGas 读 _gasHold；通气：每 tick 注入）——每 tick 重设
+    scene._gasHold = null;
+    for (const a of carryActions) {
+      if (a.hold && scene.control.has(a.action) && a.holdFn) a.holdFn(this, scene, dt);
+    }
     // 移动时冲刷表面壳（贴地摩擦）：非核心物质按浓度脱落成沉淀粒子。
     // 空中/游泳不脱落（不与地面接触就没有摩擦）。
     if (this.grid && this.onGround && (Math.abs(this.vel.x) > 50 || Math.abs(this.vel.y) > 50)) {
       this.shedShell(scene, dt);
     }
+    // 跑动扬尘：贴地快速移动时隔 0.26s 在脚后扬一小团（纯视觉反馈，不改手感）
+    if (this.onGround && Math.abs(this.vel.x) > 150) {
+      anim.dustAcc += dt;
+      if (anim.dustAcc >= 0.26) {
+        anim.dustAcc = 0;
+        const back = this.vel.x > 0 ? this.x + this.w * 0.28 : this.x + this.w * 0.72;
+        puffFx(scene, back, this.bottom, {
+          color: rgbTriple(materialColor(this.substance)), r: 2.6, spread: 9, life: 0.26, n: 4,
+        });
+      }
+    } else {
+      anim.dustAcc = 0;
+    }
     // 接触同核心物质 → 缓慢吸收回血（沉淀粒子/物块；速率慢，不影响垫脚玩法）
     this.absorbCore(scene, dt);
+  }
+
+  /**
+   * 放置/收集/操作的动作反馈（纯视觉）：尘雾 + 细碎金色闪光 + 扩散圆环。
+   * 不改变任何游戏逻辑与数值，只是让"手上有动作"看得出来。
+   */
+  _placeFeedback(scene, x, y, big = false) {
+    const col = rgbTriple(materialColor(this.substance));
+    puffFx(scene, x, y, { color: col, r: big ? 4 : 3, spread: big ? 16 : 11, life: 0.32 });
+    sparkleFx(scene, x, y - 2, {
+      color: '#ffd76a', n: big ? 7 : 5, spread: big ? 20 : 14, rise: 12, life: 0.38, size: 2,
+    });
+    rippleFx(scene, x, y, {
+      color: 'rgba(255,224,150,0.6)', r0: 3, r1: big ? 26 : 16, life: 0.36, width: 1.4, flat: 0.34,
+    });
+    this._anim.actAt = scene.time ?? 0;
   }
 
   /** 吸收附近同核心物质的粒子/物块（0.5g/s）——"接触同类物质补血" */
@@ -16044,13 +19494,21 @@ class Player extends Obj {
   tryPlace(scene) {
     // 选中格是可携带物品（集气瓶/烧杯/滴管）→ 放到玩家身旁（shift 放置）
     if (placeCarriedItem(this, scene)) return;
-    const amount = CFG.placeAmount;
-    const res = this.inventory.place(amount);
-    if (!res) return;
+    const sel = this.inventory.selectedSlot();
+    if (!sel || sel.item || !(sel.mass > 0)) return;
     // 就近放置：脚下容器优先于附近固定台（池/开关/灯，吸附）优先于酒精灯兜底
     const lamp = scene.findLampNear(this);
     let container = scene.containerUnderFeet(this);
     if (!container) container = scene.snapNearFeet(this); // ★ 池边/开关旁/灯边放置自动吸附
+    // ★ 开关只接受"激活所需物质"：错误物质不投入开关（本次放置不生效，物品留在栏里）。
+    //   无 opening 的压力开关不限制（没有可指定的激活物质）。
+    if (container && container.isSwitch && typeof container.canAcceptSubstance === 'function'
+      && !container.canAcceptSubstance(sel.substance)) {
+      return;
+    }
+    const amount = CFG.placeAmount;
+    const res = this.inventory.place(amount);
+    if (!res) return;
     const placeOrigin = { kind: 'place' };
     if (container) {
       // 落点=玩家脚下/台边吸附点（反应/气泡围绕玩家放下的位置，不再默认容器中心）
@@ -16069,10 +19527,25 @@ class Player extends Obj {
       } else {
         container.addPrecipitate(res.substance, amount, null, placeOrigin);
       }
+      // 放置反馈：落点尘雾 + 细碎闪光 + 扩散圆环（视觉层，不改数值）
+      this._placeFeedback(
+        scene,
+        container.depositAt ? container.depositAt.x : this.x + this.w / 2,
+        container.depositAt ? container.depositAt.y : this.bottom,
+        true,
+      );
+      sfx('item.place');
       return;
     }
     if (lamp) {
       lamp.addPrecipitate(res.substance, amount, null, placeOrigin);
+      this._placeFeedback(
+        scene,
+        lamp.x + lamp.w / 2,
+        typeof lamp.flameY === 'function' ? lamp.flameY() : lamp.y,
+        true,
+      );
+      sfx('item.place');
       return;
     }
     // 地面：生成"放置的沉淀"（实心、可垫脚、只能被重新收集）。
@@ -16095,19 +19568,27 @@ class Player extends Obj {
         if (!scene.particles[k]._iceDir) scene.particles[k]._iceDir = Math.random() < 0.5 ? -1 : 1;
       }
     }
+    // 地面放置反馈：尘雾 + 细碎闪光 + 扩散圆环
+    this._placeFeedback(scene, this.x + this.w / 2, this.bottom + 1, true);
+    sfx('item.place');
   }
 
   tryCollect(scene) {
     const me = this.center;
+    let got = 0; // 实际收集到的质量（0 = 什么都没收到，不响拾取音）
     // 自由沉淀粒子（按剩余容量部分收集，放不下的留在原地）
+    // ★ 距离用"玩家身体最近边缘"而不是身体中心：站在台阶/物块上时，身体中心离
+    //   下方地面的沉淀会超过 70px，但脚边其实就在沉淀上方——用中心距离会导致
+    //   "明明站在沉淀正上方却收不到"（与拾取物品/容器沉淀的判定保持一致）。
     for (const p of scene.particles.slice()) {
       if (!p.collectible) continue;
-      const dx = p.x + p.w / 2 - me.x;
-      const dy = p.y + p.h / 2 - me.y;
-      if (Math.hypot(dx, dy) > CFG.collectRadius) continue;
+      const nx = Math.max(this.x - (p.x + p.w), p.x - (this.x + this.w), 0);
+      const ny = Math.max(this.y - (p.y + p.h), p.y - (this.y + this.h), 0);
+      if (Math.hypot(nx, ny) > CFG.collectRadius) continue;
       const room = this.inventory.roomFor(p.substance);
       if (room <= 0) continue;
       const put = this.inventory.add(p.substance, Math.min(p.amount, room));
+      got += put;
       p.amount -= put;
       if (p.amount <= 1e-9) scene.removeObject(p);
     }
@@ -16140,8 +19621,16 @@ class Player extends Obj {
         }
         const taken = c.takePrecipitate(id, Math.min(mass, takenMax, room));
         this.inventory.add(id, taken);
+        got += taken;
       }
     }
+    if (got > 0) {
+      sfx('item.pickup');
+      // 收集成功：手边金色闪光 + 脚边涟漪（"收进来了"的物理反馈）
+      flashFx(scene, me.x, this.y + this.h * 0.45, { color: '#ffe9b0', r: Math.max(12, this.w * 0.45), life: 0.2, rays: 4 });
+      this._placeFeedback(scene, me.x, this.bottom, false);
+    }
+    return got;
   }
 
   adhereMaterial(id, mass) {
@@ -16151,25 +19640,90 @@ class Player extends Obj {
     return added;
   }
 
-  render(ctx) {
+  /**
+   * 玩家渲染（新 Chezzle 视觉语言）：材料网格本体 + 细金边 + 元素光晕 + 发光眼睛；
+   * 动画全部由确定性 sin/时间差驱动、只变换绘制层（碰撞箱/物理完全不变）：
+   *   待机呼吸（1.8%）/ 行走颠+倾 / 空中 squash & stretch / 落地压扁 / 起跳拉伸 / 动作压扁。
+   * 编辑器预览与游戏共用（opts.time 由渲染器传入）。
+   */
+  render(ctx, opts = {}) {
     const grid = this.grid;
     const aabb = grid.minAABB();
     if (!aabb) return;
+    const time = opts?.time ?? 0;
     const ox = this.gridOrigin.x;
     const oy = this.gridOrigin.y;
-    const sub = getSubstance(this.substance);
-    const color = sub?.solid?.[0] ?? '#7fe0ff';
+    const color = materialColor(this.substance);
     const bx = ox + aabb.x;
     const by = oy + aabb.y;
-    // 元素光晕（透明填充只投影发光）
+    const bw = aabb.w;
+    const bh = aabb.h;
+    if (!(bw > 0 && bh > 0)) return;
+    const anim = this._anim;
+    const speed = Math.abs(this.vel.x) / Math.max(1, this.moveSpeed);
+    const moving = speed > 0.06;
+    const airborne = !this.onGround;
+    const px = bx + bw / 2; // 变换支点 = 脚底中心（缩放时脚不离开地面）
+    const py = by + bh;
+    // ---- 动画包络（确定性；不改变碰撞箱）----
+    let sx = 1;
+    let sy = 1;
+    let lean = 0;
+    let bob = 0;
+    // 待机呼吸：垂直 1.8% / 水平 -1.1%；移动时减弱（"轻微活着"）
+    const breatheAmp = airborne ? 0.004 : (moving ? 0.008 : 0.018);
+    const br = Math.sin(time * 2.2 + anim.breatheOfs);
+    sy += breatheAmp * br;
+    sx -= breatheAmp * 0.62 * br;
+    // 行走：上下颠 + 轻微左右倾
+    if (moving && !airborne) {
+      const stride = time * (7 + 6 * Math.min(1, speed));
+      bob = -Math.abs(Math.sin(stride)) * Math.min(2.6, 1.2 + speed * 1.4);
+      lean += (this.vel.x > 0 ? 1 : -1) * Math.min(1, speed) * 0.03 + Math.sin(stride * 2) * 0.008;
+    }
+    // 空中：竖直拉伸 / 水平收窄（下落越快越明显）；朝速度方向微倾
+    if (airborne) {
+      const k = Math.max(-1, Math.min(1, this.vel.y / 700));
+      sy += Math.abs(k) * 0.07;
+      sx -= Math.abs(k) * 0.045;
+      lean += Math.max(-1, Math.min(1, this.vel.x / 500)) * 0.05;
+    }
+    // 落地压扁（0.24s 包络）
+    const landAge = time - anim.landAt;
+    if (landAge >= 0 && landAge < 0.24) {
+      const q = Math.sin((landAge / 0.24) * Math.PI);
+      sx += 0.10 * q;
+      sy -= 0.12 * q;
+    }
+    // 起跳拉伸（0.18s）
+    const jumpAge = time - anim.jumpAt;
+    if (jumpAge >= 0 && jumpAge < 0.18) {
+      const q = Math.sin((jumpAge / 0.18) * Math.PI);
+      sy += 0.10 * q;
+      sx -= 0.055 * q;
+    }
+    // 动作（拾取/放置/倒液/收集）短促压一下
+    const actAge = time - anim.actAt;
+    if (actAge >= 0 && actAge < 0.18) {
+      const q = Math.sin((actAge / 0.18) * Math.PI);
+      sx += 0.05 * q;
+      sy -= 0.05 * q;
+    }
+    // ---- 原版玩家外观：材料网格 + 简单轮廓 + 圆眼（不加装甲/面罩/晶片等装饰）----
+    // 动画只做轻微位移/缩放（呼吸/行走颠/落地压扁等），不改变碰撞箱。
     ctx.save();
     ctx.shadowColor = color;
     ctx.shadowBlur = 16;
     ctx.fillStyle = 'rgba(0,0,0,0)';
-    rr(ctx, bx, by, aabb.w, aabb.h, 9);
+    rr(ctx, bx, by, bw, bh, 9);
     ctx.fill();
     ctx.restore();
-    // 网格本体
+    ctx.save();
+    ctx.translate(px, py + bob);
+    ctx.rotate(lean);
+    ctx.scale(sx, sy);
+    ctx.translate(-px, -py);
+    // 材料网格本体
     renderGrid(ctx, grid, ox, oy);
     // 角色轮廓（深色物质用白色辉光轮廓，浅色用深描边）
     ctx.save();
@@ -16179,28 +19733,578 @@ class Player extends Obj {
       ctx.shadowColor = 'rgba(255,255,255,0.6)';
       ctx.shadowBlur = 8;
     }
-    rr(ctx, bx, by, aabb.w, aabb.h, 9);
+    rr(ctx, bx, by, bw, bh, 9);
     ctx.stroke();
     ctx.restore();
     // 表情（只留眼睛；随移动方向微调视线）
-    const cx = bx + aabb.w / 2;
-    const cy = by + aabb.h * 0.42;
-    const eye = Math.max(2, aabb.w * 0.06);
-    const gap = aabb.w * 0.17;
-    const lookX = Math.max(-1, Math.min(1, this.vel.x / this.moveSpeed)) * gap * 0.45;
-    const lookY = Math.max(-1, Math.min(1, this.vel.y / 600)) * aabb.h * 0.05;
-    const lx = cx + lookX;
-    const ly = cy + lookY;
+    const ecx = bx + bw / 2;
+    const ecy = by + bh * 0.42;
+    const eye = Math.max(2, bw * 0.06);
+    const eyeGap = bw * 0.17;
+    const lookX = Math.max(-1, Math.min(1, this.vel.x / this.moveSpeed)) * eyeGap * 0.45;
+    const lookY = Math.max(-1, Math.min(1, this.vel.y / 600)) * bh * 0.05;
+    const lx = ecx + lookX;
+    const ly = ecy + lookY;
     ctx.fillStyle = '#ffffff';
     ctx.beginPath();
-    ctx.arc(lx - gap, ly, eye, 0, Math.PI * 2);
-    ctx.arc(lx + gap, ly, eye, 0, Math.PI * 2);
+    ctx.arc(lx - eyeGap, ly, eye, 0, TAU);
+    ctx.arc(lx + eyeGap, ly, eye, 0, TAU);
     ctx.fill();
     ctx.fillStyle = '#141426';
     ctx.beginPath();
-    ctx.arc(lx - gap + eye * 0.32, ly, eye * 0.45, 0, Math.PI * 2);
-    ctx.arc(lx + gap + eye * 0.32, ly, eye * 0.45, 0, Math.PI * 2);
+    ctx.arc(lx - eyeGap + eye * 0.32, ly, eye * 0.45, 0, TAU);
+    ctx.arc(lx + eyeGap + eye * 0.32, ly, eye * 0.45, 0, TAU);
     ctx.fill();
+    ctx.restore();
+  }
+
+  // ---------------------------------------------------------------------------
+  // 局部绘制辅助（纯视觉；不影响物理/网格/存档/输入）
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 胸口核心 + 腰带：黑曜石/黄铜装甲细节，打破材料色块、强化"元素构造体"身份。
+   * 核心宝石用身体元素色（与眼睛/光环同源），材料色仍是身体主体；纯视觉。
+   */
+  _renderChestPlate(ctx, bx, by, bw, bh, time, color) {
+    const cx = bx + bw / 2;
+    // ---- 腰带（深钢带 + 金边 + 中央菱形扣）----
+    const beltH = Math.max(3, Math.min(6, bh * 0.075));
+    const beltY = by + bh * 0.635;
+    const beltW = bw * 0.78;
+    rr(ctx, cx - beltW / 2, beltY, beltW, beltH, Math.max(1.5, beltH * 0.45));
+    const bg = ctx.createLinearGradient(0, beltY, 0, beltY + beltH);
+    bg.addColorStop(0, '#504872');
+    bg.addColorStop(0.5, '#241e3e');
+    bg.addColorStop(1, '#100d20');
+    ctx.fillStyle = bg;
+    ctx.fill();
+    ctx.strokeStyle = rgbaOf(THEME.gold.base, 0.55);
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    const buckR = Math.min(beltH * 1.5, 6.5);
+    this._diamondPath(ctx, cx, beltY + beltH / 2, buckR, buckR * 0.78);
+    ctx.fillStyle = rgbaOf(THEME.gold.base, 0.9);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(20,12,4,0.8)';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+    this._diamondPath(ctx, cx, beltY + beltH / 2, buckR * 0.5, buckR * 0.4);
+    ctx.fillStyle = rgbaOf(color, 0.9);
+    ctx.fill();
+    // ---- 胸口核心（钢座 + 金圈 + 元素色晶核 + 能量线）----
+    const my = by + bh * 0.365;
+    const r = Math.max(5, Math.min(9, bw * 0.145));
+    ctx.beginPath();
+    ctx.arc(cx, my, r, 0, TAU);
+    ctx.fillStyle = '#231d3c';
+    ctx.fill();
+    ctx.strokeStyle = rgbaOf(THEME.gold.base, 0.7);
+    ctx.lineWidth = 1.3;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, my, r * 0.7, 0, TAU);
+    ctx.fillStyle = 'rgba(8,6,20,0.85)';
+    ctx.fill();
+    ctx.strokeStyle = rgbaOf(THEME.gold.light, 0.35);
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+    ctx.save();
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 8 + 2 * Math.sin(time * 2.6);
+    ctx.fillStyle = rgbaOf(color, 0.92);
+    this._diamondPath(ctx, cx, my, r * 0.44, r * 0.58);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.beginPath();
+    ctx.arc(cx - r * 0.1, my - r * 0.14, Math.max(0.7, r * 0.12), 0, TAU);
+    ctx.fill();
+    ctx.restore();
+    // 核心 → 腰带的细能量线（确定性强弱呼吸）
+    ctx.strokeStyle = rgbaOf(color, 0.28 + 0.1 * Math.sin(time * 2.2 + 0.7));
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cx, my + r);
+    ctx.lineTo(cx, beltY);
+    ctx.stroke();
+  }
+
+  /**
+   * 两侧悬浮护手：黑曜石/黄铜小护手，略在身体外侧悬空，随行走轻微上下；
+   * 让剪影更像"构造体"而不是一块方碑。纯视觉，无碰撞。
+   */
+  _renderGauntlets(ctx, bx, by, bw, bh, time, speed, facing, color) {
+    const gw = Math.max(4, Math.min(8, bw * 0.13));
+    const gh = Math.max(7, Math.min(15, bh * 0.17));
+    const stride = time * (7 + 6 * Math.min(1, speed));
+    const bob = Math.sin(stride) * Math.min(1.8, 0.5 + speed * 1.2);
+    for (const side of [-1, 1]) {
+      const gap = Math.max(1.5, bw * 0.045);
+      const gx = side < 0 ? bx - gap - gw : bx + bw + gap;
+      const gy = by + bh * 0.485 + (side < 0 ? bob : -bob) * 0.45;
+      rr(ctx, gx, gy, gw, gh, Math.max(1.5, gw * 0.35));
+      const g = ctx.createLinearGradient(0, gy, 0, gy + gh);
+      g.addColorStop(0, '#56607f');
+      g.addColorStop(0.45, '#2c3348');
+      g.addColorStop(1, '#141827');
+      ctx.fillStyle = g;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(8,6,20,0.85)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      // 金色腕箍 + 元素色指缝
+      ctx.fillStyle = rgbaOf(THEME.gold.base, 0.8);
+      ctx.fillRect(gx + 0.4, gy + 1, gw - 0.8, Math.max(0.8, gh * 0.1));
+      ctx.strokeStyle = rgbaOf(color, 0.75);
+      ctx.lineWidth = 0.9;
+      ctx.beginPath();
+      ctx.moveTo(gx + gw * 0.5, gy + gh * 0.42);
+      ctx.lineTo(gx + gw * 0.5, gy + gh * 0.86);
+      ctx.stroke();
+      // 侧面金铆钉
+      ctx.fillStyle = rgbaOf(THEME.gold.light, 0.75);
+      ctx.beginPath();
+      ctx.arc(gx + gw * 0.5, gy + gh * 0.24, Math.max(0.5, gw * 0.09), 0, TAU);
+      ctx.fill();
+    }
+  }
+
+  /**
+   * 玩家剪影：faceted 切角多面体轮廓（八边形变体）——放弃"整块圆角矩形"。
+   * 点序必须保持：0/1 肩线，2/3 右上切角，4 右腰，5/6 右下切角，7/8 左下切角，
+   * 9 左腰，10/11 左上切角（金线关键棱边/角标按此索引取点）。
+   */
+  _facetPoints(bx, by, bw, bh) {
+    const cx = Math.min(Math.max(3, bw * 0.20), bw * 0.30, 15); // 上/下切角 x
+    const cy = Math.min(Math.max(2.5, bh * 0.16), bh * 0.26, 11); // 上/下切角 y
+    const waist = Math.min(bw * 0.05, 6); // 腰部内收
+    const sh = Math.min(bw * 0.03, 4); // 肩部微内收（让肩甲外挂）
+    const wY = by + bh * 0.58;
+    return [
+      { x: bx + cx + sh, y: by }, // 0 左肩顶
+      { x: bx + bw - cx - sh, y: by }, // 1 右肩顶
+      { x: bx + bw - cx * 0.4, y: by + cy * 0.55 }, // 2 右上切角
+      { x: bx + bw, y: by + cy }, // 3 右肩外
+      { x: bx + bw - waist, y: wY }, // 4 右腰
+      { x: bx + bw - waist * 0.5, y: by + bh - cy }, // 5 右下切
+      { x: bx + bw - cx * 0.7, y: by + bh }, // 6 右脚
+      { x: bx + cx * 0.7, y: by + bh }, // 7 左脚
+      { x: bx + waist * 0.5, y: by + bh - cy }, // 8 左下切
+      { x: bx + waist, y: wY }, // 9 左腰
+      { x: bx, y: by + cy }, // 10 左肩外
+      { x: bx + cx * 0.4, y: by + cy * 0.55 }, // 11 左上切角
+    ];
+  }
+
+  /** 把点数组描成闭合路径（不自开新路径时的调用方需先 beginPath） */
+  _tracePolygon(ctx, pts) {
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.closePath();
+  }
+
+  /** 菱形路径（额心宝石/晶片共用；rx/ry 为半宽/半高） */
+  _diamondPath(ctx, x, y, rx, ry) {
+    ctx.beginPath();
+    ctx.moveTo(x, y - ry);
+    ctx.lineTo(x + rx, y);
+    ctx.lineTo(x, y + ry);
+    ctx.lineTo(x - rx, y);
+    ctx.closePath();
+  }
+
+  /** 金色 L 形角标（切角处的细刻线；不整圈镶金） */
+  _goldTick(ctx, x, y, dx, dy, len) {
+    ctx.beginPath();
+    ctx.moveTo(x + dx * len, y);
+    ctx.lineTo(x, y);
+    ctx.lineTo(x, y + dy * len);
+    ctx.stroke();
+  }
+
+  /**
+   * 脚下元素符文环：椭圆双环 + 8 个缓慢旋转的短刻度，确定性呼吸。
+   * 与原软阴影并存（阴影在外面先画）；离地时变淡（浮空时不该像贴地）。
+   */
+  _renderRuneRing(ctx, px, py, bw, time, color, airborne) {
+    const rx = Math.max(9, bw * 0.56);
+    const ry = rx * 0.30;
+    const k = airborne ? 0.45 : 1;
+    const breath = 0.5 + 0.5 * Math.sin(time * 1.5);
+    ctx.save();
+    // 外环（呼吸）
+    ctx.strokeStyle = rgbaOf(color, (0.20 + 0.13 * breath) * k);
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.ellipse(px, py + 1, rx, ry, 0, 0, TAU);
+    ctx.stroke();
+    // 内环（反相呼吸，更淡）
+    ctx.strokeStyle = rgbaOf(color, (0.09 + 0.07 * (1 - breath)) * k);
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.ellipse(px, py + 1, rx * 0.72, ry * 0.72, 0, 0, TAU);
+    ctx.stroke();
+    // 8 个符文短刻线（缓慢旋转）
+    const spin = time * 0.35;
+    ctx.strokeStyle = rgbaOf(color, (0.26 + 0.16 * breath) * k);
+    ctx.lineWidth = 1.2;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 4;
+    for (let i = 0; i < 8; i++) {
+      const ang = spin + (i / 8) * TAU;
+      const c = Math.cos(ang);
+      const s = Math.sin(ang);
+      ctx.beginPath();
+      ctx.moveTo(px + c * rx * 0.88, py + 1 + s * ry * 0.88);
+      ctx.lineTo(px + c * rx * 1.07, py + 1 + s * ry * 1.07);
+      ctx.stroke();
+    }
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
+
+  /**
+   * 披风/飘带：从肩部垂下、向身后飘的两条暗紫布带 + 金边（画在身体之前 = 身后层叠；
+   * 随速度/时间摆动；小尺寸玩家省略）。纯视觉，不参与物理。
+   */
+  _renderRibbons(ctx, bx, by, bw, bh, time, speed, facing) {
+    const dir = facing >= 0 ? -1 : 1; // 身后方向 = 朝向的反方向
+    for (let i = 0; i < 2; i++) {
+      const side = i === 0 ? -1 : 1;
+      const rootX = bx + bw * (0.5 + side * 0.15);
+      const rootY = by + bh * 0.24;
+      const len = bh * (0.60 + i * 0.10) + 4;
+      const ph = time * 2.2 + i * 1.9;
+      const sway = Math.sin(ph) * (2.0 + speed * 4.5);
+      const drift = dir * (bw * (0.15 + i * 0.06) + speed * 7) + sway * dir * 0.25;
+      const ctrlX = rootX + drift * 0.5 + sway;
+      const ctrlY = rootY + len * 0.55;
+      const tipX = rootX + drift + sway * 0.5;
+      const tipY = rootY + len;
+      const wTop = Math.max(2.2, bw * 0.075);
+      const wTip = Math.max(1.1, wTop * 0.32);
+      ctx.save();
+      // 布面
+      ctx.beginPath();
+      ctx.moveTo(rootX - wTop, rootY);
+      ctx.quadraticCurveTo(ctrlX - wTop * 0.65, ctrlY, tipX - wTip, tipY);
+      ctx.lineTo(tipX + wTip, tipY);
+      ctx.quadraticCurveTo(ctrlX + wTop * 0.65, ctrlY, rootX + wTop, rootY);
+      ctx.closePath();
+      ctx.fillStyle = i === 0 ? 'rgba(44,34,88,0.82)' : 'rgba(36,28,74,0.80)';
+      ctx.fill();
+      ctx.strokeStyle = rgbaOf(THEME.gold.base, 0.42);
+      ctx.lineWidth = 0.9;
+      ctx.stroke();
+      // 布褶内线（一条暗亮线，表现布面折痕）
+      ctx.strokeStyle = 'rgba(128,106,200,0.5)';
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.moveTo(rootX + side * wTop * 0.3, rootY + 2);
+      ctx.quadraticCurveTo(ctrlX, ctrlY, tipX, tipY - 1.5);
+      ctx.stroke();
+      // 末端小金坠
+      ctx.fillStyle = rgbaOf(THEME.gold.light, 0.8);
+      ctx.beginPath();
+      ctx.arc(tipX, tipY, 1.2, 0, TAU);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  /** 肩甲：黄铜/深钢叠层甲片 + 铆钉 + 元素色能量槽（略超出身体 2~4px，纯视觉） */
+  _renderPauldrons(ctx, bx, by, bw, bh, color) {
+    const out = Math.min(4, Math.max(2, bw * 0.045));
+    const shY = by + bh * 0.10;
+    const h1 = Math.max(4, bh * 0.15);
+    for (const side of [-1, 1]) {
+      const xEdge = side < 0 ? bx : bx + bw;
+      const xOut = xEdge + side * out;
+      const xIn = xEdge - side * bw * 0.19;
+      ctx.save();
+      // 主甲片（深钢）
+      ctx.beginPath();
+      ctx.moveTo(xOut, shY);
+      ctx.lineTo(xIn, shY + bh * 0.015);
+      ctx.lineTo(xIn - side * bw * 0.015, shY + h1 * 0.72);
+      ctx.lineTo(xOut - side * 1.1, shY + h1);
+      ctx.closePath();
+      ctx.fillStyle = '#3c435e';
+      ctx.fill();
+      ctx.strokeStyle = rgbaOf(THEME.gold.base, 0.55);
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      // 上缘钢高光
+      ctx.strokeStyle = 'rgba(200,210,236,0.6)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(xOut + side * 0.6, shY + 0.8);
+      ctx.lineTo(xIn - side * 0.4, shY + bh * 0.02 + 0.6);
+      ctx.stroke();
+      // 元素色能量槽（细发光线）
+      ctx.strokeStyle = rgbaOf(color, 0.75);
+      ctx.lineWidth = 1.1;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 5;
+      ctx.beginPath();
+      ctx.moveTo(xOut - side * out * 0.2, shY + h1 * 0.34);
+      ctx.lineTo(xIn + side * bw * 0.03, shY + h1 * 0.20);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      // 黄铜铆钉（2 枚）
+      ctx.fillStyle = rgbaOf(THEME.gold.light, 0.85);
+      for (const k of [0.3, 0.72]) {
+        ctx.beginPath();
+        ctx.arc(xOut + (xIn - xOut) * k, shY + h1 * (0.35 + k * 0.28), Math.max(0.9, bw * 0.018), 0, TAU);
+        ctx.fill();
+      }
+      // 下层叠甲片
+      ctx.beginPath();
+      ctx.moveTo(xOut - side * 0.8, shY + h1 * 0.78);
+      ctx.lineTo(xIn, shY + h1 * 0.62);
+      ctx.lineTo(xIn - side * bw * 0.01, shY + h1 * 1.28);
+      ctx.lineTo(xOut - side * 1.6, shY + h1 * 1.34);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(48,54,80,0.95)';
+      ctx.fill();
+      ctx.strokeStyle = rgbaOf(THEME.gold.base, 0.35);
+      ctx.lineWidth = 0.9;
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  /** 护胫甲片：下方两角的小型深钢甲片 + 金边 + 元素色细缝（小尺寸省略） */
+  _renderGreaves(ctx, bx, by, bw, bh, color) {
+    const out = Math.min(3, Math.max(1.5, bw * 0.035));
+    const gy = by + bh * 0.70;
+    for (const side of [-1, 1]) {
+      const xEdge = side < 0 ? bx : bx + bw;
+      const xOut = xEdge + side * out;
+      const xIn = xEdge - side * bw * 0.19;
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(xOut, gy);
+      ctx.lineTo(xIn, gy + bh * 0.02);
+      ctx.lineTo(xIn - side * bw * 0.01, by + bh - 0.5);
+      ctx.lineTo(xOut - side * 0.6, by + bh + 1);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(40,45,66,0.95)';
+      ctx.fill();
+      ctx.strokeStyle = rgbaOf(THEME.gold.base, 0.35);
+      ctx.lineWidth = 0.9;
+      ctx.stroke();
+      // 顶缘高光 + 元素色细缝
+      ctx.strokeStyle = 'rgba(190,200,228,0.45)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(xOut - side * 0.4, gy + 0.8);
+      ctx.lineTo(xIn - side * 0.3, gy + bh * 0.02 + 0.8);
+      ctx.stroke();
+      ctx.strokeStyle = rgbaOf(color, 0.55);
+      ctx.lineWidth = 0.9;
+      ctx.beginPath();
+      ctx.moveTo(xOut - side * 0.9, gy + bh * 0.06);
+      ctx.lineTo(xOut - side * 0.9, by + bh - 1.5);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  /**
+   * 头部/面罩（"表情"核心）：身体上部 22%~26% 盖一块暗紫玻璃切角梯形棱面
+   * + 细金边 + 额心宝石 + 一对**斜挑的狭长发光眼缝**（下方暗紫玻璃底、内芯白热；
+   * 眨眼时收成一条金线；朝移动方向倾斜）。小尺寸玩家只保留面罩/眼缝/金线。
+   */
+  _renderFaceplate(ctx, bx, by, bw, bh, time, blink, facing, color, tiny) {
+    const fx = bx + bw * 0.13;
+    const fw = bw * 0.74;
+    const fy = by + bh * 0.035;
+    const fh = Math.min(bh * 0.26, bh - 4);
+    if (fw <= 6 || fh <= 4) return;
+    const faceShift = facing * bw * 0.008; // 面罩整体朝移动方向极轻偏移
+    const pts = [
+      { x: fx + fw * 0.14 + faceShift, y: fy },
+      { x: fx + fw * 0.86 + faceShift, y: fy },
+      { x: fx + fw + faceShift, y: fy + fh * 0.30 },
+      { x: fx + fw * 0.90 + faceShift, y: fy + fh },
+      { x: fx + fw * 0.10 + faceShift, y: fy + fh },
+      { x: fx + faceShift, y: fy + fh * 0.30 },
+    ];
+    ctx.save();
+    // 暗紫玻璃底（切角梯形棱面）
+    this._tracePolygon(ctx, pts);
+    const g = ctx.createLinearGradient(fx, fy, fx + fw * 0.4, fy + fh);
+    g.addColorStop(0, 'rgba(88,66,158,0.92)');
+    g.addColorStop(0.45, 'rgba(46,32,96,0.90)');
+    g.addColorStop(1, 'rgba(18,12,42,0.94)');
+    ctx.fillStyle = g;
+    ctx.fill();
+    // 细金边（呼吸发光）
+    const goldA = 0.62 + 0.20 * Math.sin(time * 2.2 + 0.7);
+    ctx.strokeStyle = rgbaOf(THEME.gold.base, goldA);
+    ctx.lineWidth = 1.15;
+    ctx.shadowColor = rgbaOf(THEME.gold.light, 0.55);
+    ctx.shadowBlur = 5;
+    this._tracePolygon(ctx, pts);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // 玻璃高光：上缘一道亮线 + 左上斜向反光
+    ctx.strokeStyle = 'rgba(210,225,255,0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(fx + fw * 0.18 + faceShift, fy + fh * 0.14);
+    ctx.lineTo(fx + fw * 0.82 + faceShift, fy + fh * 0.14);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    ctx.lineWidth = Math.max(1, fw * 0.05);
+    ctx.beginPath();
+    ctx.moveTo(fx + fw * 0.24 + faceShift, fy + fh * 0.88);
+    ctx.lineTo(fx + fw * 0.46 + faceShift, fy + fh * 0.06);
+    ctx.stroke();
+    // 额心宝石（菱形 + 金托 + 元素色发光）——太小则不画，保证眼缝空间
+    const gemX = fx + fw / 2 + faceShift;
+    if (fh >= 7) {
+      const gemY = fy + fh * 0.24;
+      const gemR = Math.max(1.5, Math.min(fw * 0.07, fh * 0.18));
+      ctx.fillStyle = rgbaOf(THEME.gold.deep, 0.9);
+      this._diamondPath(ctx, gemX, gemY, gemR * 1.5, gemR * 1.6);
+      ctx.fill();
+      ctx.fillStyle = color;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 8;
+      this._diamondPath(ctx, gemX, gemY, gemR, gemR * 1.25);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      this._diamondPath(ctx, gemX - gemR * 0.18, gemY - gemR * 0.2, gemR * 0.36, gemR * 0.48);
+      ctx.fill();
+      // 宝石下方的细金鼻梁线（构造体的中轴）
+      ctx.strokeStyle = rgbaOf(THEME.gold.base, 0.4);
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.moveTo(gemX, gemY + gemR * 1.7);
+      ctx.lineTo(gemX, fy + fh * 0.92);
+      ctx.stroke();
+    }
+    // ---- 斜挑狭长发光眼缝（不要圆眼/黑眼窝）----
+    const eyeY = fy + fh * (tiny ? 0.60 : 0.60);
+    const eyeLen = Math.max(3.2, fw * 0.23);
+    const eyeH = Math.max(1.3, fh * 0.11);
+    const eyeGap = fw * (tiny ? 0.24 : 0.205);
+    const look = Math.max(-1, Math.min(1, this.vel.x / Math.max(1, this.moveSpeed)));
+    const tiltBase = 0.17 + Math.abs(look) * 0.06; // 外侧眼角上扬（斜挑）
+    const pairTilt = look * 0.07 * facing; // 整体朝移动方向再偏一点
+    for (const side of [-1, 1]) {
+      const ex = gemX + side * eyeGap + look * eyeLen * 0.12 * facing;
+      const tilt = -side * tiltBase + pairTilt;
+      this._eyeSlit(ctx, ex, eyeY, eyeLen, eyeH, tilt, blink, color);
+    }
+    // 下缘暗紫压暗（玻璃厚度）
+    this._tracePolygon(ctx, pts);
+    ctx.fillStyle = 'rgba(8,4,20,0.16)';
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /**
+   * 单只眼缝：暗紫玻璃底槽 + 元素色发光内芯 + 白热中线；柳叶/杏仁形。
+   * blink<0.22 时收成一条金色细线（眨眼）；不要圆眼。
+   */
+  _eyeSlit(ctx, cx, cy, len, hgt, tilt, blink, color) {
+    const b = Math.max(0.10, Math.min(1, blink));
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(tilt);
+    if (b < 0.22) {
+      // 眨眼：一条细金线
+      ctx.strokeStyle = rgbaOf(THEME.gold.light, 0.85);
+      ctx.lineWidth = 1.1;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 4;
+      ctx.beginPath();
+      ctx.moveTo(-len / 2, 0);
+      ctx.lineTo(len / 2, 0);
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
+    const h = hgt * b;
+    // 暗紫玻璃底槽
+    ctx.beginPath();
+    ctx.moveTo(-len / 2, 0);
+    ctx.quadraticCurveTo(0, -h * 1.3, len / 2, 0);
+    ctx.quadraticCurveTo(0, h * 1.3, -len / 2, 0);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(14,8,34,0.92)';
+    ctx.fill();
+    // 内芯发光（元素色 → 白热中线）
+    ctx.save();
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 9;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(-len * 0.42, 0);
+    ctx.quadraticCurveTo(0, -h * 0.92, len * 0.42, 0);
+    ctx.quadraticCurveTo(0, h * 0.92, -len * 0.42, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,250,0.95)';
+    ctx.beginPath();
+    ctx.moveTo(-len * 0.30, 0);
+    ctx.quadraticCurveTo(0, -h * 0.34, len * 0.30, 0);
+    ctx.quadraticCurveTo(0, h * 0.34, -len * 0.30, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+    ctx.restore();
+  }
+
+  /**
+   * 头顶悬浮晶片（2~3 片小晶片/符文碎片）：金 / 元素色 / 青，慢速上下浮动 +
+   * 微小自转（确定性 sin），作为构造体的"生命感"。小尺寸玩家省略。
+   */
+  _renderCrystals(ctx, bx, by, bw, bh, time, color) {
+    const baseX = bx + bw / 2;
+    const baseY = by - Math.max(4, Math.min(10, bh * 0.06)) - 2;
+    const palette = [THEME.gold.light, color, '#7fe0ff'];
+    const size = Math.max(3, Math.min(7, bh * 0.07));
+    for (let i = 0; i < 3; i++) {
+      const ph = time * 1.5 + i * 2.1;
+      const offX = (i - 1) * bw * (0.22 + i * 0.02);
+      const fy = baseY + Math.sin(ph) * 2.2 - Math.abs(i - 1) * 1.5;
+      const rot = Math.sin(ph * 0.8 + i * 1.3) * 0.35 + (i - 1) * 0.12;
+      const h = size * (i === 1 ? 1.4 : 1);
+      const w = h * 0.5;
+      ctx.save();
+      ctx.translate(baseX + offX, fy);
+      ctx.rotate(rot);
+      // 晶片：细长菱形，暗紫底 + 亮边 + 内核亮线
+      this._diamondPath(ctx, 0, 0, w, h);
+      ctx.fillStyle = 'rgba(38,30,82,0.92)';
+      ctx.fill();
+      ctx.strokeStyle = rgbaOf(palette[i], 0.75);
+      ctx.lineWidth = 0.9;
+      ctx.shadowColor = palette[i];
+      ctx.shadowBlur = 5;
+      ctx.stroke();
+      ctx.strokeStyle = rgbaOf(palette[i], 0.9);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, -h * 0.55);
+      ctx.lineTo(0, h * 0.55);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.restore();
+    }
+    // 晶片与头顶之间的细能量线（一条短弧，固定相位）
+    ctx.strokeStyle = rgbaOf(color, 0.18);
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(baseX - bw * 0.1, by - 1);
+    ctx.quadraticCurveTo(baseX, baseY + 1, baseX + bw * 0.1, by - 1);
+    ctx.stroke();
   }
 }
 
@@ -16218,6 +20322,7 @@ exports.Player = Player;
 
 const { Container } = __require('src/objects/container.js');;
 const { THEME, rr, glowText, screenTextScale } = __require('src/render/theme.js');;
+const { sfx } = __require('src/core/audio.js');;
 
 class Switch extends Container {
   get hoverLabel() {
@@ -16250,6 +20355,10 @@ class Switch extends Container {
     this._handlers = {};
     if (onOpen) this._handlers.open = onOpen;
     if (onClose) this._handlers.close = onClose;
+    // 纯视觉计时（数值很小，不参与任何玩法判定）：按压下沉/回弹 + 宝石呼吸
+    this._pressT = 0; // 0=抬起 1=按下（随 open 指数趋近）
+    this._pressKick = 0; // 状态切换冲击（1→0 约 0.16s 的回弹）
+    this._animOpen = undefined; // 上一刻的视觉目标态（用于检测切换）
   }
 
   get isSwitch() {
@@ -16258,6 +20367,12 @@ class Switch extends Container {
 
   openingMass() {
     return this.opening ? this.precipitates.get(this.opening) ?? 0 : 0;
+  }
+
+  /** 玩家放入限制：有"开启物质"的开关只接受该物质（错误物质不能投入，保留在物品栏）；
+   *  无 opening 的压力开关/纯气体探测器保持原有吸附行为。 */
+  canAcceptSubstance(id) {
+    return !this.opening || id === this.opening;
   }
 
   on(name, fn) {
@@ -16281,12 +20396,27 @@ class Switch extends Container {
     this._handlers[name]?.();
   }
 
+  /** 状态变化音效（Key 子类覆写为开锁音） */
+  _sfxChange(eff) {
+    sfx(eff ? 'switch.open' : 'switch.close');
+  }
+
   update(dt, scene) {
     this.setOpen(this._isOpenTarget(scene));
+    // ---- 视觉：按压下沉/回弹（开=按下、关=回弹，短促 0.15~0.2s，全部确定性）----
+    const visualTarget = this.open ? 1 : 0;
+    if (this._animOpen !== undefined && this._animOpen !== visualTarget) this._pressKick = 1;
+    this._animOpen = visualTarget;
+    this._pressT += (visualTarget - this._pressT) * (1 - Math.exp(-18 * dt));
+    if (this._pressKick > 0) this._pressKick = Math.max(0, this._pressKick - dt / 0.16);
     // 输出按"有效开启态"变化触发："&"联锁时需两个开关都开才输出开
     const eff = this.effectiveOpen(scene);
     if (eff !== this._lastEff) {
+      // 首次求值只记录状态，不发声：关卡开局"关着的开关"不能一起"啪"一声
+      // （fire/开启动作照旧——初始就开的开关要触发 showId/igniteId/openId）
+      const first = this._lastEff === undefined;
       this._lastEff = eff;
+      if (!first) this._sfxChange(eff);
       this.fire(eff ? 'open' : 'close');
       // 开启瞬间：删除物体 / 显现隐藏物体 / 点燃灯（只触发一次）
       if (eff) {
@@ -16363,52 +20493,110 @@ class Switch extends Container {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // 渲染（简洁版）：深紫石/深钢底座 + 黄铜细边 + 一块简踏板或药碟 + 一个状态灯；
+  //   开/关切换的按压下沉 + 短促回弹（_pressT/_pressKick）保留；开=金、等=橙、关=暗。
+  // ---------------------------------------------------------------------------
   render(ctx, opts) {
     const scene = opts?.scene ?? null;
+    const t = opts?.time ?? 0;
     const eff = this._lastEff ?? this.effectiveOpen(scene); // 有效输出态（& 双开）
     const phys = this.open; // 物理激活态（自身被按下）
     // 三态：金色=输出开；橙色=已按下但等待"&"配对开关；暗=未按下
     const waiting = this.and && phys && !eff;
-    const glowColor = eff ? THEME.gold.light : waiting ? '#ffb340' : 'rgba(90,80,60,0.6)';
-    const glowBlur = eff ? 16 : waiting ? 12 : 3;
+    const x = this.x;
+    const y = this.y;
+    const w = this.w;
+    const h = this.h;
+    const cx = x + w / 2;
+    const sink = this._pressT * 2.2 + Math.sin(this._pressKick * Math.PI) * 1.2; // 下沉 + 切换回弹
+    const accent = eff ? THEME.gold.light : waiting ? '#ffb340' : '#7a84a8';
+    const breathe = 0.5 + 0.5 * Math.sin(t * 2.2 + x * 0.013); // 状态灯呼吸
     ctx.save();
-    // 石台底座
-    const g = ctx.createLinearGradient(this.x, this.y, this.x, this.y + this.h);
-    g.addColorStop(0, eff ? '#565c80' : '#4a4f70');
-    g.addColorStop(1, '#22263f');
-    ctx.fillStyle = g;
-    rr(ctx, this.x, this.y, this.w, this.h, 6);
-    ctx.fill();
-    // 边框：开=金发光，等=橙，关=暗（一眼可辨）
-    const frame = eff ? THEME.gold.light : waiting ? '#ffb340' : '#151830';
-    ctx.strokeStyle = frame;
-    ctx.lineWidth = eff ? 2 : waiting ? 1.5 : 1;
-    ctx.shadowColor = eff ? THEME.gold.light : waiting ? '#ffb340' : 'transparent';
-    ctx.shadowBlur = eff ? 14 : waiting ? 8 : 0;
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-    // 顶部符文珠（物理按下就亮：金=双开输出，橙=已按下等配对，暗=未按下）
-    const cx = this.x + this.w / 2;
-    const cy = this.y + 7;
-    ctx.shadowColor = glowColor;
-    ctx.shadowBlur = glowBlur;
-    ctx.fillStyle = eff ? THEME.gold.light : waiting ? '#ffb340' : 'rgba(120,110,90,0.55)';
+    // 地面淡阴影
+    ctx.fillStyle = 'rgba(4,3,12,0.3)';
     ctx.beginPath();
-    ctx.arc(cx, cy, Math.min(this.w, 20) / 2, 0, Math.PI * 2);
+    ctx.ellipse(cx, y + h + 0.5, w * 0.46, Math.max(1.5, h * 0.14), 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.translate(0, sink);
+    // 深紫石/深钢底座
+    const br = Math.max(3, Math.min(8, h * 0.3));
+    rr(ctx, x, y, w, h, br);
+    const base = ctx.createLinearGradient(x, y, x, y + h);
+    base.addColorStop(0, '#3a3f5c');
+    base.addColorStop(1, '#191d36');
+    ctx.fillStyle = base;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(8,6,24,0.9)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    // 黄铜细边（内嵌一线；开/等时轻微亮起，不加辉光）
+    const pad = Math.max(1.4, Math.min(2.4, h * 0.07));
+    rr(ctx, x + pad, y + pad, w - pad * 2, h - pad * 2, Math.max(2, br - 1));
+    ctx.strokeStyle = eff ? 'rgba(255,215,106,0.7)' : waiting ? 'rgba(255,179,64,0.65)' : 'rgba(169,120,42,0.55)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // 模式装置：压力=一块简踏板；化学=一个内凹药碟（都只有一条轮廓线）
+    if (this.mode === 'pressure') this._renderPedal(ctx, cx, y, w, h);
+    else this._renderDish(ctx, cx, y, w, h);
+    // 状态灯（一个圆灯：开=金、等=橙、关=暗；仅开/等时有克制呼吸辉光）
+    const gr = Math.max(2.8, Math.min(6.5, Math.min(w, h) * 0.2));
+    if (eff || waiting) {
+      ctx.shadowColor = accent;
+      ctx.shadowBlur = 5 + 4 * breathe;
+    }
+    ctx.fillStyle = eff ? THEME.gold.light : waiting ? '#ffb340' : 'rgba(120,130,160,0.55)';
+    ctx.beginPath();
+    ctx.arc(cx, y + h * 0.5, gr, 0, Math.PI * 2);
     ctx.fill();
     ctx.shadowBlur = 0;
-    ctx.fillStyle = eff ? '#3a2a08' : waiting ? '#4a2a08' : 'rgba(150,140,110,0.6)';
-    ctx.font = `bold ${Math.round(9 * screenTextScale(ctx, 9, 10) * 10) / 10}px monospace`;
-    ctx.textAlign = 'center';
-    ctx.fillText(eff ? '开' : waiting ? '等' : '关', cx, cy + 3);
-    ctx.textAlign = 'left';
+    // 状态字（小、克制，保留原有 开/等/关 语义）
+    if (gr >= 4) {
+      ctx.fillStyle = eff || waiting ? 'rgba(30,20,8,0.85)' : 'rgba(190,198,220,0.75)';
+      ctx.font = `bold ${Math.max(7, Math.round(gr * 1.05 * 10) / 10)}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(eff ? '开' : waiting ? '等' : '关', cx, y + h * 0.5 + 0.5);
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'alphabetic';
+    }
     ctx.restore();
     this.renderLabel(ctx);
     // "&" 联锁连线（若配置了 and）
     if (this.and && scene) this.renderAndLink(ctx, scene, eff, waiting);
   }
 
-  /** 与另一个 "&" 开关画连接线 + 标记（金=双开，橙=已按下等配对，暗=未按下） */
+  /** 药碟（化学开关）：一个内凹圆 + 一条金环，无刻纹 */
+  _renderDish(ctx, cx, y, w, h) {
+    const r = Math.max(3, Math.min(w, h) * 0.36);
+    if (r < 4) return;
+    const cy = y + h * 0.5;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(10,8,28,0.35)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(169,120,42,0.5)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  /** 踏板（压力开关）：一块简钢踏板（无弹簧/油缸/防滑刻线） */
+  _renderPedal(ctx, cx, y, w, h) {
+    const pw = Math.max(8, w * 0.62);
+    const ph = Math.max(2.4, h * 0.2);
+    const py = y + h * 0.52;
+    rr(ctx, cx - pw / 2, py - ph / 2, pw, ph, 1.5);
+    const pg = ctx.createLinearGradient(0, py - ph / 2, 0, py + ph / 2);
+    pg.addColorStop(0, '#6a7392');
+    pg.addColorStop(1, '#333a58');
+    ctx.fillStyle = pg;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(216,181,108,0.55)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  /** 与另一个 "&" 开关画联锁线 + 清晰的 & 徽章（保留简洁风格，但保证一眼可见） */
   renderAndLink(ctx, scene, eff, waiting) {
     const other = scene.byId[this.and];
     if (!other) return;
@@ -16416,24 +20604,53 @@ class Switch extends Container {
     const ay = this.y + this.h / 2;
     const bx = other.x + other.w / 2;
     const by = other.y + other.h / 2;
-    const color = eff ? THEME.gold.light : waiting ? '#ffb340' : 'rgba(150,140,110,0.35)';
+    const mx = (ax + bx) / 2;
+    const my = (ay + by) / 2;
+    const lineColor = eff ? 'rgba(255,215,106,0.95)' : waiting ? 'rgba(255,179,64,0.9)' : 'rgba(216,204,170,0.6)';
     ctx.save();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1.5;
-    ctx.shadowColor = eff || waiting ? color : 'transparent';
-    ctx.shadowBlur = eff || waiting ? 6 : 0;
-    ctx.setLineDash([4, 3]);
+    // 暗色底衬 + 亮虚线：浅色线在暗背景和装置缝隙里也看得清
+    ctx.strokeStyle = 'rgba(8,6,20,0.6)';
+    ctx.lineWidth = 3.6;
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = 1.8;
+    ctx.setLineDash([6, 5]);
     ctx.beginPath();
     ctx.moveTo(ax, ay);
     ctx.lineTo(bx, by);
     ctx.stroke();
     ctx.setLineDash([]);
-    // "&" 标记（居中于连线）
-    ctx.fillStyle = color;
-    ctx.font = `bold ${Math.round(12 * screenTextScale(ctx, 12, 11) * 10) / 10}px serif`;
+    // 中央菱形徽章：深底 + 亮边 + 高对比 &，开态微光
+    const k = screenTextScale(ctx, 11, 12, 1.35);
+    const s = Math.max(13, Math.round(15 * k));
+    ctx.save();
+    ctx.translate(mx, my);
+    ctx.rotate(Math.PI / 4);
+    rr(ctx, -s / 2, -s / 2, s, s, Math.max(2, s * 0.16));
+    ctx.fillStyle = 'rgba(12,9,30,0.94)';
+    ctx.fill();
+    ctx.strokeStyle = eff ? '#ffe9b0' : waiting ? '#ffcf7a' : 'rgba(216,204,170,0.82)';
+    ctx.lineWidth = eff ? 2 : 1.5;
+    if (eff) {
+      ctx.shadowColor = THEME.gold.light;
+      ctx.shadowBlur = 8;
+    }
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = eff ? '#fff1c4' : waiting ? '#ffd98c' : '#e6dfc8';
+    ctx.font = `bold ${Math.max(12, Math.round(12 * k))}px "Segoe UI", "Microsoft YaHei", serif`;
     ctx.textAlign = 'center';
-    ctx.fillText('&', (ax + bx) / 2, (ay + by) / 2 - 4);
+    ctx.textBaseline = 'middle';
+    if (eff) {
+      ctx.shadowColor = THEME.gold.light;
+      ctx.shadowBlur = 6;
+    }
+    ctx.fillText('&', mx, my + 0.5);
     ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
     ctx.restore();
   }
 }
@@ -16444,12 +20661,13 @@ exports.Switch = Switch;
   __modules["src/objects/key.js"] = function (module, exports, __require) {
 // ============================================================================
 // 钥匙：开关子类，开启物质不消耗（一旦开启永久打开）。
-// 渲染为神话金钥匙（开启时发光）。
+// 渲染为简洁的黄铜钥匙本体（开启时一层淡金光）。
 // 开启后通常联动打开通关口（关卡接线 key.onOpen(() => door.open())）。
 // ============================================================================
 
 const { Switch } = __require('src/objects/switch.js');;
 const { THEME } = __require('src/render/theme.js');;
+const { sfx } = __require('src/core/audio.js');;
 
 class Key extends Switch {
   get hoverLabel() {
@@ -16459,36 +20677,52 @@ class Key extends Switch {
     super({ consumeRate, color, ...rest });
   }
 
+  /** 开锁音（Key = 永久开启的开关；异常关闭按普通开关闭合音） */
+  _sfxChange(eff) {
+    sfx(eff ? 'key.open' : 'switch.close');
+  }
+
+  // ---------------------------------------------------------------------------
+  // 渲染（简洁版）：黄铜钥匙本体（杆 + 两齿 + 圆环），开锁时只有一层很淡的金光；
+  //   无展示牌/漂浮/闪光等装饰。
+  // ---------------------------------------------------------------------------
   render(ctx) {
-    const cx = this.x + this.w / 2;
     const cy = this.y + this.h / 2;
+    const open = !!this.open;
+    const bowR = Math.min(9, this.h * 0.34);
+    const metal = ctx.createLinearGradient(this.x, cy - bowR, this.x + this.w, cy + bowR);
+    metal.addColorStop(0, open ? '#ffe9b0' : '#d8b56c');
+    metal.addColorStop(1, open ? '#a9782a' : '#7a5a20');
     ctx.save();
-    ctx.shadowColor = this.open ? THEME.gold.light : '#a9722a';
-    ctx.shadowBlur = this.open ? 18 : 6;
-    ctx.strokeStyle = this.open ? THEME.gold.light : '#c9a45a';
-    ctx.lineWidth = 3;
+    ctx.strokeStyle = metal;
+    ctx.lineWidth = Math.max(2.2, this.h * 0.1);
     ctx.lineCap = 'round';
+    ctx.shadowColor = open ? THEME.gold.light : '#a9722a';
+    ctx.shadowBlur = open ? 4 : 1.5;
     // 钥匙杆
     ctx.beginPath();
-    ctx.moveTo(this.x + 6, cy);
-    ctx.lineTo(this.x + this.w, cy);
+    ctx.moveTo(this.x + bowR + 2, cy);
+    ctx.lineTo(this.x + this.w - 2, cy);
     ctx.stroke();
-    // 齿
+    // 齿（两枚）
+    const toothY = Math.min(this.h * 0.34, 9);
     ctx.beginPath();
     ctx.moveTo(this.x + this.w * 0.72, cy);
-    ctx.lineTo(this.x + this.w * 0.72, cy + 8);
+    ctx.lineTo(this.x + this.w * 0.72, cy + toothY);
     ctx.moveTo(this.x + this.w * 0.9, cy);
-    ctx.lineTo(this.x + this.w * 0.9, cy + 9);
+    ctx.lineTo(this.x + this.w * 0.9, cy + toothY + 1);
     ctx.stroke();
-    // 圆环（钥匙头）
+    // 钥匙头圆环
     ctx.beginPath();
-    ctx.arc(this.x + 6, cy, 9, 0, Math.PI * 2);
+    ctx.arc(this.x + bowR + 1, cy, bowR, 0, Math.PI * 2);
     ctx.stroke();
-    // 钥匙头内亮
-    ctx.fillStyle = this.open ? 'rgba(255,240,190,0.35)' : 'rgba(120,90,40,0.25)';
-    ctx.beginPath();
-    ctx.arc(this.x + 6, cy, 4, 0, Math.PI * 2);
-    ctx.fill();
+    // 开锁微光（只一层很淡的金，关态不画）
+    if (open) {
+      ctx.fillStyle = 'rgba(255,233,176,0.26)';
+      ctx.beginPath();
+      ctx.arc(this.x + bowR + 1, cy, bowR * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.restore();
     this.renderLabel(ctx);
   }
@@ -16504,6 +20738,8 @@ exports.Key = Key;
 
 const { Obj } = __require('src/objects/obj.js');;
 const { THEME } = __require('src/render/theme.js');;
+const { sfx } = __require('src/core/audio.js');;
+const { puffFx } = __require('src/objects/fx.js');;
 
 class Door extends Obj {
   get hoverLabel() {
@@ -16514,6 +20750,9 @@ class Door extends Obj {
     this.color = color;
     this.isOpen = false;
     this.key = null; // 关联钥匙（可选，供检查）
+    // 纯视觉：闸门升起的平滑进度（0..1，约 0.3s；通关判定只看 isOpen，立即生效）
+    this._openT = 0;
+    this._seenOpen = false; // 检测 false→true 的瞬间（开启动画起点，用于扬尘）
   }
 
   get isDoor() {
@@ -16521,102 +20760,146 @@ class Door extends Obj {
   }
 
   open() {
+    if (this.isOpen) return; // 已开的门再 open() 不是状态变化
     this.isOpen = true;
+    sfx('door.open');
   }
 
-  render(ctx, opts) {
-    const t = opts?.time ?? 0;
-    ctx.save();
+  /** 视觉动画推进（纯表现层：门板升起 + 尘雾；不影响碰撞/通关时机） */
+  update(dt, scene) {
+    const target = this.isOpen ? 1 : 0;
+    // 开 ~0.32s、关 ~0.4s（指数趋近；近目标时直接落定，避免无限尾数）
+    const k = 1 - Math.exp(-(this.isOpen ? 9 : 7.5) * dt);
+    this._openT += (target - this._openT) * k;
+    if (Math.abs(this._openT - target) < 0.004) this._openT = target;
+    if (this.isOpen && !this._seenOpen) {
+      this._seenOpen = true;
+      // 开门瞬间：门底两侧扬起一点石尘（复用 B 组 fx.puffFx；纯视觉）
+      if (scene && typeof scene.addObject === 'function') {
+        puffFx(scene, this.x + this.w * 0.28, this.y + this.h - 3, { color: '198,180,255', spread: 16, r: 5, n: 5, life: 0.4 });
+        puffFx(scene, this.x + this.w * 0.72, this.y + this.h - 3, { color: '198,180,255', spread: 16, r: 5, n: 5, life: 0.4 });
+      }
+    } else if (!this.isOpen) {
+      this._seenOpen = false;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 渲染（简洁版）：深紫石/钢拱框 + 一条细金内缘 + 升降闸门（深钢门板 + 2 道钢带）：
+  //   门板平滑升起、底部光缝随之上扫；开=暖金透光，关=暗。无符文/拱心石/光尘装饰。
+  // ---------------------------------------------------------------------------
+  render(ctx) {
     const W = this.w;
     const H = this.h;
-    const cx = this.x + W / 2;
-    const cy = this.y + H / 2;
-    // 石拱门框 + 砖纹
-    const g = ctx.createLinearGradient(this.x, this.y, this.x, this.y + H);
-    g.addColorStop(0, '#545a80');
-    g.addColorStop(1, '#262a44');
-    ctx.fillStyle = g;
-    this._arch(ctx, 0);
-    ctx.fill();
+    if (!(W > 0 && H > 0)) return;
+    const x = this.x;
+    const y = this.y;
+    const cx = x + W / 2;
+    const openT = Math.max(0, Math.min(1, this._openT ?? (this.isOpen ? 1 : 0)));
+    const ease = openT * openT * (3 - 2 * openT); // smoothstep
+    const frame = Math.max(2, Math.min(5, Math.floor(Math.min(W, H) * 0.12))); // 门框厚度
     ctx.save();
-    this._arch(ctx, 0);
+    // ---- 1) 门洞内容（裁剪在拱内）----
+    ctx.save();
+    this._arch(ctx, frame);
     ctx.clip();
-    ctx.strokeStyle = 'rgba(0,0,0,0.20)';
-    ctx.lineWidth = 1;
-    for (let ty = this.y + 12; ty < this.y + H; ty += 13) {
-      ctx.beginPath();
-      ctx.moveTo(this.x + 2, ty);
-      ctx.lineTo(this.x + W - 2, ty);
-      ctx.stroke();
+    // 暗腔
+    ctx.fillStyle = 'rgba(5,4,16,0.95)';
+    ctx.fillRect(x, y, W, H);
+    // 开启透光：上金下紫的竖渐变（强度随 ease）
+    if (ease > 0.01) {
+      const lg = ctx.createLinearGradient(0, y, 0, y + H);
+      lg.addColorStop(0, `rgba(255,226,160,${(0.5 * ease).toFixed(3)})`);
+      lg.addColorStop(0.55, `rgba(255,205,110,${(0.72 * ease).toFixed(3)})`);
+      lg.addColorStop(1, `rgba(150,100,240,${(0.42 * ease).toFixed(3)})`);
+      ctx.fillStyle = lg;
+      ctx.fillRect(x, y, W, H);
     }
-    ctx.restore();
-    // 拱框描边
-    ctx.strokeStyle = '#12152a';
-    ctx.lineWidth = 2;
-    this._arch(ctx, 0);
-    ctx.stroke();
-    // 金色拱沿
-    ctx.strokeStyle = THEME.gold.deep;
-    ctx.lineWidth = 1.6;
+    // ---- 2) 升降闸门（裁剪在拱内；升起时滑出拱顶）----
+    const inset = frame + 1;
+    const pw = Math.max(2, W - inset * 2);
+    const ph = Math.max(2, H - inset * 2);
+    const rise = ease * (ph + frame + 4);
+    ctx.save();
+    this._arch(ctx, inset);
+    ctx.clip();
+    ctx.translate(0, -rise);
+    // 门板主体（深钢）
+    const pg = ctx.createLinearGradient(x + inset, 0, x + inset + pw, 0);
+    pg.addColorStop(0, '#565d7e');
+    pg.addColorStop(0.4, '#3a3f5c');
+    pg.addColorStop(1, '#20243c');
+    ctx.fillStyle = pg;
+    ctx.fillRect(x + inset, y + inset, pw, ph);
+    ctx.strokeStyle = 'rgba(8,6,22,0.9)';
+    ctx.lineWidth = 1.2;
+    ctx.strokeRect(x + inset, y + inset, pw, ph);
+    // 横向钢带（2 条，仅一道亮面）
+    for (let i = 0; i < 2; i++) {
+      const by = y + inset + (ph * (i + 0.5)) / 2;
+      const bh = Math.max(1.2, ph * 0.03);
+      const bg = ctx.createLinearGradient(0, by - bh, 0, by + bh);
+      bg.addColorStop(0, '#7a84a8');
+      bg.addColorStop(1, '#252a44');
+      ctx.fillStyle = bg;
+      ctx.fillRect(x + inset, by - bh, pw, bh * 2);
+      ctx.strokeStyle = 'rgba(8,6,22,0.55)';
+      ctx.lineWidth = 0.8;
+      ctx.strokeRect(x + inset, by - bh, pw, bh * 2);
+    }
+    // 门板下缘光缝（关门时微弱；开门时随门板上升扫过——"光缝扫过"）
+    const seamY = y + inset + ph;
+    const seamA = 0.25 + 0.75 * ease;
+    ctx.strokeStyle = `rgba(255,240,190,${(0.55 * seamA).toFixed(3)})`;
+    ctx.lineWidth = Math.max(1, frame * 0.4);
     ctx.shadowColor = THEME.gold.light;
-    ctx.shadowBlur = 6;
-    this._arch(ctx, 3);
+    ctx.shadowBlur = 4 + 6 * ease;
+    ctx.beginPath();
+    ctx.moveTo(x + inset, seamY);
+    ctx.lineTo(x + W - inset, seamY);
     ctx.stroke();
     ctx.shadowBlur = 0;
-    // 拱心石
-    ctx.fillStyle = '#6a6f96';
-    ctx.fillRect(cx - 3, this.y + 1, 6, 7);
-    ctx.strokeStyle = THEME.gold.deep;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(cx - 3, this.y + 1, 6, 7);
-    // 门内
-    if (this.isOpen) {
-      const rg = ctx.createRadialGradient(cx, cy, 2, cx, cy, H * 0.6);
-      rg.addColorStop(0, '#f2e6ff');
-      rg.addColorStop(0.45, THEME.portal.base);
-      rg.addColorStop(1, 'rgba(90,42,154,0)');
-      ctx.save();
-      this._arch(ctx, 5);
-      ctx.clip();
-      ctx.fillStyle = rg;
-      ctx.fillRect(this.x, this.y, W, H);
-      // 旋转符文粒子
-      const n = 9;
-      for (let i = 0; i < n; i++) {
-        const a = t * 1.3 + (i / n) * Math.PI * 2;
-        const rr = 5 + ((i * 37) % 22);
-        const px = cx + Math.cos(a) * rr;
-        const py = cy + Math.sin(a) * rr * 0.72;
-        ctx.fillStyle = 'rgba(242,230,255,0.85)';
-        ctx.beginPath();
-        ctx.arc(px, py, 1.6, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.restore();
-      // 门口光晕
-      ctx.shadowColor = THEME.portal.base;
-      ctx.shadowBlur = 22;
-      ctx.strokeStyle = 'rgba(199,139,255,0.7)';
-      ctx.lineWidth = 2;
-      this._arch(ctx, 5);
-      ctx.stroke();
-      ctx.shadowBlur = 0;
-    } else {
-      ctx.fillStyle = 'rgba(6,6,18,0.92)';
-      this._arch(ctx, 4);
-      ctx.fill();
-    }
+    ctx.restore(); // 门板裁剪结束
+    ctx.restore(); // 门洞裁剪结束
+
+    // ---- 3) 门框：深紫石/钢拱环 + 一条细金内缘（无符文/拱心石/铆钉）----
+    ctx.beginPath();
+    this._archTrail(ctx, 0);
+    this._archTrail(ctx, frame);
+    const stone = ctx.createLinearGradient(x, y, x, y + H);
+    stone.addColorStop(0, '#545a80');
+    stone.addColorStop(0.5, '#3a3f5c');
+    stone.addColorStop(1, '#22263f');
+    ctx.fillStyle = stone;
+    ctx.fill('evenodd');
+    ctx.strokeStyle = 'rgba(8,6,22,0.92)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    this._archTrail(ctx, 0);
+    ctx.stroke();
+    // 细金内缘（开=稍亮，无辉光）
+    ctx.beginPath();
+    this._arch(ctx, frame + 0.5);
+    ctx.strokeStyle = ease > 0.03 ? 'rgba(255,233,176,0.75)' : THEME.gold.deep;
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
     ctx.restore();
   }
 
-  /** 拱形路径；inset 为向内的缩进 */
+  /** 拱形路径（独立 beginPath；inset 为向内缩进） */
   _arch(ctx, inset) {
+    ctx.beginPath();
+    this._archTrail(ctx, inset);
+    ctx.closePath();
+  }
+
+  /** 向当前路径追加拱形轮廓（不自开路径：供 even-odd「门框环」组合子路径用） */
+  _archTrail(ctx, inset) {
     const x = this.x + inset;
     const y = this.y + inset;
     const w = this.w - inset * 2;
     const h = this.h - inset * 2;
     const r = w / 2;
-    ctx.beginPath();
     ctx.moveTo(x, y + h);
     ctx.lineTo(x, y + r);
     ctx.arcTo(x, y, x + r, y, r);
@@ -16638,9 +20921,16 @@ exports.Door = Door;
 // ============================================================================
 
 const { Container } = __require('src/objects/container.js');;
-const { THEME, rr, drawFlame } = __require('src/render/theme.js');;
+const { rr, drawFlame } = __require('src/render/theme.js');;
 const { flameColorOf } = __require('src/chem/substances.js');;
 const { CFG } = __require('src/core/config.js');;
+const { sfx } = __require('src/core/audio.js');;
+
+/** 墙钟秒（音效限频用：灯的点燃/熄灭入口没有 scene 引用） */
+function sfxNow() {
+  if (typeof performance !== 'undefined' && typeof performance.now === 'function') return performance.now() / 1000;
+  return Date.now() / 1000;
+}
 
 class Lamp extends Container {
   constructor({ x, y, w = 40, h = 40, autoOn = false, range = CFG.lampRange, lightRange = CFG.lampLightRange, highTemp = false, ...rest } = {}) {
@@ -16677,11 +20967,24 @@ class Lamp extends Container {
   }
 
   ignite() {
+    if (this.lit) return; // 已点着 → 不是状态变化
     this.lit = true;
+    // 点火音：0.12s 限频（防止同一帧被反复熄灭/点燃时刷屏）
+    const now = sfxNow();
+    if (now - (this._sfxT ?? -1) >= 0.12) {
+      this._sfxT = now;
+      sfx('chem.ignite');
+    }
   }
 
   extinguish() {
+    if (!this.lit) return; // 已熄灭 → 不是状态变化
     this.lit = false;
+    const now = sfxNow();
+    if (now - (this._sfxT ?? -1) >= 0.12) {
+      this._sfxT = now;
+      sfx('chem.extinguish');
+    }
   }
 
   /** 灯面可容纳的沉淀质量上限（g）：按灯面区域面积估算，防止粉末全部挤在灯框里 */
@@ -16690,11 +20993,11 @@ class Lamp extends Container {
     return Math.max(2, (r.w * r.h) / 36 * 0.2); // 约每 36px² 放一颗（0.2g）
   }
 
-  /** 火焰动画：点燃快速淡入、熄灭缓慢淡出；灯上沉淀颗粒照常沉降（不再滑落） */
+  /** 火焰动画：点燃 0.3s 渐强、熄灭 ~0.33s 渐弱；灯上沉淀颗粒照常沉降（不再滑落） */
   update(dt, scene) {
     super.update(dt, scene);
     const target = this.lit ? 1 : 0;
-    const k = this.lit ? 11 : 4.5;
+    const k = this.lit ? 3.6 : 3.2; // 指数趋近：点燃约 0.3s 到稳定、熄灭渐弱
     this.flameLevel += (target - this.flameLevel) * Math.min(1, k * dt);
     if (Math.abs(this.flameLevel - target) < 0.01) this.flameLevel = target;
     // 焰色反应检测：火焰区域物体的表层物质（灯上沉淀 → 灯焰上物块/玩家）
@@ -16760,75 +21063,89 @@ class Lamp extends Container {
     return { x: bx - w / 2, y: fy - h + 2, w, h };
   }
 
+  // ---------------------------------------------------------------------------
+  // 渲染（简洁版）：酒精灯 = 黄铜灯身 + 灯芯 + 火焰；宽炉条 = 铜条 + 一排火焰。
+  //   保留点燃 0.3s 渐强 / 熄灭渐弱 + 轻微摇曳；不加灯罩/加强筋/底座铆钉等装饰。
+  // ---------------------------------------------------------------------------
   render(ctx, opts) {
     const t = opts?.time ?? 0;
     const thin = this.h < 20;
     const bx = this.x + this.w / 2;
     const fy = this.flameY();
+    const x = this.x;
+    const y = this.y;
+    const w = this.w;
+    const h = this.h;
+    const fl = this.flameLevel;
     if (thin) {
-      // 喷灯：青铜炉条 + 一排火焰
+      // 宽炉条：一块铜条 + 一排火焰（原版轮廓）
       ctx.save();
-      const g = ctx.createLinearGradient(this.x, this.y, this.x, this.y + this.h);
+      const g = ctx.createLinearGradient(x, y, x, y + h);
       g.addColorStop(0, '#8a6420');
       g.addColorStop(1, '#4a3410');
       ctx.fillStyle = g;
-      rr(ctx, this.x, this.y, this.w, this.h, 4);
+      rr(ctx, x, y, w, h, Math.max(2, Math.min(4, h * 0.3)));
       ctx.fill();
       ctx.strokeStyle = '#2a1c08';
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 1.4;
       ctx.stroke();
-      // 炉口纹
+      // 炉口纹（几道暗槽，原版样式）
       ctx.fillStyle = 'rgba(0,0,0,0.25)';
-      for (let i = 0; i < Math.floor(this.w / 12); i++) {
-        ctx.fillRect(this.x + 4 + i * 12, this.y + 2, 5, this.h - 4);
+      for (let i = 0; i < Math.max(2, Math.floor(w / 12)); i++) {
+        ctx.fillRect(x + 4 + i * 12, y + 2, 5, h - 4);
       }
       ctx.restore();
-      if (this.flameLevel > 0.01) {
+      if (fl > 0.01) {
         const fc = this.flameTintCur ?? (this.highTemp ? '#4fb6ff' : '#ff7a3d');
         const inner = this.flameTintCur ? lightenHex(fc, 0.55) : (this.highTemp ? '#d8f6ff' : '#fff3c4');
-        const n = Math.max(2, Math.floor(this.w / 26));
-        const grow = 0.25 + 0.75 * this.flameLevel;
+        const n = Math.max(2, Math.floor(w / 26));
+        const grow = 0.25 + 0.75 * fl;
         for (let i = 0; i < n; i++) {
-          const fx = this.x + (i + 0.5) * (this.w / n);
+          const fx = x + (i + 0.5) * (w / n);
           ctx.save();
-          ctx.globalAlpha = this.flameLevel;
+          ctx.globalAlpha = fl;
           drawFlame(ctx, fx, fy + 2, (17 + Math.sin(t * 11 + i * 1.9) * 2) * grow, fc, inner, t + i * 1.7);
           ctx.restore();
         }
       }
     } else {
-      // 酒精灯：青铜灯身
+      // 酒精灯：黄铜灯身（简单梯形罐，接近原版轮廓）+ 灯芯 + 火焰
+      const bodyTop = y + h - 22;
+      const bodyBottom = y + h;
       ctx.save();
-      const g = ctx.createLinearGradient(this.x, this.y, this.x, this.y + this.h);
+      const g = ctx.createLinearGradient(x, y, x, y + h);
       g.addColorStop(0, '#c9932f');
       g.addColorStop(0.5, '#8a6420');
       g.addColorStop(1, '#4a3410');
       ctx.fillStyle = g;
       ctx.beginPath();
-      ctx.moveTo(this.x + 5, this.y + this.h - 6);
-      ctx.lineTo(this.x + this.w - 5, this.y + this.h - 6);
-      ctx.lineTo(this.x + this.w - 10, this.y + this.h - 22);
-      ctx.lineTo(this.x + 10, this.y + this.h - 22);
+      ctx.moveTo(x + 5, bodyBottom - 6);
+      ctx.lineTo(x + w - 5, bodyBottom - 6);
+      ctx.lineTo(x + w - 10, bodyTop);
+      ctx.lineTo(x + 10, bodyTop);
       ctx.closePath();
       ctx.fill();
       ctx.strokeStyle = '#2a1c08';
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 1.4;
       ctx.stroke();
       // 灯芯
       ctx.fillStyle = '#2a2418';
-      ctx.fillRect(bx - 2, this.y + this.h - 27, 4, 8);
+      ctx.fillRect(bx - 2, bodyTop - 5, 4, 8);
       ctx.restore();
-      if (this.flameLevel > 0.01) {
+      if (fl > 0.01) {
         const fc = this.flameTintCur ?? (this.highTemp ? '#4fb6ff' : '#ff7a3d');
         const inner = this.flameTintCur ? lightenHex(fc, 0.55) : (this.highTemp ? '#d8f6ff' : '#fff3c4');
-        const grow = 0.25 + 0.75 * this.flameLevel;
+        const grow = 0.25 + 0.75 * fl;
+        // 火苗轻微摇曳（确定性 sin；保住点燃渐强/熄灭渐弱的手感）
+        const sway = Math.sin(t * 8.5) * 0.6 + Math.sin(t * 13.7 + 1.3) * 0.35;
         ctx.save();
-        ctx.globalAlpha = this.flameLevel;
+        ctx.globalAlpha = fl;
+        ctx.translate(sway * grow, 0);
         drawFlame(ctx, bx, fy + 2, (20 + Math.sin(t * 13) * 2) * grow, fc, inner, t);
         ctx.restore();
       }
     }
-    // 焰色反应：火焰区域铺一层特征色柔光（物体也在光里，视觉上"发同色的光"）
+    // 焰色反应：火焰区域铺一层特征色柔光（原有玩法视觉，保留）
     if (this.flameTintCur && this.flameLevel > 0.01) {
       ctx.save();
       const g = ctx.createRadialGradient(bx, fy, 4, bx, fy, 56);
@@ -16887,14 +21204,15 @@ exports.Lamp = Lamp;
   __modules["src/objects/blastlamp.js"] = function (module, exports, __require) {
 // ============================================================================
 // 酒精喷灯：酒精灯子类，提供"高温"（且隐式满足"加热"）与点燃源。
-// 造型（卡通化挂式酒精喷灯）：黄铜底座罐 → 预热盘 → 中央喷管（火焰出口）→
-// 侧立汽化管 + 银管与黑色旋钮；点燃时从喷管口冒出狭长高温蓝焰。
-// 风格与游戏一致的"玩具感"：统一深色描边 + 平涂渐变 + 一两笔高光，舍去写实细节
-// （滚花/多道高光/支架等）。宽炉条款（h<20）沿用老样式。
+// 造型：深钢炉体（黄铜包边/通风孔/铆钉/小压力表）→ 黄铜预热盘 → 中央喷管
+// （火焰出口）→ 侧立汽化管 + 黄铜管路与钢制阀门；点燃时从喷管口冒出狭长
+// 高温蓝焰（白热内芯）并给炉体/通风孔透出蓝白热光，熄灭渐弱。
+// 风格与游戏一致：深紫/金 + 黄铜/深钢金属 + 元素色霓虹；统一深色描边，
+// 动画全部为确定性 sin/指数缓动。宽炉条款（h<20）沿用酒精灯的炉条样式。
 // ============================================================================
 
 const { Lamp } = __require('src/objects/lamp.js');;
-const { rr } = __require('src/render/theme.js');;
+const { THEME, rr } = __require('src/render/theme.js');;
 
 class BlastLamp extends Lamp {
   constructor({ highTemp = true, color = '#8fd8ff', ...rest } = {}) {
@@ -16906,6 +21224,10 @@ class BlastLamp extends Lamp {
     return '喷灯';
   }
 
+  // ---------------------------------------------------------------------------
+  // 渲染（简洁版）：深钢炉体（黄铜上下细线）+ 预热盘 + 中央喷管 + 侧立汽化管 + 喷焰。
+  //   喷焰仍用 drawJet，点燃渐强 / 熄灭渐弱保留；无压力表/通风孔/阀门管线等装饰。
+  // ---------------------------------------------------------------------------
   render(ctx, opts) {
     const t = opts?.time ?? 0;
     const bx = this.x + this.w / 2;
@@ -16915,146 +21237,112 @@ class BlastLamp extends Lamp {
       super.render(ctx, opts);
       return;
     }
-    // ---- 卡通挂式酒精喷灯 ----
-    const x = this.x, y = this.y, w = this.w, h = this.h;
-    const baseTop = y + h - 18; // 底座罐体顶
+    const x = this.x;
+    const y = this.y;
+    const w = this.w;
+    const h = this.h;
+    const baseTop = y + h - 18; // 炉体顶
+    const fl = this.flameLevel;
+    const hot = this.highTemp;
+    const flameColor = hot ? '#4fb6ff' : '#ff9a3d';
     ctx.save();
-    // 底座罐体
-    const g = ctx.createLinearGradient(x, baseTop, x, y + h);
-    g.addColorStop(0, '#c9932f');
-    g.addColorStop(1, '#6e4e14');
-    ctx.fillStyle = g;
-    rr(ctx, x + 3, baseTop, w - 6, y + h - baseTop, 5);
+    // ---- 1) 炉体（深钢罐 + 上下黄铜细线）----
+    rr(ctx, x + 2, baseTop, w - 4, y + h - baseTop - 1, 4);
+    const bg = ctx.createLinearGradient(x, baseTop, x, y + h);
+    bg.addColorStop(0, '#4a4f70');
+    bg.addColorStop(1, '#1b2038');
+    ctx.fillStyle = bg;
     ctx.fill();
-    ctx.strokeStyle = '#2a1c08';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    // 顶盖（椭圆圆盘）
-    ctx.fillStyle = '#b5882a';
-    ctx.beginPath();
-    ctx.ellipse(bx, baseTop, (w - 6) / 2, 4, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = '#2a1c08';
+    ctx.strokeStyle = 'rgba(8,6,22,0.9)';
     ctx.lineWidth = 1.2;
     ctx.stroke();
-    // 盖子左侧一笔高光（卡通感）
-    ctx.strokeStyle = 'rgba(255,240,190,0.5)';
-    ctx.lineWidth = 1.6;
-    ctx.beginPath();
-    ctx.ellipse(bx - 2, baseTop - 0.6, (w - 6) / 2 - 7, 2.2, 0, Math.PI * 1.08, Math.PI * 1.75);
-    ctx.stroke();
-    // 调节旋钮（底座右侧：圆钮 + 6 道齿痕）
-    const kx = x + w - 9, ky = baseTop + 8;
-    ctx.fillStyle = '#c9932f';
-    ctx.beginPath();
-    ctx.arc(kx, ky, 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = '#2a1c08';
-    ctx.lineWidth = 1.2;
-    ctx.stroke();
-    ctx.strokeStyle = 'rgba(42,28,8,0.55)';
-    ctx.lineWidth = 0.9;
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * Math.PI * 2 + 0.26;
+    ctx.strokeStyle = THEME.gold.deep;
+    ctx.lineWidth = 1;
+    for (const ly of [baseTop + 1.4, y + h - 2.2]) {
       ctx.beginPath();
-      ctx.moveTo(kx + Math.cos(a) * 2.4, ky + Math.sin(a) * 2.4);
-      ctx.lineTo(kx + Math.cos(a) * 4.6, ky + Math.sin(a) * 4.6);
+      ctx.moveTo(x + 4, ly);
+      ctx.lineTo(x + w - 4, ly);
       ctx.stroke();
     }
-    // 预热盘（小碟）
-    ctx.fillStyle = '#c9932f';
-    ctx.strokeStyle = '#2a1c08';
-    ctx.lineWidth = 1.3;
+    // ---- 2) 预热盘（炉体顶上的黄铜小碟）----
+    const dishRX = Math.max(5, w * 0.32);
     ctx.beginPath();
-    ctx.ellipse(bx, baseTop - 1, 14, 3.4, 0, 0, Math.PI * 2);
+    ctx.ellipse(bx, baseTop - 1, dishRX, 3.2, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#a9782a';
     ctx.fill();
+    ctx.strokeStyle = 'rgba(40,26,8,0.8)';
+    ctx.lineWidth = 1.1;
     ctx.stroke();
     ctx.fillStyle = '#3a2c10';
     ctx.beginPath();
-    ctx.ellipse(bx, baseTop - 1.2, 7, 1.6, 0, 0, Math.PI * 2);
+    ctx.ellipse(bx, baseTop - 1.4, dishRX * 0.5, 1.5, 0, 0, Math.PI * 2);
     ctx.fill();
-    // 中央喷管（汽化管：火焰出口在顶部）
-    const cw = 11;
+    // ---- 3) 中央喷管（黄铜管，上窄下宽）+ 暗喷口 ----
+    const cw = Math.max(6, Math.min(11, w * 0.26));
     const cg = ctx.createLinearGradient(bx - cw / 2, 0, bx + cw / 2, 0);
-    cg.addColorStop(0, '#8a6420');
+    cg.addColorStop(0, '#6b4a18');
     cg.addColorStop(0.35, '#c9932f');
-    cg.addColorStop(1, '#6e4e14');
+    cg.addColorStop(0.62, '#9a7028');
+    cg.addColorStop(1, '#4a3410');
+    ctx.beginPath();
+    ctx.moveTo(bx - cw * 0.34, fy);
+    ctx.lineTo(bx - cw * 0.5, baseTop - 1);
+    ctx.lineTo(bx + cw * 0.5, baseTop - 1);
+    ctx.lineTo(bx + cw * 0.34, fy);
+    ctx.closePath();
     ctx.fillStyle = cg;
-    rr(ctx, bx - cw / 2, fy, cw, baseTop - 1 - fy, 2.5);
     ctx.fill();
     ctx.strokeStyle = '#2a1c08';
-    ctx.lineWidth = 1.3;
+    ctx.lineWidth = 1.2;
     ctx.stroke();
-    // 喷口（顶部暗口 + 亮缘）
-    ctx.fillStyle = '#171208';
+    // 喷口（暗口 + 点燃时口沿亮色）
     ctx.beginPath();
-    ctx.ellipse(bx, fy + 0.6, cw / 2 - 0.8, 1.7, 0, 0, Math.PI * 2);
+    ctx.ellipse(bx, fy + 0.6, cw * 0.4, 1.8, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#171208';
     ctx.fill();
-    ctx.strokeStyle = 'rgba(255,235,170,0.8)';
+    ctx.strokeStyle = fl > 0.03 ? (hot ? '#9fe6ff' : '#ffb340') : 'rgba(255,235,170,0.6)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.ellipse(bx, fy + 0.4, cw / 2 - 0.4, 1.9, 0, 0, Math.PI * 2);
+    ctx.ellipse(bx, fy + 0.4, cw * 0.44, 2, 0, 0, Math.PI * 2);
     ctx.stroke();
-    // 侧立汽化管（右侧较高，顶端开口）
-    const tw = 7, tX = bx + cw / 2 + 0.5;
+    // ---- 4) 侧立汽化管（右侧黄铜管 + 顶盖，简单一根）----
+    const tw = Math.max(5, Math.min(7, w * 0.18));
+    const tX = bx + cw * 0.5 + 0.5;
     const tg = ctx.createLinearGradient(tX, 0, tX + tw, 0);
-    tg.addColorStop(0, '#a97a24');
-    tg.addColorStop(0.4, '#c9932f');
-    tg.addColorStop(1, '#6e4e14');
+    tg.addColorStop(0, '#6b4a18');
+    tg.addColorStop(0.42, '#c9932f');
+    tg.addColorStop(1, '#4a3410');
+    rr(ctx, tX, fy - 5, tw, baseTop - 1 - (fy - 5), Math.max(1.6, tw * 0.28));
     ctx.fillStyle = tg;
-    rr(ctx, tX, fy - 5, tw, baseTop - 1 - (fy - 5), 2);
     ctx.fill();
     ctx.strokeStyle = '#2a1c08';
-    ctx.lineWidth = 1.2;
+    ctx.lineWidth = 1.1;
     ctx.stroke();
+    // 管顶暗口 + 黄铜盖环
     ctx.fillStyle = '#221a0a';
     ctx.beginPath();
-    ctx.ellipse(tX + tw / 2, fy - 4.6, tw / 2 - 0.8, 1.3, 0, 0, Math.PI * 2);
+    ctx.ellipse(tX + tw / 2, fy - 4.6, tw / 2 - 0.8, 1.2, 0, 0, Math.PI * 2);
     ctx.fill();
-    // 银色侧管（单笔粗线）+ 黑色旋钮
-    ctx.strokeStyle = '#b8c4cc';
-    ctx.lineCap = 'round';
-    ctx.lineWidth = 3.2;
-    ctx.beginPath();
-    ctx.moveTo(bx - cw / 2, fy + 7);
-    ctx.lineTo(x - 8, fy + 7);
-    ctx.stroke();
-    ctx.lineCap = 'butt';
-    ctx.fillStyle = '#1a1a1a';
-    rr(ctx, x - 17, fy + 2, 10, 10, 3.5);
-    ctx.fill();
-    ctx.strokeStyle = '#000';
-    ctx.lineWidth = 1.2;
-    ctx.stroke();
-    ctx.strokeStyle = '#3c3c3c';
-    ctx.lineWidth = 0.9;
-    for (let i = 0; i < 4; i++) {
-      ctx.beginPath();
-      ctx.moveTo(x - 14.5 + i * 2.4, fy + 3.5);
-      ctx.lineTo(x - 14.5 + i * 2.4, fy + 10.5);
-      ctx.stroke();
-    }
-    // 旋钮左上小高光
-    ctx.fillStyle = 'rgba(255,255,255,0.22)';
-    ctx.beginPath();
-    ctx.ellipse(x - 13.5, fy + 4.4, 2.6, 1.4, -0.5, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.fillStyle = THEME.gold.deep;
+    ctx.fillRect(tX - 1, fy - 3.4, tw + 2, 1.6);
     ctx.restore();
-    // 喷焰：喷管口冒出的狭长高温蓝焰（窄焰 + 白热内芯）
-    if (this.flameLevel > 0.01) {
-      const fc = this.flameTintCur ?? '#4fb6ff';
-      const inner = this.flameTintCur ? lightenHex(fc, 0.6) : '#eaf8ff';
-      const grow = 0.25 + 0.75 * this.flameLevel;
+    // ---- 5) 喷焰（drawJet；点燃渐强 / 熄灭渐弱 + 轻微摆动）----
+    if (fl > 0.01) {
+      const fc = this.flameTintCur ?? flameColor;
+      const inner = this.flameTintCur ? lightenHex(fc, 0.6) : (hot ? '#eaf8ff' : '#fff3c4');
+      const grow = 0.25 + 0.75 * fl;
+      const sway = Math.sin(t * 9.5) * 0.5;
       ctx.save();
-      ctx.globalAlpha = this.flameLevel;
+      ctx.globalAlpha = fl;
+      ctx.translate(sway * grow, 0);
       drawJet(ctx, bx, fy + 2.5, (19 + Math.sin(t * 14) * 1.8) * grow, fc, inner, t);
       ctx.restore();
     }
-    // 焰色反应：火焰区域铺一层特征色柔光（与酒精灯一致）
-    if (this.flameTintCur && this.flameLevel > 0.01) {
+    // 焰色反应：火焰区域铺一层特征色柔光（与酒精灯一致，保留玩法视觉）
+    if (this.flameTintCur && fl > 0.01) {
       ctx.save();
       const g2 = ctx.createRadialGradient(bx, fy, 4, bx, fy, 56);
-      g2.addColorStop(0, hexRgba(this.flameTintCur, 0.34 * this.flameLevel));
+      g2.addColorStop(0, hexRgba(this.flameTintCur, 0.34 * fl));
       g2.addColorStop(1, hexRgba(this.flameTintCur, 0));
       ctx.fillStyle = g2;
       ctx.fillRect(bx - 60, fy - 60, 120, 120);
@@ -17091,6 +21379,16 @@ function drawJet(ctx, x, y, h, color, innerColor, t) {
   ctx.quadraticCurveTo(x + w * 0.16, y - h * 0.36, x + w * 0.22, y - h * 0.03);
   ctx.closePath();
   ctx.fill();
+  // 火星（确定性相位，少量）
+  for (let i = 0; i < 2; i++) {
+    const ph = (t * 1.6 + i * 0.43) % 1;
+    ctx.globalAlpha = 0.5 * (1 - ph);
+    ctx.fillStyle = innerColor;
+    ctx.beginPath();
+    ctx.arc(x + Math.sin(t * 9 + i * 2.7) * w * 0.3, y - h * (0.6 + ph * 0.5), 0.9, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
   ctx.restore();
 }
 
@@ -17124,7 +21422,7 @@ exports.BlastLamp = BlastLamp;
   __modules["src/objects/sign.js"] = function (module, exports, __require) {
 // ============================================================================
 // 文字标签：关卡内显示说明文字（帮助玩家理解每个区域的机制）
-// 渲染为神秘石板 + 金色发光文字。
+// 渲染为简洁暗紫板 + 细金边 + 金色发光文字（无角件/铆钉/反光装饰）。
 // ============================================================================
 
 const { Obj } = __require('src/objects/obj.js');;
@@ -17152,13 +21450,15 @@ class Sign extends Obj {
     this.size = size;
   }
 
+  // ---------------------------------------------------------------------------
+  // 渲染（简洁版）：暗紫底板 + 一条细金边 + 金色发光文字；文字位置/字号保底逻辑不变。
+  // ---------------------------------------------------------------------------
   render(ctx) {
     const lines = this.text.split('\n');
     const size = this.size;
     // 屏幕最小字号保底：相机缩放后路牌字过小（移动端小视口 ~0.85×）。
     // ★ 保底取 12px（与药品标签同档）且 k 上限 1.15：路牌是**世界摆位**的文字
-    //   （编辑器按原字号排布），放大过猛会让相邻路牌互相压叠（用户截图复现：
-    //   13px 保底后两牌重叠、文案互相打架）——收敛幅度兼顾可读与摆位。
+    //   （编辑器按原字号排布），放大过猛会让相邻路牌互相压叠——收敛幅度兼顾可读与摆位。
     const k = Math.min(1.15, screenTextScale(ctx, size, 12));
     const s2 = size * k;
     const lh = s2 + 4 * k; // 紧凑行距（省高度：多行牌更少占屏）
@@ -17167,7 +21467,7 @@ class Sign extends Obj {
     const maxW = Math.max(...lines.map((ln) => ctx.measureText(ln).width));
     // 盒模型：this.y = 石板顶（与编辑器选中框一致）；文字基线 = 顶 + size + 8
     const baseY = this.y + s2 + 6 * k;
-    // 石板底：顶边在文字上方留出 padding（整块等比 k，更轻薄的底）
+    // 暗紫底板 + 细金边
     ctx.fillStyle = 'rgba(14,10,38,0.66)';
     rr(ctx, this.x - 5 * k, this.y, maxW + 10 * k, lines.length * lh + 14 * k, 6 * k);
     ctx.fill();
@@ -17197,6 +21497,7 @@ exports.Sign = Sign;
 
 const { Switch } = __require('src/objects/switch.js');;
 const { THEME, rr, glowText, screenTextScale } = __require('src/render/theme.js');;
+const { getSubstance } = __require('src/chem/substances.js');;
 
 class GasDetector extends Switch {
   get hoverLabel() {
@@ -17211,12 +21512,35 @@ class GasDetector extends Switch {
     super({ x, y, w, h, mode: 'chemical', color, onOpen, onClose, ...rest });
     this.gas = gas; // 检测的气体 id
     this.threshold = threshold; // 触发阈值（g）
+    // 纯视觉：指针摆动/气量条缓动（0..1，确定性，不参与判定）
+    this._level = 0;
+    this._needle = 0;
+  }
+
+  /** 当前检测到的目标气体质量（含气室分区语义；render/update 共用） */
+  _gasMass(scene) {
+    const reactGas = scene && typeof scene.reactGasFor === 'function'
+      ? scene.reactGasFor(this)
+      : (scene && scene._reactGas) || {};
+    return this.gas ? reactGas[this.gas] ?? 0 : 0;
+  }
+
+  /** 视觉计时：指针/气量条缓动（关闭回落、激活摆到高位）——约 0.3s 短过渡 */
+  update(dt, scene) {
+    super.update(dt, scene);
+    const m = this._gasMass(scene);
+    const target = this.gas ? Math.max(0, Math.min(1, m / Math.max(1e-3, this.threshold))) : 0;
+    this._level += (target - this._level) * (1 - Math.exp(-9 * dt));
+    // 激活（含放入开启物质）→ 指针至少摆到高位；关闭 → 回落到真实气量
+    const nTarget = this.open ? Math.max(0.75, this._level) : this._level * 0.35;
+    this._needle += (nTarget - this._needle) * (1 - Math.exp(-8 * dt));
   }
 
   /** 检测开态：只有"反应产生的气体"超标 或 放入开启物质（任一满足即开；其余复用 Switch.update + "&"联锁）。
-   *  不检测大气里预置的气体（如初始 atmosphere.add('H2', 8)），只检测反应正在产生的那种气体。 */
+   *  不检测大气里预置的气体（如初始 atmosphere.add('H2', 8)），只检测反应正在产生的那种气体。
+   *  气室内部：只读取该气室内部的产气（外部产气不会激活内部探测器，反之亦然）。 */
   _isOpenTarget(scene) {
-    const gasOn = this.gas ? !!(scene._reactGas && scene._reactGas[this.gas] > this.threshold) : false;
+    const gasOn = this.gas ? this._gasMass(scene) > this.threshold : false;
     const openingOn = this.opening ? this.openingMass() > 0 : false;
     return gasOn || openingOn;
   }
@@ -17233,56 +21557,91 @@ class GasDetector extends Switch {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // 渲染（简洁版）：深钢仪表壳 + 黄铜细边 + 一块简仪表窗（水平气量条 + 指针标记）+
+  //   气体色状态光；指针缓动保留（约 0.3s）。无刻度环/铆钉/玻璃罩等装饰。
+  // ---------------------------------------------------------------------------
   render(ctx, opts) {
     const scene = opts?.scene ?? null;
     const eff = this._lastEff ?? this.effectiveOpen(scene); // 有效输出态
     const phys = this.open; // 物理检测态（气体超标）
     const waiting = this.and && phys && !eff; // 已检测到气体但等待"&"配对
-    const cx = this.x + this.w / 2;
-    const cy = this.y + this.h / 2;
+    const x = this.x;
+    const y = this.y;
+    const w = this.w;
+    const h = this.h;
+    const level = Math.max(0, Math.min(1, this._level ?? 0));
+    const needle = Math.max(0, Math.min(1, this._needle ?? 0));
+    const gasColor = (this.gas && getSubstance(this.gas)?.gasColor) || THEME.water.light;
     ctx.save();
-    // 蓝宝石底座（区别于普通金开关）
-    const g = ctx.createLinearGradient(this.x, this.y, this.x, this.y + this.h);
-    g.addColorStop(0, eff ? '#3a5a82' : '#2c4a6e');
-    g.addColorStop(1, '#16263c');
-    ctx.fillStyle = g;
-    rr(ctx, this.x, this.y, this.w, this.h, 6);
-    ctx.fill();
-    // 边框：开=亮蓝发光，等=橙，关=暗（一眼可辨）
-    const frame = eff ? THEME.water.light : waiting ? '#ffb340' : '#0e1a2c';
-    ctx.strokeStyle = frame;
-    ctx.lineWidth = eff ? 2 : waiting ? 1.5 : 1;
-    ctx.shadowColor = eff ? THEME.water.light : waiting ? '#ffb340' : 'transparent';
-    ctx.shadowBlur = eff ? 14 : waiting ? 8 : 0;
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-    // 状态珠：开=亮蓝白实心发光，等=橙，关=暗灰空心
+    // 地面淡阴影
+    ctx.fillStyle = 'rgba(4,3,12,0.3)';
     ctx.beginPath();
-    ctx.arc(cx, cy, Math.min(this.w, 20) / 2, 0, Math.PI * 2);
-    if (!eff && !waiting) {
-      ctx.strokeStyle = 'rgba(130,160,200,0.6)';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    } else {
-      ctx.fillStyle = eff ? '#bfe6ff' : '#ffb340';
-      ctx.shadowColor = eff ? THEME.water.light : '#ffb340';
-      ctx.shadowBlur = eff ? 16 : waiting ? 12 : 0;
-      ctx.fill();
+    ctx.ellipse(x + w / 2, y + h + 0.5, w * 0.46, Math.max(1.5, h * 0.14), 0, 0, Math.PI * 2);
+    ctx.fill();
+    // 深钢仪表壳
+    const br = Math.max(3, Math.min(8, h * 0.3));
+    rr(ctx, x, y, w, h, br);
+    const base = ctx.createLinearGradient(x, y, x, y + h);
+    base.addColorStop(0, '#3a3f5c');
+    base.addColorStop(1, '#191d36');
+    ctx.fillStyle = base;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(8,6,24,0.9)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    // 黄铜细边（内嵌一线；激活时轻微亮起，不加辉光）
+    const pad = Math.max(1.4, Math.min(2.4, h * 0.07));
+    rr(ctx, x + pad, y + pad, w - pad * 2, h - pad * 2, Math.max(2, br - 1));
+    ctx.strokeStyle = eff ? 'rgba(255,215,106,0.7)' : waiting ? 'rgba(255,179,64,0.65)' : 'rgba(169,120,42,0.55)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // 简仪表窗（深紫玻璃面 + 一道细边）
+    const wx = x + Math.max(4, w * 0.1);
+    const wy = y + Math.max(3, h * 0.22);
+    const ww = Math.max(6, w - (wx - x) * 2);
+    const wh = Math.max(4, h - (wy - y) * 2);
+    rr(ctx, wx, wy, ww, wh, Math.max(1.5, wh * 0.25));
+    ctx.fillStyle = 'rgba(16,12,38,0.95)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(150,170,210,0.35)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // 气体色状态光（窗口内从左向右随气量淡入）
+    if (level > 0.01) {
+      ctx.save();
+      rr(ctx, wx, wy, ww, wh, Math.max(1.5, wh * 0.25));
+      ctx.clip();
+      ctx.globalAlpha = 0.18 + 0.3 * level;
+      ctx.fillStyle = gasColor;
+      ctx.fillRect(wx, wy, ww * level, wh);
+      ctx.globalAlpha = 1;
+      ctx.restore();
     }
-    ctx.shadowBlur = 0;
-    // 状态字：开 / 等 / 关（直接标在珠上）
-    ctx.fillStyle = eff ? '#062a44' : waiting ? '#4a2a08' : 'rgba(150,180,210,0.6)';
-    ctx.font = 'bold 9px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(eff ? '开' : waiting ? '等' : '关', cx, cy + 3);
-    ctx.textAlign = 'left';
+    // 气量条（窗口底部一条细条：轨道 + 气体色填充）
+    const barH = Math.max(1.6, wh * 0.16);
+    const barY = wy + wh - barH - Math.max(1, wh * 0.12);
+    ctx.fillStyle = 'rgba(255,255,255,0.10)';
+    ctx.fillRect(wx + 1, barY, ww - 2, barH);
+    if (level > 0.005) {
+      ctx.fillStyle = gasColor;
+      ctx.fillRect(wx + 1, barY, (ww - 2) * level, barH);
+    }
+    // 指针标记（竖线，位置由缓动的 _needle 决定；激活时金/气体色，关态灰）
+    const mx = wx + ww * needle;
+    ctx.strokeStyle = eff ? '#ffe9b0' : waiting ? '#ffb340' : '#aab4d0';
+    ctx.lineWidth = Math.max(1, ww * 0.022 + 0.6);
+    ctx.beginPath();
+    ctx.moveTo(mx, wy + Math.max(1.5, wh * 0.12));
+    ctx.lineTo(mx, barY - Math.max(1.5, wh * 0.1));
+    ctx.stroke();
     ctx.restore();
     this.renderLabel(ctx);
     // "&" 联锁连线（若配置了 and）
     if (this.and && scene) this.renderAndLink(ctx, scene, eff, waiting);
   }
 
-  /** 与另一个 "&" 开关画连接线（金/蓝=双开，橙=已检测等配对，暗=未检测） */
+  /** 与另一个 "&" 装置画联锁线 + 清晰的 & 徽章（与开关同语言，使用探测器青色） */
   renderAndLink(ctx, scene, eff, waiting) {
     const other = scene.byId[this.and];
     if (!other) return;
@@ -17290,24 +21649,51 @@ class GasDetector extends Switch {
     const ay = this.y + this.h / 2;
     const bx = other.x + other.w / 2;
     const by = other.y + other.h / 2;
-    const color = eff ? THEME.water.light : waiting ? '#ffb340' : 'rgba(120,140,170,0.35)';
+    const mx = (ax + bx) / 2;
+    const my = (ay + by) / 2;
+    const lineColor = eff ? 'rgba(127,224,255,0.95)' : waiting ? 'rgba(255,179,64,0.9)' : 'rgba(150,190,225,0.6)';
     ctx.save();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1.5;
-    ctx.shadowColor = eff || waiting ? color : 'transparent';
-    ctx.shadowBlur = eff || waiting ? 6 : 0;
-    ctx.setLineDash([4, 3]);
+    ctx.strokeStyle = 'rgba(8,6,20,0.6)';
+    ctx.lineWidth = 3.6;
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = 1.8;
+    ctx.setLineDash([6, 5]);
     ctx.beginPath();
     ctx.moveTo(ax, ay);
     ctx.lineTo(bx, by);
     ctx.stroke();
     ctx.setLineDash([]);
-    // "&" 标记
-    ctx.fillStyle = color;
-    ctx.font = 'bold 12px serif';
+    const k = screenTextScale(ctx, 11, 12, 1.35);
+    const s = Math.max(13, Math.round(15 * k));
+    ctx.save();
+    ctx.translate(mx, my);
+    ctx.rotate(Math.PI / 4);
+    rr(ctx, -s / 2, -s / 2, s, s, Math.max(2, s * 0.16));
+    ctx.fillStyle = 'rgba(10,14,30,0.94)';
+    ctx.fill();
+    ctx.strokeStyle = eff ? '#bfe6ff' : waiting ? '#ffcf7a' : 'rgba(150,190,225,0.82)';
+    ctx.lineWidth = eff ? 2 : 1.5;
+    if (eff) {
+      ctx.shadowColor = THEME.water.light;
+      ctx.shadowBlur = 8;
+    }
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = eff ? '#e8f8ff' : waiting ? '#ffd98c' : '#dbe8f4';
+    ctx.font = `bold ${Math.max(12, Math.round(12 * k))}px "Segoe UI", "Microsoft YaHei", serif`;
     ctx.textAlign = 'center';
-    ctx.fillText('&', (ax + bx) / 2, (ay + by) / 2 - 4);
+    ctx.textBaseline = 'middle';
+    if (eff) {
+      ctx.shadowColor = THEME.water.light;
+      ctx.shadowBlur = 6;
+    }
+    ctx.fillText('&', mx, my + 0.5);
     ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
     ctx.restore();
   }
 }
@@ -17327,6 +21713,14 @@ const { Obj } = __require('src/objects/obj.js');;
 const { getSubstance } = __require('src/chem/substances.js');;
 const { CFG } = __require('src/core/config.js');;
 const { THEME, rr, glowText, screenTextScale } = __require('src/render/theme.js');;
+const { hexToRgb } = __require('src/render/color.js');;
+const { sfx } = __require('src/core/audio.js');;
+
+/** 十六进制色 + 透明度 → rgba 字符串（装置组视觉共用） */
+function rgbaOf(hex, a) {
+  const c = hexToRgb(hex);
+  return `rgba(${c.r},${c.g},${c.b},${a})`;
+}
 
 class Extractor extends Obj {
   get hoverLabel() {
@@ -17346,18 +21740,27 @@ class Extractor extends Obj {
     this.switchId = switchId; // 激活开关 id
     this.rate = rate; // 提取速率 g/s（缓慢冒出）
     this._acc = {}; // 每种物质的提取质量累积器（攒满 0.1g 才吐一个粒子，严格守恒）
+    // 纯视觉：工作态平滑 + 管道流光脉冲衰减（数值很小，不参与判定）
+    this._active = false;
+    this._work = 0;
+    this._pulse = 0;
   }
 
   update(dt, scene) {
     const pool = scene.byId[this.poolId];
     const sw = this.switchId ? scene.byId[this.switchId] : null;
-    if (!pool || !pool.material) return;
     // 激活判定：switchId 字段为空 → ★ 压力提取器（玩家/物块站上即提取，同压力开关）；
     // 绑定了开关id → 只有开关有效开启才提取（开关不存在 = 未接线，不激活——不误退成压力）
     const active = this.switchId
       ? (sw ? (typeof sw.effectiveOpen === 'function' ? sw.effectiveOpen(scene) : sw.open) : false)
       : this._onTop(scene);
+    // ---- 纯视觉：工作态平滑 + 流光脉冲衰减 ----
+    this._active = !!active;
+    this._work += ((active ? 1 : 0) - this._work) * (1 - Math.exp(-7 * dt));
+    if (this._pulse > 0) this._pulse = Math.max(0, this._pulse - dt / 0.7);
+    if (!pool || !pool.material) return;
     if (!active) return;
+    let pumped = false; // 本 tick 是否真的抽出物质（决定抽气声）
     // 池内所有物质：只提取能以固体形式出现的（state==='solid'）
     for (const id of pool.material.ids()) {
       const sub = getSubstance(id);
@@ -17366,6 +21769,7 @@ class Extractor extends Obj {
       const take = Math.min(avail, this.rate * dt);
       if (take <= 1e-9) continue;
       pool.material.consume(id, take);
+      pumped = true;
       // 质量累积：每攒满一个粒子（0.1g）才吐出一个，避免小量提取被 spawnParticles
       // 的取整放大（round(0.01/0.1)=1 → 凭空多出 10 倍质量）。
       this._acc[id] = (this._acc[id] ?? 0) + take;
@@ -17377,6 +21781,12 @@ class Extractor extends Obj {
           text: `${id} 提取`,
         });
       }
+    }
+    // 抽气声：真的抽出物质才响，0.3s 一下（机器连续工作时的节奏）
+    if (pumped) this._pulse = 1; // 视觉：管道流光/齿轮加速脉冲
+    if (pumped && scene.time - (this._sfxT ?? -10) >= 0.3) {
+      this._sfxT = scene.time;
+      sfx('extractor.pump');
     }
   }
 
@@ -17393,43 +21803,30 @@ class Extractor extends Obj {
     return false;
   }
 
+  // ---------------------------------------------------------------------------
+  // 渲染（简洁版）：深钢机身（黄铜上沿）+ L 形金属管道 + 工作状态光；
+  //   工作时管道有青色流光（泵动动画保留）。无齿轮/压力表/通风槽/多层管线装饰。
+  //   管道几何与逻辑不变（表面底中心 → 池体中间高度 → 池近侧内壁）。
+  // ---------------------------------------------------------------------------
   render(ctx, opts) {
     // ★ 与其它对象一致：渲染器传的是 opts（{ scene, time, ... }），必须先解出 scene。
-    //   直接写 render(ctx, scene) 会让 scene 收到 opts 对象：压力提取器 _onTop(scene)
-    //   迭代 scene.objects → undefined 抛异常 → 游戏主循环整帧死亡（用户"传送后
-    //   画面里没有玩家"的根因：portal 传送到 temple 首帧渲染 pressure extractor 就炸）。
     const scene = opts?.scene ?? null;
+    const t = opts?.time ?? 0;
     const pool = scene?.byId?.[this.poolId];
-    const sw = this.switchId ? scene?.byId?.[this.switchId] : null;
-    const active = this.switchId ? (sw ? (sw._lastEff ?? sw.open) : false) : this._onTop(scene);
+    const x = this.x;
+    const y = this.y;
+    const w = this.w;
+    const h = this.h;
+    const active = !!this._active;
+    const work = Math.max(0, Math.min(1, Number.isFinite(this._work) ? this._work : (active ? 1 : 0)));
+    const pulse = Math.max(0, Math.min(1, this._pulse ?? 0));
+    const accent = THEME.water.light; // 提取 = 抽吸，用"水/青"元素色
+    const hot = work > 0.05;
     ctx.save();
-    // 地表矩形（金属台，激活时发光）
-    const g = ctx.createLinearGradient(this.x, this.y, this.x, this.y + this.h);
-    g.addColorStop(0, active ? '#4a6a8a' : '#3a3f5c');
-    g.addColorStop(1, '#22263f');
-    ctx.fillStyle = g;
-    rr(ctx, this.x, this.y, this.w, this.h, 4);
-    ctx.fill();
-    ctx.strokeStyle = active ? THEME.water.light : '#151830';
-    ctx.lineWidth = 1.5;
-    ctx.shadowColor = active ? THEME.water.light : 'transparent';
-    ctx.shadowBlur = active ? 10 : 0;
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-    // 台面网格线
-    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
-    ctx.lineWidth = 1;
-    for (let gx = this.x + 6; gx < this.x + this.w; gx += 7) {
-      ctx.beginPath();
-      ctx.moveTo(gx, this.y + 2);
-      ctx.lineTo(gx, this.y + this.h - 2);
-      ctx.stroke();
-    }
-    // L 形地下管道（用户预期：表面底中心 → 竖直下到**池体中间高度** → 水平接到池
-    // **近侧壁内边（水面可见处）**——高度在池子正中，不垂到池底"太下面"）
+    // ---- 1) 地下 L 形管道（暗钢外壁 + 钢亮面 + 工作流光；几何与逻辑不变）----
     if (pool) {
-      const startX = this.x + this.w / 2;
-      const startY = this.y + this.h;
+      const startX = x + w / 2;
+      const startY = y + h;
       // 水平段高度 = 池体垂直中点；提取器底低于中点（罕见）→ 最小下探 10px
       const depth = Math.max(pool.y + pool.h / 2, startY + 10);
       // 水平终点 = 池近侧**内壁**（扣除壁厚 wall——水面可见处；正上方则直插池内）
@@ -17437,27 +21834,76 @@ class Extractor extends Obj {
       const endX = (startX >= pool.x + pool.w - wall) ? pool.x + pool.w - wall
         : (startX <= pool.x + wall) ? pool.x + wall
         : startX;
-      ctx.strokeStyle = active ? '#7fe0ff' : '#4a4f70';
-      ctx.lineWidth = 5;
+      const pipePath = () => {
+        ctx.beginPath();
+        ctx.moveTo(startX, startY);
+        ctx.lineTo(startX, depth);
+        ctx.lineTo(endX, depth);
+      };
       ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(startX, startY);
-      ctx.lineTo(startX, depth);
-      ctx.lineTo(endX, depth);
+      ctx.lineJoin = 'round';
+      // 外壁（暗钢）+ 钢亮面
+      pipePath();
+      ctx.strokeStyle = 'rgba(8,8,20,0.85)';
+      ctx.lineWidth = 7;
       ctx.stroke();
+      pipePath();
+      const steel = ctx.createLinearGradient(startX - 3, 0, startX + 3, 0);
+      steel.addColorStop(0, '#5c6486');
+      steel.addColorStop(0.5, '#333a58');
+      steel.addColorStop(1, '#1b2038');
+      ctx.strokeStyle = steel;
+      ctx.lineWidth = 5;
+      ctx.stroke();
+      // 工作流光：沿管道流动的青色虚线（确定性相位；待机不画）
+      if (hot) {
+        pipePath();
+        ctx.strokeStyle = rgbaOf(accent, (0.3 + 0.4 * work).toFixed(3));
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([5, 9]);
+        ctx.lineDashOffset = -((t * 40 + pulse * 10) % 14);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
       ctx.lineCap = 'butt';
-      // 管道内衬高光
-      ctx.strokeStyle = 'rgba(255,255,255,0.14)';
-      ctx.lineWidth = 1.5;
+      ctx.lineJoin = 'miter';
+    }
+    // ---- 2) 地表机身：深钢基座 + 黄铜上沿（工作=上沿透一道青光）----
+    const br = Math.max(2, Math.min(5, h * 0.28));
+    rr(ctx, x, y, w, h, br);
+    const bodyG = ctx.createLinearGradient(x, y, x, y + h);
+    bodyG.addColorStop(0, '#4a4f70');
+    bodyG.addColorStop(0.45, '#333a58');
+    bodyG.addColorStop(1, '#1b2038');
+    ctx.fillStyle = bodyG;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(8,6,22,0.92)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    // 黄铜顶板（机身上沿一条亮铜）
+    const capY = y + 1;
+    const capH = Math.max(2, Math.min(3.4, h * 0.18));
+    rr(ctx, x + 1, capY, w - 2, capH, capH * 0.5);
+    const capG = ctx.createLinearGradient(0, capY, 0, capY + capH);
+    capG.addColorStop(0, '#d8b56c');
+    capG.addColorStop(1, '#6b4a18');
+    ctx.fillStyle = capG;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(30,20,6,0.7)';
+    ctx.lineWidth = 0.7;
+    ctx.stroke();
+    // 工作状态光（一条克制的青线，随工作强度亮起）
+    if (hot) {
+      ctx.strokeStyle = rgbaOf(accent, (0.3 + 0.45 * work).toFixed(3));
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(startX, startY);
-      ctx.lineTo(startX, depth);
-      ctx.lineTo(endX, depth);
+      ctx.moveTo(x + 2, capY + capH + 1);
+      ctx.lineTo(x + w - 2, capY + capH + 1);
       ctx.stroke();
     }
-    // 标注：压力提取器写"压力"（与压力开关同位同义：站在上面即触发）
+    // ---- 3) 标注：压力提取器写"压力"（与压力开关同位同义：站在上面即触发）----
     const kT = screenTextScale(ctx, 10, 11); // 屏幕最小字号保底（与路牌同档、上限 1.15）
-    glowText(ctx, this.switchId ? '提取' : '压力', this.x + this.w / 2, this.y - 4 * kT, active ? THEME.water.light : '#9fb2c8', `bold ${Math.round(10 * kT * 10) / 10}px monospace`, 3);
+    glowText(ctx, this.switchId ? '提取' : '压力', this.x + this.w / 2, this.y - 4 * kT, hot ? accent : '#9fb2c8', `bold ${Math.round(10 * kT * 10) / 10}px monospace`, 3);
     ctx.restore();
   }
 }
@@ -17467,32 +21913,52 @@ exports.Extractor = Extractor;
   };
   __modules["src/objects/gastube.js"] = function (module, exports, __require) {
 // ============================================================================
-// 导气管：连接两个药品池的单向气体装置。
+// 导气管：一个输入端药品池 → 多个输出端（药品池 / 气室）的单向气体装置。
 // ----------------------------------------------------------------------------
 // 输入端 = 罩住整个输入药品池的大罩子（池口以上是罩体，池体本身也在罩内）：
 //   池内产气（溶液反应 / 池中物块·烧杯产气 / 滴管落入池中反应产气）产生的
-//   气体**全部**被罩住，经管道鼓入输出端药品池（与集气瓶通气同一条"主动鼓入"
+//   气体**全部**被罩住，经主干与各支路鼓入输出端（与集气瓶通气同一条"主动鼓入"
 //   管线：碱吸收 → 水溶解，之后溶液内反应照常）。输入端不冒气泡柱、气体也不
 //   进大气。
-// 输出端 = 从池子侧面插入池内的管口：气体从管口冒泡鼓入输出池；输出池吸收
-//   不完的多余气体才在管口生成气泡柱并进入大气。输入端无论如何都不会生成
-//   气泡柱。单向：输出端自己产气不受影响（照常冒柱/进大气），也不会反灌。
+// 输出端两种：
+//   · 药品池：从池子侧面插入池内的管口，气体从管口冒泡鼓入输出池；输出池吸收
+//     不完的多余气体才在管口生成气泡柱并进入大气（Scene 负责）。
+//   · 气室：管子接在气室外壁的法兰/喷嘴上（不进入内部——气室无碰撞箱），气体由
+//     Scene 直接送进该气室自己的大气（见 objects/gaschamber.js）。
+//   输入端无论如何都不会生成气泡柱。单向：输出端自己产气不受影响（照常冒柱/
+//   进大气），也不会反灌。
+// 阀门 = 本装置自身的一部分（不是独立物体）：每条支路可装一个阀门，位置固定在
+//   离开主干后的第一段横管中点；点击阀门切换开/关（开=金色发光、关=暗灰）。
+//   阀门状态存 this.valves 普通对象（{outId: 开}），存档可自动捕获。
 // ----------------------------------------------------------------------------
 // 无碰撞箱（physicsKind='none'）：罩子/管子在物理里完全不存在，不挡玩家、
 //   物块、物品进出药品池。
 // 视觉：整体半透明灰色玻璃管，因此显示色与流过的气体颜色（gasColor）有关；
-//   输出端管口通气时冒气泡。
-// 接线：inId / outId = 药品池对象 id（两端都接好才工作；否则装置不显示）。
+//   输出端管口通气时冒气泡（气室的气泡冒在气室内侧）。
+// 接线：inId = 输入端药品池 id；outIds = 输出端 id 数组（药品池或气室）。
+//   旧字段 outId（单输出、无阀门）保留兼容（编辑器/旧关卡/旧 Scene 调用）。
+// 几何：geometry(scene) 纯计算、可每帧反复调用；x/y/w/h 同步为装置包围盒
+//   （编辑器选中/导出用）。未接线时编辑器里画虚线占位框，运行中不显示。
 // ============================================================================
 
 const { Obj } = __require('src/objects/obj.js');;
 const { Bubble } = __require('src/objects/bubble.js');;
 const { getSubstance } = __require('src/chem/substances.js');;
-const { rr } = __require('src/render/theme.js');;
+const { rr, THEME } = __require('src/render/theme.js');;
+const { sfx } = __require('src/core/audio.js');;
 
 const PIPE_W = 13; // 管径（px）
 const FLOW_FADE = 0.55; // 停止产气后管内颜色褪回灰色所需时间（s）
 const HOOD_MARGIN = 6; // 罩子比池宽多出来的边缘（px）
+const BUS_GAP = 22; // 主干顶部横线离罩顶/输出端顶部的距离（px）
+const LANE_STEP = 20; // 相邻支路横段的垂直间距（px，> 管径：分开布管不重叠）
+const SIDE_GAP = 22; // 支路下降段离输出端侧壁的水平距离（px）
+const VALVE_R = 11; // 阀门阀体半径（px）
+const VALVE_TAP_PAD = 4; // 阀门点击容差（px）
+const FLANGE_W = 10; // 气室法兰板厚度（px）
+const FLANGE_H = 28; // 气室法兰板高度（px）
+const BUBBLE_INTERVAL = 0.14; // 管口气泡生成间隔（s）
+const FALLBACK_FLOW_COLOR = '#78dcff'; // 气体未声明 gasColor 时的通用气流青
 
 class GasTube extends Obj {
   get hoverLabel() {
@@ -17503,17 +21969,41 @@ class GasTube extends Obj {
     return true;
   }
 
-  constructor({ x = 0, y = 0, w = 90, h = 70, inId = '', outId = '', ...rest } = {}) {
+  constructor({ x = 0, y = 0, w = 90, h = 70, inId = '', outId = '', outIds = null, valves = null, ...rest } = {}) {
     super({ x, y, w, h, solid: false, physicsKind: 'none', ...rest });
-    this.inId = inId ?? ''; // 输入端药品池 id
-    this.outId = outId ?? ''; // 输出端药品池 id
-    this.flow = 0; // 管内气流强度 0..1（有新气体通过时置 1，随时间衰减）
-    this.gasId = null; // 最近流过的气体（管内颜色/管口微光用）
-    this._bubbleAcc = 0; // 管口气泡生成节流
-    this._geom = null; // 最近一次布局（编辑器命中检测用）
+    this.inId = inId ?? ''; // 输入端药品池 id（必须是药品池）
+    this.outId = outId ?? ''; // 旧字段：单输出（outIds 缺省时生效，编辑器/旧关卡兼容）
+    // 输出端 id 列表：新配置 outIds 优先；否则旧 outId 视为单输出
+    const requested = Array.isArray(outIds) ? outIds : (this.outId ? [this.outId] : []);
+    const ids = [];
+    for (const raw of requested) {
+      const id = typeof raw === 'string' ? raw.trim() : '';
+      if (id && !ids.includes(id)) ids.push(id);
+    }
+    this.outIds = ids;
+    // 阀门：普通对象 {outId: true/false}（键存在 = 该支路装了阀门，值 = 初始开）。
+    // 必须保持普通对象：存档系统只深拷贝纯数据，类实例/Map 作键不会被捕获。
+    this.valves = {};
+    if (valves && typeof valves === 'object') {
+      for (const key of Object.keys(valves)) {
+        if (!key) continue;
+        this.valves[key] = valves[key] !== false;
+      }
+    }
+    this.flow = 0; // 聚合气流强度 0..1（主干颜色/旧测试/调试用）
+    this.gasId = null; // 最近流过的气体（主干颜色）
+    this._branchFlow = {}; // outId → 该支路气流强度 0..1（逐支路衰减）
+    this._branchGas = {}; // outId → 该支路最近流过的气体
+    this._legacyFlow = 0; // 旧单参 noteFlow 的"全支路"气流（旧 Scene 调用兼容）
+    this._bubbleAcc = {}; // outId → 管口气泡节流计时
+    // 最近一次几何（编辑器命中/点击阀门用）。非枚举：存档不会把带对象引用的
+    // 半深拷贝写回（geometry 每帧都会重算，无需持久化）。
+    Object.defineProperty(this, '_geom', { value: null, writable: true, enumerable: false });
+    // 每条支路的"柱归属"token 缓存（branchSource 每次都返回同一个对象；无原型键防意外）
+    Object.defineProperty(this, '_branchSources', { value: Object.create(null), writable: true, enumerable: false });
   }
 
-  /** 解析两端药品池；未接好（缺 id / 不是池 / 已隐藏 / 同一池）→ null */
+  /** 解析输入端药品池；未接好（缺 id / 不是池 / 已隐藏 / 无溶液）→ null */
   _poolOf(scene, id) {
     if (!scene || !scene.byId || !id) return null;
     const o = scene.byId[id];
@@ -17521,56 +22011,182 @@ class GasTube extends Obj {
   }
 
   /**
-   * 计算装置几何（世界坐标）：罩住整个输入池的罩体 + 从罩顶接出、绕到输出池
-   * 侧面再水平插入的管道 + 管口。返回 null = 两端未接好（装置不工作）。
+   * 解析一个输出端：药品池（isPool + 有溶液 + innerRect）或气室（isGasChamber）。
+   * 已隐藏 / 类型不符 / 已移除 → null。
+   */
+  _targetOf(scene, id) {
+    if (!scene || !scene.byId || !id) return null;
+    const o = scene.byId[id];
+    if (!o || o.hidden) return null;
+    if (o.isGasChamber) return { target: o, targetKind: 'chamber' };
+    if (o.isPool && o.solution && typeof o.innerRect === 'function') return { target: o, targetKind: 'pool' };
+    return null;
+  }
+
+  // ---- 阀门 ----------------------------------------------------------------
+
+  /** 该输出支路是否装了阀门（键存在即装） */
+  hasValve(outId) {
+    return !!outId && Object.prototype.hasOwnProperty.call(this.valves, outId);
+  }
+
+  /** 阀门是否开着（没装阀门 → false；openBranches 另按"无阀门=通气"处理） */
+  valveOpen(outId) {
+    return this.hasValve(outId) && this.valves[outId] !== false;
+  }
+
+  /** 切换阀门开/关，返回新状态（没装阀门 → 不凭空加阀门，返回 false） */
+  toggleValve(outId) {
+    if (!this.hasValve(outId)) return false;
+    const next = this.valves[outId] === false; // 关→开 / 开→关
+    this.valves[outId] = next;
+    return next;
+  }
+
+  /**
+   * 计算装置几何（世界坐标，纯计算幂等）：
+   *   输入罩（罩住整个输入池）+ 罩顶竖直主干 + 各输出支路（从主干不同高度横着
+   *   分叉出去 → 沿输出端外侧下行 → 插入药品池液面下 / 贴气室外壁法兰）。
+   * 返回 null = 没有有效输入端或没有任何有效输出端（装置不工作）。
    * 同时把自身 body 矩形同步为装置包围盒（编辑器选中框/命中/导出用）。
+   *
+   * 返回 { inPool, hood, trunk:[{x,y}...], branches:[
+   *   { outId, target, targetKind:'pool'|'chamber', fromLeft,
+   *     path:[{x,y}...], mouth:{x,y}, valve:{x,y,r,open}|null } ] }
+   * 另含旧单输出兼容字段（旧 Scene 路由/旧测试读取）：outPool / path / mouth
+   * （= 第一条药品池支路；无药品池支路时 path/mouth 取第一条支路）。
    */
   _layout(scene) {
     const inPool = this._poolOf(scene, this.inId);
-    const outPool = this._poolOf(scene, this.outId);
-    if (!inPool || !outPool || inPool === outPool) return null;
+    if (!inPool) {
+      this._geom = null;
+      return null;
+    }
+    // 输出端：跳过空 id / 重复 id / 输入池自身 / 无效或已隐藏目标
+    const plans = [];
+    const seenIds = new Set();
+    const seenTargets = new Set();
+    for (const outId of this.outIds) {
+      if (!outId || seenIds.has(outId) || outId === this.inId) continue;
+      const t = this._targetOf(scene, outId);
+      if (!t || t.target === inPool || seenTargets.has(t.target)) continue;
+      seenIds.add(outId);
+      seenTargets.add(t.target);
+      plans.push({ outId, target: t.target, targetKind: t.targetKind });
+    }
+    if (!plans.length) {
+      this._geom = null;
+      return null;
+    }
     // 罩体：罩住整个池口（比池宽略大，底边落在池口地面线上）
     const hoodH = Math.round(Math.max(48, Math.min(84, inPool.w * 0.22)));
     const hood = { x: inPool.x - HOOD_MARGIN, y: inPool.y - hoodH, w: inPool.w + HOOD_MARGIN * 2, h: hoodH };
     const cx = hood.x + hood.w / 2;
-    // 输出端：从靠近输入端的一侧水平插入池壁（管口在池内，离内壁 14px）
-    const wall = Number.isFinite(outPool.wall) ? outPool.wall : 8;
-    const fromLeft = outPool.x + outPool.w / 2 >= inPool.x + inPool.w / 2;
-    const insertY = Math.round(outPool.y + outPool.h * 0.55); // 插在池深中部（液面下）
-    const mouth = {
-      x: fromLeft ? outPool.x + wall + 14 : outPool.x + outPool.w - wall - 14,
-      y: insertY,
-    };
-    const sideX = fromLeft ? outPool.x - 22 : outPool.x + outPool.w + 22; // 下降段贴池外侧
-    const topY = Math.round(Math.min(hood.y, outPool.y) - 22);
-    const path = [
-      { x: cx, y: hood.y + 2 }, // 罩顶接出
-      { x: cx, y: topY }, // 竖管
-      { x: sideX, y: topY }, // 横管
-      { x: sideX, y: insertY }, // 沿输出池外侧下行
-      { x: mouth.x, y: insertY }, // 水平插入池内
-    ];
-    // body 矩形 = 装置包围盒
+    // 主干顶部横线：罩顶与所有输出端顶部再往上 BUS_GAP
+    let top = hood.y;
+    for (const p of plans) top = Math.min(top, p.target.y);
+    const topY = Math.round(top - BUS_GAP);
+    // 各支路接入点：药品池 = 插到液面下（离内壁 14px）；气室 = 贴靠近输入端一侧外壁
+    for (const p of plans) {
+      const t = p.target;
+      const fromLeft = t.x + t.w / 2 >= inPool.x + inPool.w / 2; // 输出端在输入池右侧 → 从右接近
+      if (p.targetKind === 'pool') {
+        const wall = Number.isFinite(t.wall) ? t.wall : 8;
+        const insertY = Math.round(t.y + t.h * 0.55); // 插在池深中部（液面下）
+        p.mouth = { x: fromLeft ? t.x + wall + 14 : t.x + t.w - wall - 14, y: insertY };
+      } else {
+        p.mouth = { x: fromLeft ? t.x : t.x + t.w, y: Math.round(t.y + t.h / 2) };
+      }
+      p.sideX = fromLeft ? t.x - SIDE_GAP : t.x + t.w + SIDE_GAP; // 下降段贴输出端外侧
+      p.fromLeft = fromLeft;
+      p.dist = Math.abs(p.sideX - cx);
+    }
+    // 车道分配：离主干近的走低车道（近支路的立管不会横穿远支路的横段），
+    // 横段彼此错开 LANE_STEP —— 多支路分开布管、不重叠。
+    const lanes = plans.slice().sort((a, b) => a.dist - b.dist);
+    lanes.forEach((p, i) => { p.laneY = topY - i * LANE_STEP; });
+    const trunk = [{ x: cx, y: hood.y + 2 }, { x: cx, y: topY - (plans.length - 1) * LANE_STEP }];
+    const branches = plans.map((p) => ({
+      outId: p.outId,
+      target: p.target,
+      targetKind: p.targetKind,
+      fromLeft: p.fromLeft,
+      path: [
+        { x: cx, y: p.laneY }, // 从主干分叉
+        { x: p.sideX, y: p.laneY }, // 横段（阀门装在这里的中点）
+        { x: p.sideX, y: p.mouth.y }, // 沿输出端外侧下行
+        { x: p.mouth.x, y: p.mouth.y }, // 插入药品池内 / 贴气室外壁
+      ],
+      mouth: p.mouth,
+      valve: this.hasValve(p.outId)
+        ? { x: Math.round((cx + p.sideX) / 2), y: p.laneY, r: VALVE_R, open: this.valveOpen(p.outId) }
+        : null,
+    }));
+    // 包围盒 = 罩体 + 主干 + 各支路 + 阀门手柄/气室法兰的绘制范围
     let x0 = hood.x;
     let x1 = hood.x + hood.w;
     let y0 = hood.y;
     let y1 = hood.y + hood.h;
-    for (const p of path) {
-      x0 = Math.min(x0, p.x);
-      x1 = Math.max(x1, p.x);
-      y0 = Math.min(y0, p.y);
-      y1 = Math.max(y1, p.y);
+    const cover = (px, py) => {
+      if (px < x0) x0 = px;
+      if (px > x1) x1 = px;
+      if (py < y0) y0 = py;
+      if (py > y1) y1 = py;
+    };
+    for (const pt of trunk) cover(pt.x, pt.y);
+    for (const b of branches) {
+      for (const pt of b.path) cover(pt.x, pt.y);
+      if (b.valve) {
+        cover(b.valve.x - b.valve.r - 7, b.valve.y - b.valve.r - 7);
+        cover(b.valve.x + b.valve.r + 7, b.valve.y + b.valve.r + 7);
+      }
+      if (b.targetKind === 'chamber') {
+        // 法兰板贴外壁向外伸出
+        const out = b.fromLeft ? -1 : 1;
+        cover(b.mouth.x + out * (FLANGE_W + 3), b.mouth.y - FLANGE_H / 2 - 3);
+        cover(b.mouth.x + out * (FLANGE_W + 3), b.mouth.y + FLANGE_H / 2 + 3);
+      }
     }
     this.x = Math.round(x0 - PIPE_W);
     this.y = Math.round(y0 - PIPE_W);
     this.w = Math.round(x1 - x0 + PIPE_W * 2);
     this.h = Math.round(y1 - y0 + PIPE_W * 2);
-    return { inPool, outPool, hood, path, mouth, fromLeft };
+    const g = { inPool, hood, trunk, branches };
+    // 旧单输出兼容字段：旧 Scene 路由与旧测试按 path/mouth/outPool 读
+    const compat = branches.find((b) => b.targetKind === 'pool') ?? branches[0];
+    g.outPool = compat.targetKind === 'pool' ? compat.target : null;
+    g.mouth = compat.mouth;
+    g.path = trunk.concat(compat.path.slice(1));
+    this._geom = g;
+    return g;
   }
 
-  /** 当前装置几何（世界坐标；两端未接好 → null）。Scene 输送气体时用 */
+  /** 当前装置几何（世界坐标；无有效输入/输出 → null）。Scene 输送气体时用 */
   geometry(scene) {
     return this._layout(scene);
+  }
+
+  /**
+   * 某输出支路的"柱归属"token（Scene._gasPlume 的 source 合并用）：同一 outId
+   * 每次返回**同一个对象**，多条支路同种气体各自冒柱、不互相抢同一根柱。
+   * 单支路装置直接返回装置自身（= 旧单输出语义：气泡柱归属该导气管）。
+   */
+  branchSource(outId) {
+    if (this._geom && this._geom.branches.length === 1) return this;
+    const key = outId ?? '';
+    let token = this._branchSources[key];
+    if (!token) {
+      token = { branch: key };
+      this._branchSources[key] = token;
+    }
+    return token;
+  }
+
+  /** 当前通气的支路（没阀门或阀门开着；几何无效 → 空数组）。Scene 输送气体用 */
+  openBranches(scene) {
+    const g = this._layout(scene);
+    if (!g) return [];
+    return g.branches.filter((b) => !b.valve || b.valve.open);
   }
 
   /** 本次产气是否来自输入端（罩住整个输入池：池内反应 + 池口贴合处产气） */
@@ -17587,38 +22203,87 @@ class GasTube extends Obj {
     return pt.x >= r.x - 8 && pt.x <= r.x + r.w + 8 && pt.y >= r.y - 8 && pt.y <= r.y + r.h + 8;
   }
 
-  /** 本 tick 有气体通过（Scene 输送时调用）：点亮管内气流颜色 */
-  noteFlow(id) {
-    if (id) this.gasId = id;
+  /**
+   * 本 tick 有气体通过（Scene 输送时调用），点亮对应支路的管内颜色/管口气泡。
+   * 新双参形式 noteFlow(outId, gasId)：只点亮该输出支路。
+   * 旧单参形式 noteFlow(gasId)（旧 Scene / 旧测试）：没有支路信息 → 点亮全部支路。
+   */
+  noteFlow(outId, gasId) {
+    if (gasId === undefined) {
+      // 旧单参：把入参当气体 id，点亮全部支路（兼容旧 Scene 的 noteFlow(id)）
+      if (outId) this.gasId = outId;
+      this._legacyFlow = 1;
+      this.flow = 1;
+      return;
+    }
+    if (gasId) {
+      this.gasId = gasId;
+      this._branchGas[outId] = gasId;
+    }
+    this._branchFlow[outId] = 1;
     this.flow = 1;
   }
 
-  /** 管内显示的气体色（半透明灰管透过气体色；气体未声明 gasColor 时用通用气流青） */
+  /** 该支路当前气流强度（含旧单参 noteFlow 的全支路点亮） */
+  _flowOf(outId) {
+    return Math.max(this._branchFlow[outId] ?? 0, this._legacyFlow);
+  }
+
+  /** 主干显示的气体色（半透明灰管透过气体色；未声明 gasColor 时用通用气流青） */
   tintColor() {
-    return (this.gasId && getSubstance(this.gasId)?.gasColor) || '#78dcff';
+    return (this.gasId && getSubstance(this.gasId)?.gasColor) || FALLBACK_FLOW_COLOR;
+  }
+
+  /** 某支路显示的气体色（支路可能流着与主干最近记录不同的气体） */
+  _branchTint(outId) {
+    const id = this._branchGas[outId] ?? this.gasId;
+    return (id && getSubstance(id)?.gasColor) || FALLBACK_FLOW_COLOR;
   }
 
   update(dt, scene) {
     const g = this._layout(scene);
-    this._geom = g;
-    // 停止产气后管内颜色渐褪回灰色
-    this.flow = Math.max(0, this.flow - dt / FLOW_FADE);
-    // 管口气泡：只在有气流时冒（气体正在鼓入输出池；纯视觉）
-    if (g && this.flow > 0.03) {
-      this._bubbleAcc += dt;
-      if (this._bubbleAcc >= 0.14) {
-        this._bubbleAcc = 0;
-        const m = g.mouth;
-        scene.addObject(new Bubble({
-          x: m.x - 3 + (Math.random() - 0.5) * 6,
-          y: m.y - 4 - Math.random() * 6,
-          dir: -1, // 池内气泡一律上浮（与气体轻重无关）
-          speed: 46 + Math.random() * 26,
-        }));
-      }
-    } else {
-      this._bubbleAcc = 0;
+    // 停止产气后管内颜色渐褪回灰色（逐支路衰减，聚合值取最大）
+    const decay = dt / FLOW_FADE;
+    let flow = 0;
+    for (const outId of Object.keys(this._branchFlow)) {
+      const v = Math.max(0, this._branchFlow[outId] - decay);
+      if (v > 1e-4) {
+        this._branchFlow[outId] = v;
+        if (v > flow) flow = v;
+      } else delete this._branchFlow[outId];
     }
+    this._legacyFlow = Math.max(0, this._legacyFlow - decay);
+    if (this._legacyFlow > flow) flow = this._legacyFlow;
+    this.flow = flow;
+    if (!g) return;
+    // 管口气泡：每条有气流的支路在自己 mouth 冒泡（气体正在鼓入该输出端；纯视觉）
+    for (const b of g.branches) {
+      if (this._flowOf(b.outId) > 0.03) {
+        const acc = (this._bubbleAcc[b.outId] ?? 0) + dt;
+        if (acc >= BUBBLE_INTERVAL) {
+          this._bubbleAcc[b.outId] = 0;
+          this._spawnMouthBubble(scene, b);
+        } else this._bubbleAcc[b.outId] = acc;
+      } else this._bubbleAcc[b.outId] = 0;
+    }
+  }
+
+  /** 在支路管口生成一颗上浮气泡（气室没有液体 → 冒在气室内侧贴壁处） */
+  _spawnMouthBubble(scene, b) {
+    if (!scene || typeof scene.addObject !== 'function') return;
+    const m = b.mouth;
+    let bx = m.x - 3 + (Math.random() - 0.5) * 6;
+    let by = m.y - 4 - Math.random() * 6;
+    if (b.targetKind === 'chamber') {
+      bx = m.x + (b.fromLeft ? 8 : -8) + (Math.random() - 0.5) * 8;
+      by = m.y + (Math.random() - 0.5) * 10;
+    }
+    scene.addObject(new Bubble({
+      x: bx,
+      y: by,
+      dir: -1, // 池内/气室内气泡一律上浮（与气体轻重无关）
+      speed: 46 + Math.random() * 26,
+    }));
   }
 
   render(ctx, opts) {
@@ -17628,59 +22293,401 @@ class GasTube extends Obj {
       this._renderPlaceholder(ctx, scene);
       return;
     }
-    this._geom = g;
     const t = opts?.time ?? 0;
     const flow = Math.max(0, Math.min(1, this.flow));
     const tint = flow > 0.02 ? this.tintColor() : null;
-    const rgb = tint ? hexToRgb(tint) : null;
-    const gas = (a) => `rgba(${rgb.r},${rgb.g},${rgb.b},${a})`;
-
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    // ---- 管道：半透明灰玻璃（外壁 → 内壁高光 → 管内气体色 → 流动光带）----
-    this._strokePath(ctx, g.path, PIPE_W + 4, 'rgba(108,118,136,0.36)');
-    this._strokePath(ctx, g.path, PIPE_W, 'rgba(162,172,190,0.34)');
-    this._strokePath(ctx, g.path, PIPE_W - 4, 'rgba(216,224,238,0.11)');
-    if (tint) {
-      this._strokePath(ctx, g.path, PIPE_W - 3, gas(0.12 + 0.30 * flow));
-      // 气流光带（沿管道向输出端流动）
-      ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(g.path[0].x, g.path[0].y);
-      for (let i = 1; i < g.path.length; i++) ctx.lineTo(g.path[i].x, g.path[i].y);
-      ctx.setLineDash([5, 15]);
-      ctx.lineDashOffset = -t * 110;
-      ctx.strokeStyle = gas(0.55 * flow);
-      ctx.lineWidth = 3;
-      ctx.stroke();
-      ctx.restore();
+    // ---- 管道：半透明灰玻璃（外壁 → 内壁高光；主干 + 各支路共用一套层次）----
+    this._pipeShell(ctx, g.trunk);
+    for (const b of g.branches) this._pipeShell(ctx, b.path);
+    // ---- 主干气流（聚合色；各支路气体可能不同，主干显示最近一种）----
+    if (tint) this._pipeFlow(ctx, g.trunk, tint, flow, t);
+    // ---- 各支路气流（各自颜色/强度；没通气的支路保持灰色）----
+    for (const b of g.branches) {
+      const bf = Math.max(0, Math.min(1, this._flowOf(b.outId)));
+      if (bf <= 0.02) continue;
+      this._pipeFlow(ctx, b.path, this._branchTint(b.outId), bf, t);
     }
-    // ---- 输出端管口：玻璃圆环 + 冒气微光（气泡是 Bubble 对象，见 update）----
-    const m = g.mouth;
-    ctx.beginPath();
-    ctx.arc(m.x, m.y, PIPE_W / 2 + 1, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(150,160,178,0.55)';
+    // ---- 黄铜箍环：每个弯头/接头（压住金属包边接缝）----
+    this._collars(ctx, g);
+    // ---- 输出端管口：药品池=插液管口；气室=外壁法兰/喷嘴 ----
+    for (const b of g.branches) this._renderMouth(ctx, b);
+    // ---- 阀门（黄铜手轮：开=金环/青珠发光，关=暗灰、把手转 90°）----
+    for (const b of g.branches) if (b.valve) this._renderValve(ctx, b.valve, t);
+    // ---- 输入罩：罩住整个池口的大玻璃罩（罩内空间也在采集范围内）----
+    this._renderHood(ctx, g.hood, tint ? hexToRgb(tint) : null, flow);
+    ctx.restore();
+  }
+
+  /**
+   * 玻璃管身 + 深钢金属包边：管内仍是半透明玻璃（透出后方场景/气体色），
+   * 两侧沿管段偏移画深钢边框（接缝由黄铜箍环遮住；弯头圆润来自 round 端帽）。
+   */
+  _pipeShell(ctx, pts) {
+    if (!pts || pts.length < 2) return;
+    // 玻璃本体（半透明 + 内壁高光，保持可透视）
+    this._strokePath(ctx, pts, PIPE_W, 'rgba(126,144,176,0.34)');
+    this._strokePath(ctx, pts, PIPE_W - 3, 'rgba(226,236,250,0.15)');
+    // 两侧金属包边（只处理轴向管段；当前几何全部为水平/垂直段）
+    ctx.save();
+    ctx.lineCap = 'butt';
+    const off = PIPE_W / 2 - 0.6; // 包边中线位置（≈管外缘）
+    for (let i = 1; i < pts.length; i++) {
+      const p = pts[i - 1];
+      const q = pts[i];
+      const horiz = Math.abs(q.y - p.y) < 0.5;
+      const vert = Math.abs(q.x - p.x) < 0.5;
+      if (!horiz && !vert) continue; // 非轴向段：只保留玻璃管身（不画错位的边）
+      ctx.strokeStyle = '#262b3d';
+      ctx.lineWidth = 2.6;
+      if (horiz) {
+        for (const dy of [-off, off]) {
+          ctx.beginPath();
+          ctx.moveTo(p.x, p.y + dy);
+          ctx.lineTo(q.x, q.y + dy);
+          ctx.stroke();
+        }
+        // 上边缘受光高光
+        ctx.strokeStyle = 'rgba(180,192,218,0.5)';
+        ctx.lineWidth = 0.9;
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y - off);
+        ctx.lineTo(q.x, q.y - off);
+        ctx.stroke();
+      } else {
+        for (const dx of [-off, off]) {
+          ctx.beginPath();
+          ctx.moveTo(p.x + dx, p.y);
+          ctx.lineTo(q.x + dx, q.y);
+          ctx.stroke();
+        }
+        ctx.strokeStyle = 'rgba(180,192,218,0.4)';
+        ctx.lineWidth = 0.9;
+        ctx.beginPath();
+        ctx.moveTo(p.x - off, p.y);
+        ctx.lineTo(q.x - off, q.y);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
+  /** 所有管道折线的黄铜箍环（弯头/接头处；主干 + 各支路） */
+  _collars(ctx, g) {
+    const draw = (pts) => {
+      for (let i = 0; i < pts.length - 1; i++) {
+        this._pipeCollar(ctx, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y);
+      }
+    };
+    draw(g.trunk);
+    for (const b of g.branches) draw(b.path);
+  }
+
+  /** 黄铜箍环（细金环 + 两颗铆钉）：套在顶点出发的那段管子上，遮住金属包边接缝 */
+  _pipeCollar(ctx, px, py, qx, qy) {
+    const dx = qx - px;
+    const dy = qy - py;
+    const len = Math.hypot(dx, dy);
+    if (!(len > 8)) return;
+    const ux = dx / len;
+    const uy = dy / len;
+    const cx = px + ux * 5.5;
+    const cy = py + uy * 5.5;
+    const angle = Math.atan2(uy, ux);
+    const halfW = PIPE_W / 2 + 3.2; // 箍环横跨管径（略宽于管）
+    const halfT = 1.8; // 箍环沿管方向的厚度
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angle);
+    // 环体（黄铜）
+    rr(ctx, -halfT, -halfW, halfT * 2, halfW * 2, 1.2);
+    ctx.fillStyle = '#c09241';
     ctx.fill();
-    ctx.strokeStyle = 'rgba(205,214,228,0.45)';
-    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(58,40,12,0.8)';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+    // 受光侧亮边
+    ctx.fillStyle = 'rgba(255,226,150,0.5)';
+    ctx.fillRect(-halfT + 0.5, -halfW + 1.5, 1, halfW * 2 - 3);
+    // 两颗铆钉（箍环两端）
+    for (const ry of [-halfW + 2.2, halfW - 2.2]) {
+      ctx.fillStyle = '#f0d493';
+      ctx.beginPath();
+      ctx.arc(0, ry, 1.1, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(60,40,10,0.75)';
+      ctx.beginPath();
+      ctx.arc(0, ry, 0.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /** 管内气体色 + 沿管道向输出端流动的光带 */
+  _pipeFlow(ctx, pts, tint, flow, t) {
+    const { r, g, b } = hexToRgb(tint);
+    const gas = (a) => `rgba(${r},${g},${b},${a})`;
+    this._strokePath(ctx, pts, PIPE_W - 3, gas(0.12 + 0.30 * flow));
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.setLineDash([5, 15]);
+    ctx.lineDashOffset = -t * 110;
+    ctx.strokeStyle = gas(0.55 * flow);
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** 输出端管口：药品池=黄铜管口环 + 玻璃内口 + 冒气微光；气室=黄铜法兰/喷嘴 */
+  _renderMouth(ctx, b) {
+    if (b.targetKind === 'chamber') {
+      this._renderFlange(ctx, b);
+      return;
+    }
+    const flow = Math.max(0, Math.min(1, this._flowOf(b.outId)));
+    const tint = flow > 0.02 ? this._branchTint(b.outId) : null;
+    const m = b.mouth;
+    // 黄铜管口环
+    ctx.beginPath();
+    ctx.arc(m.x, m.y, PIPE_W / 2 + 2.4, 0, Math.PI * 2);
+    ctx.fillStyle = '#a9782a';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(58,40,12,0.8)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    // 玻璃内口
+    ctx.beginPath();
+    ctx.arc(m.x, m.y, PIPE_W / 2 - 0.8, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(150,168,196,0.55)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(226,236,250,0.4)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    // 内口高光弧
+    ctx.beginPath();
+    ctx.arc(m.x, m.y, PIPE_W / 2 - 2, Math.PI * 1.12, Math.PI * 1.62);
+    ctx.strokeStyle = 'rgba(255,255,255,0.32)';
+    ctx.lineWidth = 1;
     ctx.stroke();
     if (tint) {
+      const { r, g, b: bb } = hexToRgb(tint);
       ctx.beginPath();
       ctx.arc(m.x, m.y, 3.5, 0, Math.PI * 2);
-      ctx.fillStyle = gas(0.35 + 0.45 * flow);
-      ctx.shadowColor = gas(0.8);
+      ctx.fillStyle = `rgba(${r},${g},${bb},${0.35 + 0.45 * flow})`;
+      ctx.shadowColor = `rgba(${r},${g},${bb},0.8)`;
       ctx.shadowBlur = 10;
       ctx.fill();
       ctx.shadowBlur = 0;
     }
-    // ---- 输入罩：罩住整个池口的大玻璃罩（罩内空间也在采集范围内）----
-    this._renderHood(ctx, g.hood, rgb ? gas : null, flow);
+  }
+
+  /** 气室外壁法兰：黄铜法兰盘 + 4 颗螺栓 + 短喷嘴 + 内圈金属高光（与气室外框呼应） */
+  _renderFlange(ctx, b) {
+    const flow = Math.max(0, Math.min(1, this._flowOf(b.outId)));
+    const tint = flow > 0.02 ? this._branchTint(b.outId) : null;
+    const m = b.mouth;
+    const out = b.fromLeft ? -1 : 1; // 外法线方向（气室在管口另一侧）
+    const fr = FLANGE_H / 2; // 法兰盘半径
+    const cx = m.x + out * 3; // 盘心略偏外，压在气室外壁上
+    ctx.save();
+    // 短喷嘴（向气室内侧伸出的金属管口）
+    const stub = Math.max(6, FLANGE_W - 1);
+    ctx.fillStyle = '#3a3f5c';
+    ctx.fillRect(Math.min(m.x, m.x - out * stub), m.y - 4.5, stub, 9);
+    ctx.fillStyle = 'rgba(190,200,228,0.25)';
+    ctx.fillRect(Math.min(m.x, m.x - out * stub), m.y - 4.5, stub, 1.2);
+    // 黄铜法兰盘（外圆）
+    ctx.beginPath();
+    ctx.arc(cx, m.y, fr, 0, Math.PI * 2);
+    ctx.fillStyle = '#a9782a';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(44,28,10,0.85)';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+    // 盘面亮环（内圈金属高光）
+    ctx.beginPath();
+    ctx.arc(cx, m.y, fr - 3.4, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(232,184,75,0.55)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, m.y, fr - 1.8, Math.PI * 1.1, Math.PI * 1.6);
+    ctx.strokeStyle = 'rgba(255,240,190,0.35)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // 4 颗螺栓（对角布置）
+    for (let i = 0; i < 4; i++) {
+      const ang = Math.PI / 4 + (i * Math.PI) / 2;
+      const bx = cx + Math.cos(ang) * (fr - 6);
+      const by = m.y + Math.sin(ang) * (fr - 6);
+      ctx.fillStyle = '#e8d29a';
+      ctx.beginPath();
+      ctx.arc(bx, by, 1.7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(60,40,10,0.8)';
+      ctx.beginPath();
+      ctx.arc(bx, by, 0.7, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // 中心喷口（黄铜环 + 深色孔）
+    ctx.beginPath();
+    ctx.arc(cx, m.y, 5.4, 0, Math.PI * 2);
+    ctx.fillStyle = '#2a2438';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(232,184,75,0.7)';
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+    ctx.restore();
+    // 通气微光：气体色向气室内侧渗入
+    if (tint) {
+      const { r, g, b: bb } = hexToRgb(tint);
+      ctx.beginPath();
+      ctx.arc(m.x - out * 6, m.y, 4 + flow * 3, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${r},${g},${bb},${0.18 + 0.42 * flow})`;
+      ctx.shadowColor = `rgba(${r},${g},${bb},0.85)`;
+      ctx.shadowBlur = 12;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+  }
+
+  /**
+   * 黄铜手轮阀门：外圈金环 + 4 根辐条 + 中心深紫玻璃状态珠 + 手轮把手（关闭转 90°）+
+   * 下方钢制安装座/卡箍。开/关辨识度靠"整体明度"拉开：
+   *   开 = 亮黄铜外圈 + 青色状态珠发光 + 呼吸金辉 + 把手末端青色小指示灯；
+   *   关 = 暗黄铜/发灰整体压暗、去高光、状态珠近黑、把手/辐条深灰（无青色）。
+   * 命中半径/几何位置/valve 数据不变（几何仍用 valve.x/y/r）。
+   */
+  _renderValve(ctx, v, t = 0) {
+    const { x, y, r, open } = v;
+    const pulse = 0.5 + 0.5 * Math.sin(t * 2.2); // 开态微光呼吸（确定性）
+    ctx.save();
+    ctx.lineCap = 'round';
+    // ---- 钢制安装座/卡箍（连到管道上；关态整体压暗）----
+    rr(ctx, x - r * 0.62, y + r * 0.42, r * 1.24, 5.5, 1.6);
+    ctx.fillStyle = open ? '#3a3f5c' : '#262a3c';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(14,12,30,0.85)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = open ? 'rgba(226,232,244,0.6)' : 'rgba(150,158,180,0.3)';
+    for (const dx of [-r * 0.5, r * 0.5]) {
+      ctx.beginPath();
+      ctx.arc(x + dx, y + r * 0.42 + 2.8, 1.1, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // ---- 手轮把手（关闭时长把手旋转 90°；先画，压在轮盘下）----
+    ctx.save();
+    ctx.translate(x, y);
+    if (!open) ctx.rotate(Math.PI / 2);
+    const hw = r * 1.5;
+    const hh = 4.2;
+    rr(ctx, -hw, -hh / 2, hw * 2, hh, hh / 2);
+    const hg = ctx.createLinearGradient(-hw, 0, hw, 0);
+    if (open) {
+      hg.addColorStop(0, '#8a6420');
+      hg.addColorStop(0.5, '#ffd76a');
+      hg.addColorStop(1, '#8a6420');
+    } else {
+      hg.addColorStop(0, '#24262f');
+      hg.addColorStop(0.5, '#34373f');
+      hg.addColorStop(1, '#1e2026');
+    }
+    ctx.fillStyle = hg;
+    ctx.fill();
+    ctx.strokeStyle = open ? 'rgba(255,224,150,0.75)' : 'rgba(90,96,110,0.5)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // 把手末端握球：开=青色小指示灯（带柔光）；关=近黑哑光
+    ctx.beginPath();
+    ctx.arc(hw, 0, hh * 0.62, 0, Math.PI * 2);
+    if (open) {
+      ctx.fillStyle = '#9ff0ff';
+      ctx.shadowColor = '#7fe0ff';
+      ctx.shadowBlur = 6 + 3 * pulse;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    } else {
+      ctx.fillStyle = '#2b2e36';
+      ctx.fill();
+    }
+    ctx.strokeStyle = open ? 'rgba(255,255,255,0.35)' : 'rgba(70,76,90,0.55)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.restore();
+    // ---- 中心深紫玻璃轮盘 + 辐条（关态整体压暗）----
+    ctx.beginPath();
+    ctx.arc(x, y, r - 1.5, 0, Math.PI * 2);
+    ctx.fillStyle = open ? 'rgba(34,27,70,0.92)' : 'rgba(13,13,20,0.95)';
+    ctx.fill();
+    ctx.strokeStyle = open ? THEME.gold.deep : '#2b2e37';
+    ctx.lineWidth = open ? 2 : 1.6;
+    for (let i = 0; i < 4; i++) {
+      const ang = Math.PI / 4 + (i * Math.PI) / 2;
+      ctx.beginPath();
+      ctx.moveTo(x + Math.cos(ang) * (r * 0.32), y + Math.sin(ang) * (r * 0.32));
+      ctx.lineTo(x + Math.cos(ang) * (r - 2.2), y + Math.sin(ang) * (r - 2.2));
+      ctx.stroke();
+    }
+    // ---- 状态珠（开=青色发光；关=近黑无光）----
+    const beadR = r * 0.42;
+    ctx.beginPath();
+    ctx.arc(x, y, beadR, 0, Math.PI * 2);
+    if (open) {
+      ctx.fillStyle = '#7fe0ff';
+      ctx.shadowColor = pulse > 0.5 ? '#7fe0ff' : THEME.gold.light;
+      ctx.shadowBlur = 8 + 4 * pulse;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.beginPath();
+      ctx.arc(x - beadR * 0.3, y - beadR * 0.3, beadR * 0.32, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.fillStyle = '#1d1f26';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(52,56,70,0.8)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    // ---- 外圈（开=亮金环发光；关=暗黄铜/发灰、无高光）----
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.strokeStyle = open ? THEME.gold.base : '#3d414c';
+    ctx.lineWidth = open ? 2.6 : 2.2;
+    if (open) {
+      ctx.shadowColor = THEME.gold.light;
+      ctx.shadowBlur = 8;
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // 外圈 4 颗铆钉（开=金亮；关=哑光深灰）
+    ctx.fillStyle = open ? '#f0d493' : '#4a4f59';
+    for (let i = 0; i < 4; i++) {
+      const ang = (i * Math.PI) / 2;
+      ctx.beginPath();
+      ctx.arc(x + Math.cos(ang) * (r - 0.5), y + Math.sin(ang) * (r - 0.5), 1.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // 开态外圈柔和金色辉光环（关态完全没有）
+    if (open) {
+      ctx.globalAlpha = 0.16 + 0.12 * pulse;
+      ctx.beginPath();
+      ctx.arc(x, y, r + 2.5, 0, Math.PI * 2);
+      ctx.strokeStyle = THEME.gold.light;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
     ctx.restore();
   }
 
-  /** 输入罩体：圆顶玻璃罩 + 底部法兰；有气流时罩内泛出气体色 */
-  _renderHood(ctx, h, gas, flow) {
+  /** 输入罩体：圆顶玻璃罩（深钢边 + 细金内缘）+ 底座法兰铆钉；有气流时罩内泛出气体色 */
+  _renderHood(ctx, h, rgb, flow) {
     const rad = Math.min(h.w / 2 - 2, h.h - 4);
     const dome = () => {
       ctx.beginPath();
@@ -17691,20 +22698,29 @@ class GasTube extends Obj {
       ctx.quadraticCurveTo(h.x + h.w, h.y, h.x + h.w, h.y + rad);
       ctx.lineTo(h.x + h.w, h.y + h.h);
     };
-    // 玻璃罩体（半透明灰，能看到池内）
+    // 玻璃罩体（半透明灰，能看到输入池）
     dome();
     const grad = ctx.createLinearGradient(0, h.y, 0, h.y + h.h);
     grad.addColorStop(0, 'rgba(178,188,206,0.15)');
     grad.addColorStop(1, 'rgba(126,136,156,0.06)');
     ctx.fillStyle = grad;
     ctx.fill();
-    if (gas) {
-      ctx.fillStyle = gas(0.05 + 0.09 * flow); // 罩内气体色
+    if (rgb) {
+      ctx.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},${0.05 + 0.09 * flow})`; // 罩内气体色
       ctx.fill();
     }
-    ctx.strokeStyle = 'rgba(182,192,210,0.55)';
-    ctx.lineWidth = 3;
+    // 罩体边缘：深钢粗边 + 细金内缘（金属包边玻璃圆顶）
+    ctx.strokeStyle = '#2c3146';
+    ctx.lineWidth = 4;
+    dome();
     ctx.stroke();
+    ctx.strokeStyle = 'rgba(232,184,75,0.55)';
+    ctx.lineWidth = 1.3;
+    ctx.shadowColor = 'rgba(255,215,106,0.35)';
+    ctx.shadowBlur = 5;
+    dome();
+    ctx.stroke();
+    ctx.shadowBlur = 0;
     // 玻璃高光（左侧一道弧）
     ctx.beginPath();
     ctx.moveTo(h.x + h.w * 0.16, h.y + h.h - 10);
@@ -17712,19 +22728,38 @@ class GasTube extends Obj {
     ctx.strokeStyle = 'rgba(255,255,255,0.13)';
     ctx.lineWidth = 2.5;
     ctx.stroke();
-    // 底部法兰：压在池口地面线上（"罩住整个池"的底座）
+    // 底部法兰：压在池口地面线上（"罩住整个池"的底座）+ 金上沿 + 铆钉
     rr(ctx, h.x - 6, h.y + h.h - 7, h.w + 12, 11, 4);
     const fg = ctx.createLinearGradient(0, h.y + h.h - 7, 0, h.y + h.h + 4);
-    fg.addColorStop(0, 'rgba(172,182,200,0.50)');
-    fg.addColorStop(1, 'rgba(92,102,120,0.50)');
+    fg.addColorStop(0, 'rgba(74,81,117,0.85)');
+    fg.addColorStop(1, 'rgba(30,34,56,0.85)');
     ctx.fillStyle = fg;
     ctx.fill();
-    ctx.strokeStyle = 'rgba(200,210,226,0.35)';
+    ctx.strokeStyle = 'rgba(12,10,30,0.85)';
     ctx.lineWidth = 1.2;
     ctx.stroke();
+    // 金上沿线
+    ctx.strokeStyle = 'rgba(232,184,75,0.45)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(h.x - 4, h.y + h.h - 6.2);
+    ctx.lineTo(h.x + h.w + 4, h.y + h.h - 6.2);
+    ctx.stroke();
+    // 底座铆钉
+    for (const fx of [0.12, 0.38, 0.62, 0.88]) {
+      const px = h.x - 6 + (h.w + 12) * fx;
+      ctx.fillStyle = '#e8d29a';
+      ctx.beginPath();
+      ctx.arc(px, h.y + h.h - 1.5, 1.3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(60,40,10,0.8)';
+      ctx.beginPath();
+      ctx.arc(px, h.y + h.h - 1.5, 0.55, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
-  /** 两端未接好：编辑器里画虚线框便于选中/接线；游戏里不显示（不凭空出现装置） */
+  /** 未接线：编辑器里画虚线框便于选中/接线；游戏里不显示（不凭空出现装置） */
   _renderPlaceholder(ctx, scene) {
     if (scene && scene.status === 'running') return;
     ctx.save();
@@ -17736,10 +22771,45 @@ class GasTube extends Obj {
     ctx.restore();
   }
 
-  /** 编辑器命中检测：只认装置轮廓（罩边/管道/管口），罩子内部留给药品池选中 */
+  /**
+   * 细粒度命中：只认阀门圆（供点击管线 hitTap 用——整台装置 bbox 很大，
+   * 不能靠它抢滴管等其它物体的点击）。
+   */
+  tapHit(world) {
+    if (!world || !this._geom) return false;
+    for (const b of this._geom.branches) {
+      if (!b.valve) continue;
+      if (Math.hypot(world.x - b.valve.x, world.y - b.valve.y) <= b.valve.r + VALVE_TAP_PAD) return true;
+    }
+    return false;
+  }
+
+  /**
+   * 点击阀门：切换该支路阀门开/关。
+   * **永远返回 false** —— 点击管线里返回 true 会进入"按住连发"（每 0.08s 再点
+   * 一次，阀门会被疯狂翻转）；且未命中阀门时更不应消费这次按下。
+   */
+  onTap(scene, world) {
+    if (!world) return false;
+    const g = scene ? this._layout(scene) : this._geom;
+    if (!g) return false;
+    for (const b of g.branches) {
+      if (!b.valve) continue;
+      if (Math.hypot(world.x - b.valve.x, world.y - b.valve.y) <= b.valve.r + VALVE_TAP_PAD) {
+        if (this.hasValve(b.outId)) {
+          this.toggleValve(b.outId);
+          sfx('ui.click');
+        }
+        return false;
+      }
+    }
+    return false;
+  }
+
+  /** 编辑器命中检测：罩边/主干/各支路管道/管口/阀门圆都能选中，罩内空间留给药品池 */
   editorHit(wx, wy) {
     const g = this._geom;
-    if (!g) {
+    if (!g || !g.hood || !Array.isArray(g.branches)) {
       const pad = 8;
       return wx >= this.x - pad && wx <= this.x + this.w + pad && wy >= this.y - pad && wy <= this.y + this.h + pad;
     }
@@ -17752,11 +22822,19 @@ class GasTube extends Obj {
       const nearBase = wy >= h.y + h.h - 8;
       if (nearSide || nearTop || nearBase) return true;
     }
-    const pts = g.path;
-    for (let i = 1; i < pts.length; i++) {
-      if (segDist(wx, wy, pts[i - 1], pts[i]) <= PIPE_W) return true;
+    const hitPath = (pts) => {
+      for (let i = 1; i < pts.length; i++) {
+        if (segDist(wx, wy, pts[i - 1], pts[i]) <= PIPE_W) return true;
+      }
+      return false;
+    };
+    if (hitPath(g.trunk)) return true;
+    for (const b of g.branches) {
+      if (hitPath(b.path)) return true;
+      if (Math.hypot(wx - b.mouth.x, wy - b.mouth.y) <= PIPE_W + 2) return true;
+      if (b.valve && Math.hypot(wx - b.valve.x, wy - b.valve.y) <= b.valve.r + 4) return true;
     }
-    return Math.hypot(wx - g.mouth.x, wy - g.mouth.y) <= PIPE_W + 2;
+    return false;
   }
 
   /** 折线描边（管道共用） */
@@ -17793,6 +22871,1182 @@ function hexToRgb(hex) {
 exports.GasTube = GasTube;
 
   };
+  __modules["src/objects/gaschamber.js"] = function (module, exports, __require) {
+// ============================================================================
+// 气室（GasChamber）：无碰撞的独立大气区域。
+// ----------------------------------------------------------------------------
+// - 不参与物理：solid=false、physicsKind='none'——不进 statics/dynamics 索引，
+//   不挡玩家/物块，也没有碰撞箱（与导气管的罩子同一套"纯逻辑区域"约定）。
+// - 独立大气：内部持有自己的一份 Atmosphere，与场景外部大气互不影响。
+//   · 未配置 gases（null / 空对象）→ seed 时复制关卡外部大气（气体组成 + _baseTotal），
+//     即"气室默认就是关卡大气"；
+//   · 配置了 gases → 走 Atmosphere.preset 的**独占语义**（先清空再按配置设置：
+//     写了的=配置值，没写的=没有；空表才会保持默认，这里已由上面的分支拦掉）。
+// - 内部判定按**矩形重叠**（用户定案）：与气室矩形有任何重叠就算在气室内，
+//   不要求中心/整体进入。
+// - 视觉：密闭玻璃培养舱——深钢机械外框 + 细金内缘 + 四角黄铜加固件/铆钉 +
+//   暗紫玻璃腔体（腔内按主成分气体色的淡雾/漂移气团）+ 底座裙边法兰 +
+//   顶部小黄铜通气帽 + 右上角无文字小压力表；无 scene（编辑器预览）时照常画。
+// - 气室进出气/内部反应路由由 Scene 集成负责（Scene.gasChambers），本文件只提供
+//   数据与视觉；气室内"反应产生的气体"另记在 _reactGas（气体探测器用，同场景 _reactGas）。
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+const { Atmosphere } = __require('src/chem/atmosphere.js');;
+const { getSubstance } = __require('src/chem/substances.js');;
+const { THEME, rr } = __require('src/render/theme.js');;
+const { hexToRgb } = __require('src/render/color.js');;
+
+const DEFAULT_GAS_COLOR = '#78dcff'; // 主成分气体未声明 gasColor 时的缺省色（青灰，同集气瓶）
+const NEUTRAL_HAZE = '#9aa3c8'; // 无色气体（N2/O2/CO2…）/常压：腔内中性灰紫雾（提亮过，读得出玻璃腔）
+
+class GasChamber extends Obj {
+  get hoverLabel() {
+    return '气室';
+  }
+
+  get isGasChamber() {
+    return true;
+  }
+
+  constructor({ x = 0, y = 0, w = 160, h = 120, gases = null, id = '', ...rest } = {}) {
+    super({ x, y, w, h, solid: false, physicsKind: 'none', id, ...rest });
+    this.atmosphere = new Atmosphere(); // 气室内部大气（独立于 scene.atmosphere）
+    this._initialGases = gases; // { 气体id: 质量g }；null/空对象 = 不配置 → 复制外部大气
+    this._seeded = false; // 幂等初始化标记（Scene 首刻前 seed；update 里补一次）
+    this._reactGas = {}; // 气室内反应产气累积：gasId → 质量g（同 scene._reactGas）
+  }
+
+  /**
+   * 初始化内部大气（幂等，由 Scene 在首次 step 前后调用；update 里也会补一次）。
+   *  - 配置过 gases → Atmosphere.preset 独占语义（先清空再按配置设置）；
+   *  - 否则复制场景外部大气：气体组成 entries + _baseTotal（默认与关卡大气一致）。
+   */
+  seed(scene) {
+    if (this._seeded) return;
+    const gases = this._initialGases;
+    if (gases && Object.keys(gases).length > 0) {
+      this.atmosphere.preset(gases); // 独占：没写的气体 = 没有，写 0 的 = 0g
+    } else {
+      const src = scene.atmosphere;
+      this.atmosphere.gas.clear();
+      for (const [id, mass] of src.gas) this.atmosphere.gas.set(id, mass);
+      this.atmosphere._baseTotal = src._baseTotal;
+    }
+    this._seeded = true;
+  }
+
+  update(dt, scene) {
+    // 幂等 seed：Scene 集成会在首刻前显式调用；没接上时这里补一次（已 seed 过的不会重复制）
+    if (!this._seeded) this.seed(scene);
+  }
+
+  /** 点是否在气室内（含边界） */
+  containsPoint(x, y) {
+    return x >= this.x && x <= this.x + this.w && y >= this.y && y <= this.y + this.h;
+  }
+
+  /** 矩形是否与气室相交（有重叠即算；仅边贴边不算） */
+  overlapsRect(r) {
+    return r.x < this.x + this.w && r.x + r.w > this.x && r.y < this.y + this.h && r.y + r.h > this.y;
+  }
+
+  /** 物体是否与气室重叠（部分重叠即视为在气室内——用户定案） */
+  containsObj(obj) {
+    return obj.right > this.x && obj.left < this.x + this.w && obj.bottom > this.y && obj.top < this.y + this.h;
+  }
+
+  /** 内部当前质量最大的气体（主成分）：[id, mass] 或 null（空腔） */
+  dominantGas() {
+    let best = null;
+    for (const [id, mass] of this.atmosphere.gas) {
+      if (!(mass > 1e-9)) continue;
+      if (!best || mass > best[1]) best = [id, mass];
+    }
+    return best;
+  }
+
+  /** 主成分气体色（内部淡填充用；气体未声明 gasColor → 青灰） */
+  gasColor() {
+    const d = this.dominantGas();
+    return (d && getSubstance(d[0])?.gasColor) || DEFAULT_GAS_COLOR;
+  }
+
+  // ---------------------------------------------------------------------------
+  // 渲染：密闭玻璃培养舱
+  //   深钢机械外框（细金内缘/倒角高光）+ 暗紫玻璃腔体 + 主成分气体淡雾/漂移气团 +
+  //   四角黄铜加固件与铆钉 + 底座裙边法兰 + 顶部黄铜通气帽 + 右上角无文字小压力表。
+  //   动画只用确定性 sin 相位（缓慢呼吸/飘移），无随机闪烁；不画任何文字。
+  // ---------------------------------------------------------------------------
+  render(ctx, opts = {}) {
+    const time = opts?.time ?? 0;
+    const x = this.x;
+    const y = this.y;
+    const w = this.w;
+    const h = this.h;
+    if (!(w > 0 && h > 0)) return;
+    const dom = this.dominantGas();
+    const declared = dom ? getSubstance(dom[0])?.gasColor : null; // 只有声明了颜色的气体才染色
+    const haze = declared ?? NEUTRAL_HAZE; // 无色气体/常压 → 中性灰紫
+    const colored = !!declared;
+    const breathe = 0.5 + 0.5 * Math.sin(time * 0.9); // 0..1 缓慢呼吸（确定性）
+    const small = w < 64 || h < 48; // 太小只保留最简外观
+    const frame = Math.max(3.5, Math.min(9, Math.min(w, h) * 0.055)); // 机械框厚度
+    const cornerR = Math.max(4, Math.min(10, Math.min(w, h) * 0.07));
+    const ix = x + frame;
+    const iy = y + frame;
+    const iw = w - frame * 2;
+    const ih = h - frame * 2;
+
+    ctx.save();
+    const cavR = Math.max(2, cornerR - 2);
+    const hasCavity = iw > 4 && ih > 4;
+    // ---- 顶部黄铜通气帽（先画：短柱被外框压住，只露出帽头） ----
+    if (!small && iw > 36) this._renderVentCaps(ctx, x, y, w, frame);
+
+    // ---- 1) 玻璃腔体：全部半透明（先画，腔内物体照样看得见，只是隔一层暗紫玻璃）----
+    if (hasCavity) {
+      const glass = ctx.createLinearGradient(ix, iy, ix, iy + ih);
+      glass.addColorStop(0, 'rgba(92,78,156,0.40)');
+      glass.addColorStop(0.5, 'rgba(52,42,100,0.36)');
+      glass.addColorStop(1, 'rgba(26,20,58,0.48)');
+      rr(ctx, ix, iy, iw, ih, cavR);
+      ctx.fillStyle = glass;
+      ctx.fill();
+      // ---- 顶部顶光（自上而下的柔光渐变：玻璃腔的受光感）----
+      const topLight = ctx.createLinearGradient(ix, iy, ix, iy + ih * 0.6);
+      topLight.addColorStop(0, 'rgba(198,188,255,0.12)');
+      topLight.addColorStop(1, 'rgba(198,188,255,0)');
+      rr(ctx, ix, iy, iw, ih, cavR);
+      ctx.fillStyle = topLight;
+      ctx.fill();
+      // ---- 腔口内阴影：只沿内缘压一圈（不整面压暗内部，保证腔内物体可见）----
+      ctx.save();
+      ctx.strokeStyle = 'rgba(8,6,24,0.55)';
+      ctx.lineWidth = Math.max(2.5, frame * 0.55);
+      rr(ctx, ix, iy, iw, ih, cavR);
+      ctx.stroke();
+      ctx.restore();
+
+      // ---- 腔内气体雾（裁剪在玻璃腔内）----
+      ctx.save();
+      rr(ctx, ix, iy, iw, ih, cavR);
+      ctx.clip();
+      const baseA = colored ? 0.18 : 0.095; // 有色气体更明显；常压=可辨认的灰紫玻璃腔
+      const body = ctx.createLinearGradient(ix, iy, ix, iy + ih);
+      body.addColorStop(0, rgbaOf(haze, baseA * 0.32));
+      body.addColorStop(0.5, rgbaOf(haze, baseA * (0.62 + 0.12 * breathe)));
+      body.addColorStop(1, rgbaOf(haze, baseA * 1.35)); // 气体沉在腔底更浓
+      ctx.fillStyle = body;
+      ctx.fillRect(ix, iy, iw, ih);
+      // 两缕缓慢漂移的气团（确定性 sin，纯视觉）
+      const minSide = Math.min(iw, ih);
+      for (let i = 0; i < 2; i++) {
+        const px = ix + iw * (0.3 + i * 0.4 + 0.09 * Math.sin(time * 0.33 + i * 2.1));
+        const py = iy + ih * (0.36 + 0.26 * Math.sin(time * 0.19 + i * 1.7));
+        const pr = Math.max(8, minSide * (0.26 + i * 0.07));
+        const hazeG = ctx.createRadialGradient(px, py, 1, px, py, pr);
+        hazeG.addColorStop(0, rgbaOf(haze, colored ? 0.11 : 0.07));
+        hazeG.addColorStop(1, rgbaOf(haze, 0));
+        ctx.fillStyle = hazeG;
+        ctx.fillRect(px - pr, py - pr, pr * 2, pr * 2);
+      }
+      // 底部内阴影（玻璃厚度感）
+      const shade = ctx.createLinearGradient(ix, iy + ih * 0.7, ix, iy + ih);
+      shade.addColorStop(0, 'rgba(0,0,0,0)');
+      shade.addColorStop(1, 'rgba(0,0,0,0.30)');
+      ctx.fillStyle = shade;
+      ctx.fillRect(ix, iy + ih * 0.7, iw, ih * 0.3);
+      // 左上斜向玻璃反光
+      ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+      ctx.lineWidth = Math.max(2, Math.min(7, iw * 0.045));
+      ctx.beginPath();
+      ctx.moveTo(ix - 4, iy + ih * 0.34);
+      ctx.lineTo(ix + iw * 0.34, iy - 4);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // ---- 2) 机械外框：只填充"环"（even-odd），内孔留给玻璃腔，绝不盖住腔内物体 ----
+    const frameGrad = ctx.createLinearGradient(x, y, x, y + h);
+    frameGrad.addColorStop(0, '#565d7e');
+    frameGrad.addColorStop(0.35, '#3a3f5c');
+    frameGrad.addColorStop(1, '#20243c');
+    ctx.beginPath();
+    roundedTrail(ctx, x, y, w, h, cornerR);
+    if (hasCavity) roundedTrail(ctx, ix, iy, iw, ih, cavR);
+    ctx.fillStyle = frameGrad;
+    if (hasCavity) ctx.fill('evenodd');
+    else ctx.fill();
+    ctx.strokeStyle = 'rgba(12,10,30,0.92)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    // 细金外缘（呼吸）
+    ctx.save();
+    ctx.strokeStyle = rgbaOf(THEME.gold.base, 0.30 + 0.14 * breathe);
+    ctx.lineWidth = 1;
+    ctx.shadowColor = rgbaOf(THEME.gold.light, 0.45);
+    ctx.shadowBlur = 3;
+    rr(ctx, x + 1.6, y + 1.6, w - 3.2, h - 3.2, Math.max(2, cornerR - 1));
+    ctx.stroke();
+    ctx.restore();
+    // 顶部倒角高光
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x + cornerR, y + 2.2);
+    ctx.lineTo(x + w - cornerR, y + 2.2);
+    ctx.stroke();
+
+    if (hasCavity) {
+      // ---- 3) 金内缘：压在"钢框内孔 / 玻璃腔"交界线上（最后画，边缘干净）----
+      ctx.save();
+      ctx.strokeStyle = rgbaOf(THEME.gold.base, 0.42 + 0.18 * breathe);
+      ctx.lineWidth = 1.2;
+      ctx.shadowColor = rgbaOf(THEME.gold.light, 0.4);
+      ctx.shadowBlur = 4;
+      rr(ctx, ix + 0.6, iy + 0.6, iw - 1.2, ih - 1.2, cavR);
+      ctx.stroke();
+      ctx.restore();
+      // ---- 右上角小压力表（金圈+深紫面+气体色指针，无文字）----
+      if (!small && w >= 110 && h >= 80) {
+        const gr = Math.max(6, Math.min(9, Math.min(w, h) * 0.06));
+        this._renderGauge(ctx, x + w - frame - gr - 4, y + frame + gr + 4, gr, declared, time);
+      }
+      // ---- 四角黄铜加固件 + 外框铆钉 + 底座裙边 ----
+      if (!small && w >= 56 && h >= 42) {
+        this._renderCornerPlates(ctx, x, y, w, h, frame);
+        if (frame >= 4.5) this._renderFrameRivets(ctx, x, y, w, h, frame);
+        this._renderSkirt(ctx, x, y, w, h);
+      }
+    } else {
+      // 极小气室：钢框 + 金内缘（不塞装饰，保持可辨认）
+      ctx.strokeStyle = rgbaOf(THEME.gold.base, 0.45);
+      ctx.lineWidth = 1;
+      rr(ctx, x + 2, y + 2, Math.max(2, w - 4), Math.max(2, h - 4), 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /** 顶部两个小黄铜通气帽（装饰：暗示密闭结构可接导管；先画，短柱被外框遮住） */
+  _renderVentCaps(ctx, x, y, w, frame) {
+    const bw = Math.max(5, frame * 0.9); // 帽身宽
+    const capH = Math.max(3, frame * 0.5);
+    for (const fx of [0.3, 0.68]) {
+      const cx = Math.round(x + w * fx);
+      // 短柱（钢 + 侧向螺栓）
+      ctx.fillStyle = '#3a3f5c';
+      ctx.fillRect(cx - bw / 2, y - capH * 2.4, bw, capH * 2.6);
+      ctx.fillStyle = 'rgba(255,255,255,0.14)';
+      ctx.fillRect(cx - bw / 2, y - capH * 2.4, 1.2, capH * 2.6);
+      ctx.fillStyle = 'rgba(226,232,244,0.5)';
+      for (const dy of [-capH * 1.9, -capH * 1.15]) {
+        ctx.fillRect(cx + bw / 2 - 1.2, y + dy, 1.8, 1.1);
+      }
+      // 黄铜帽（六角/倒角感：底座一层 + 收窄顶盖）
+      rr(ctx, cx - bw * 0.85, y - capH * 3.15, bw * 1.7, capH * 1.3, capH * 0.35);
+      ctx.fillStyle = '#8a6420';
+      ctx.fill();
+      ctx.strokeStyle = '#4a320e';
+      ctx.lineWidth = 0.9;
+      ctx.stroke();
+      rr(ctx, cx - bw * 0.62, y - capH * 3.45, bw * 1.24, capH * 0.85, capH * 0.3);
+      ctx.fillStyle = '#c09241';
+      ctx.fill();
+      ctx.strokeStyle = '#5a3f14';
+      ctx.lineWidth = 0.9;
+      ctx.stroke();
+      // 帽顶高光 + 中心小凹点 + 横纹
+      ctx.fillStyle = 'rgba(255,232,160,0.6)';
+      ctx.fillRect(cx - bw * 0.5, y - capH * 3.32, bw, 1);
+      ctx.fillStyle = 'rgba(40,26,8,0.6)';
+      ctx.beginPath();
+      ctx.arc(cx, y - capH * 2.88, Math.max(0.6, capH * 0.14), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(40,26,8,0.5)';
+      ctx.fillRect(cx - bw * 0.6, y - capH * 2.28, bw * 1.2, 1.1);
+    }
+  }
+
+  /** 四角黄铜加固件（L 形贴角）+ 两颗铆钉 */
+  _renderCornerPlates(ctx, x, y, w, h, frame) {
+    const s = Math.max(8, Math.min(22, Math.min(w, h) * 0.14)); // 角件臂长
+    const t = Math.max(2.2, Math.min(frame * 0.45, s * 0.45)); // 角件臂厚
+    const corners = [
+      [x, y, 1, 1],
+      [x + w, y, -1, 1],
+      [x, y + h, 1, -1],
+      [x + w, y + h, -1, -1],
+    ];
+    ctx.save();
+    for (const [cx, cy, sx, sy] of corners) {
+      // L 形黄铜板（沿两条外框边）
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cx + sx * s, cy);
+      ctx.lineTo(cx + sx * s, cy + sy * t);
+      ctx.lineTo(cx + sx * t, cy + sy * t);
+      ctx.lineTo(cx + sx * t, cy + sy * s);
+      ctx.lineTo(cx, cy + sy * s);
+      ctx.closePath();
+      ctx.fillStyle = '#a9782a';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(44,28,10,0.75)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      // 黄铜亮边（内折角一线）
+      ctx.strokeStyle = rgbaOf(THEME.gold.light, 0.5);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cx + sx * (t + 1), cy + sy * (t + 1));
+      ctx.lineTo(cx + sx * (s - 1), cy + sy * (t + 1));
+      ctx.stroke();
+      // 两颗铆钉（沿两臂）
+      for (const [rx, ry] of [[s * 0.62, t * 0.5], [t * 0.5, s * 0.62]]) {
+        const px = cx + sx * rx;
+        const py = cy + sy * ry;
+        ctx.fillStyle = '#f0d493';
+        ctx.beginPath();
+        ctx.arc(px, py, 1.4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(60,40,10,0.8)';
+        ctx.beginPath();
+        ctx.arc(px, py, 0.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
+  /** 外框铆钉（顶/左/右三边中点；底边被裙边盖住） */
+  _renderFrameRivets(ctx, x, y, w, h, frame) {
+    if (w < 40 || h < 32) return;
+    const m = frame * 0.5;
+    const pts = [
+      [x + w * 0.5, y + m],
+      [x + m, y + h * 0.5],
+      [x + w - m, y + h * 0.5],
+    ];
+    ctx.save();
+    for (const [px, py] of pts) {
+      ctx.fillStyle = '#c9a75f';
+      ctx.beginPath();
+      ctx.arc(px, py, Math.max(1.2, Math.min(2.2, frame * 0.28)), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,240,190,0.55)';
+      ctx.beginPath();
+      ctx.arc(px - 0.5, py - 0.5, Math.max(0.5, Math.min(0.9, frame * 0.13)), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(50,32,8,0.8)';
+      ctx.beginPath();
+      ctx.arc(px + 0.4, py + 0.4, Math.max(0.4, Math.min(0.7, frame * 0.1)), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /**
+   * 右上角小压力表：金圈 + 深紫表盘 + 气体色指针（无刻度文字）。
+   * 指针角度 = 缓慢漂移的确定性 sin（不是随机闪烁）；有色气体时用其 gasColor 作指针色。
+   */
+  _renderGauge(ctx, cx, cy, r, gasTint, time) {
+    ctx.save();
+    // 表盘（深紫玻璃面）
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(26,20,54,0.95)';
+    ctx.fill();
+    // 金圈（暗金外圈 + 亮金内圈）
+    ctx.strokeStyle = '#7a5a20';
+    ctx.lineWidth = Math.max(2, r * 0.28);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(232,184,75,0.85)';
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r - 1.4, 0, Math.PI * 2);
+    ctx.stroke();
+    // 三枚刻度（极简，不画字）
+    ctx.strokeStyle = 'rgba(210,220,245,0.4)';
+    ctx.lineWidth = 1;
+    for (const ang of [-2.3, -1.75, -1.2]) {
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(ang) * (r - 2.2), cy + Math.sin(ang) * (r - 2.2));
+      ctx.lineTo(cx + Math.cos(ang) * (r - 4.2), cy + Math.sin(ang) * (r - 4.2));
+      ctx.stroke();
+    }
+    // 气体色指针（缓慢漂移；有色气体=gasColor，无色=金）
+    const needle = gasTint || THEME.gold.light;
+    const ang = -Math.PI * 0.82 + Math.sin(time * 0.5) * 0.16;
+    ctx.strokeStyle = needle;
+    ctx.shadowColor = needle;
+    ctx.shadowBlur = 4;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(ang) * (r - 3), cy + Math.sin(ang) * (r - 3));
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // 中心轴
+    ctx.fillStyle = '#e8d29a';
+    ctx.beginPath();
+    ctx.arc(cx, cy, Math.max(0.9, r * 0.18), 0, Math.PI * 2);
+    ctx.fill();
+    // 表面高光弧
+    ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 0.7, Math.PI * 1.1, Math.PI * 1.55);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** 底部裙边/法兰：与舱体底边贴合（上沿压在边框上、略窄于框架、薄一点）+ 金上沿 + 三铆钉 */
+  _renderSkirt(ctx, x, y, w, h) {
+    const sh = Math.max(3, Math.min(6, Math.min(w, h) * 0.045)); // 裙边厚（收薄）
+    const skX = x + 1; // 比框架窄 2px
+    const skW = w - 2;
+    const sy = y + h - sh - 1; // 上沿压在底边框上，与舱体连成一体
+    const g = ctx.createLinearGradient(skX, sy, skX, sy + sh + 3);
+    g.addColorStop(0, 'rgba(84,91,128,0.95)');
+    g.addColorStop(0.55, 'rgba(58,64,94,0.95)');
+    g.addColorStop(1, 'rgba(26,30,52,0.95)');
+    rr(ctx, skX, sy, skW, sh + 3, 2);
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(12,10,30,0.85)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // 金色上沿（与边框呼应，位置压进舱体底框内）
+    ctx.strokeStyle = rgbaOf(THEME.gold.base, 0.38);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(skX + 2, sy + 1.1);
+    ctx.lineTo(skX + skW - 2, sy + 1.1);
+    ctx.stroke();
+    // 底部铆钉（两下角 + 中央）
+    ctx.save();
+    for (const fx of [0.2, 0.5, 0.8]) {
+      const px = skX + skW * fx;
+      const py = sy + sh + 0.6;
+      ctx.fillStyle = '#c9a75f';
+      ctx.beginPath();
+      ctx.arc(px, py, 1.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(50,32,8,0.8)';
+      ctx.beginPath();
+      ctx.arc(px, py, 0.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /**
+   * 编辑器命中检测：只认边框 10px 带 + 四角括号——内部空间返回 false，
+   * 让腔内物体（池/烧杯/物块等）仍能被编辑器选中。
+   */
+  editorHit(wx, wy) {
+    const BAND = 10;
+    if (wx < this.x - BAND || wx > this.x + this.w + BAND || wy < this.y - BAND || wy > this.y + this.h + BAND) return false;
+    // 四条边框的 10px 带（含外侧一点，方便抓边缩放）
+    if (wx <= this.x + BAND || wx >= this.x + this.w - BAND || wy <= this.y + BAND || wy >= this.y + this.h - BAND) return true;
+    // 四角括号：角部 L 形区域（比边框带稍微向内延伸一点）
+    const L = Math.max(8, Math.min(18, this.w * 0.16, this.h * 0.2)) + 4;
+    const nearX = wx <= this.x + L || wx >= this.x + this.w - L;
+    const nearY = wy <= this.y + L || wy >= this.y + this.h - L;
+    return nearX && nearY;
+  }
+}
+
+/** 十六进制色 + 透明度 → rgba 字符串（视觉层共用） */
+function rgbaOf(hex, a) {
+  const c = hexToRgb(hex);
+  return `rgba(${c.r},${c.g},${c.b},${a})`;
+}
+
+/** 向当前路径追加一段圆角矩形（不自开新路径：供 even-odd "框环" 填充组合子路径用） */
+function roundedTrail(ctx, x, y, w, h, r) {
+  const r2 = Math.max(0, Math.min(r, w / 2, h / 2));
+  ctx.moveTo(x + r2, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r2);
+  ctx.arcTo(x + w, y + h, x, y + h, r2);
+  ctx.arcTo(x, y + h, x, y, r2);
+  ctx.arcTo(x, y, x + w, y, r2);
+  ctx.closePath();
+}
+
+exports.GasChamber = GasChamber;
+
+  };
+  __modules["src/objects/poolvariants.js"] = function (module, exports, __require) {
+// ============================================================================
+// 药品池变种：电解池 / 加热池 / 高温池。
+// ----------------------------------------------------------------------------
+// 继承 Pool（isPool 保持 true：导气管/提取器/放置吸附等仍按普通药品池对待），
+// 额外向化学引擎提供一种"环境条件"：
+//   Scene.variantPoolFor / conditionsFor 识别 isVariantPool && active(scene)，
+//   按 mode 给 electric / heat / highTemp 条件——池自身与浸在池内的物体都获得。
+// 开关控制：switchId 留空 = 常开；非空时由该 id 的 Switch/GasDetector 的
+//   effectiveOpen(scene) 决定（只在编辑器里绑定；游戏内池子本身不可点击）。
+// 渲染：先画普通池（液体/沉淀/化学式标注），再叠加"安装在池沿的专用装置"：
+//   池沿金属包边/卡箍 + 三模式统一的大号黄铜铭牌（电解/加热/高温；屏幕最小 13.5px
+//   保底、暗铜底+亮刻字+元素小图标）+ 各模式装置（电解：电极/绝缘座/电源盒/电缆；
+//   加热/高温：燃烧栅排/火焰舌/热浪，高温只换配色与强度=白蓝银白火焰+冷白炽光+
+//   白金栅排）。关闭态装置保留但灰暗、铭牌文字暗但仍可读、无火焰/无炽光；
+//   动画全部为确定性 sin 相位，无随机闪烁。
+// 电解产气定点（公开接口，Scene._gasPlume 消费）：
+//   electrodeLayout()      左右电极几何（左=阴极(−)、右=阳极(+)，含各自水下点）
+//   gasOriginPoint(gasId)  H2 → 左阴极；O2/Cl2 → 右阳极；其它气体 null
+// ============================================================================
+
+const { Pool } = __require('src/objects/pool.js');;
+const { rr, clearText, screenTextScale, drawFlame } = __require('src/render/theme.js');;
+
+// 变种配色（延续项目的暗紫/金"元素"视觉语言）：装置=黄铜/钢，状态=元素色霓虹
+const ACCENT = {
+  electric: {
+    rim: '#6fe4ff', rimOff: '#4a5270',
+    metal: '#c99a45', metalDark: '#6f5220', // 黄铜（卡箍/电极箍/接线端子）
+    gem: '#7fe0ff', // 电源盒状态宝石
+  },
+  heat: {
+    rim: '#ffb340', rimOff: '#5a4a34',
+    metal: '#c99a45', metalDark: '#6f5220', // 黄铜（栅排卡箍/螺栓）
+    spark: '#ff9a3d',
+  },
+  highTemp: {
+    rim: '#cfe6ff', rimOff: '#44506a',
+    metal: '#c8d2e6', metalDark: '#5f6a84', // 白金/钢色栅排（与加热池一眼区分）
+    spark: '#a9ecff',
+  },
+};
+
+// 池沿黄铜铭牌的刻字（三种池唯一允许的说明性文字，用户明确要求）
+const NAME_LABEL = { electric: '电解', heat: '加热', highTemp: '高温' };
+
+/** 十六进制色 + 透明度 → rgba 字符串（视觉层共用） */
+function rgbaOf(hex, a) {
+  const h = String(hex).replace('#', '');
+  const n = h.length === 3
+    ? [parseInt(h[0] + h[0], 16), parseInt(h[1] + h[1], 16), parseInt(h[2] + h[2], 16)]
+    : [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  return `rgba(${n[0]},${n[1]},${n[2]},${a})`;
+}
+
+/** 铭牌图标的极小泪滴形火焰路径（以 (x, baseY) 为焰底、h 为焰高；调用方负责 fill） */
+function flameGlyph(ctx, x, baseY, h) {
+  const w = h * 0.5;
+  ctx.beginPath();
+  ctx.moveTo(x, baseY - h);
+  ctx.quadraticCurveTo(x + w, baseY - h * 0.4, x + w * 0.46, baseY);
+  ctx.quadraticCurveTo(x, baseY + h * 0.1, x - w * 0.46, baseY);
+  ctx.quadraticCurveTo(x - w, baseY - h * 0.4, x, baseY - h);
+  ctx.closePath();
+}
+
+class VariantPool extends Pool {
+  constructor({ switchId = '', ...rest } = {}) {
+    super(rest);
+    this.switchId = String(switchId || ''); // 绑定的开关 id（空 = 常开）
+    this.mode = 'none'; // 子类常量：'electric' | 'heat' | 'highTemp'
+    // 渲染用的当前条件态：常开池开局即为真；开关控制的池等第一次 update 求值
+    this._activeNow = !this.switchId;
+  }
+
+  /** 变种池标记（Scene.variantPoolFor 按此识别） */
+  get isVariantPool() {
+    return true;
+  }
+
+  /** 当前是否在提供条件：switchId 空 = 常开；否则读绑定开关的有效开启态 */
+  active(scene) {
+    if (!this.switchId) return true;
+    const sw = scene?.byId?.[this.switchId];
+    if (!sw || sw.hidden) return false;
+    // 开关/气体探测器/钥匙都实现 effectiveOpen（"&"联锁的有效输出态）；其它可开合对象退化为 open
+    if (typeof sw.effectiveOpen === 'function') return !!sw.effectiveOpen(scene);
+    return !!sw.open;
+  }
+
+  update(dt, scene) {
+    super.update(dt, scene); // 池内沉淀颗粒沉降等普通池逻辑
+    this._activeNow = this.active(scene);
+  }
+
+  // ===========================================================================
+  // 电解电极几何 / 产气点位（公开接口；Scene._gasPlume 用 gasOriginPoint 定点冒泡）
+  // ===========================================================================
+
+  /** 液体液面 y（与 Pool.render 的液面高度同一公式；无液体时=池底） */
+  _waterSurfaceY(r) {
+    const sol = this.solution;
+    const vol = sol.volume > 0 ? sol.volume : Infinity;
+    const lh = r.h * Math.max(0, Math.min(1, sol.totalMass() / vol));
+    return r.y + r.h - lh;
+  }
+
+  /**
+   * 电解池电极几何（公开；Scene 产气定点/测试用）。
+   * 左 = 阴极(−)、右 = 阳极(+)。返回 null = 非电解池或池太小放不下装置
+   * （与 _renderElectrolysis 的渲染门槛一致）。
+   * 返回：{
+   *   rodW, rimY, topY, botY, waterY,
+   *   left:  { x, top, bottom, polarity:'-', underwater:{x,y} },
+   *   right: { x, top, bottom, polarity:'+', underwater:{x,y} },
+   * }
+   * underwater 为电极上"水面以下、仍在池内"的取气点（随 innerRect/液面自适应）。
+   */
+  electrodeLayout() {
+    if (this.mode !== 'electric') return null; // 只有电解池有电极
+    const r = this.innerRect();
+    if (r.w < 46 || r.h < 22) return null; // 太小放不下电极（渲染同门槛）
+    const rodW = Math.max(4, Math.min(7, r.w * 0.032));
+    const inset = Math.max(14, r.w * 0.26);
+    const rimY = r.y + 2; // 池沿线（绝缘座所在）
+    const topY = rimY - Math.max(12, Math.min(22, r.h * 0.34)); // 电极顶端（池沿以上）
+    const botY = r.y + r.h - Math.max(6, r.h * 0.22); // 电极没入水下的底端
+    const waterY = this._waterSurfaceY(r);
+    const y = this._underwaterY(r, topY, botY, waterY);
+    const mk = (x, polarity) => ({
+      x,
+      top: topY,
+      bottom: botY,
+      polarity,
+      underwater: { x, y },
+    });
+    return {
+      rodW,
+      rimY,
+      topY,
+      botY,
+      waterY,
+      left: mk(r.x + inset, '-'), // 阴极（−）
+      right: mk(r.x + r.w - inset, '+'), // 阳极（+）
+    };
+  }
+
+  /** 取气点 y：液面下 6~12px（电极中下段）；池太浅/无水时贴池底上方（仍在池内） */
+  _underwaterY(r, topY, botY, waterY) {
+    const floorY = r.y + r.h - 3; // 池底内缘（水下点的下限）
+    const want = waterY + Math.min(12, Math.max(6, (botY - topY) * 0.2));
+    return Math.max(topY + 4, Math.min(want, Math.min(floorY, botY + 2)));
+  }
+
+  /**
+   * 电解产气对应的电极点位（公开；Scene._gasPlume 用它把气泡柱/气泡定到正确电极）：
+   *   H2 → 左阴极(−)；O2 / Cl2 → 右阳极(+)；其它气体/null = 不指定（由场景按原逻辑取点）。
+   * @returns {{x:number,y:number}|null}
+   */
+  gasOriginPoint(gasId) {
+    const layout = this.electrodeLayout();
+    if (!layout) return null;
+    // 阴极（左）：H2；阳极（右）：O2 / Cl2
+    if (gasId === 'H2') return { ...layout.left.underwater };
+    if (gasId === 'O2' || gasId === 'Cl2') return { ...layout.right.underwater };
+    return null;
+  }
+
+  // ===========================================================================
+  // 渲染
+  // ===========================================================================
+
+  render(ctx, opts) {
+    super.render(ctx, opts); // 普通池外观：液体/沉淀颗粒/化学式标注（先画，保证可见）
+    const r = this.innerRect();
+    if (r.w <= 0 || r.h <= 0) return;
+    const on = this._activeNow;
+    const t = opts?.time ?? 0;
+    const a = ACCENT[this.mode] ?? ACCENT.electric;
+    ctx.save();
+    // 池沿金属包边（所有变种共有）→ 卡箍 → 各模式专用装置 → 铭牌（最前，不被装置遮挡）
+    this._renderRimBand(ctx, r, on, a);
+    this._renderClamps(ctx, r, on, a);
+    if (this.mode === 'electric') this._renderElectrolysis(ctx, r, on, a);
+    else this._renderHeater(ctx, r, on, a, t, this.mode === 'highTemp');
+    this._renderNameplate(ctx, r, on);
+    ctx.restore();
+  }
+
+  /**
+   * 池沿金属包边：深钢槽 + 钢亮面 + 高光细线 + 元素色内缘（开=发光/关=暗灰）。
+   * 关闭态装置仍保留（灰暗），只是不发光。
+   */
+  _renderRimBand(ctx, r, on, a) {
+    const bw = Math.max(3, Math.min(6, Math.round(r.w * 0.022))); // 包边厚度
+    const x = r.x + bw / 2;
+    const y = r.y + bw / 2;
+    const w = r.w - bw;
+    const h = r.h - bw;
+    if (w <= 2 || h <= 2) return;
+    ctx.save();
+    // 外槽（暗钢）
+    ctx.strokeStyle = 'rgba(18,16,40,0.85)';
+    ctx.lineWidth = bw + 2.5;
+    ctx.strokeRect(x, y, w, h);
+    // 钢亮面
+    ctx.strokeStyle = 'rgba(74,81,117,0.95)';
+    ctx.lineWidth = bw;
+    ctx.strokeRect(x, y, w, h);
+    // 上缘高光细线
+    ctx.strokeStyle = 'rgba(190,200,228,0.28)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x - bw / 2 + 1, y - bw / 2 + 0.5);
+    ctx.lineTo(x + w + bw / 2 - 1, y - bw / 2 + 0.5);
+    ctx.stroke();
+    // 元素色内缘（U 形：左/底/右；开=元素色霓虹发光，关=暗灰）
+    ctx.strokeStyle = on ? a.rim : a.rimOff;
+    ctx.lineWidth = on ? 1.6 : 1;
+    if (on) {
+      ctx.shadowColor = a.rim;
+      ctx.shadowBlur = 9;
+    }
+    ctx.beginPath();
+    ctx.moveTo(x - bw / 2, y + bw / 2);
+    ctx.lineTo(x - bw / 2, y + h + bw / 2);
+    ctx.lineTo(x + w + bw / 2, y + h + bw / 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  /** 池沿钢制卡箍/挂架（装置底座；关闭态也保留，开态黄铜/白金螺栓发亮） */
+  _renderClamps(ctx, r, on, a) {
+    const cw = Math.max(7, Math.min(12, r.w * 0.05));
+    const ch = Math.max(6, Math.min(10, r.h * 0.16));
+    ctx.save();
+    for (const cx of [r.x + r.w * 0.14, r.x + r.w * 0.86]) {
+      // 座块
+      rr(ctx, cx - cw / 2, r.y - ch + 2, cw, ch, 2);
+      ctx.fillStyle = on ? '#3f4562' : '#2c3044';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(14,12,30,0.8)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      // 黄铜/白金螺栓
+      ctx.fillStyle = on ? a.metal : '#5a5648';
+      ctx.beginPath();
+      ctx.arc(cx, r.y - ch / 2 + 1.5, 1.4, 0, Math.PI * 2);
+      ctx.fill();
+      // 贴池沿的卡脚
+      ctx.fillRect(cx - 1.2, r.y - 1, 2.4, Math.max(2, ch * 0.5));
+    }
+    ctx.restore();
+  }
+
+  /**
+   * 铭牌布局（渲染与可读性测试共用）：尺寸/位置/字号。
+   * 世界尺寸正常关卡尺度约 52~64 × 18~22（随池宽自适应）；窄池缩到约 44×16 起。
+   * 位置：电解池架在电极接线帽上方（避开电极/跨接电缆/绝缘座）；加热/高温池骑在
+   * 上侧池沿中央（避开两侧卡箍与池底栅排；公式标签在池下方，不会重叠）。
+   */
+  _nameplateLayout(ctx, r) {
+    const text = NAME_LABEL[this.mode];
+    if (!text) return null;
+    // 世界字号基准 12px，按相机缩放补到屏幕上 ≥13.5px（上限 1.75：极端缩放时牌面不过大）
+    const k = screenTextScale(ctx, 12, 13.5, 1.75);
+    const fs = 12 * k;
+    const textW = fs * text.length;
+    const iconW = fs * 0.6;
+    const gap = fs * 0.34;
+    let w = Math.round(textW + iconW + gap + fs * 0.9 + 8);
+    w = Math.max(44, Math.min(96, w)); // 放大：正常尺度 ≥52，窄池下限 44
+    w = Math.min(w, Math.max(44, r.w - 4)); // 随池宽自适应（不小于 44）
+    const h = Math.max(16, Math.min(34, Math.round(fs + 8)));
+    const showIcon = w - textW >= iconW + gap + 12; // 牌面太窄时不画图标，保证文字完整
+    const x = r.x + r.w / 2 - w / 2;
+    let y;
+    const layout = this.mode === 'electric' ? this.electrodeLayout() : null;
+    if (layout) {
+      // 架在电极接线帽上方（与 _renderElectrolysis 的帽高公式一致）
+      const capFs = Math.max(6, Math.min(9, layout.rodW * 1.5));
+      const capH = Math.max(5, Math.round(capFs * 0.9));
+      y = layout.topY - capH - 3 - h;
+    } else {
+      y = r.y - h * 0.6; // 骑在上侧池沿
+    }
+    return { text, w, h, x, y, fs, iconW, gap, showIcon };
+  }
+
+  /**
+   * 池沿黄铜铭牌（三种池统一）：暗黄铜/深紫底渐变 + 细金边 + 四角铆钉 + 极小元素
+   *   图标（电解=闪电 / 加热=火焰 / 高温=双焰）+ 明亮刻字「电解/加热/高温」。
+   *   clearText 的细暗描边保证文字与暗牌面高对比；开态亮铜+米白刻字，关态灰暗但
+   *   文字用 #cfc6b0 仍可读。字号经 screenTextScale 补足屏幕最小 13.5px（真实关卡
+   *   尺度可读，避免"黑牌糊字"）。最后绘制（不被装置遮挡）。
+   */
+  _renderNameplate(ctx, r, on) {
+    const L = this._nameplateLayout(ctx, r);
+    if (!L) return;
+    const { text, w, h, x, y, fs, iconW, gap, showIcon } = L;
+    ctx.save();
+    // 投影（让铭牌从池沿/装置上"浮"出来）
+    rr(ctx, x + 1, y + 2, w, h, 3);
+    ctx.fillStyle = 'rgba(6,4,12,0.55)';
+    ctx.fill();
+    // 牌面：暗黄铜/深紫底渐变（开=暖铜，关=灰暗铜）——保持深底，衬托亮刻字
+    rr(ctx, x, y, w, h, 3);
+    const g = ctx.createLinearGradient(x, y, x, y + h);
+    if (on) {
+      g.addColorStop(0, '#4a3418');
+      g.addColorStop(0.45, '#33230f');
+      g.addColorStop(1, '#20150a');
+    } else {
+      g.addColorStop(0, '#3b352b');
+      g.addColorStop(1, '#252220');
+    }
+    ctx.fillStyle = g;
+    ctx.fill();
+    // 细金边（开=亮金微光；关=暗金）
+    ctx.strokeStyle = on ? '#ffd76a' : '#8a7a5a';
+    ctx.lineWidth = 1.4;
+    if (on) {
+      ctx.shadowColor = '#ffb340';
+      ctx.shadowBlur = 5;
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    // 内圈凹刻线
+    rr(ctx, x + 2, y + 2, w - 4, h - 4, 2);
+    ctx.strokeStyle = on ? 'rgba(255,220,150,0.22)' : 'rgba(150,140,120,0.18)';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+    // 四角铆钉（亮金/灰色）
+    const rv = Math.max(1.1, h * 0.07);
+    const inset = Math.max(3.5, h * 0.16);
+    for (const [rx, ry] of [
+      [x + inset, y + inset], [x + w - inset, y + inset],
+      [x + inset, y + h - inset], [x + w - inset, y + h - inset],
+    ]) {
+      ctx.fillStyle = on ? '#ffe08a' : '#90886f';
+      ctx.beginPath();
+      ctx.arc(rx, ry, rv, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(30,18,6,0.7)';
+      ctx.beginPath();
+      ctx.arc(rx, ry, rv * 0.45, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // 内容区（左右避开铆钉列）
+    const padIn = Math.max(7, h * 0.34);
+    const contentL = x + padIn;
+    const contentR = x + w - padIn;
+    // 元素图标（极小；牌面太窄时省略）
+    if (showIcon) {
+      this._renderNameIcon(ctx, contentL + iconW / 2, y + h / 2 + h * 0.02, h * 0.5, on);
+    }
+    // 明亮刻字（clearText 细暗描边；开态米白/金，关态 #cfc6b0 仍可读）
+    const textCX = showIcon
+      ? contentL + iconW + gap + (contentR - (contentL + iconW + gap)) / 2
+      : (contentL + contentR) / 2;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    clearText(ctx, text, textCX, y + h * 0.54, on ? '#fff2cc' : '#cfc6b0', `bold ${Math.round(fs * 10) / 10}px monospace`);
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.restore();
+  }
+
+  /** 铭牌上的极小元素图标：闪电（电解）/ 火焰（加热）/ 双焰（高温） */
+  _renderNameIcon(ctx, cx, cy, h, on) {
+    ctx.save();
+    if (this.mode === 'electric') {
+      // 闪电
+      ctx.fillStyle = on ? '#ffe9a8' : '#cfc6b0';
+      ctx.beginPath();
+      ctx.moveTo(cx + h * 0.06, cy - h * 0.48);
+      ctx.lineTo(cx + h * 0.36, cy - h * 0.48);
+      ctx.lineTo(cx + h * 0.04, cy - h * 0.04);
+      ctx.lineTo(cx + h * 0.3, cy - h * 0.04);
+      ctx.lineTo(cx - h * 0.34, cy + h * 0.52);
+      ctx.lineTo(cx - h * 0.04, cy + h * 0.02);
+      ctx.lineTo(cx - h * 0.32, cy + h * 0.02);
+      ctx.closePath();
+      ctx.fill();
+    } else if (this.mode === 'highTemp') {
+      // 双焰：后一簇冷色小焰 + 前一簇亮白焰（"高温"一眼区分）
+      ctx.fillStyle = on ? '#7fd8ff' : '#a89f8a';
+      flameGlyph(ctx, cx + h * 0.24, cy + h * 0.34, h * 0.62);
+      ctx.fill();
+      ctx.fillStyle = on ? '#eafcff' : '#cfc6b0';
+      flameGlyph(ctx, cx, cy + h * 0.46, h * 0.9);
+      ctx.fill();
+    } else {
+      // 单焰（加热）
+      ctx.fillStyle = on ? '#ffe9a8' : '#cfc6b0';
+      flameGlyph(ctx, cx, cy + h * 0.46, h * 0.9);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /**
+   * 电解池：黄铜/石墨电极（陶瓷绝缘座 + 金夹箍 + 顶部接线端子 + −/+ 阴刻极标）+
+   *   跨接铜排 + 池沿电源盒（青宝石状态灯）。无水下电弧/气泡（真实气泡由 Scene 按
+   *   gasOriginPoint 从对应电极位置冒出）。关闭态：电极冷灰、宝石暗灰。
+   */
+  _renderElectrolysis(ctx, r, on, a) {
+    const layout = this.electrodeLayout();
+    if (!layout) return; // 太小放不下装置：只留池沿包边/卡箍/铭牌
+    const { rodW, rimY, topY, botY, left, right } = layout;
+    const x1 = left.x;
+    const x2 = right.x;
+    // ---- 池沿电源盒（左） ----
+    const boxW = Math.max(18, Math.min(26, r.w * 0.2));
+    const boxH = Math.max(12, Math.min(17, r.h * 0.3));
+    const bx = r.x + 4;
+    const by = rimY - boxH - 2;
+    rr(ctx, bx, by, boxW, boxH, 2.5);
+    const bg = ctx.createLinearGradient(bx, by, bx, by + boxH);
+    bg.addColorStop(0, '#2a2350');
+    bg.addColorStop(1, '#141029');
+    ctx.fillStyle = bg;
+    ctx.fill();
+    ctx.strokeStyle = on ? rgbaOf(a.metal, 0.75) : 'rgba(120,128,152,0.5)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // 面板刻线
+    ctx.strokeStyle = 'rgba(190,200,228,0.18)';
+    ctx.beginPath();
+    ctx.moveTo(bx + 3, by + boxH * 0.5);
+    ctx.lineTo(bx + boxW * 0.52, by + boxH * 0.5);
+    ctx.stroke();
+    // 状态宝石（开=青宝石发光；关=暗灰）
+    const gemX = bx + boxW * 0.74;
+    const gemY = by + boxH * 0.5;
+    const gemR = Math.max(2, boxH * 0.2);
+    ctx.beginPath();
+    ctx.arc(gemX, gemY, gemR, 0, Math.PI * 2);
+    if (on) {
+      ctx.fillStyle = a.gem;
+      ctx.shadowColor = a.gem;
+      ctx.shadowBlur = 10;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = 'rgba(255,255,255,0.75)';
+      ctx.beginPath();
+      ctx.arc(gemX - gemR * 0.3, gemY - gemR * 0.3, gemR * 0.38, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.fillStyle = '#3f4560';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(140,148,172,0.5)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    // 电源盒 → 左电极的短电缆
+    ctx.strokeStyle = '#241f38';
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(bx + boxW, by + boxH * 0.5);
+    ctx.quadraticCurveTo((bx + boxW + x1) / 2, by - 2, x1, topY + 3);
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+    // ---- 两根电极：陶瓷绝缘座 + 石墨棒 + 金夹箍 + 顶部金属帽（− / + 阴刻） ----
+    const capFs = Math.max(6, Math.min(9, rodW * 1.5));
+    const capH = Math.max(5, Math.round(capFs * 0.9));
+    for (const [ex, polarity] of [[x1, left.polarity], [x2, right.polarity]]) {
+      // 陶瓷绝缘座（池沿上）
+      rr(ctx, ex - 6, rimY - 5, 12, 7, 2);
+      ctx.fillStyle = on ? '#ded6c4' : '#b7b2a6';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(60,52,40,0.7)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      // 石墨电极棒（深色 + 冷色反光；关=更暗）
+      const g = ctx.createLinearGradient(ex - rodW / 2, 0, ex + rodW / 2, 0);
+      g.addColorStop(0, on ? '#2b3140' : '#23262e');
+      g.addColorStop(0.45, on ? '#4a5468' : '#33373f');
+      g.addColorStop(1, on ? '#20242f' : '#1c1e24');
+      ctx.fillStyle = g;
+      ctx.fillRect(ex - rodW / 2, topY, rodW, botY - topY);
+      // 电极侧沿冷色反光（通电时轮廓更清楚；无辉光）
+      ctx.fillStyle = on ? 'rgba(190,205,225,0.45)' : 'rgba(130,138,150,0.22)';
+      ctx.fillRect(ex - rodW / 2 + 0.4, topY, 1.1, botY - topY);
+      // 金夹箍（绝缘座下方的黄铜箍）
+      ctx.fillStyle = on ? a.metal : '#6b6250';
+      ctx.fillRect(ex - rodW / 2 - 1, rimY - 1, rodW + 2, 3);
+      // 顶部金属帽（黄铜；极小的 − / + 阴刻标记：左=阴极、右=阳极）
+      rr(ctx, ex - rodW * 1.3, topY - capH, rodW * 2.6, capH, 1.5);
+      ctx.fillStyle = on ? a.metal : '#4c4a44';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(40,28,10,0.65)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      if (on) {
+        ctx.fillStyle = 'rgba(255,232,160,0.5)';
+        ctx.fillRect(ex - rodW * 0.9, topY - capH + 1, rodW * 1.8, 0.9);
+      }
+      // 阴刻极性符号（− / +）：深色小笔画（十字 = +，横杠 = −）
+      const symColor = on ? 'rgba(38,24,8,0.9)' : 'rgba(34,32,26,0.8)';
+      const arm = Math.max(2.4, capFs * 0.5);
+      const th = Math.max(1, Math.round(capFs * 0.16));
+      const sy = topY - capH / 2;
+      ctx.fillStyle = symColor;
+      ctx.fillRect(ex - arm / 2, sy - th / 2, arm, th); // 横杠（两种极性共有）
+      if (polarity === '+') ctx.fillRect(ex - th / 2, sy - arm / 2, th, arm); // 竖杠 → +
+    }
+    // ---- 跨接铜排（两电极顶端之间的暗色电缆，略微下垂） ----
+    ctx.strokeStyle = '#241f38';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x1, topY - 2);
+    ctx.quadraticCurveTo((x1 + x2) / 2, topY + 5, x2, topY - 2);
+    ctx.stroke();
+    ctx.strokeStyle = on ? 'rgba(200,140,60,0.5)' : 'rgba(120,100,70,0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x1 + 4, topY - 0.5);
+    ctx.quadraticCurveTo((x1 + x2) / 2, topY + 5.5, x2 - 4, topY - 0.5);
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+  }
+
+  /**
+   * 加热池（intense=false）/ 高温池（intense=true）：**同一套结构**——
+   *   池底金属燃烧栅排（栅缝透光）+ 栅缝上方火焰舌 + 池底向上的热辉光 + 热浪线。
+   *   高温池只换配色与强度：白金/钢色栅排、白蓝/银白火焰、冷白炽光、更高更密的热浪；
+   *   不再有独立的"厚钢箍 + 炉膛钢芯"造型。关闭态=冷灰装置、无火焰/无炽光。
+   */
+  _renderHeater(ctx, r, on, a, t, intense) {
+    if (r.w < 40 || r.h < 18) return;
+    const barH = Math.max(5, Math.min(9, r.h * 0.12)); // 燃烧排高度
+    const barX = r.x + 3;
+    const barW = r.w - 6;
+    const barY = r.y + r.h - barH - 1; // 池底
+    // ---- 池底燃烧栅排（黄铜 / 白金栅条 + 栅缝） ----
+    rr(ctx, barX, barY, barW, barH, 2);
+    const mg = ctx.createLinearGradient(barX, barY, barX, barY + barH);
+    if (intense) {
+      mg.addColorStop(0, on ? '#79839c' : '#343a4c');
+      mg.addColorStop(1, on ? '#3c4356' : '#1e2130');
+    } else {
+      mg.addColorStop(0, on ? '#6a5a3c' : '#3c3a34');
+      mg.addColorStop(1, on ? '#3a2f1e' : '#232220');
+    }
+    ctx.fillStyle = mg;
+    ctx.fill();
+    ctx.strokeStyle = on ? rgbaOf(a.metal, 0.8) : 'rgba(90,96,116,0.6)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // 栅缝（开=透出火焰/炽光；关=暗缝）。垂直渐变对所有栅缝相同：只建一次复用
+    const slots = Math.max(2, Math.floor(barW / 14));
+    const slotGrad = on ? ctx.createLinearGradient(barX, barY, barX, barY + barH) : null;
+    if (slotGrad) {
+      slotGrad.addColorStop(0, intense ? 'rgba(246,253,255,0.95)' : 'rgba(255,220,140,0.95)');
+      slotGrad.addColorStop(1, intense ? 'rgba(127,216,255,0.62)' : 'rgba(255,130,40,0.6)');
+    }
+    for (let i = 0; i < slots; i++) {
+      const sx = barX + 4 + i * ((barW - 8) / slots);
+      const sw = Math.max(2, ((barW - 8) / slots) * 0.45);
+      if (slotGrad) {
+        ctx.fillStyle = slotGrad;
+        ctx.shadowColor = intense ? '#cfe6ff' : a.spark;
+        ctx.shadowBlur = intense ? 11 : 7;
+      } else {
+        ctx.fillStyle = 'rgba(14,16,26,0.8)';
+      }
+      ctx.fillRect(sx, barY + 1.5, sw, barH - 3);
+      ctx.shadowBlur = 0;
+    }
+    // 两端金属卡箍（黄铜 / 白金）
+    for (const cx of [barX + 2, barX + barW - 2]) {
+      ctx.fillStyle = on ? a.metal : '#5a5648';
+      ctx.fillRect(cx - 2, barY - 1, 4, barH + 2);
+    }
+    if (!on) return; // 关闭态：装置保留但灰暗，无火焰/无炽光
+    // ---- 开：池底向上的热辉光（加热=暖橙；高温=冷白炽光） ----
+    const glow = ctx.createLinearGradient(r.x, r.y + r.h, r.x, r.y);
+    if (intense) {
+      glow.addColorStop(0, 'rgba(246,253,255,0.92)');
+      glow.addColorStop(0.32, 'rgba(170,224,255,0.50)');
+      glow.addColorStop(1, 'rgba(0,0,0,0)');
+    } else {
+      glow.addColorStop(0, 'rgba(255,150,55,0.42)');
+      glow.addColorStop(0.35, 'rgba(255,110,35,0.18)');
+      glow.addColorStop(1, 'rgba(0,0,0,0)');
+    }
+    ctx.fillStyle = glow;
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    // ---- 栅缝上方的火焰舌（确定性摆动；高温更密更高、白蓝银白焰） ----
+    const n = intense
+      ? Math.max(3, Math.min(7, Math.floor(r.w / 34)))
+      : Math.max(2, Math.min(6, Math.floor(r.w / 42)));
+    for (let i = 0; i < n; i++) {
+      const fx = r.x + ((i + 0.5) * r.w) / n;
+      const fh = (intense ? 27 : 22) * (0.7 + 0.3 * Math.sin(t * (intense ? 10.5 : 9) + i * 1.7));
+      ctx.save();
+      ctx.globalAlpha = intense ? 0.95 : 0.9;
+      drawFlame(ctx, fx, barY + 2, Math.max(8, fh), intense ? '#7fd8ff' : '#ff7a2d', intense ? '#eafcff' : '#ffe9a8', t + i * 1.3);
+      ctx.restore();
+    }
+    // ---- 热浪线（确定性 sin；高温更密更强，但保持半透明不糊） ----
+    const waves = intense ? Math.max(4, Math.floor(r.w / 26)) : Math.max(2, Math.min(5, Math.floor(r.w / 52)));
+    ctx.strokeStyle = intense ? 'rgba(238,252,255,0.55)' : 'rgba(255,200,130,0.38)';
+    ctx.lineWidth = intense ? 1.3 : 1.1;
+    ctx.shadowColor = intense ? '#cfe6ff' : a.spark;
+    ctx.shadowBlur = intense ? 11 : 6;
+    for (let i = 0; i < waves; i++) {
+      const x0 = r.x + ((i + 0.5) * r.w) / waves;
+      const ph = t * (intense ? 2.2 : 1.5) + i * 0.9;
+      ctx.globalAlpha = 0.22 + 0.16 * Math.sin(ph * 1.6 + i);
+      ctx.beginPath();
+      for (let k = 0; k <= 6; k++) {
+        const yy = r.y + r.h - 3 - (k / 6) * (r.h * 0.85);
+        const xx = x0 + Math.sin(ph + k * 0.85 + i * 1.3) * (intense ? 6 : 4);
+        if (k === 0) ctx.moveTo(xx, yy);
+        else ctx.lineTo(xx, yy);
+      }
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+  }
+}
+
+/** 电解池：池内反应获得 electric 条件（常开或由 switchId 指向的开关控制） */
+class ElectrolysisPool extends VariantPool {
+  get hoverLabel() {
+    return '电解池';
+  }
+
+  constructor(opts = {}) {
+    super(opts);
+    this.mode = 'electric';
+  }
+}
+
+/** 加热池：池内反应获得 heat 条件（常开或由 switchId 指向的开关控制） */
+class HeatingPool extends VariantPool {
+  get hoverLabel() {
+    return '加热池';
+  }
+
+  constructor(opts = {}) {
+    super(opts);
+    this.mode = 'heat';
+  }
+}
+
+/** 高温池：池内反应获得 highTemp 条件（常开或由 switchId 指向的开关控制） */
+class HighTempPool extends VariantPool {
+  get hoverLabel() {
+    return '高温池';
+  }
+
+  constructor(opts = {}) {
+    super(opts);
+    this.mode = 'highTemp';
+  }
+}
+
+exports.VariantPool = VariantPool;
+exports.ElectrolysisPool = ElectrolysisPool;
+exports.HeatingPool = HeatingPool;
+exports.HighTempPool = HighTempPool;
+
+  };
   __modules["src/level/multiscene.js"] = function (module, exports, __require) {
 // ============================================================================
 // Multiscene：多场景（章节）关卡管理器。
@@ -17824,6 +24078,7 @@ const { bindTouchUI } = __require('src/core/touch.js');;
 const { bindOverviewInput } = __require('src/core/overview.js');;
 const { attachRecorderPanel } = __require('src/core/recorder.js');;
 const { setupCanvasSize, fitCanvasToWindow, canvasLW, canvasLH } = __require('src/render/canvas.js');;
+const { sfx } = __require('src/core/audio.js');;
 
 class Multiscene {
   /**
@@ -18063,6 +24318,8 @@ class Multiscene {
     e.active = true;
     this.current = name;
     this.switches++;
+    // 传送门跨场景：真正切场景的一刻响传送音（普通章节切换不响——那不是传送门）
+    if (opts.portalLanding) sfx('portal');
     // 键盘事件转发切换（bindKeyboard 绑定的是旧场景）
     if (this._unbindKeys) this._unbindKeys();
     this._unbindKeys = bindKeyboard(e.scene);
@@ -18089,4 +24346,4 @@ exports.Multiscene = Multiscene;
   };
   global.Chezzle = __require("src/index.js");
 })(typeof window !== 'undefined' ? window : globalThis);
-console.log('[Chezzle] 引擎构建 "vmvc6l20g"');
+console.log('[Chezzle] 引擎构建 "vmvmdw3n4"');

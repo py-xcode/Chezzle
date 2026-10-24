@@ -8,6 +8,8 @@ export * from './core/input.js';
 export * from './core/loop.js';
 export * from './core/touch.js';
 export * from './core/fullscreen.js';
+export * from './core/audio.js';
+export * from './core/savepoint.js';
 export * from './core/overview.js';
 export * from './core/recorder.js';
 
@@ -23,6 +25,8 @@ export * from './objects/particle.js';
 export * from './objects/floor.js';
 export * from './objects/container.js';
 export * from './objects/pool.js';
+export * from './objects/poolvariants.js';
+export * from './objects/gaschamber.js';
 export * from './objects/block.js';
 export * from './objects/deposit.js';
 export * from './objects/player.js';

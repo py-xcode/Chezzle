@@ -7,7 +7,9 @@
 <link rel="icon" href="data:,">
 <title>Chezzle · 化学 × 解谜</title>
 <!-- 偏好设置（引擎与首页设置面板共用；必须在本页任何引擎脚本之前加载） -->
-<script src="prefs.js?vmvc6l20g"></script>
+<script src="prefs.js?vmvmdw3n4"></script>
+<!-- 音效（UI 点击自动接线 + 设置面板音量；读 ChezzlePrefs 的 sfxVolume/sfxMuted 实时生效） -->
+<script src="audio.js?vmvmdw3n4"></script>
 <script>
 /* 深链首帧：路由不是首页时，先把首页的标题/角落舞台藏起来（脚本还没跑到也不闪首页） */
 (function () {
@@ -151,7 +153,7 @@
   body.low .meteor { filter: none; }
   body.low .bar { transition: none; }
   /* —— 入场：深色幕布自动淡出（纯 CSS，不等引擎；国内网络下引擎包很大）——
-     开场动画一律不依赖 dist/chezzle.js?vmvc6l20g：标题/按钮的 CSS 动画在解析时就跑起来，
+     开场动画一律不依赖 dist/chezzle.js?vmvmdw3n4：标题/按钮的 CSS 动画在解析时就跑起来，
      引擎只影响两个角落的小舞台（下面用"启动占位"承接等待）。 */
   #veil { position: fixed; inset: 0; z-index: 899; background: #07051a; pointer-events: none;
     animation: veilOut .55s ease-out .02s both; }
@@ -272,7 +274,7 @@
     font: bold 12px/1 ui-monospace, Consolas, monospace; letter-spacing: 1px;
     transition: border-color .16s, color .16s, background .16s; }
   .czset-kbtn:hover { border-color: #7fd8ff; color: #fff; }
-  .czset-kbtn.listen { border-color: #ffd76a; color: #ffd76a; background: rgba(232, 184, 75, .14); }
+  .czset-kbtn.listen, .czset-kbtn[aria-pressed="true"] { border-color: #ffd76a; color: #ffd76a; background: rgba(232, 184, 75, .14); }
   .czset-foot { display: flex; justify-content: flex-end; gap: 12px; padding: 12px 22px 18px;
     border-top: 1px solid rgba(232, 184, 75, .14); }
   .czset-btn { padding: 9px 24px; cursor: pointer; border: 0; border-radius: 0;
@@ -421,10 +423,10 @@
       <path class="lt" style="animation-delay:.47s" transform="translate(420,0) rotate(-1.2 32 40)" d="M64 0 H0 V80 H64 V62 H16 V46 H60 V30 H16 V18 H64 Z" stroke="url(#gCyan)" stroke-width="9"/>
     </g>
   </svg>
-  <!-- 版本号：贴在 CHEZZLE 大字右下角（只这一行字，不加别的） -->
-  <div class="ver">alpha-1017</div>
+  <!-- 版本号 = 更新当天的日期（alpha-MMDD），不要自己顺序递增 -->
+  <div class="ver">alpha-1024</div>
 
-  <a id="btnPlay" class="bar" href="select.html">
+  <a id="btnPlay" class="bar" href="select.html" data-sfx="ui.open">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path d="M9 3h6M10 3v5.2L4.8 17a3.4 3.4 0 0 0 3 5h8.4a3.4 3.4 0 0 0 3-5L14.4 8.2V3"
         stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -432,7 +434,7 @@
     </svg>
     开始选关
   </a>
-  <button id="btnSet" class="bar" type="button" aria-haspopup="dialog" aria-controls="czSet">
+  <button id="btnSet" class="bar" type="button" aria-haspopup="dialog" aria-controls="czSet" data-sfx="ui.open">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z" stroke="currentColor" stroke-width="2"/>
       <path d="M19.4 12a7.6 7.6 0 0 0-.1-1.2l2-1.5-2-3.4-2.3.9a7.4 7.4 0 0 0-2-1.2L14.6 3h-4l-.4 2.6a7.4 7.4 0 0 0-2 1.2l-2.3-.9-2 3.4 2 1.5a7.6 7.6 0 0 0 0 2.4l-2 1.5 2 3.4 2.3-.9a7.4 7.4 0 0 0 2 1.2l.4 2.6h4l.4-2.6a7.4 7.4 0 0 0 2-1.2l2.3.9 2-3.4-2-1.5c.06-.4.1-.8.1-1.2Z"
@@ -440,7 +442,7 @@
     </svg>
     设置
   </button>
-  <a id="btnAbout" class="bar" href="about.html">
+  <a id="btnAbout" class="bar" href="about.html" data-sfx="ui.tick">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/>
       <path d="M12 8.2v0M12 11.4v4.6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
@@ -458,12 +460,22 @@
         <p class="czset-kicker">CHEZZLE · SETTINGS</p>
         <h2 id="czSetTitle">设置</h2>
       </div>
-      <button id="czSetClose" class="czset-x" type="button" aria-label="关闭">✕</button>
+      <button id="czSetClose" class="czset-x" type="button" aria-label="关闭" data-sfx="ui.close">✕</button>
     </div>
     <div class="czset-body">
       <section class="czset-sec">
         <h3>视角大小 <span id="czSetViewVal">100%</span></h3>
         <input id="czSetView" type="range" min="85" max="130" step="5" value="100" aria-label="视角大小">
+      </section>
+      <!-- 音效：写入 prefs.js 的 sfxVolume/sfxMuted；audio.js 读同一份偏好并监听 chezzle:prefs 实时生效。
+           滑杆自身跳过 audio.js 的默认点击音（data-sfx="off"），由下面的 input 预览统一发声。 -->
+      <section class="czset-sec" id="czSetSfx">
+        <h3>音效 <span id="czSetSfxVal">70%</span></h3>
+        <input id="czSetSfxVol" type="range" min="0" max="100" step="1" value="70" aria-label="音效音量" data-sfx="off">
+        <div class="czset-key">
+          <span>静音</span>
+          <button id="czSetSfxMute" class="czset-kbtn" type="button" aria-pressed="false" data-sfx="off">未静音</button>
+        </div>
       </section>
       <section class="czset-sec" id="czSetTouch">
         <h3>摇杆大小 <span id="czSetJoyVal">100%</span></h3>
@@ -477,8 +489,8 @@
       </section>
     </div>
     <div class="czset-foot">
-      <button id="czSetReset" class="czset-btn ghost" type="button">恢复默认</button>
-      <button id="czSetDone" class="czset-btn" type="button">完成</button>
+      <button id="czSetReset" class="czset-btn ghost" type="button" data-sfx="ui.toggle">恢复默认</button>
+      <button id="czSetDone" class="czset-btn" type="button" data-sfx="ui.close">完成</button>
     </div>
   </div>
 </div>
@@ -886,12 +898,12 @@
 
 <script>
 // ============================================================================
-// 引擎懒加载：只有首页的两个角落小舞台需要 dist/chezzle.js?vmvc6l20g（~800KB）。
+// 引擎懒加载：只有首页的两个角落小舞台需要 dist/chezzle.js?vmvmdw3n4（~800KB）。
 // 选关 / 关于 / 关卡视图各自在 iframe 里加载自己的引擎；外壳不再为一个装饰动画
 // 在首屏下载大包 —— 国内访问 CF Pages 时这是首屏体感最大的一个优化。
 // ============================================================================
 (function () {
-  var SRC = 'dist/chezzle.js?vmvc6l20g';
+  var SRC = 'dist/chezzle.js?vmvmdw3n4';
   window.__czEngineWaiters = [];
   window.__czHomeShow = window.__czHomeShow || function () {};
   window.__czLoadEngine = function (cb) {
@@ -921,6 +933,9 @@
 // 包在函数里 → 只有首页可见时才加载引擎并初始化；从选关返回首页时也走这里。
 function __czHomeInit() {
 const C = window.Chezzle;
+// 角落小舞台是装饰性 Scene（传送门循环 / 焰色灯）：会一直 step()，不关掉的话
+// 传送、落地、焰色反应音效会变成首页背景噪音。UI 点击音不受影响（audio.js 自己接）。
+if (typeof C.setSfxEnabled === 'function') C.setSfxEnabled(false);
 const REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches;
 // —— 性能档位（低档 = 触屏/小屏设备）——
 // 手机发热掉帧的大头不是画布，而是"每帧都在重新合成/重绘"的装饰层：全屏星云动画、
@@ -1639,6 +1654,7 @@ if (!document.body.classList.contains('czl-page')) window.__czStartHome();
      · 视角大小      → 关卡相机缩放（src/core/prefs.js → render/camera.js）
      · 摇杆大小      → 移动端摇杆半径（core/touch.js joyGeom）
      · 右下按钮大小  → 移动端 2×2 按钮边长（core/touch.js touchButtonRects）
+     · 音效音量/静音 → window.ChezzleAudio（audio.js 读 sfxVolume/sfxMuted，监听 chezzle:prefs）
      · 键位          → 桌面键盘映射（core/input.js）
    改完即存；关卡页启动时读取。移动端隐藏键位、桌面隐藏触控尺寸（触屏笔电两者都显示）。
    ========================================================================== */
@@ -1661,10 +1677,23 @@ if (!document.body.classList.contains('czl-page')) window.__czStartHome();
   var btnVal = document.getElementById('czSetBtnVal');
   var touchSec = document.getElementById('czSetTouch');
   var keysSec = document.getElementById('czSetKeys');
+  var sfxVol = document.getElementById('czSetSfxVol');
+  var sfxVal = document.getElementById('czSetSfxVal');
+  var sfxMute = document.getElementById('czSetSfxMute');
   var lastFocus = null;
   var listening = null; // { action, oldCode }
 
   function pct(v) { return Math.round(v * 100) + '%'; }
+
+  /** 播放一次 UI 音效（audio.js 未加载 / 被单独打开时也不会抛错） */
+  function uiSfx(name, opts) {
+    try {
+      if (window.ChezzleAudio && typeof window.ChezzleAudio.play === 'function') {
+        return window.ChezzleAudio.play(name, opts);
+      }
+    } catch (e) { /* 音频异常不影响设置面板 */ }
+    return false;
+  }
 
   // 触屏设备显示摇杆/按钮尺寸；桌面（精细指针）显示键位。触屏笔电两者都显示。
   var coarse = false;
@@ -1701,7 +1730,16 @@ if (!document.body.classList.contains('czl-page')) window.__czStartHome();
     joyVal.textContent = pct(p.joyScale);
     btnInput.value = Math.round(p.btnScale * 100);
     btnVal.textContent = pct(p.btnScale);
+    sfxVol.value = Math.round(p.sfxVolume * 100);
+    sfxVal.textContent = pct(p.sfxVolume);
+    renderSfxMute(p.sfxMuted);
     renderKeys();
+  }
+
+  /** 静音开关的显示态（文案 + aria-pressed；配色沿用 .czset-kbtn[aria-pressed="true"]） */
+  function renderSfxMute(m) {
+    sfxMute.setAttribute('aria-pressed', m ? 'true' : 'false');
+    sfxMute.textContent = m ? '已静音' : '未静音';
   }
 
   function endListen() {
@@ -1752,6 +1790,28 @@ if (!document.body.classList.contains('czl-page')) window.__czStartHome();
   btnInput.addEventListener('input', function () {
     P.save({ btnScale: Number(btnInput.value) / 100 });
     btnVal.textContent = pct(Number(btnInput.value) / 100);
+  });
+
+  // —— 音效音量：拖动即时保存 + 即时生效 + 试听（audio.js 自带同名音限频，不会连成爆音）——
+  sfxVol.addEventListener('input', function () {
+    var v = Number(sfxVol.value) / 100;
+    P.save({ sfxVolume: v });
+    sfxVal.textContent = pct(v);
+    if (window.ChezzleAudio && typeof window.ChezzleAudio.setVolume === 'function') {
+      try { window.ChezzleAudio.setVolume(v); } catch (e) { /* 忽略 */ }
+    }
+    uiSfx('ui.tick', { gain: 0.6 });   // 预览音压低一点，别盖过实际效果
+  });
+
+  // —— 静音开关：开启立刻静音（不再发声）；取消静音时先恢复再播一声 ui.toggle 确认 ——
+  sfxMute.addEventListener('click', function () {
+    var m = !P.get().sfxMuted;
+    P.save({ sfxMuted: m });
+    if (window.ChezzleAudio && typeof window.ChezzleAudio.setMuted === 'function') {
+      try { window.ChezzleAudio.setMuted(m); } catch (e) { /* 忽略 */ }
+    }
+    renderSfxMute(m);
+    if (!m) uiSfx('ui.toggle');
   });
 
   function openPanel() {

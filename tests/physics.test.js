@@ -7,12 +7,30 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Body } from '../src/physics/body.js';
 import { CollisionSystem, ContactTracker, overlaps } from '../src/physics/collision.js';
+import { Player } from '../src/objects/player.js';
 
 const TICK = 1 / 30;
 const G = 1200;
 
 function stepN(sys, n, dyn, stat) {
   for (let i = 0; i < n; i++) sys.step(TICK, { dynamics: dyn, statics: stat });
+}
+
+/**
+ * 把玩家网格底行的两侧挖空、只留中间一条"龙骨"（模拟被酸/碱腐蚀后的不规则底面）：
+ * 玩家 AABB 底边 = 龙骨底；两侧列比它高 rows 行（5px/行）。
+ * 用户反馈的"站在窄物块上向右走、物块被一起推走"需要这种不规则底面才能复现。
+ */
+function carveKeelBottom(p, sideFrac = 0.2, rows = 1) {
+  const g = p.grid;
+  const leftEnd = Math.floor(g.cols * sideFrac);
+  const rightStart = Math.ceil(g.cols * (1 - sideFrac));
+  for (let r = 0; r < rows; r++) {
+    for (let x = 0; x < leftEnd; x++) g.cells[g.rows - 1 - r][x] = null;
+    for (let x = rightStart; x < g.cols; x++) g.cells[g.rows - 1 - r][x] = null;
+  }
+  g._dirty = true;
+  p.syncGrid();
 }
 
 // ---- 1. 重力落地 ------------------------------------------------------------
@@ -305,4 +323,27 @@ test('物块上跳跃：跳起后仍能落回物块顶（支撑关系不被破�
   stepN(sys, 100, [blk, p], [floor]); // 落回
   assert.ok(Math.abs(p.bottom - blk.top) < 1.5, `玩家应落回物块顶，bottom=${p.bottom} vs 顶=${blk.top}`);
   assert.equal(blk.top, 670, '物块保持在地板上');
+});
+
+// ---- 11b. 不规则底面（腐蚀缺口）回归：仍不得把脚下物块横向推走 -------------------
+test('腐蚀出不规则底面的玩家站在窄物块上向右走：物块不得被一起推走（用户反馈回归）', () => {
+  const sys = new CollisionSystem({ gravity: G });
+  const floor = new Body({ x: -200, y: 720, w: 3000, h: 80, static: true });
+  const blk = new Body({ x: 520, y: 670, w: 50, h: 50, pushable: true }); // 顶 670
+  const p = new Player({ x: 0, y: 0, mass: 30 }); // 真实玩家网格 85×90
+  carveKeelBottom(p, 0.2, 1); // 底面两侧缺 1 行 → AABB 底 = 中间龙骨
+  p.x = 480; // 龙骨压在物块上，两侧较高的"脚"在物块外
+  p.y = blk.top - p.h;
+  const dyn = [blk, p];
+  stepN(sys, 60, dyn, [floor]);
+  assert.ok(Math.abs(p.bottom - blk.top) < 1.5,
+    `玩家应站在物块上：bottom=${p.bottom.toFixed(1)} vs 顶=${blk.top.toFixed(1)}`);
+  // 向右走：物块不得被带走（旧代码会因 AABB 底边低于物块顶 >1.5px 而误判成侧碰 → tryPushX）
+  const bx0 = blk.x;
+  for (let i = 0; i < 120; i++) {
+    p.vel.x = 250;
+    sys.step(TICK, { dynamics: dyn, statics: [floor] });
+  }
+  assert.ok(Math.abs(blk.x - bx0) < 1,
+    `不规则底面的玩家不得推走脚下物块，Δx=${(blk.x - bx0).toFixed(1)}`);
 });

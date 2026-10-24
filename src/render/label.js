@@ -32,6 +32,7 @@ export function flushLabels(ctx) {
     const bx = Math.max(4, Math.min(W - 4 - c.bw, c.bx));
     const by = Math.max(4, Math.min(H - 4 - c.bh, c.by));
     ctx.font = `bold ${c.fs}px monospace`;
+    // 简洁标签：暗底圆角 + 细边框 + 清晰描边字（无角标/色条等装饰）
     ctx.fillStyle = 'rgba(12,9,34,0.72)';
     rr(ctx, bx, by, c.bw, c.bh, 5);
     ctx.fill();

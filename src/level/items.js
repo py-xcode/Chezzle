@@ -1,35 +1,86 @@
 // ============================================================================
-// 可携带物品（集气瓶 / 烧杯 / 滴管）互动逻辑
+// 可拾取物品（集气瓶 / 烧杯 / 滴管）互动逻辑
 // ----------------------------------------------------------------------------
-// 按键语义（全部基于"选中的物品栏格子"）：
-//  - C（选中空格）：拾取附近最近的一个可携带物品（一物一格，不堆叠）；
-//  - C（选中烧杯/滴管）：从最近的液体容器（药品池/烧杯）吸液——烧杯 20g/次
-//    （可混合、直到满），滴管 5g/次（**同种液体可反复续吸至容量上限 50g**，
-//    装着别的液体则不能续吸）；
-//  - C（按住，选中集气瓶）：把最近气泡柱产生的气体直接截留进瓶（5g 封顶）；
-//  - X（选中烧杯）：把烧杯里的液体倒入最近的烧杯/药品池，**每次倒 10g**
-//    （滴管不行）；
-//  - X（按住，选中集气瓶）：向最近的液体容器通入气体（0.05g/s）；
-//  - Shift：把选中格里的物品放到玩家身旁（集气瓶与烧杯一样有碰撞箱可推动，
-//    滴管无碰撞箱可拖动）。
+// 通用操作（所有物品/沉淀一样）：
+//  - Q：拾取附近最近的一个可拾取物品（一物一格，不堆叠；物品格满则收不了）；
+//       附近没有物品时按原语义收集沉淀；
+//  - Shift：把选中格里的物品放到玩家身旁（集气瓶与烧杯有碰撞箱可推动，滴管无碰撞箱可拖动）。
+//
+// 物品自定义操作（见 carryActionsOf：选中物品后才出现，最多两个，绑定可改键动作
+// grab/use——设置里显示为「物品操作 1/2」；名称/图标由物品自己定义）：
+//  - 烧杯：C 吸液（20g/次，可混合到满） / X 倒出（10g/次）；
+//  - 滴管：C 吸液（5g/次，只能装同一种液体） / X 滴加（向最近容器滴一滴，默认 0.5g；
+//          世界里的滴管仍可点胶头/长按/拖动做精细操作）；
+//  - 集气瓶：C 按住集气（截留最近气泡柱产气，5g 封顶） / X 按住通气（0.05g/s）。
 // ============================================================================
 
 import { CFG } from '../core/config.js';
 import { solutionColor } from '../render/liquidrender.js';
-import { puffFx, flowFx } from '../objects/fx.js';
+import { puffFx, flowFx, sparkleFx, rippleFx, arcFx, swirlFx } from '../objects/fx.js';
+import { getSubstance } from '../chem/substances.js';
 import { Bubble } from '../objects/bubble.js';
 import { Beaker } from '../objects/beaker.js';
 import { Dropper } from '../objects/dropper.js';
 import { GasBottle } from '../objects/gasbottle.js';
+import { Drip } from '../objects/drip.js';
+import { sfx } from '../core/audio.js';
 
 let FX_SEQ = 0; // 特效对象 id 序号（fx.js 的计数器不跨模块共享）
+
+/** 可拾取物品的"物品栏操作"定义（数据驱动；HUD/触屏/玩家共用）。
+ *  action = 输入动作 id（grab/use，即设置里的物品操作 1/2）；id = 语义；
+ *  label/icon = 按钮与键位提示显示；press = 按一下执行；hold+holdFn = 按住每 tick 执行。
+ *  以后新增可拾取物品只需在这里加一条（不用改 HUD/输入）。 */
+const CARRY_ACTIONS = {
+  beaker: [
+    { action: 'grab', id: 'suck', label: '吸液', icon: 'beakerSuck', press: (p, s) => drawLiquid(p, s) },
+    { action: 'use', id: 'pour', label: '倒出', icon: 'beakerPour', press: (p, s) => pourBeaker(p, s) },
+  ],
+  dropper: [
+    { action: 'grab', id: 'suck', label: '吸液', icon: 'dropperSuck', press: (p, s) => drawLiquid(p, s) },
+    { action: 'use', id: 'drip', label: '滴加', icon: 'dropperDrip', press: (p, s) => dripCarriedDropper(p, s) },
+  ],
+  bottle: [
+    { action: 'grab', id: 'gasCollect', label: '集气', icon: 'bottleCollect', hold: true,
+      holdFn: (p, s) => { s._gasHold = p.inventory.selectedItem(); } },
+    { action: 'use', id: 'gasInject', label: '通气', icon: 'bottleInject', hold: true,
+      holdFn: (p, s, dt) => injectBottleGas(p, s, dt) },
+  ],
+};
+
+/** 选中某个可拾取物品时提供的操作（无物品/未知物品 = []） */
+export function carryActionsOf(item) {
+  const kind = item && item.isCarryItem;
+  return (kind && CARRY_ACTIONS[kind]) || [];
+}
+
+
+/** 十六进制色 → 'r,g,b' 三元组（PuffDust 的 color 参数格式） */
+function rgbTripleOf(hex) {
+  const h = String(hex ?? '#9fd8ff').replace('#', '');
+  const n = h.length === 3
+    ? [parseInt(h[0] + h[0], 16), parseInt(h[1] + h[1], 16), parseInt(h[2] + h[2], 16)]
+    : [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  return `${n[0]},${n[1]},${n[2]}`;
+}
+
+/** 气体显示色（集气瓶通气/分页视觉取色；气体未声明 gasColor → 通用气流青） */
+function gasTintOf(id) {
+  return getSubstance(id)?.gasColor ?? '#78dcff';
+}
 
 /** 放置落点是否被占用：与其它可携带物品、实心动态体（装置壁）、实心放置粒子重叠 */
 function spotBlocked(scene, o, x, y) {
   const m = 3; // 收缩容差：贴边不算
   const l = x + m, r = x + o.w - m, t = y + m, b = y + o.h - m;
+  // 玩家自身也占位：物品不能放到玩家身上（否则烧杯会把玩家包进去，物理互相挤压，
+  // 玩家还会被判定为"在杯内"而与杯里的液体反应）。拥挤时宁可不放下、留在物品栏。
+  const p = scene.player;
+  if (p && !p.hidden
+    && r > p.x + m && l < p.x + p.w - m
+    && b > p.y + m && t < p.y + p.h - m) return true;
   for (const s of scene.objects) {
-    if (s === scene.player || !s || s.hidden) continue;
+    if (s === p || !s || s.hidden) continue;
     if (typeof s.amount === 'number' && !s.solid) continue; // 软体自由粒子不挡
     const isCarry = !!s.isCarryItem;
     if (!(isCarry || s.solid)) continue; // 只看实体类；区域容器（池等）允许浸入
@@ -64,18 +115,30 @@ export function nearestCarryItem(scene, player) {
 }
 
 /**
- * C 拾取：选中格必须**为空**，把最近的可携带物品收进该格（连同其内容物）。
- * 物品不堆叠：一物一格，重复拾取需要依次选空格。
+ * Q 拾取：把最近的可拾取物品收进物品栏（连同其内容物）。
+ * 优先放进当前选中的空格；选中格不是空时找第一个空格——与收集沉淀一样跨格收集。
+ * 物品不堆叠：一物一格，重复拾取会依次占用空格；物品格满则收不了。
  */
 export function pickupItem(player, scene) {
   const inv = player.inventory;
-  if (inv.selectedSlot() !== null) return false;
+  const slot = inv.selectedSlot() === null ? inv.selected : inv.slots.findIndex((s) => s === null);
+  if (slot < 0) return false;
   const o = nearestCarryItem(scene, player);
   if (!o) return false;
-  // 吸入特效：物品位置一圈尘雾（先于移除取坐标）
-  puffFx(scene, o.x + o.w / 2, o.y + o.h * 0.4);
+  // 吸入特效：物品位置一圈尘雾（先于移除取坐标）+ 金色闪光 + 短弧光（物品 → 手边）
+  const fx = o.x + o.w / 2;
+  const fy = o.y + o.h * 0.4;
+  puffFx(scene, fx, fy);
+  sparkleFx(scene, fx, fy, { color: '#ffd76a', n: 7, spread: 20, rise: 14, life: 0.42, size: 2.2 });
+  swirlFx(scene, fx, fy, { color: '#ffd76a', r: 13, life: 0.3, arms: 3 });
+  arcFx(scene, {
+    x0: fx, y0: fy,
+    x1: player.x + player.w / 2, y1: player.y + player.h * 0.42,
+    color: 'rgba(255,215,106,0.85)', life: 0.28, bend: 0.3, width: 1.8,
+  });
   scene.removeItem(o); // 深度移除（烧杯含杯壁子体）
-  inv.slots[inv.selected] = { item: o.isCarryItem, obj: o };
+  inv.slots[slot] = { item: o.isCarryItem, obj: o };
+  sfx('item.pickup');
   return true;
 }
 
@@ -110,14 +173,28 @@ export function placeCarriedItem(player, scene) {
         break;
       }
     }
-    if (!found && !spotBlocked(scene, o, player.x, y)) x = player.x; // 最后兜底：正下方
+    // 所有探测位都堵死（含玩家自身/地形）：不放下，物品留在物品栏，并给一句 HUD 提示。
+    // 旧逻辑最后兜底放到玩家正下方 → 与玩家重叠，玩家被算作"在杯内"，两者互相挤压。
+    if (!found) {
+      scene._notice = { text: '这里放不下', t: scene.time ?? 0 };
+      return false;
+    }
   }
   o.x = x;
   o.y = y;
   if (Number.isFinite(o.rx)) { o.rx = o.x; o.ry = o.y; } // 滴管渲染平滑坐标同步（防放置瞬移残影）
   scene.addItem(o);
-  puffFx(scene, x + o.w / 2, y + o.h - 3); // 落地尘雾
+  // 落地反馈：尘雾 + 金色细闪 + 地面涟漪；物品 0.22s 缩放入场（Renderer 的
+  // appearFade 淡入机制，不改放置逻辑/位置）
+  const cx = x + o.w / 2;
+  const fy = y + o.h - 3;
+  puffFx(scene, cx, fy);
+  sparkleFx(scene, cx, fy - 2, { color: '#ffd76a', n: 6, spread: 18, rise: 12, life: 0.38, size: 2 });
+  rippleFx(scene, cx, y + o.h, { color: 'rgba(210,222,248,0.7)', r0: 4, r1: Math.max(18, o.w * 0.9), life: 0.38, width: 1.6, flat: 0.32 });
+  o.appearTime = scene.time;
+  o.appearFade = 0.22;
   inv.slots[inv.selected] = null;
+  sfx('item.place');
   return true;
 }
 
@@ -159,14 +236,16 @@ export function nearestLiquidTarget(scene, player, range = CFG.item.liquidRange,
   return best && bd <= range ? best : null;
 }
 
-/** 吸液特效：从容器液面到玩家的一串上行液滴（纯视觉） */
+/** 吸液特效：从容器液面到玩家的一串上行液滴 + 液面涟漪（纯视觉） */
 function _suckFx(scene, src, player) {
   const r = src.innerRect ? src.innerRect() : { x: src.x + 4, y: src.y + 6, w: src.w - 8, h: src.h - 12 };
   // 液面近似：按容器高度中点取上沿区域即可（视觉用途，无需精确）
   const col = solutionColor(src.solution).color;
+  const sx = Math.max(r.x + 4, Math.min(r.x + r.w - 4, player.x + player.w / 2));
+  const sy = r.y + Math.min(10, r.h * 0.3);
   flowFx(scene, {
-    x0: Math.max(r.x + 4, Math.min(r.x + r.w - 4, player.x + player.w / 2)),
-    y0: r.y + Math.min(10, r.h * 0.3),
+    x0: sx,
+    y0: sy,
     x1: player.x + player.w / 2,
     y1: player.y + player.h * 0.35,
     color: col,
@@ -174,6 +253,9 @@ function _suckFx(scene, src, player) {
     n: 8,
     bend: 0.3,
   });
+  // 液面被吸起的涟漪 + 少量水花（"有东西被抽走"）
+  rippleFx(scene, sx, r.y + 4, { color: col, r0: 3, r1: Math.max(14, r.w * 0.35), life: 0.4, width: 1.4, flat: 0.28 });
+  puffFx(scene, sx, r.y + 4, { color: rgbTripleOf(col), r: 2.6, spread: 9, life: 0.3, n: 4 });
 }
 
 /**
@@ -199,6 +281,7 @@ export function drawLiquid(player, scene) {
       if (v > 1e-9) o.noteSolOrigin?.(id, { kind: 'fill', text: '吸液入杯' });
     }
     _suckFx(scene, src, player); // 吸液液流动画
+    sfx('item.suck');
     return true;
   }
   if (slot.item === 'dropper') {
@@ -227,9 +310,49 @@ export function drawLiquid(player, scene) {
       o.liquid += got;
     }
     _suckFx(scene, src, player); // 吸液液流动画
+    sfx('item.suck');
     return true;
   }
   return false;
+}
+
+/**
+ * X 滴加：选中背包里的滴管时，向最近的容器滴一滴（默认 0.5g）。
+ * 世界里放下的滴管仍可用"点胶头 / 长按 / 拖动"做精细操作；这里给物品栏操作一个快捷方式。
+ * 目标与吸液/倒出同一套距离（边缘 80px），跳过已满的烧杯。
+ */
+export function dripCarriedDropper(player, scene) {
+  const slot = player.inventory.selectedSlot();
+  if (!slot || slot.item !== 'dropper') return false;
+  const o = slot.obj;
+  if (o.liquid <= 1e-9) return false;
+  const target = nearestLiquidTarget(scene, player, CFG.item.liquidRange, false, true);
+  if (!target) return false;
+  const take = Math.min(o.drop, o.liquid);
+  if (take <= 1e-9) return false;
+  target.solutionMat.add(o.substance, take);
+  if (o.substance !== 'H2O') target.noteSolOrigin?.(o.substance, { kind: 'dropper', text: '滴管滴入' });
+  o.liquid -= take;
+  // 落点：目标口沿附近（化学/气泡围绕滴入点发生）
+  const ir = target.innerRect();
+  const dx = Math.max(ir.x + 4, Math.min(ir.x + ir.w - 4, player.x + player.w / 2));
+  const dy = Math.max(ir.y + 4, Math.min(ir.y + ir.h - 6, ir.y + 8));
+  target.depositAt = { x: dx, y: dy };
+  // 视觉：手边一束细液流 + 一颗液滴从容器口上方落到液面
+  const { color } = o.liquidColor();
+  const hx = player.x + player.w / 2;
+  const hy = player.y + player.h * 0.38;
+  flowFx(scene, { x0: hx, y0: hy, x1: dx, y1: ir.y + 5, color, life: 0.3, n: 6, bend: 0.25 });
+  rippleFx(scene, dx, ir.y + 4, { color, r0: 3, r1: Math.max(14, ir.w * 0.3), life: 0.35, width: 1.3, flat: 0.3 });
+  scene.addObject(new Drip({
+    x: dx - 2,
+    y: ir.y - 18,
+    targetY: ir.y + 6,
+    color,
+    id: `drip${++FX_SEQ}`,
+  }));
+  sfx('item.drip');
+  return true;
 }
 
 /**
@@ -259,6 +382,19 @@ export function pourBeaker(player, scene) {
   for (const [id, v] of Object.entries(sample.solutes ?? {})) {
     if (v > 1e-9) target.noteSolOrigin?.(id, { kind: 'pour', text: '烧杯倒入' });
   }
+  // 倒出反馈：杯口 → 目标液面的液流弧 + 落点涟漪/水花（"看得见液真的倒进去"）
+  const ir = target.innerRect();
+  const bx = o.x + o.w / 2;
+  const towardRight = (target.x + (target.w ?? 0) / 2) >= bx;
+  const lipX = bx + (towardRight ? 1 : -1) * Math.max(6, o.w / 2 - 5);
+  const lipY = o.y + 10;
+  const tx = Math.max(ir.x + 6, Math.min(ir.x + ir.w - 6, lipX + (towardRight ? -10 : 10)));
+  const ty = ir.y + 5;
+  const col = solutionColor(o.solution).color;
+  flowFx(scene, { x0: lipX, y0: lipY, x1: tx, y1: ty, color: col, life: 0.45, n: 8, bend: 0.22 });
+  rippleFx(scene, tx, ir.y + 4, { color: col, r0: 4, r1: Math.max(16, ir.w * 0.4), life: 0.42, width: 1.5, flat: 0.3 });
+  puffFx(scene, tx, ir.y + 4, { color: rgbTripleOf(col), r: 3, spread: 10, life: 0.3, n: 4 });
+  sfx('item.pour');
   return true;
 }
 
@@ -279,6 +415,20 @@ export function injectBottleGas(player, scene, dt) {
   if (amount <= 1e-9) return false;
   o.removeGas(d[0], amount);
   scene.bubbleGas(target, d[0], amount, dt);
+  // 通气流反馈：手边 → 注入点的气体细流 + 注入点涟漪 + 手边小涡环（纯视觉）。
+  // 集气瓶在背包里（世界里没有瓶身），所以视觉起点取玩家手边位置。
+  const tint = gasTintOf(d[0]);
+  o._fxAcc = (o._fxAcc ?? 0) + dt;
+  if (o._fxAcc >= 0.32 && target.depositAt) {
+    o._fxAcc = 0;
+    const dp = target.depositAt;
+    const hx = player.x + player.w / 2;
+    const hy = player.y + player.h * 0.35;
+    flowFx(scene, { x0: hx, y0: hy, x1: dp.x, y1: dp.y - 2, color: tint, life: 0.4, n: 7, bend: 0.2 });
+    rippleFx(scene, dp.x, dp.y + 2, { color: tint, r0: 3, r1: 20, life: 0.4, width: 1.4, flat: 0.26 });
+    // 手边（瓶口方向）的喷射小涡旋：气体从瓶里被压出的反馈
+    swirlFx(scene, hx, hy, { color: tint, r: 12, life: 0.32, arms: 3 });
+  }
   // 通气气泡特效：注入点（bubbleGas 更新过的 depositAt）每 ~0.16s 冒一颗上升泡
   o._injAcc = (o._injAcc ?? 0) + dt;
   if (o._injAcc >= 0.16 && target.depositAt) {
@@ -289,8 +439,13 @@ export function injectBottleGas(player, scene, dt) {
       y: target.depositAt.y - 6,
       dir: -1,
       speed: 62,
-      id: `fx${++FX_SEQ}`,
+      id: `ifx${++FX_SEQ}`,
     }));
+  }
+  // 通气声：按住 X 持续通气，0.3s 限频（与 item.gas 音色的 gap 一致）
+  if (scene.time - (o._sfxGasT ?? -10) >= 0.3) {
+    o._sfxGasT = scene.time;
+    sfx('item.gas');
   }
   return true;
 }

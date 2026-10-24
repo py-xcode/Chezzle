@@ -130,6 +130,42 @@ test('Shift 放置：烧杯放回玩家身旁（世界内、子体注册）；�
   assert.equal(placeCarriedItem(p, scene), false, '无物品不能放置');
 });
 
+test('拥挤时 Shift 放置不与玩家重叠；无空位则失败并留在物品栏', () => {
+  const scene = new Scene({ worldW: 150, worldH: 800 });
+  scene.addObject(new Floor({ x: -200, y: 720, w: 800, h: 100 }));
+  scene.status = 'running';
+  const p = withPlayer(scene, 20, 630);
+  // 烧杯先放在玩家上方（在拾取范围内但不与玩家重叠），拾取后世界窄到左右都塞不下
+  const bk = new Beaker({ x: 20, y: 500, w: 60, h: 70, volume: 200, water: 0 });
+  scene.addObject(bk);
+  run(scene, 3);
+  p.inventory.selected = 0;
+  assert.equal(pickupItem(p, scene), true, '先拾取');
+  // 世界宽 150：右侧初始位/两侧探测位都会与玩家重叠 → 应失败而不是塞进玩家体内
+  assert.equal(placeCarriedItem(p, scene), false, '无空位时不应放下');
+  assert.equal(scene._notice && scene._notice.text, '这里放不下', '应给出一句放置失败提示');
+  assert.ok(p.inventory.selectedSlot() && p.inventory.selectedSlot().item === 'beaker', '物品应留在物品栏');
+  assert.equal(scene.objects.includes(bk), false, '物品不应回到场景（更不应与玩家重叠）');
+});
+
+test('拥挤但侧边有空位时：放到空位，且不与玩家重叠', () => {
+  const scene = flatScene();
+  const p = withPlayer(scene, 300, 630);
+  // 玩家右侧贴一个高块，初始落点被挡；左侧仍空
+  scene.addObject(new Block({ x: 395, y: 560, w: 50, h: 160, substance: 'Fe', mass: 0 }));
+  const bk = new Beaker({ x: 200, y: 600, w: 60, h: 70, volume: 200, water: 0 });
+  scene.addObject(bk);
+  run(scene, 3);
+  p.inventory.selected = 0;
+  pickupItem(p, scene);
+  assert.equal(placeCarriedItem(p, scene), true, '侧边有空位应放置成功');
+  const placed = scene.containers.find((c) => c.isCarryItem === 'beaker');
+  assert.ok(placed, '烧杯应在场景中');
+  const overlapPlayer = placed.x + placed.w > p.x && placed.x < p.x + p.w
+    && placed.y + placed.h > p.y && placed.y < p.y + p.h;
+  assert.equal(overlapPlayer, false, `放置后不得与玩家重叠：bk(${placed.x},${placed.y}) p(${p.x},${p.y})`);
+});
+
 // ---- 5. C 吸液：烧杯 20g/次（比例混合）；滴管 5g（占优溶质，空管才能装） -------
 test('C 吸液：烧杯按比例吸 20g 可混合；满杯拒绝；总量守恒', () => {
   const scene = flatScene();
@@ -477,15 +513,14 @@ test('集气瓶实体化：子体壁落地、玩家贴壁推动整瓶且无法�
   const bottle = new GasBottle({ x: 420, y: 720 - 56, id: 'bottleA' }); // 底边贴地
   scene.addObject(bottle);
   run(scene, 30); // 落定
-  // 子体注册齐全（左/右/底/盖板）
-  for (const suf of ['_l', '_r', '_b', '_lid']) {
+  // 子体注册齐全（左/右/底；没有瓶盖）
+  for (const suf of ['_l', '_r', '_b']) {
     const sb = scene.byId[`bottleA_gb${suf}`];
     assert.ok(sb, `子体 ${suf} 应在场景中`);
     assert.equal(sb.solid, true, `${suf} 应是实心体`);
   }
+  assert.equal(scene.byId['bottleA_gb_lid'], undefined, '集气瓶不应有盖板子体');
   assert.ok(Math.abs(bottle.bottom - 720) < 2, `应落在地面：${bottle.bottom}`);
-  const lid = scene.byId['bottleA_gb_lid'];
-  assert.ok(lid.y < bottle.y + 4, '盖板应在瓶口上方');
   // 玩家从左侧走向瓶子：贴外壁推动整瓶，但不能进瓶内
   const p = withPlayer(scene, 320, 630);
   run(scene, 5);
@@ -681,23 +716,30 @@ test('noCarry 锁定的集气瓶：不可拾取且仍可放气（固定装置）
 });
 
 // ---- 15. 集气瓶碰撞箱与视觉对齐（用户反馈：碰撞箱看起来异常偏大） ------------
-test('集气瓶碰撞对齐：瓶壁只沿瓶身段（瓶颈区无墙）；盖板贴口', () => {
+test('集气瓶碰撞对齐：瓶壁只沿瓶身段（瓶颈区无墙）；瓶口敞开无盖板', () => {
   const scene = flatScene();
   const gb = new GasBottle({ x: 420, y: 620, id: 'gbA', noCarry: true });
   scene.addObject(gb);
   run(scene, 30); // 落定
   const l = scene.byId['gbA_gb_l'];
   const r = scene.byId['gbA_gb_r'];
-  const lid = scene.byId['gbA_gb_lid'];
   // 壁体从瓶口下方 NECK_H(10) 开始（瓶颈区不再有"假墙"）
   assert.ok(Math.abs(l.y - (gb.y + 10)) < 0.01, `左壁应从瓶身段开始：${l.y} vs ${gb.y + 10}`);
   assert.ok(Math.abs(r.y - (gb.y + 10)) < 0.01, '右壁同');
   // 壁到瓶底（沿瓶身全高）
   assert.ok(Math.abs(l.y + l.h - gb.bottom) < 0.01, `壁到瓶底：${l.y + l.h} vs ${gb.bottom}`);
-  // 盖板贴住瓶口（底边与瓶口线重叠 1~2px；不悬空）
-  assert.ok(lid.y < gb.y && lid.y + lid.h >= gb.y - 1, `盖板应贴住瓶口：lid(${lid.y}..${lid.y + lid.h}) 瓶口=${gb.y}`);
-  // 盖板宽度贴近瓶颈（不再宽出一圈悬空沿）
-  assert.ok(lid.x >= gb.x + 3 && lid.x + lid.w <= gb.x + gb.w - 3, `盖板应在瓶口范围：${lid.x}..${lid.x + lid.w}`);
+  // 瓶口不该有任何实心盖板/假墙（用户要求：不要盖子）
+  assert.equal(scene.byId['gbA_gb_lid'], undefined, '不应有盖板子体');
+  const atMouth = scene.statics.filter((s) => s !== l && s !== r && s.x < gb.x + gb.w && s.x + s.w > gb.x && s.y < gb.y + 2);
+  assert.equal(atMouth.length, 0, '瓶口区域不应有实心阻挡');
+});
+
+// ---- 15b. 集气瓶气体外观：无色气体不套用蓝色液体色，填充用淡雾 -----------
+test('集气瓶气体填充色：CO2 用无色冷白；Cl2 才用本身黄绿色', () => {
+  const co2 = new GasBottle({ x: 0, y: 0, gases: { CO2: 2 } });
+  assert.equal(co2.gasFillColor(), '#e4f2ff', 'CO2 应使用无色冷白填充');
+  const cl2 = new GasBottle({ x: 0, y: 0, gases: { Cl2: 2 } });
+  assert.equal(cl2.gasFillColor(), '#b8e01f', 'Cl2 应使用黄绿色填充');
 });
 
 // ---- 16. 推动平滑性（用户反馈：推动时瓶子震动/玩家一卡一卡） ------------------
@@ -815,4 +857,35 @@ test('拖动边界回抓：拖到钳制边界松开，还能再次抓住拖回�
   const d1 = Math.hypot(dr.x + dr.w / 2 - pcx, dr.y + dr.h / 2 - pcy);
   assert.ok(d1 < d0 - 50, `应能拖回：${d1.toFixed(1)} < ${d0.toFixed(1)}`);
   handleScenePressUp(scene, canvas);
+});
+
+// ---- 17. 倒液/通气的目标也可以是烧杯（不只有药品池） -------------------------
+test('烧杯 X 倒出：目标可以是最近另一只烧杯', () => {
+  const scene = flatScene();
+  const p = withPlayer(scene, 320, 630);
+  const target = new Beaker({ x: 430, y: 620, w: 60, h: 70, volume: 200, water: 0 });
+  scene.addObject(target);
+  const src = new Beaker({ x: 100, y: 620, w: 60, h: 70, volume: 200, water: 100, solutes: { CuSO4: 10 } });
+  scene.addObject(src);
+  scene.removeItem(src);
+  p.inventory.slots[0] = { item: 'beaker', obj: src };
+  p.inventory.selected = 0;
+  run(scene, 3);
+  assert.ok(pourBeaker(p, scene), '应能把液体倒进旁边的烧杯');
+  assert.ok(target.solution.totalMass() > 1, `目标烧杯应接到液体：${target.solution.totalMass()}`);
+  assert.ok(src.solution.totalMass() < 110, '源烧杯液体应减少');
+});
+
+test('集气瓶 X 通气：目标可以是最近的烧杯（石灰水）', () => {
+  const scene = flatScene();
+  const p = withPlayer(scene, 320, 630);
+  const target = new Beaker({ x: 430, y: 620, w: 60, h: 70, volume: 200, water: 200, solutes: { 'Ca(OH)2': 1 } });
+  scene.addObject(target);
+  const bottle = new GasBottle({ x: 0, y: 0, capacity: 5, gases: { CO2: 1 } });
+  p.inventory.slots[0] = { item: 'bottle', obj: bottle };
+  p.inventory.selected = 0;
+  run(scene, 3);
+  for (let i = 0; i < 80; i++) injectBottleGas(p, scene, TICK);
+  assert.ok(bottle.totalGas() < 0.999, `应通入烧杯：瓶内剩 ${bottle.totalGas()}`);
+  assert.ok(target.precipitates.get('CaCO3') > 0, '石灰水烧杯应析出 CaCO3');
 });

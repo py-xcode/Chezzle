@@ -28,6 +28,7 @@ import { bindTouchUI } from '../core/touch.js';
 import { bindOverviewInput } from '../core/overview.js';
 import { attachRecorderPanel } from '../core/recorder.js';
 import { setupCanvasSize, fitCanvasToWindow, canvasLW, canvasLH } from '../render/canvas.js';
+import { sfx } from '../core/audio.js';
 
 export class Multiscene {
   /**
@@ -267,6 +268,8 @@ export class Multiscene {
     e.active = true;
     this.current = name;
     this.switches++;
+    // 传送门跨场景：真正切场景的一刻响传送音（普通章节切换不响——那不是传送门）
+    if (opts.portalLanding) sfx('portal');
     // 键盘事件转发切换（bindKeyboard 绑定的是旧场景）
     if (this._unbindKeys) this._unbindKeys();
     this._unbindKeys = bindKeyboard(e.scene);

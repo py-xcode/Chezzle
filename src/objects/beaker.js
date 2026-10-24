@@ -34,6 +34,9 @@ export class Beaker extends Container {
     super({ x, y, w, h, ...rest });
     this.wall = wall;
     this.vy = 0;
+    // 纯视觉：被放置/瞬移时杯身轻晃（_swayKick 1→0 衰减约 0.5s），液体涟漪走 pulse
+    this._prevX = null;
+    this._swayKick = 0;
     // 实心杯壁（左/右/底），跟随烧杯移动；顶口敞开（可跳入）
     // static：壁是"与杯身联动的死墙"——不参与动量交换（玩家推杯时靠 update 驱动杯身，
     // 壁只跟随；动态壁会被玩家撞飞再被 syncWalls 拉回 → 推动强烈震动——用户反馈）。
@@ -163,6 +166,10 @@ export class Beaker extends Container {
     this.applyGravity(dt, scene);
     // 冰面惯性滑行在 pushContainers（Player.update）里驱动（推动/滑行不双算）
     this.updatePour(dt, scene);
+    // 纯视觉：被放置/位置突变（>6px）→ 杯身轻晃一下（确定性衰减，物理坐标不变）
+    if (this._prevX != null && Math.abs(this.x - this._prevX) > 6) this._swayKick = 1;
+    this._prevX = this.x;
+    if (this._swayKick > 0) this._swayKick = Math.max(0, this._swayKick - dt / 0.55);
     // 玩家贴壁推动已挪到 Player.update（pushContainers——时序要求：玩家重设 vel 之后、
     // 物理步之前：吸附+清 vel，否则推-弹交替"一卡一卡"——用户反馈）
   }
@@ -199,49 +206,108 @@ export class Beaker extends Container {
     this.syncWalls();
   }
 
-  render(ctx, scene) {
+  // ---------------------------------------------------------------------------
+  // 渲染：暗紫玻璃杯身 + 黄铜口沿/刻度线 + 杯底高光；液体沿用 renderLiquid
+  //   （可传 A 组 Container 的 _liquidPulse 做涟漪）；被放置时杯身轻晃（纯视觉，
+  //   不改物理/几何）。倒出会话的平移+倾斜变换保持不变。
+  // ---------------------------------------------------------------------------
+  render(ctx, opts) {
+    const t = opts?.time ?? 0;
+    const pulse = this._liquidPulse ?? 0; // 液量突变脉冲（0..1，A 组 Container 提供）
+    const x = this.x;
+    const y = this.y;
+    const w = this.w;
+    const h = this.h;
     // 倒出会话变换：平移到目标旁 + 轻微抬升 + 倾斜（液体/颗粒/杯体整体）
     ctx.save();
     const vp = this._visPour;
     if (vp && (Math.abs(vp.offX) > 0.01 || vp.ang > 0.001)) {
-      const cx = this.x + vp.offX + this.w / 2;
-      const cy = this.y + this.h;
+      const cx = x + vp.offX + w / 2;
+      const cy = y + h;
       ctx.translate(cx, cy);
       ctx.rotate(vp.aSign * vp.ang);
       ctx.translate(-cx, -cy - vp.liftY);
+    } else if (this._swayKick > 0) {
+      // 放置/瞬移后的杯身轻晃（绕杯底中心小幅摆动，确定性衰减）
+      const sway = Math.sin((1 - this._swayKick) * Math.PI * 5) * this._swayKick * 0.035;
+      if (Math.abs(sway) > 1e-4) {
+        const cx = x + w / 2;
+        const cy = y + h;
+        ctx.translate(cx, cy);
+        ctx.rotate(sway);
+        ctx.translate(-cx, -cy);
+      }
     }
     // 液体（元素发光液面；液面高度 = 实际液体量/容量——吸液/倒出后可见升降）
     const inner = this.innerRect();
     if (inner.w > 0 && inner.h > 0) {
       const vol = this.solution.volume > 0 ? this.solution.volume : Infinity;
       const lh = inner.h * Math.max(0, Math.min(1, this.solution.totalMass() / vol));
-      if (lh > 2) renderLiquid(ctx, inner.x, inner.y + inner.h - lh, inner.w, lh, this.solution, scene.time ?? 0);
+      if (lh > 2) {
+        // 裁到杯身内轮廓：液体不越过杯底圆角/杯壁（视觉，不动液体几何）
+        ctx.save();
+        rr(ctx, this.x + 1, this.y + 1, this.w - 2, this.h - 2, Math.max(3, this.w * 0.1));
+        ctx.clip();
+        renderLiquid(ctx, inner.x, inner.y + inner.h - lh, inner.w, lh, this.solution, t, pulse);
+        ctx.restore();
+      }
     }
     // 沉淀：从反应位置生成的视觉颗粒，物理堆叠成堆
     this.renderGrains(ctx);
-    // 玻璃杯（U 形，半透明 + 亮边 + 高光）
+    // ---- 玻璃杯（简洁版）：暗紫玻璃杯身 + 敞开杯口（没有盖子/横梁）----
+    const botR = Math.max(3, Math.min(9, w * 0.13));
+    const lip = Math.max(1.4, Math.min(3.2, w * 0.05));
+    const glassPath = () => {
+      ctx.beginPath();
+      ctx.moveTo(x, y + lip * 0.5);
+      ctx.lineTo(x, y + h - botR);
+      ctx.arcTo(x, y + h, x + botR, y + h, botR);
+      ctx.lineTo(x + w - botR, y + h);
+      ctx.arcTo(x + w, y + h, x + w, y + h - botR, botR);
+      ctx.lineTo(x + w, y + lip * 0.5);
+      ctx.closePath();
+    };
     ctx.save();
-    ctx.fillStyle = 'rgba(210,240,255,0.12)';
-    rr(ctx, this.x, this.y, this.w, this.h, 7);
+    // 玻璃体（暗紫玻璃，半透明）
+    glassPath();
+    const glass = ctx.createLinearGradient(x, y, x + w, y + h);
+    glass.addColorStop(0, 'rgba(150,130,230,0.16)');
+    glass.addColorStop(0.45, 'rgba(80,70,150,0.09)');
+    glass.addColorStop(1, 'rgba(120,110,200,0.14)');
+    ctx.fillStyle = glass;
     ctx.fill();
-    ctx.strokeStyle = 'rgba(225,245,255,0.8)';
-    ctx.lineWidth = 2;
-    ctx.shadowColor = 'rgba(180,230,255,0.6)';
-    ctx.shadowBlur = 6;
-    ctx.beginPath();
-    ctx.moveTo(this.x, this.y);
-    ctx.lineTo(this.x, this.y + this.h - 7);
-    ctx.arcTo(this.x, this.y + this.h, this.x + 7, this.y + this.h, 7);
-    ctx.lineTo(this.x + this.w - 7, this.y + this.h);
-    ctx.arcTo(this.x + this.w, this.y + this.h, this.x + this.w, this.y + this.h - 7, 7);
-    ctx.lineTo(this.x + this.w, this.y);
+    // 玻璃细边（浅冷色，细）
+    ctx.strokeStyle = 'rgba(205,225,255,0.62)';
+    ctx.lineWidth = 1.3;
     ctx.stroke();
-    ctx.shadowBlur = 0;
-    // 左侧高光
-    ctx.fillStyle = 'rgba(255,255,255,0.16)';
-    ctx.fillRect(this.x + 1, this.y + 2, 2, this.h - 4);
-    ctx.restore();
-    ctx.restore(); // 倾旋包裹结束
-    this.renderContentsLabel(ctx, scene);
+    ctx.restore(); // 玻璃杯身层结束（保留外层倒出/晃动变换）
+    // 杯口：扁椭圆开口（深色口内 + 细玻璃口沿）——不是盖在杯口的横梁
+    const mouthY = y + 1.2;
+    const mouthRx = w / 2 - 0.8;
+    const mouthRy = Math.max(1.6, w * 0.05);
+    ctx.beginPath();
+    ctx.ellipse(x + w / 2, mouthY, mouthRx, mouthRy, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(7,10,26,0.62)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(205,225,255,0.66)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // 两侧极短的黄铜口沿（保留金属语言，但中间敞开）
+    const tickW = Math.max(2.2, w * 0.11);
+    const tickH = Math.max(2, lip * 1.7);
+    for (const sx of [x - 0.3, x + w - tickW + 0.3]) {
+      rr(ctx, sx, y, tickW, tickH, 0.8);
+      const brass = ctx.createLinearGradient(0, y, 0, y + tickH);
+      brass.addColorStop(0, '#ffe6a8');
+      brass.addColorStop(0.45, '#c9932f');
+      brass.addColorStop(1, '#6b4a18');
+      ctx.fillStyle = brass;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(30,20,6,0.8)';
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+    }
+    ctx.restore(); // 倾旋/晃动包裹结束
+    this.renderContentsLabel(ctx, opts);
   }
 }

@@ -7,12 +7,15 @@
 //    摇杆语义与键盘完全一致（写入 scene.control 的 left/right/jump）。
 //    起手容错圈：出手点偏离圆心 < joyDead 比例 → 完全不动（防"点歪先朝错方向
 //    跳一步"）；启动后启停阈值不同（joyDeadBack 滞回），边界不抖动。
-//  - 右下：Q 收集 / ⇧ 放置 / C 拾取… / X 倒出… 四键（C/X 支持**按住**：
-//    与键盘 keydown/keyup 完全同语义——C 按住收气、X 按住通气），下方是物品栏。
+//  - 右下：Q 拾取/收集 与 ⇧ 放置常驻；选中可拾取物品（烧杯/滴管/集气瓶）时，
+//    上排出现该物品自己的操作键（吸液/倒出、吸液/滴加、集气/通气；名称与图标由物品定义），
+//    按住语义同键盘（C 按住集气、X 按住通气）。下方是物品栏。
 //  - 场景内：与鼠标同一套"按下/拖动/抬起"管线（滴管点击滴液、长按持续滴、
 //    液下吸取、拖动），触点落在 UI 控件外即进入该管线。
 //  - 鸟瞰（灵魂出窍）：进入后触点改走手势管线——1 指拖动 = 平移、2 指捏合 =
 //    缩放（中点为锚）；"返回"按钮退出（桌面 V 键 / HUD 鸟瞰按钮同效）。
+//  - 重开菜单：HUD 重开按钮双击打开（画布弹层，打开时暂停模拟）；菜单打开时触点
+//    只走菜单命中/关闭，不落到摇杆/按钮/场景。死亡轻触 = 回存档点（无存档整局重开）。
 //  - 全屏：首个触点自动请求全屏（小屏金贵；iOS 不支持元素全屏 → 静默跳过），
 //    HUD ⛶ 按钮可随时切换。
 //  - 竖屏：HUD 层画"请旋转设备"提示（游戏照常运行）。
@@ -25,6 +28,7 @@ import { CFG } from './config.js';
 import { getPrefs } from './prefs.js';
 import { setupCanvasSize, canvasLW, canvasLH } from '../render/canvas.js';
 import { compactView, compactK } from '../level/click.js';
+import { carryActionsOf } from '../level/items.js';
 import {
   handleSceneClick,
   handleScenePressDown,
@@ -38,6 +42,8 @@ import {
   tipPanelRect,
 } from '../level/click.js';
 import { requestFullscreenOnce } from './fullscreen.js';
+import { sfx } from './audio.js';
+import { Savepoint } from './savepoint.js';
 
 // ---------------------------------------------------------------------------
 // 设备检测
@@ -87,11 +93,12 @@ export function joyGeom(W, H, insets = {}) {
   return { cx, cy, R };
 }
 
-/** 右下按钮：2×2 块（C 上左 / X 上右 / Q 下左 / ⇧ 下右），下方是物品栏。
+/** 右下按钮：Q/⇧ 常驻下排；上排物品操作键只在选中物品定义时出现。
  *  与物品栏几何（inventorySlotRects，触屏边距版）共用坐标，按钮块贴着物品栏上沿。
+ *  actions = carryActionsOf(选中物品)（每项带 action/label/icon，action=grab/use）。
  *  小屏：按钮 72%（68→49px，2×2 总高 ≈104px）。
  *  用户可在设置里调「右下按钮大小」（btnScale 0.8~1.4）。 */
-export function touchButtonRects(W, H, slots, insets = {}) {
+export function touchButtonRects(W, H, slots, insets = {}, actions = []) {
   if (!slots || slots.length === 0) return [];
   const p = getPrefs();
   const btnScale = Number.isFinite(p.btnScale) ? p.btnScale : 1;
@@ -109,12 +116,16 @@ export function touchButtonRects(W, H, slots, insets = {}) {
   const bw = btn * 2 + gap;
   const bx = invRight - bw;
   const by = invTop - 12 - (btn * 2 + gap);
-  return [
-    { key: 'grab', x: bx, y: by, size: btn },
-    { key: 'use', x: bx + btn + gap, y: by, size: btn },
-    { key: 'collect', x: bx, y: by + btn + gap, size: btn },
-    { key: 'place', x: bx + btn + gap, y: by + btn + gap, size: btn },
-  ];
+  const out = [];
+  // 上排：物品操作按钮（按各自绑定的动作键放左/右格）；未定义的键不出现
+  for (const a of actions ?? []) {
+    if (!a || (a.action !== 'grab' && a.action !== 'use')) continue;
+    out.push({ key: a.action, x: a.action === 'grab' ? bx : bx + btn + gap, y: by, size: btn, action: a });
+  }
+  // 下排：Q 拾取/收集、⇧ 放置（常驻）
+  out.push({ key: 'collect', x: bx, y: by + btn + gap, size: btn });
+  out.push({ key: 'place', x: bx + btn + gap, y: by + btn + gap, size: btn });
+  return out;
 }
 
 /** 点在矩形内（含手指容差 pad） */
@@ -278,19 +289,28 @@ export class TouchUI {
     return false;
   }
 
+  /** 右下按钮按下音：40ms 限频（多指同时按不叠成爆音） */
+  _sfxButton() {
+    const now = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+      ? performance.now() : Date.now();
+    if (now - (this._sfxBtnT ?? -1e9) < 40) return;
+    this._sfxBtnT = now;
+    sfx('ui.click');
+  }
+
   /** 摇杆几何（画布坐标） */
   geom() {
     return joyGeom(canvasLW(this.canvas), canvasLH(this.canvas), this.insets);
   }
 
-  /** 按钮矩形（画布坐标）；场景设置了 hideTouchGrab → 不返回/不渲染'grab'（拾取/吸液
-   *  按钮，=电脑端 C 键）。其余按钮位置不变（2×2 留一格空白，手指不会误触）。 */
+  /** 按钮矩形（画布坐标）：基础 Q/⇧ 常驻；上排物品操作由当前选中的可拾取物品定义
+   *  （烧杯/滴管/集气瓶的操作名称/图标见 items.carryActionsOf）。 */
   buttonRects() {
     const act = this.getActive();
     const scene = act && act.scene ? act.scene : null;
-    const slots = act && act.scene && act.scene.player ? act.scene.player.inventory.slots : [];
-    const rs = touchButtonRects(canvasLW(this.canvas), canvasLH(this.canvas), slots, this.insets);
-    return scene && scene.hideTouchGrab ? rs.filter((r) => r.key !== 'grab') : rs;
+    const slots = scene && scene.player ? scene.player.inventory.slots : [];
+    const actions = scene && scene.player ? carryActionsOf(scene.player.inventory.selectedItem()) : [];
+    return touchButtonRects(canvasLW(this.canvas), canvasLH(this.canvas), slots, this.insets, actions);
   }
 
   /** 设备/布局刷新：安全区、画布铺满、相机移动端视野（forceTouch / resize 时调用）。
@@ -392,9 +412,16 @@ export class TouchUI {
     if (this.isPortrait()) return 'rot';
     const scene = act.scene;
     const hud = act.hud ?? null;
-    // 死亡：轻触重开（桌面按 R）
+    // 重开菜单打开（游戏已暂停）：触点只交给菜单（按钮命中 / 点面板外关闭），
+    // 摇杆/右下按钮/场景按下管线全部不响应
+    if (scene.restartMenuOpen) {
+      handleSceneClick(scene, hud, this.canvas, x, y);
+      this.uiTouches.add(id);
+      return 'ui';
+    }
+    // 死亡：轻触重开（有存档 → 回存档点；无存档 → 整局重开）
     if (scene.status === 'died') {
-      scene.restart();
+      Savepoint.retryAfterDeath(scene);
       return 'died';
     }
     // ⓪ 鸟瞰模式：返回按钮 = 退出；其余触点进手势管线（1指平移 / 2指捏合缩放）
@@ -417,6 +444,7 @@ export class TouchUI {
     // ② 右下按钮（Q/⇧/C/X）：按下 = keydown（pressed + control），抬起 = keyup
     for (const r of this.buttonRects()) {
       if (hitRect(r, x, y)) {
+        this._sfxButton();
         this.buttons.set(id, r.key);
         scene.pressed.add(r.key);
         scene.control.add(r.key);
@@ -433,6 +461,7 @@ export class TouchUI {
         if (x >= r.x + r.w - 32 && y <= r.y + 32) {
           if (typeof hud.closeTip === 'function') hud.closeTip();
           else hud.showTip = false;
+          sfx('ui.close');
           return 'ui';
         }
         this.tipSwipe = { id, x0: x };

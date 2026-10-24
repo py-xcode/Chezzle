@@ -30,6 +30,7 @@ import {
   CATALYTIC_RULES,
   COMBUSTION_RULES,
   AUTO_DECOMP_RULES,
+  ELECTROLYSIS_RULES,
   GAS_REDUCTION_RULES,
   SOLID_REDUCTION_RULES,
   SPECIAL_PAIR_RULES,
@@ -80,6 +81,7 @@ function conditionMet(cond, env, ctx) {
   if (cond === 'normal') return true;
   if (cond === 'heat') return !!env.conditions.heat || !!env.conditions.highTemp;
   if (cond === 'highTemp') return !!env.conditions.highTemp;
+  if (cond === 'electric') return !!env.conditions.electric; // 电解（池变种"电解池"提供）
   if (cond === 'ignited') {
     return !!env.conditions.ignited && env.atmosphere.o2Fraction() > COMBUSTION_MIN_O2;
   }
@@ -87,6 +89,7 @@ function conditionMet(cond, env, ctx) {
     if (cond.catalyst !== undefined && !env.conditions.hasCatalyst(cond.catalyst)) return false;
     if (cond.heat !== undefined && !(env.conditions.heat || env.conditions.highTemp)) return false;
     if (cond.highTemp !== undefined && !env.conditions.highTemp) return false;
+    if (cond.electric !== undefined && !env.conditions.electric) return false; // 电解（电解池）
     if (cond.ignited !== undefined && !(env.conditions.ignited && env.atmosphere.o2Fraction() > COMBUSTION_MIN_O2)) return false;
     if (cond.light !== undefined && !env.conditions.light) return false; // 见光反应（HClO 分解等）
     if (cond.o2 !== undefined) {
@@ -181,6 +184,13 @@ export class ChemistryEngine {
       return s;
     };
 
+    // 电解：电解液规则在前、水规则在最后（见 rules.js ELECTROLYSIS_RULES）。
+    // 同刻只跑第一条"真反应"的规则：有电解液先电解电解液，耗尽（reactedMass=0）
+    // 才轮到水——否则食盐水会同时被两条规则消耗，H2/Cl2/O2 比例与质量守恒都对不上。
+    for (const rule of ELECTROLYSIS_RULES) {
+      if (rule.reactants.every((r) => mat.avail(r.id) > 0)
+          && this._runRule(rule, sources(rule), dt, env, ctx) > 0) break;
+    }
     for (const rule of THERMAL_RULES) {
       if (mat.avail(rule.reactants[0].id) > 0) this._runRule(rule, sources(rule), dt, env, ctx);
     }
@@ -910,18 +920,20 @@ export class ChemistryEngine {
   /**
    * 执行一条规则：按 rate 与限域试剂推进一个 tick，消耗并产出。
    * 规则带 explosive 标签 → 推进后触发爆炸。
+   * @returns {number} 实际反应质量（g，全部反应物实际消耗量之和；0 = 本刻未反应）。
+   *   电解互斥循环依赖它判断"这条规则本刻真的推进了"，耗尽/条件不满足都返回 0。
    */
   _runRule(rule, sources, dt, env, ctx) {
     // ★ 分步质子化闸门（放在这里 = 所有执行路径统一生效：成对路径 _runPairDataRule
     //   与同材料路径 reactSelf 都走 _runRule，不会有一条路绕过闸门）
-    if (this._ruleBlockedByCarbonate(rule, ctx, ...Object.values(sources))) return;
-    if (!conditionMet(rule.condition, env, ctx)) return;
+    if (this._ruleBlockedByCarbonate(rule, ctx, ...Object.values(sources))) return 0;
+    if (!conditionMet(rule.condition, env, ctx)) return 0;
     const ref = rule.reactants[0];
     const refMM = getSubstance(ref.id).mm;
     let rate = rule.rate;
     for (const r of rule.reactants) {
       const m = sources[r.id];
-      if (!m) return;
+      if (!m) return 0;
       rate *= this._concFactorFor(m, r.id);
     }
     let units = (rate * dt) / refMM;
@@ -932,7 +944,7 @@ export class ChemistryEngine {
       units = Math.min(units, this._availFor(m, r.id) / (mm * r.coeff));
     }
     // !(units > 0) 同时拦截 NaN/负值（NaN 比较恒 false，旧写法 units<=0 会放行 NaN）
-    if (!(units > 1e-12)) return;
+    if (!(units > 1e-12)) return 0;
     // 盖章大气原因（燃烧会消耗大气 O2/燃料，须在消耗前盖章）
     this._stamp(ctx, reactionEquation(rule.reactants.map((r) => r.id), rule.products.map((p) => p.id)));
 
@@ -947,10 +959,12 @@ export class ChemistryEngine {
       reactedMass += removed;
       if (take > 1e-12) scale = Math.min(scale, removed / take);
     }
-    if (!(scale > 1e-9)) return;
+    if (!(scale > 1e-9)) return 0;
     const act = units * scale;
+    // skipAbsorb：产物气体不在本池被碱吸收（电解的阳极气体直接逸出，见 rules.js）
+    const emitOpts = rule.skipAbsorb ? { skipAbsorb: true } : undefined;
     for (const p of rule.products) {
-      this._emit(p.id, act * p.coeff * getSubstance(p.id).mm, ctx);
+      this._emit(p.id, act * p.coeff * getSubstance(p.id).mm, ctx, emitOpts);
     }
     this._logReaction(ctx, rule.reactants.map((r) => r.id), rule.products.map((p) => p.id));
     // 反应现象：金属燃烧迸发火星（火星四射——铁/镁/铝等在氧中燃烧的标志现象）
@@ -959,6 +973,7 @@ export class ChemistryEngine {
     if (rule.explosive && env.explode) {
       env.explode(env.explodePoint ?? null, 4 + reactedMass * 1.2, ctx.lastRxText || '剧烈反应');
     }
+    return reactedMass;
   }
 
   /**
@@ -1042,13 +1057,17 @@ export class ChemistryEngine {
     };
   }
 
-  _emit(id, mass, ctx) {
+  /**
+   * 产物路由（opts 透传给气体管线，见 _emitGas）：
+   *   opts.skipAbsorb = 气体产物不在本容器被碱吸收（电解的阳极气体直接逸出）。
+   */
+  _emit(id, mass, ctx, opts = {}) {
     // 挡住 NaN/非法质量（反应数学异常时避免生成 NaN 粒子 → 物品栏质量变 NaN）
     if (!Number.isFinite(mass) || mass <= 1e-9) return;
     const sub = getSubstance(id);
 
     if (sub.state === 'gas') {
-      this._emitGas(id, mass, ctx);
+      this._emitGas(id, mass, ctx, opts);
       return;
     }
     if (id === 'H2O') {
@@ -1132,6 +1151,9 @@ export class ChemistryEngine {
    *  onGas 返回"已截留质量"（集气瓶收集 / 导气管输送）——截留部分不再走吸收/水溶/大气；
    *  opts.forceDissolve（向溶液通入气体）：CO2/SO2/NO2/Cl2 也能溶进水（主动鼓泡）。
    *  opts.skipOnGas：跳过 onGas 钩子（导气管先把气体鼓入输出池吸收，多余部分再另行冒柱）。
+   *  opts.skipAbsorb：跳过"本容器的碱/酸吸收"——电解阳极气体（Cl2 等）从电极直接
+   *   逸出，不该被同池刚生成的 NaOH 尾气吸收（否则食盐水电解看不到黄绿色氯气，
+   *   产物还会变回 NaCl/NaClO）。
    *  opts.deferAtmosphere：剩余气体不直接进大气、作为返回值交还调用方（导气管先在输出端
    *  管口冒气泡柱、再入大气）。
    *  返回：因 deferAtmosphere 未入大气的剩余质量（普通调用返回 0）。 */
@@ -1144,8 +1166,9 @@ export class ChemistryEngine {
     }
     let leftover = mass;
     const baseMat = ctx.inContainer ? ctx.containerMat : null;
-    // 1. 碱吸收酸性气体 / 酸吸收 NH3（尾气处理、石灰水检验等）
-    if (baseMat) {
+    // 1. 碱吸收酸性气体 / 酸吸收 NH3（尾气处理、石灰水检验等）；skipAbsorb=电解
+    //    阳极气体直接逸出（不被本池 NaOH 吸收）
+    if (baseMat && !opts.skipAbsorb) {
       for (const base of baseMat.ids()) {
         const rule = acidGasRuleFor(id, base);
         if (!rule) continue;

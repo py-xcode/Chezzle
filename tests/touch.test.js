@@ -13,6 +13,7 @@ import { Player, Inventory } from '../src/objects/player.js';
 import { Floor } from '../src/objects/floor.js';
 import { Dropper } from '../src/objects/dropper.js';
 import { Beaker } from '../src/objects/beaker.js';
+import { GasBottle } from '../src/objects/gasbottle.js';
 import { Camera } from '../src/render/camera.js';
 import { CFG } from '../src/core/config.js';
 import {
@@ -126,19 +127,33 @@ test('摇杆：起手偏左 30px 先不动（不左跳），拖向右侧才向�
 // ---- 3. 几何布局 -------------------------------------------------------------
 // 测试窗口 844×390 = iPhone 8 Plus 横屏（小屏）→ 紧凑模式（摇杆/按钮 72%）；
 // 全尺寸窗口另测（桌面/大屏不变）
-test('几何：摇杆半圆在左下、按钮 2×2 贴物品栏上沿、互不重叠（844×390 小屏=紧凑）', () => {
+test('几何：摇杆半圆在左下、基础按钮 Q/⇧ 贴物品栏上沿、互不重叠（844×390 小屏=紧凑）', () => {
   const g = joyGeom(W, H, {});
   assert.equal(g.cx, 14 + Math.max(70, Math.round(CFG.touch.joyR * 0.72)), '圆心 x = 左边距+紧凑半径');
   assert.ok(g.cy < H && g.cx - g.R >= 0, '半圆在屏幕内左下');
   const slots = new Array(5).fill(null);
   const rects = touchButtonRects(W, H, slots, {});
-  assert.equal(rects.length, 4);
-  const keys = rects.map((r) => r.key).sort();
-  assert.deepEqual(keys, ['collect', 'grab', 'place', 'use']);
+  // 未选中可拾取物品：只有 Q（拾取/收集）与 ⇧（放置）两个基础键
+  assert.equal(rects.length, 2);
+  assert.deepEqual(rects.map((r) => r.key).sort(), ['collect', 'place']);
+  // 选中物品的操作键出现在上排（2×2 的上半），基础键仍在下排
+  const withActions = touchButtonRects(W, H, slots, {}, [
+    { action: 'grab', label: '吸液', icon: 'beakerSuck' },
+    { action: 'use', label: '倒出', icon: 'beakerPour' },
+  ]);
+  assert.equal(withActions.length, 4);
+  assert.deepEqual(withActions.map((r) => r.key).sort(), ['collect', 'grab', 'place', 'use']);
+  const grab = withActions.find((r) => r.key === 'grab');
+  const use = withActions.find((r) => r.key === 'use');
+  const collect = withActions.find((r) => r.key === 'collect');
+  assert.equal(grab.action.label, '吸液');
+  assert.equal(grab.action.icon, 'beakerSuck');
+  assert.equal(grab.y, use.y, '物品操作在上排');
+  assert.ok(collect.y > grab.y, '基础键在下排');
   // 按钮块与物品栏不重叠（都在屏幕内；物品栏在按钮下方）
   const inv = inventorySlotRects(W, H, slots, { bottom: 10, right: 10 });
   const invTop = Math.min(...inv.map((r) => r.y));
-  for (const r of rects) {
+  for (const r of withActions) {
     assert.ok(r.x >= 0 && r.y >= 0 && r.x + r.size <= W && r.y + r.size <= H, '按钮在屏内');
     assert.ok(r.y + r.size <= invTop, '按钮在物品栏上方');
   }
@@ -230,11 +245,15 @@ test('按钮：按下=keydown(pressed+control)，抬指=keyup；摇杆+按钮多
   const scene = flatScene();
   const p = new Player({ x: 500, y: 600, mass: 30, id: 'p1' });
   scene.addObject(p);
+  // 选中集气瓶 → 上排出现 集气/通气 两个物品操作键（C/X）
+  p.inventory.slots[0] = { item: 'bottle', obj: new GasBottle({ x: 0, y: 0, capacity: 5 }) };
+  p.inventory.selected = 0;
   run(scene, 2);
   const ui = new TouchUI(canvas, () => ({ scene, hud: null }));
   const rects = ui.buttonRects();
   const byKey = Object.fromEntries(rects.map((r) => [r.key, r]));
   const center = (r) => ({ x: r.x + r.size / 2, y: r.y + r.size / 2 });
+  assert.deepEqual(rects.map((r) => r.key).sort(), ['collect', 'grab', 'place', 'use'], '选中物品后 4 键都在');
   // Q 收集：边缘触发（一 tick 后 pressed 清空、control 保持到抬指）
   const q = center(byKey.collect);
   assert.equal(ui.down(2, q.x, q.y), 'btn');
@@ -257,6 +276,33 @@ test('按钮：按下=keydown(pressed+control)，抬指=keyup；摇杆+按钮多
   assert.equal(scene.control.has('left'), true, '摇杆不受按钮抬指影响');
   ui.up(1);
   assert.equal(scene.control.has('left'), false, '摇杆抬指释放');
+});
+
+// ---- 5.5 按钮内容随选中物品变化（名称/图标来自物品操作定义） -------------------
+test('按钮随选中物品变化：烧杯=吸液/倒出、集气瓶=集气/通气；取消选中只剩 Q/⇧', () => {
+  forceTouch(true);
+  const canvas = fakeCanvas();
+  const scene = flatScene();
+  const p = new Player({ x: 500, y: 600, mass: 30, id: 'p1' });
+  scene.addObject(p);
+  run(scene, 2);
+  const ui = new TouchUI(canvas, () => ({ scene, hud: null }));
+  const labels = () => Object.fromEntries(ui.buttonRects().map((r) => [r.key, r.action ? r.action.label : null]));
+  assert.deepEqual(Object.keys(labels()).sort(), ['collect', 'place'], '未选中物品：只有基础键');
+  const beaker = new Beaker({ x: 0, y: 0, volume: 200, water: 0 });
+  p.inventory.slots[1] = { item: 'beaker', obj: beaker };
+  p.inventory.selected = 1;
+  const l1 = labels();
+  assert.equal(l1.grab, '吸液');
+  assert.equal(l1.use, '倒出');
+  const bottle = new GasBottle({ x: 0, y: 0, capacity: 5 });
+  p.inventory.slots[2] = { item: 'bottle', obj: bottle };
+  p.inventory.selected = 2;
+  const l2 = labels();
+  assert.equal(l2.grab, '集气');
+  assert.equal(l2.use, '通气');
+  p.inventory.selected = 0; // 空格
+  assert.deepEqual(Object.keys(labels()).sort(), ['collect', 'place'], '取消选中物品后操作键消失');
 });
 
 // ---- 6. TouchUI：物品栏选格 / 提示按钮 -----------------------------------------

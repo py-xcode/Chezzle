@@ -39,7 +39,7 @@ const toSceneTips = (tips) => (Array.isArray(tips) ? tips : [])
 Chezzle.Plugin.register('chapters', {
   editor(ed) {
     const st = ed.state;
-    st.scenes = st.scenes ?? []; // [{ id, snap }]；snap = { worldW, worldH, rx, atm, tips, hideTouchGrab, objects }
+    st.scenes = st.scenes ?? []; // [{ id, snap }]；snap = { worldW, worldH, rx, atm, tips, objects }
     st.current = st.current ?? null;
     st.start = st.start ?? null; // 初始场景 id
 
@@ -67,7 +67,7 @@ Chezzle.Plugin.register('chapters', {
     const addScene = () => {
       saveCurrent();
       const id = nextId();
-      const blank = { worldW: 3000, worldH: 800, rx: [], atm: {}, tips: [], hideTouchGrab: false, objects: [] };
+      const blank = { worldW: 3000, worldH: 800, rx: [], atm: {}, tips: [], objects: [] };
       st.scenes.push({ id, snap: { ...blank } });
       st.current = id;
       ed.applySnapshot({ ...blank });
@@ -195,7 +195,7 @@ Chezzle.Plugin.register('chapters', {
       holder.appendChild(box);
       wrap.appendChild(holder);
       const hint = document.createElement('div');
-      hint.textContent = 'A/D 移动 · 空格跳 · Q 收集 · Shift 放置 · 顶部「⏹ 退出试玩」返回编辑器';
+      hint.textContent = 'A/D 移动 · 空格跳 · Q 拾取/收集 · Shift 放置 · 选中物品后 C/X 用物品操作 · 顶部「⏹ 退出试玩」返回编辑器';
       hint.style.cssText = 'position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:70;color:#6a7a96;font-size:11px;font-family:system-ui,sans-serif;';
       holder.appendChild(hint);
       const M = new Chezzle.Multiscene(box, {
@@ -204,7 +204,7 @@ Chezzle.Plugin.register('chapters', {
         plugins: ed.getActivePlugins().map((p) => ({ ...p, cfg: { ...(p.cfg ?? {}), M: () => M } })),
       });
       for (const s of scenesGo) {
-        const b = M.scene(s.id, { worldW: s.snap.worldW, worldH: s.snap.worldH, hideTouchGrab: !!s.snap.hideTouchGrab });
+        const b = M.scene(s.id, { worldW: s.snap.worldW, worldH: s.snap.worldH });
         // 条件提示（多场景每场景独立清单；与导出 sceneDsl 同规格）
         const tps = toSceneTips(s.snap.tips);
         if (tps.length) b.tips(tps);

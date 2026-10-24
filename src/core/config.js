@@ -41,17 +41,17 @@ export const CFG = {
   placeAmount: 0.5, // g/次
   collectRadius: 70, // px
 
-  // 可携带物品（集气瓶/烧杯/滴管）交互参数（距离一律为**边缘间隙**：贴边就算，宽池不显远）
+  // 可拾取物品（集气瓶/烧杯/滴管）交互参数（距离一律为**边缘间隙**：贴边就算，宽池不显远）
   item: {
-    collectRange: 90,      // C 拾取物品半径
-    liquidRange: 80,       // C 吸液 / X 倒出 / 通入气体的目标容器距离
+    collectRange: 90,      // Q 拾取物品半径
+    liquidRange: 80,       // 物品操作（吸液/倒出/滴加/通气）的目标容器距离
     dragRange: 480,        // 可拖动滴管的玩家最大距离（中心距离；用户反馈 130 太小 —— 扩大）
     dragSlack: 14,         // 回抓宽限：拖到边界后再抓，允许超出 dragRange 一点也能重新抓住
     beakerCapacity: 200,   // 标准烧杯容量（g；与编辑器烧杯默认 volume 一致）
-    beakerTransfer: 20,    // 烧杯每次 C 吸液量（g）
-    pourStep: 10,          // 烧杯每次 X 倒出量（g）——分次倒，不再一次全倒
+    beakerTransfer: 20,    // 烧杯每次「吸液」量（g）
+    pourStep: 10,          // 烧杯每次「倒出」量（g）——分次倒，不再一次全倒
     dropperCapacity: 50,   // 滴管容量（g）
-    dropperTransfer: 5,    // 滴管每次 C 吸液量（g）
+    dropperTransfer: 5,    // 滴管每次「吸液」量（g）
     bottleCapacity: 5,     // 集气瓶最大集气量（g）
     gasCollectRange: 100,  // 按住 C 集气：找最近气泡柱的距离
     gasRate: 0.05,         // 通入气体速率（g/s）

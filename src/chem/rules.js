@@ -22,6 +22,7 @@ export const RATE = {
   displace: 12,       // 金属置换
   redox: 3,           // 氧化还原（自动配平，整体较慢便于观察）
   thermal: 5,         // 加热/高温分解
+  electrolysis: 6,    // 电解（g/s，按方程式首个反应物计；由"电解池"提供 electric 条件）
   catalytic: 5,       // 催化/加热制氧
   combustion: 5,      // 燃烧
   reduction: 5,       // 固还原
@@ -111,6 +112,24 @@ export const AUTO_DECOMP_RULES = [
   { type: 'autoDecomp', reactants: [{ id: 'HClO', coeff: 2 }], products: [{ id: 'HCl', coeff: 2 }, { id: 'O2', coeff: 1 }], condition: { light: true }, rate: RATE.autoDecomp * 0.05 },
   // 4Fe(OH)2 + O2 + 2H2O → 4Fe(OH)3（白色→红棕色，需大气 O2）
   { type: 'autoDecomp', reactants: [{ id: 'Fe(OH)2', coeff: 4 }, { id: 'O2', coeff: 1 }, { id: 'H2O', coeff: 2 }], products: [{ id: 'Fe(OH)3', coeff: 4 }], condition: 'normal', rate: RATE.autoDecomp * 0.01 },
+];
+
+// ---- 自反应：电解（"电解池"变种提供 electric 条件；见 engine.reactSelf）----
+// 顺序即优先级：**电解液规则在前、水规则在最后**——reactSelf 的同刻循环保证
+// "有电解液先电解它，耗尽才轮到水"（否则食盐水池会同时按电解水和电解食盐水
+// 两条规则消耗，产量对不上）。condition 用 {electric:true, solution:true} 表示
+// 必须通电且在真实溶液介质中（干池/固相不电离）；水规则只要求通电。
+// skipAbsorb：阳极气体（Cl2 等）从电极直接成泡逸出，不在**本池**被刚生成的
+// NaOH 尾气吸收（否则电解食盐水得到的 Cl2 立刻变回 NaCl/NaClO，看不到黄绿色）。
+export const ELECTROLYSIS_RULES = [
+  // CuCl2 --通电--> Cu + Cl2↑（阴极析出铜、阳极放氯气）
+  { type: 'electrolysis', reactants: [{ id: 'CuCl2', coeff: 1 }], products: [{ id: 'Cl2', coeff: 1 }, { id: 'Cu', coeff: 1 }], condition: { electric: true, solution: true }, rate: RATE.electrolysis * 0.5, skipAbsorb: true },
+  // 2HCl --通电--> H2↑ + Cl2↑（电解盐酸：阴极氢气、阳极氯气）
+  { type: 'electrolysis', reactants: [{ id: 'HCl', coeff: 2 }], products: [{ id: 'H2', coeff: 1 }, { id: 'Cl2', coeff: 1 }], condition: { electric: true, solution: true }, rate: RATE.electrolysis * 0.5, skipAbsorb: true },
+  // 2NaCl + 2H2O --通电--> 2NaOH + H2↑ + Cl2↑（氯碱工业：阴极氢气、阳极氯气、溶液留碱）
+  { type: 'electrolysis', reactants: [{ id: 'NaCl', coeff: 2 }, { id: 'H2O', coeff: 2 }], products: [{ id: 'H2', coeff: 1 }, { id: 'Cl2', coeff: 1 }, { id: 'NaOH', coeff: 2 }], condition: { electric: true, solution: true }, rate: RATE.electrolysis, skipAbsorb: true },
+  // 2H2O --通电--> 2H2↑ + O2↑（电解水：放在最后 = 电解液耗尽后才轮到水）
+  { type: 'electrolysis', reactants: [{ id: 'H2O', coeff: 2 }], products: [{ id: 'H2', coeff: 2 }, { id: 'O2', coeff: 1 }], condition: 'electric', rate: RATE.electrolysis * 0.5 },
 ];
 
 // ---- 自反应：气态还原（氧化物 + 大气 CO/H2，高温）----

@@ -32,6 +32,15 @@ export class Container extends Obj {
     this.clipGrains = true; // 是否按 grainRegion 裁剪渲染（酒精灯关掉，让颗粒自然堆成小山）
     this.formulaVisible = true; // 是否显示化学式
     this.spillSides = false; // 灯等开放平台：颗粒可滚出左右边缘（堆不下从两侧滚落）
+    // ---- 通用视觉计时字段（非枚举：不进存档快照，只驱动渲染动画）----
+    // _liquidPulse：液量突变脉冲 0..1（update 检测 totalMass 突变触发；Pool/Beaker 传给 renderLiquid）
+    // _precipPulse：新增沉淀脉冲 0..1（addPrecipitate 触发；renderGrains 画扩散微光/亮边）
+    Object.defineProperty(this, '_liquidPulse', { value: 0, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, '_precipPulse', { value: 0, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, '_precipPulseColor', { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, '_precipPulseX', { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, '_precipPulseY', { value: null, writable: true, enumerable: false, configurable: true });
+    Object.defineProperty(this, '_prevLiquidMass', { value: null, writable: true, enumerable: false, configurable: true });
   }
 
   get hoverLabel() {
@@ -82,12 +91,22 @@ export class Container extends Obj {
   /**
    * 增加沉淀（g）。point 为反应/放置位置（世界坐标）+ 生成宽幅；
    * 之后把颗粒数对账到与质量一致（避免逐次舍入导致收集后残留）。
+   * 同时点亮 `_precipPulse`（新增沉淀的扩散微光，renderGrains 读取；视觉专用，非枚举不进存档）。
    */
   addPrecipitate(id, mass, point, origin = null) {
     this.precipitates.set(id, (this.precipitates.get(id) ?? 0) + mass);
     // 记录该沉淀的生成来源（反应/放置/关卡预设），供调试悬停显示；未指明时保留已有来源或默认关卡生成
     if (origin) this.precipOrigins.set(id, origin);
     else if (!this.precipOrigins.has(id)) this.precipOrigins.set(id, { kind: 'level' });
+    if (mass > 0) {
+      const sub = getSubstance(id);
+      this._precipPulse = Math.max(this._precipPulse, Math.min(1, 0.45 + mass * 0.5));
+      this._precipPulseColor = (sub.solid && sub.solid.length) ? sub.solid[0] : '#c9b46a';
+      if (point && Number.isFinite(point.x) && Number.isFinite(point.y)) {
+        this._precipPulseX = point.x;
+        this._precipPulseY = point.y;
+      }
+    }
     if (this.useGrains && mass > 0) this._syncGrains(id, point);
   }
 
@@ -182,7 +201,34 @@ export class Container extends Obj {
     return obj.right > r.x && obj.left < r.x + r.w && obj.bottom > r.y && obj.top < r.y + r.h;
   }
 
+  /**
+   * 通用视觉计时（只驱动渲染动画，不参与物理/化学账本；字段非枚举，不进存档快照）：
+   *  - 液量突变：本刻 totalMass 与上一刻比较，超阈值（容量 1%，夹 0.8~8g）→
+   *    `_liquidPulse` 置高，由 Pool/Beaker 传给 renderLiquid 做涟漪/表面高光；
+   *  - 沉淀闪光：`addPrecipitate` 已置 `_precipPulse`，这里按 dt 线性衰减。
+   * 放在 update 顶部（先于颗粒物理）：容器当前没有颗粒时也照常计时。
+   */
+  _updateFx(dt) {
+    const total = this.solution.totalMass();
+    if (this._prevLiquidMass == null) {
+      this._prevLiquidMass = total;
+    } else {
+      const delta = Math.abs(total - this._prevLiquidMass);
+      const vol = this.solution.volume > 0 ? this.solution.volume : 0;
+      const trigger = Math.max(0.8, Math.min(8, vol * 0.01));
+      if (delta >= trigger) {
+        this._liquidPulse = Math.min(1, Math.max(this._liquidPulse, 0.45 + Math.min(0.55, delta / (trigger * 4))));
+      }
+      this._prevLiquidMass = total;
+    }
+    const lDecay = dt * 2.2;
+    if (this._liquidPulse > 0) this._liquidPulse = this._liquidPulse > lDecay ? this._liquidPulse - lDecay : 0;
+    const pDecay = dt * 2.6;
+    if (this._precipPulse > 0) this._precipPulse = this._precipPulse > pDecay ? this._precipPulse - pDecay : 0;
+  }
+
   update(dt, scene) {
+    this._updateFx(dt); // 视觉计时（与颗粒物理解耦：无颗粒容器也照常衰减/检测）
     // 颗粒 = 圆形沙粒的接触动力学（冲量 + 摩擦 + 少量位置修正）：
     //  重力全程作用；接触时速度冲量抵消法向（不反弹、不抖），摩擦阻尼切向（堆能立住）；
     //  位置修正只处理重叠的一小部分（≤5px/帧），不整量瞬移；
@@ -489,10 +535,23 @@ export class Container extends Obj {
   }
 
   /** 渲染视觉颗粒：与自由沉淀粒子同一绘制（辉光/高光/深色白色光晕），
-   *  按 grainClip 裁剪（clipGrains=false 时不裁剪）——两套沉淀外观完全一致 */
+   *  按 grainClip 裁剪（clipGrains=false 时不裁剪）——两套沉淀外观完全一致。
+   *  额外加：堆底环境阴影（沉在池底更实）、新增沉淀的扩散微光（_precipPulse）。 */
   renderGrains(ctx) {
     if (!this.useGrains) return;
     const rg = this.grainRegion();
+    // 堆底环境阴影（一次渐变；开放平台/灯不画，避免压暗火焰）
+    if (this.clipGrains && rg.w > 0 && rg.h > 0) {
+      ctx.save();
+      const sg = ctx.createLinearGradient(rg.x, rg.y + rg.h * 0.7, rg.x, rg.y + rg.h);
+      sg.addColorStop(0, 'rgba(0,0,0,0)');
+      sg.addColorStop(1, 'rgba(0,0,0,0.26)');
+      this.grainClip(ctx, rg);
+      ctx.clip();
+      ctx.fillStyle = sg;
+      ctx.fillRect(rg.x, rg.y + rg.h * 0.7, rg.w, rg.h * 0.3);
+      ctx.restore();
+    }
     ctx.save();
     if (this.clipGrains) {
       this.grainClip(ctx, rg);
@@ -502,6 +561,38 @@ export class Container extends Obj {
       const sub = getSubstance(g.id);
       const c = sub.solid && sub.solid.length ? sub.solid[0] : '#c9b46a';
       renderPrecipitateBall(ctx, g.x, g.y, g.r * 2, c);
+    }
+    ctx.restore();
+    // 沉淀新增脉冲：一圈扩散微光 + 亮边（确定性衰减，不改变化学/物理）
+    this._renderPrecipPulse(ctx, rg);
+  }
+
+  /** 沉淀新增反馈：扩散光环（由 _precipPulse 驱动，材质色；无脉冲时不画） */
+  _renderPrecipPulse(ctx, rg) {
+    const p = this._precipPulse;
+    if (!(p > 0.01) || !rg || rg.w <= 0 || rg.h <= 0) return;
+    const hasPos = Number.isFinite(this._precipPulseX) && Number.isFinite(this._precipPulseY);
+    const cx = hasPos ? this._precipPulseX : rg.x + rg.w / 2;
+    const cy = hasPos ? this._precipPulseY : rg.y + rg.h * 0.82;
+    const maxR = Math.max(14, Math.min(48, Math.max(rg.w, rg.h) * 0.5));
+    const r = 5 + (1 - p) * maxR;
+    const color = this._precipPulseColor || '#e8b84b';
+    ctx.save();
+    ctx.globalAlpha = p * 0.55;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2 + p * 2;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    if (p > 0.35) {
+      ctx.globalAlpha = (p - 0.35) * 0.6;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r * 0.62, 0, Math.PI * 2);
+      ctx.stroke();
     }
     ctx.restore();
   }

@@ -31,6 +31,9 @@ function toJsonObj(text) {
 
 const scenes = new Map(); // name -> { worldW, worldH, atm, objects }
 
+// 位置参数为 x,y,w,h 的矩形型物体（池变种/气室与 pool 同分支）
+const RECT_TYPES = ['floor', 'pool', 'door', 'gaschamber', 'elepool', 'heatpool', 'hotpool'];
+
 // ---- 场景段：M.scene('x', { worldW..worldH })  …  ; ----
 const segRe = /M\.scene\('([^']+)'\s*,\s*\{([^}]*worldH:\s*\d+[^}]*)\}\s*([\s\S]*?);/g;
 let seg;
@@ -60,7 +63,7 @@ while ((seg = segRe.exec(html))) {
     const opts = toJsonObj(args);
     const a = (n, d = 0) => nums[n] ?? d;
     let obj = null;
-    if (type === 'floor' || type === 'pool' || type === 'door') {
+    if (RECT_TYPES.includes(type)) {
       obj = { type, opts: { x: a(0), y: a(1), w: a(2), h: a(3), ...opts } };
     } else if (type === 'sign') {
       const q = args.indexOf("'");
@@ -131,6 +134,7 @@ const out = {
       start: list[0]?.id ?? 'a',
     },
     showtime: { plays },
+    // 检查点沿用旧 spawns/texts 格式；编辑器加载后由 plugin/checkpoint.js 面板自动迁移成 points
     checkpoint: {
       spawns: ck,
       texts: ['复活！化学家从不回头看爆炸', '没事，NaOH 还有很多（30 克而已）', '刚才那是教学的一部分（才怪）', '重来一次！这回先看路标'],

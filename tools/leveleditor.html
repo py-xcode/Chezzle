@@ -129,6 +129,35 @@
   .fld input, .fld select, .fld textarea { width: 100%; background: #0e1432; color: #fff; border: 1px solid var(--edge); padding: 3px 5px; font-size: 12px; }
   .fld input[type=checkbox] { width: auto; }
   #props .empty { color: #6a7a96; font-size: 12px; }
+  /* 项目制：工具栏项目按钮 + 项目管理弹窗 */
+  #btnProjects { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #projModal { position: fixed; inset: 0; z-index: 50; background: rgba(4,6,20,.66); display: none; align-items: center; justify-content: center; }
+  #projModal.open { display: flex; }
+  #projBox { width: min(580px, 92vw); max-height: min(680px, 88vh); display: flex; flex-direction: column; background: var(--panel); border: 1px solid #3a4178; border-radius: 8px; box-shadow: 0 18px 60px rgba(0,0,0,.55); }
+  #projHead { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--edge); color: var(--gold); font-size: 14px; }
+  #projHead small { color: #6a7a96; font-size: 10px; font-weight: normal; }
+  #projClose { margin-left: auto; background: #2a3060; color: #fff; border: 1px solid #3a4178; border-radius: 4px; cursor: pointer; padding: 2px 8px; font-size: 12px; }
+  #projClose:hover { background: #3a4380; }
+  #projList { flex: 1; min-height: 80px; overflow-y: auto; padding: 8px 10px; }
+  .proj-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; margin-bottom: 6px; background: #0e1432; border: 1px solid var(--edge); border-radius: 5px; }
+  .proj-row.current { border-color: var(--gold); box-shadow: 0 0 0 1px rgba(232,184,75,.35) inset; }
+  .proj-main { flex: 1; min-width: 0; }
+  .proj-title { color: #dfe9ff; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .proj-cur { margin-left: 6px; color: #2a2000; background: var(--gold); border-radius: 3px; padding: 0 5px; font-size: 10px; }
+  .proj-meta { color: #6a7a96; font-size: 10px; margin-top: 2px; }
+  .proj-btns { display: flex; gap: 4px; flex-shrink: 0; }
+  .proj-btns .btn { font-size: 11px; padding: 2px 8px; }
+  .proj-btns .btn:disabled { opacity: .45; cursor: default; }
+  .proj-btns .proj-del { background: #5a2a2a; border-color: #7a3a3a; color: #ffd9d9; }
+  .proj-btns .proj-del:hover { background: #7a2a2a; }
+  .proj-confirm { color: #ffb340; font-size: 11px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .proj-empty { color: #6a7a96; padding: 24px 8px; text-align: center; font-size: 12px; }
+  #projForm { display: none; align-items: center; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--edge); }
+  #projForm.open { display: flex; }
+  #projForm input { flex: 1; min-width: 0; background: #0e1432; color: #fff; border: 1px solid #3a4178; padding: 4px 6px; font-size: 12px; }
+  #projFoot { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-top: 1px solid var(--edge); }
+  #projMsg { color: #6a7a96; font-size: 10px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+  #projMsg.err { color: #ffb340; }
   /* 主题：无底部导出区（导出 HTML 按钮直接生成文件） */
 </style>
 </head>
@@ -136,9 +165,10 @@
 <div id="app">
   <div id="toolbar">
     <button class="btn" id="btnExportHTML">📄 导出 HTML</button>
+    <button class="btn" id="btnProjects" title="项目：新建 / 打开 / 删除（自动保存在本浏览器）">📁 <span id="projName">未命名项目</span></button>
     <label style="color:#9fb2c8">关卡ID <input type="text" id="inLevelId" placeholder="如 H-1（选关系统 id，留空不接上报）" style="width:110px"></label>
-    <button class="btn" id="btnSave">💾 保存关卡</button>
-    <button class="btn" id="btnLoad">📂 加载关卡</button>
+    <button class="btn" id="btnSave" title="把当前项目导出为 JSON 文件（项目本身自动保存在浏览器）">⬇ 导出 JSON</button>
+    <button class="btn" id="btnLoad" title="把 JSON 文件作为新项目导入（不会覆盖当前项目）">⬆ 导入 JSON</button>
     <button class="btn" id="btnPlay">▶ 试玩</button>
     <button class="btn" id="btnUndo">↩ 撤销</button>
     <button class="btn" id="btnPlugins">🧩 插件</button>
@@ -148,8 +178,7 @@
     <label>高 <input type="number" id="inH" value="800" min="300" step="50"></label>
     <label style="color:#9fb2c8">大气 <input type="text" id="inAtm" placeholder="CO2:8, O2:15（不填=默认地球大气）" style="width:100px;background:#0e1432;color:#fff;border:1px solid var(--edge);padding:2px 5px;font-size:11px"></label>
     <button class="btn" id="btnAtmSet" title="把大气设置存入关卡（编辑器自带；多场景下随场景快照保存）" style="padding:1px 6px">设</button>
-    <label style="color:#9fb2c8"><input type="checkbox" id="cbHideGrab" title="很多关卡用不到"拾取/吸液"（=电脑端 C 键），隐藏后移动端不显示该按钮、不误导玩家"> 隐藏移动端「拾取」按钮</label>
-    <span id="verBadge" style="margin-right:6px;color:#7fe0ff;font-size:11px;border:1px solid #3a4178;padding:1px 6px;border-radius:3px">v3</span>
+    <span id="verBadge" style="margin-right:6px;color:#7fe0ff;font-size:11px;border:1px solid #3a4178;padding:1px 6px;border-radius:3px">v4</span>
     <span id="status">就绪</span>
   </div>
   <div id="main">
@@ -194,13 +223,26 @@
     </div>
   </div>
 </div>
+<div id="projModal" aria-hidden="true">
+  <div id="projBox" role="dialog" aria-label="项目管理">
+    <div id="projHead"><b>📁 项目</b><small>自动保存在本浏览器</small><button id="projClose" title="关闭 (Esc)">✕</button></div>
+    <div id="projList"></div>
+    <div id="projForm">
+      <input id="projNameInput" maxlength="60" placeholder="项目名称">
+      <button id="projFormOk" class="btn primary">确定</button>
+      <button id="projFormCancel" class="btn">取消</button>
+    </div>
+    <div id="projFoot"><button id="projNew" class="btn primary">＋ 新建项目</button><span id="projMsg"></span></div>
+  </div>
+</div>
 <datalist id="substances"></datalist>
-<script src="../prefs.js?vmvc6l20g"></script>
-<script src="../dist/chezzle.js?vmvc6l20g"></script>
+<script src="../prefs.js?vmvmdw3n4"></script>
+<script src="../audio.js?vmvmdw3n4"></script>
+<script src="../dist/chezzle.js?vmvmdw3n4"></script>
 <script>
 // ============================================================================
 // Chezzle 可视化关卡编辑器
-// 复用 dist/chezzle.js?vmvc6l20g 的全局 Chezzle：对象类、Scene、渲染、物理循环。
+// 复用 dist/chezzle.js?vmvmdw3n4 的全局 Chezzle：对象类、Scene、渲染、物理循环。
 // 编辑模式：自建 transform 渲染已摆放物体；试玩模式：重建 Scene 跑物理+化学。
 // ============================================================================
 const C = Chezzle;
@@ -221,6 +263,74 @@ const F = {
   dropsub: (k, label, d = '') => ({ k, label: label ?? k, kind: 'dropsub', d }), // 滴管：只列液体/可溶物质
   sol: (k, label = '溶质') => ({ k, label, kind: 'solutes', d: {} }),
 };
+
+/** 导气管文本字段 → 运行时：输出端 id 数组（每行一个，也接受逗号；旧数据的单输出 outId 兼容） */
+function parseIdList(text, legacyId = '') {
+  const list = Array.isArray(text) ? text : String(text ?? '').split(/[\n,，]/);
+  const ids = list.map((s) => String(s).trim()).filter(Boolean);
+  if (!ids.length && legacyId) ids.push(String(legacyId).trim());
+  return [...new Set(ids)]; // 去重保序（同一输出端接两条支路没有意义）
+}
+/** 导气管文本字段 → 运行时：支路阀门 {输出id: 是否打开}（每行 `id:开/关`，只写 id=开；空=无阀门） */
+function parseValves(text) {
+  const valves = {};
+  if (!text || typeof text !== 'string') {
+    // 手工 JSON 里直接写对象：归一成布尔（键存在=装了阀门）
+    for (const [id, open] of Object.entries(text ?? {})) valves[id] = !/^(关|false|0|off|closed|no)$/i.test(String(open));
+    return valves;
+  }
+  for (const line of text.split('\n')) {
+    const seg = line.trim();
+    if (!seg) continue;
+    const p = seg.split(':');
+    const id = p[0].trim();
+    if (!id) continue;
+    valves[id] = !/^(关|false|0|off|closed|no)$/i.test((p[1] ?? '').trim());
+  }
+  return valves;
+}
+/** 气室初始气体文本 → {气体id:质量g}（null=复制外部大气）。
+ *  友好语法：`O2:2000, N2:0`（逗号/中文逗号/换行分隔，每项 气体id:质量g）；
+ *  兼容旧数据：合法 JSON 对象字符串（如 {"O2":2000}）或已解析对象。
+ *  bad=语法无效的片段（属性面板标红提示用，不静默吞掉）。 */
+function parseGasesText(text) {
+  const normalize = (obj) => {
+    const gases = {};
+    for (const [id, m] of Object.entries(obj ?? {})) {
+      const key = String(id).trim();
+      const mass = Number(m);
+      if (key && Number.isFinite(mass) && mass >= 0) gases[key] = mass;
+    }
+    return Object.keys(gases).length ? gases : null;
+  };
+  if (text && typeof text === 'object') return { gases: normalize(text), bad: [] };
+  const s = String(text ?? '').trim();
+  if (!s) return { gases: null, bad: [] };
+  // 旧存档/手写数据是 JSON 对象文本：优先按 JSON 解析；不是 JSON 就按 `id:质量` 友好语法
+  if (s.startsWith('{')) {
+    try {
+      const obj = JSON.parse(s);
+      if (obj && typeof obj === 'object' && !Array.isArray(obj)) return { gases: normalize(obj), bad: [] };
+    } catch (e) { /* 不是合法 JSON → 走下面友好语法 */ }
+  }
+  const gases = {};
+  const bad = [];
+  for (const seg of s.split(/[,，\n]/)) {
+    const t = seg.trim();
+    if (!t) continue;
+    const p = t.split(':');
+    const id = (p[0] ?? '').trim();
+    const mass = Number.parseFloat((p[1] ?? '').trim());
+    // 气体 id 只能是化学式形态（字母开头+字母数字），否则视为语法错（如把旧 JSON 示例照抄进来）
+    if (!/^[A-Za-z][A-Za-z0-9]*$/.test(id) || !Number.isFinite(mass) || mass < 0) { bad.push(t); continue; }
+    gases[id] = mass;
+  }
+  return { gases: Object.keys(gases).length ? gases : null, bad };
+}
+/** 气室初始气体 {气体id:质量g} → 属性面板/存档文本 `O2:2000, N2:0`（空=复制外部大气） */
+function formatGases(gases) {
+  return Object.entries(gases ?? {}).map(([id, mass]) => `${id}:${mass}`).join(', ');
+}
 const CATALOG = [
   { type: 'floor', label: '地板', dsl: 'floor', color: '#8a6a48', rect: true,
     construct: (o) => new C.Floor({ x: o.x, y: o.y, w: o.w, h: o.h, ice: o.ice, id: o.id }),
@@ -230,6 +340,19 @@ const CATALOG = [
     construct: (o) => new C.Pool({ x: o.x, y: o.y, w: o.w, h: o.h, volume: o.volume ?? 200, solutes: o.solutes, gasHeight: o.gasHeight, id: o.id }),
     collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, volume: o.solution.volume, solutes: mapToObj(o.solution.solutes), gasHeight: o.gasHeight ?? 80, id: o.id }),
     fields: [F.num('x'), F.num('y'), F.num('w', '宽'), F.num('h', '高'), F.num('volume', '容量ml'), F.sol('solutes'), F.num('gasHeight', '气泡柱高px', 80), F.txt('id', 'id')] },
+  // 池变种（电解/加热/高温）：池内反应额外获得对应条件，常开或由 switchId 指向的开关控制
+  { type: 'elepool', label: '电解池', dsl: 'elepool', color: '#7f6cff', rect: true,
+    construct: (o) => new C.ElectrolysisPool({ x: o.x, y: o.y, w: o.w, h: o.h, volume: o.volume ?? 200, solutes: o.solutes, gasHeight: o.gasHeight, switchId: o.switchId, id: o.id }),
+    collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, volume: o.solution.volume, solutes: mapToObj(o.solution.solutes), gasHeight: o.gasHeight ?? 80, switchId: o.switchId ?? '', id: o.id }),
+    fields: [F.num('x'), F.num('y'), F.num('w', '宽'), F.num('h', '高'), F.num('volume', '容量ml'), F.sol('solutes'), F.num('gasHeight', '气泡柱高px', 80), { k: 'switchId', label: '开关id(留空=常开)', kind: 'idref', d: '' }, F.txt('id', 'id')] },
+  { type: 'heatpool', label: '加热池', dsl: 'heatpool', color: '#ff9a5a', rect: true,
+    construct: (o) => new C.HeatingPool({ x: o.x, y: o.y, w: o.w, h: o.h, volume: o.volume ?? 200, solutes: o.solutes, gasHeight: o.gasHeight, switchId: o.switchId, id: o.id }),
+    collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, volume: o.solution.volume, solutes: mapToObj(o.solution.solutes), gasHeight: o.gasHeight ?? 80, switchId: o.switchId ?? '', id: o.id }),
+    fields: [F.num('x'), F.num('y'), F.num('w', '宽'), F.num('h', '高'), F.num('volume', '容量ml'), F.sol('solutes'), F.num('gasHeight', '气泡柱高px', 80), { k: 'switchId', label: '开关id(留空=常开)', kind: 'idref', d: '' }, F.txt('id', 'id')] },
+  { type: 'hotpool', label: '高温池', dsl: 'hotpool', color: '#ff5f5f', rect: true,
+    construct: (o) => new C.HighTempPool({ x: o.x, y: o.y, w: o.w, h: o.h, volume: o.volume ?? 200, solutes: o.solutes, gasHeight: o.gasHeight, switchId: o.switchId, id: o.id }),
+    collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, volume: o.solution.volume, solutes: mapToObj(o.solution.solutes), gasHeight: o.gasHeight ?? 80, switchId: o.switchId ?? '', id: o.id }),
+    fields: [F.num('x'), F.num('y'), F.num('w', '宽'), F.num('h', '高'), F.num('volume', '容量ml'), F.sol('solutes'), F.num('gasHeight', '气泡柱高px', 80), { k: 'switchId', label: '开关id(留空=常开)', kind: 'idref', d: '' }, F.txt('id', 'id')] },
   { type: 'block', label: '物块', dsl: 'block', color: '#ff8f46',
     construct: (o) => new C.Block({ x: o.x, y: o.y, substance: o.substance ?? 'Fe', mass: o.mass ?? 50, w: o.w, h: o.h, pushable: o.pushable, noLift: o.noLift, id: o.id }),
     collect: (o) => ({ x: o.x, y: o.y, substance: o.substance, mass: Math.round((o.grid?.totalMass?.() ?? o.mass ?? 50) * 10) / 10, w: o.w, h: o.h, pushable: o.pushable, noLift: o.noLift, id: o.id }),
@@ -306,11 +429,28 @@ const CATALOG = [
     collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, poolId: o.poolId, switchId: o.switchId, rate: o.rate, id: o.id }),
     fields: [F.num('x'), F.num('y'), F.num('w', '宽'), F.num('h', '高'), F.txt('poolId', '池id'), F.txt('switchId', '开关id(留空=压力提取器)'), F.num('rate', '速率g/s', 0.25), F.txt('id', 'id')] },
   { type: 'gastube', label: '导气管', dsl: 'gastube', color: '#9aa4b4',
-    // 装置几何由两端药品池自动生成（罩住输入池口 + 管道插到输出池侧面），只需接线：
-    // inId=产气的那口池，outId=接收气体的那口池（两端都填才显示）
-    construct: (o) => new C.GasTube({ x: o.x, y: o.y, w: o.w ?? 90, h: o.h ?? 70, inId: o.inId ?? '', outId: o.outId ?? '', id: o.id }),
-    collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, inId: o.inId ?? '', outId: o.outId ?? '', id: o.id }),
-    fields: [F.txt('inId', '输入端池id(产气)'), F.txt('outId', '输出端池id(通气)'), F.txt('id', 'id')] },
+    // 装置几何由两端容器自动生成（罩住输入池口 + 管道插到各输出端），只需接线：
+    // inId=产气的那口池；outIds=输出端（药品池/气室，每行一个，也可逗号分隔）；
+    // valves=给需要阀门的支路填 `输出id:开/关`（每行一条；空=无阀门，全部直通）
+    construct: (o) => new C.GasTube({
+      x: o.x, y: o.y, w: o.w ?? 90, h: o.h ?? 70, inId: o.inId ?? '',
+      outIds: parseIdList(o.outIds, o.outId), // 文本字段（属性面板写回字符串）→ 数组；旧 outId 兼容
+      valves: parseValves(o.valves), // 文本字段 → {输出id: 是否开}
+      id: o.id,
+    }),
+    collect: (o) => ({
+      x: o.x, y: o.y, w: o.w, h: o.h, inId: o.inId ?? '',
+      outIds: (o.outIds ?? []).join('\n'), // 数组 → 每行一个 id（面板显示/存档文本）
+      valves: Object.entries(o.valves ?? {}).map(([id, open]) => `${id}:${open ? '开' : '关'}`).join('\n'),
+      id: o.id,
+    }),
+    fields: [F.txt('inId', '输入端池id(产气)'), F.txtM('outIds', '输出端id(每行一个；药品池/气室)'), F.txtM('valves', '支路阀门(每行 输出id:开/关；空=无阀门)'), F.txt('id', 'id')] },
+  { type: 'gaschamber', label: '气室', dsl: 'gaschamber', color: '#8aa9b8', rect: true,
+    // 无碰撞的独立大气区域：gases 留空=复制关卡外部大气；填 {气体id:质量g} 时独占（没写的=没有）
+    // 面板/存档文本 = `O2:2000, N2:0`（旧数据 JSON 字符串/对象也能读入，见 parseGasesText）
+    construct: (o) => new C.GasChamber({ x: o.x, y: o.y, w: o.w, h: o.h, gases: parseGasesText(o.gases).gases, id: o.id }),
+    collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, gases: formatGases(o._initialGases), id: o.id }),
+    fields: [F.num('x'), F.num('y'), F.num('w', '宽'), F.num('h', '高'), F.txt('gases', '初始气体(留空=复制外部大气，如 O2:2000, N2:0)'), F.txt('id', 'id')] },
   { type: 'beaker', label: '烧杯', dsl: 'beaker', color: '#9adcff', rect: true,
     construct: (o) => new C.Beaker({ x: o.x, y: o.y, w: o.w ?? 60, h: o.h ?? 80, volume: o.volume ?? 200, water: o.water !== undefined ? o.water : undefined, solutes: o.solutes, noCarry: o.noCarry, id: o.id }),
     collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, volume: o.solution.volume, water: o.solution.water, solutes: mapToObj(o.solution.solutes), noCarry: o.noCarry, id: o.id }),
@@ -650,9 +790,15 @@ function loadPluginSource(file, src, opts = {}) {
       if (typeof console !== 'undefined') console.error(`[editor-plugin:${reg}] editor()`, e);
     }
   }
+  // 记录插件状态默认形状（= editor() 初始化后的空状态）：切换项目时先还原默认，再叠加项目存档。
+  // 只在首次加载时记录；原地重载（编辑模块保存）保留原默认，不把当前项目的数据当默认。
+  if (!editorStateDefaults.has(reg)) {
+    try { editorStateDefaults.set(reg, JSON.parse(JSON.stringify(editorStates.get(reg) ?? {}))); } catch (e) { /* 默认状态不可序列化就跳过 */ }
+  }
   if (!opts.silent) $('status').textContent = `已加载插件 ${meta.name}${meta.version ? ' v' + meta.version : ''}${opts.silent ? '' : '（已用于本关）'}`;
   renderPluginPanel();
   refreshShelfEmpty();
+  if (!opts.silent) saveState(); // 手动加载 = 改动本关插件清单：立即存进当前项目
   return true;
 }
 
@@ -693,6 +839,7 @@ function pluginUnload(file, opts = {}) {
   editorPlaySceneHooks.delete(e.reg);
   for (const [m, h] of editorPlayHooks) if (h.reg === e.reg) editorPlayHooks.delete(m);
   editorStates.delete(e.reg); // 用户要求：卸载插件 → 其保存的数据不再保留（重载=全新）
+  editorStateDefaults.delete(e.reg);
   for (const el of editorDom.get(e.reg) ?? []) el.remove?.();
   editorDom.delete(e.reg);
   refreshShelfEmpty();
@@ -758,6 +905,8 @@ function onPluginPanelChange(e) {
   if (ref) ref.enabled = e.target.checked;
   else if (e.target.checked) state.plugins.push({ file, reg: pluginLib.get(file).reg, name: pluginLib.get(file).meta.name ?? file, enabled: true });
   renderPluginPanel();
+  refreshExport();
+  saveState(); // 「用于本关」也是项目数据：切项目/刷新不能丢
 }
 
 function onPluginPanelClick(e) {
@@ -1111,6 +1260,7 @@ function requiredPluginFiles() {
 const editorHooks = new Map();    // reg -> [fn]（onExport）
 const editorDom = new Map();      // reg -> [elements]（卸载时移除）
 const editorStates = new Map();   // reg -> 插件私有持久化状态
+const editorStateDefaults = new Map(); // reg -> 插件 editor() 初始化后的默认状态（切换项目时还原，避免缺字段被插件读成 undefined）
 const editorCleanups = new Map(); // reg -> cleanup
 const editorPluginCfgs = new Map(); // reg -> fn()（返回运行时配置 cfg——试玩/导出注入插件用）
 const editorStateLoadedHooks = new Map(); // reg -> [fn]（存档恢复后调用——插件重渲染面板用）
@@ -1232,14 +1382,13 @@ function makeEditorApi(reg) {
     refresh: () => { buildRenderScene(); renderEdit(); refreshProps(); renderRxPanel(); renderPluginPanel(); refreshExport(); },
     $: (id) => document.getElementById(id),
     /** 画布快照（可序列化；切换/备份场景数据用；含编辑器自带的大气设置）
-     *  条件提示/隐藏拾取按钮随快照走——多场景（章节）下每场景独立 */
+     *  条件提示随快照走——多场景（章节）下每场景独立 */
     snapshot: () => ({
       worldW: state.worldW,
       worldH: state.worldH,
       rx: [...state.customReactions],
       atm: { ...state.atmosphere },
       tips: state.tips.map((t) => ({ text: t.text ?? '', mode: t.mode ?? 'and', items: (t.items ?? []).map((c) => ({ ...c })) })),
-      hideTouchGrab: state.hideTouchGrab,
       objects: state.placed.map((p) => ({ type: p.type, opts: byType[p.type].collect(p.obj) })),
     }),
     /** 载入快照 */
@@ -1249,8 +1398,6 @@ function makeEditorApi(reg) {
       state.customReactions = (snap.rx ?? []).slice();
       state.atmosphere = { ...(snap.atm ?? {}) };
       state.tips = Array.isArray(snap.tips) ? snap.tips.map((t) => ({ text: t.text ?? '', mode: t.mode ?? 'and', items: Array.isArray(t.items) ? t.items : [] })) : [];
-      state.hideTouchGrab = !!snap.hideTouchGrab;
-      $('cbHideGrab').checked = state.hideTouchGrab;
       refreshAtmInput();
       renderTipPanel();
       state.placed = (snap.objects ?? []).filter((o) => byType[o.type]).map((o) => ({ type: o.type, obj: byType[o.type].construct(gridOpts(o.type, o.opts)) }));
@@ -1291,7 +1438,7 @@ function makeEditorApi(reg) {
         }
         placed.push(p);
       }
-      const chain = [`M.scene(${q(name)}, { worldW: ${snap.worldW ?? state.worldW}, worldH: ${snap.worldH ?? state.worldH}${snap.hideTouchGrab ? ', hideTouchGrab: true' : ''} })`];
+      const chain = [`M.scene(${q(name)}, { worldW: ${snap.worldW ?? state.worldW}, worldH: ${snap.worldH ?? state.worldH} })`];
       const post = [];
       for (const p of placed) {
         if (p.type === 'rope') continue;
@@ -1389,7 +1536,7 @@ for (const e of CATALOG) {
 // ---- 状态 ----------------------------------------------------------------
 // 单场景编辑器：场景/章节这类"不常用玩法"由**编辑器插件**实现（ed API 可加 UI/按钮/
 // 导出钩子/持久化；官方示例 plugin/chapters.js 演示）。
-const state = { worldW: 3000, worldH: 800, palette: 'floor', placed: [], selected: null, sel: new Set(), selBox: null, playing: false, customReactions: [], plugins: [], atmosphere: {}, tips: [], hideTouchGrab: false };
+const state = { worldW: 3000, worldH: 800, palette: 'floor', placed: [], selected: null, sel: new Set(), selBox: null, playing: false, customReactions: [], plugins: [], atmosphere: {}, tips: [] };
 const view = { scale: 1, ox: 0, oy: 0 }; // 屏幕→世界：world=(screen-offset)/scale
 let renderScene = new C.Scene({ worldW: state.worldW, worldH: state.worldH });
 let drag = null; // {mode:'place'|'move'|'resize'|'select'|'rect'|'pan', ...}
@@ -1400,7 +1547,7 @@ let statusMsg = ''; // 状态栏常驻文案：试玩退出/编辑后恢复（�
 // 可拖手柄缩放的类型（构造支持 w/h 的物体）；网格物体（block/deposit）缩放时重建
 // 网格（质量=格数×0.1g，质量↔体积挂钩），非网格物体直接改 w/h。
 // 玩家不可改形状：形状始终由质量决定。
-const RESIZE_TYPES = new Set(['floor', 'pool', 'block', 'deposit', 'door', 'beaker', 'gas', 'portal', 'extractor']);
+const RESIZE_TYPES = new Set(['floor', 'pool', 'elepool', 'heatpool', 'hotpool', 'block', 'deposit', 'door', 'beaker', 'gas', 'portal', 'extractor', 'gaschamber']);
 const RESIZE_MIN = { block: 5, deposit: 15 }; // 最小宽（px）；默认 10
 const RESIZE_MIN_H = { deposit: 10 }; // 最小高（px）；默认=宽
 
@@ -1457,6 +1604,9 @@ function pushUndo() { undoStack.push(snap()); if (undoStack.length > 60) undoSta
 function buildRenderScene() {
   renderScene = new C.Scene({ worldW: state.worldW, worldH: state.worldH });
   for (const p of state.placed) renderScene.addObject(p.obj);
+  // 气室：预览场景不 step（不会自己 seed），这里显式 seed 一次（幂等）——
+  // 否则初始大气按空腔画青灰，看不到配置的初始气体颜色
+  for (const ch of renderScene.gasChambers) ch.seed(renderScene);
 }
 
 // ---- 物体构造/替换 ---------------------------------------------------------
@@ -1536,9 +1686,9 @@ function stripSeedObjects() {
 }
 function addPlaced(type, opts) {
   const e = byType[type];
-  // 药品池：新建时默认容积随划定大小自动计算（≈25px²/ml，取5的倍数，下限20ml）——
+  // 药品池/池变种：新建时默认容积随划定大小自动计算（≈25px²/ml，取5的倍数，下限20ml）——
   // 大池子不再顶着固定 200ml 的小容量永远显示满格；属性面板里手动改过则尊重原值
-  if (type === 'pool' && opts.volume == null && opts.w > 0 && opts.h > 0) {
+  if (['pool', 'elepool', 'heatpool', 'hotpool'].includes(type) && opts.volume == null && opts.w > 0 && opts.h > 0) {
     opts.volume = Math.max(20, Math.round((opts.w * opts.h) / 25 / 5) * 5);
   }
   // 数字 id（属性面板/旧数据可能给数字）统一转字符串
@@ -1852,8 +2002,8 @@ function renderEdit() {
 function hitTest(wx, wy) {
   for (let i = state.placed.length - 1; i >= 0; i--) {
     const o = state.placed[i].obj;
-    if (o.isGasTube && typeof o.editorHit === 'function') {
-      // 导气管：只认装置轮廓（罩子边/管道/管口）——罩内空间让给药品池选中
+    if (typeof o.editorHit === 'function') {
+      // 装置型物体（导气管/气室等）：只认自身轮廓——罩内/腔内空间让给内部物体选中
       if (o.editorHit(wx, wy)) return i;
     } else if (o.constructor?.name === 'Rope') {
       // 绳子是细线：水平 ±12px 宽容命中，垂直整段可点
@@ -2139,6 +2289,8 @@ canvas.addEventListener('wheel', (e) => {
 });
 window.addEventListener('keydown', (e) => {
   if (state.playing) return;
+  // 项目管理弹窗打开时：画布键盘操作（Delete/撤销/全选）全部暂停，Esc 由弹窗自己的监听处理
+  if (document.getElementById('projModal')?.classList.contains('open')) return;
   // 焦点在输入框/下拉里时不拦截键盘——否则在属性面板打字/退格会误删选中物体
   const ae = document.activeElement;
   const inInput = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT');
@@ -2270,7 +2422,7 @@ function refreshProps() {
     else if (f.kind === 'rx') html += `<input type="text" data-k="${f.k}" data-kind="rx" value="${(v ?? '').replace(/"/g, '&quot;')}"${freezeAttr}>`;
     else if (f.k === 'color') html += `<input type="color" data-k="${f.k}" data-kind="color" value="${/^#[0-9a-fA-F]{6}$/.test(v || '') ? v : '#c78bff'}"${freezeAttr}>`;
     else if (f.multiline) html += `<textarea rows="3" data-k="${f.k}" data-kind="text"${freezeAttr}>${(v ?? '').replace(/</g, '&lt;')}</textarea>`;
-    else html += `<input type="text" data-k="${f.k}" data-kind="text" value="${v ?? ''}"${freezeAttr}>`;
+    else html += `<input type="text" data-k="${f.k}" data-kind="text" value="${String(v ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"${freezeAttr}>`;
     html += '</div>';
   }
   box.innerHTML = html;
@@ -2329,6 +2481,18 @@ function refreshProps() {
           val[id] = parseFloat(p[1]) || 1;
         }
         el.style.border = '1px solid var(--edge)';
+      }
+      else if (k === 'gases' && item.type === 'gaschamber') {
+        // 气室初始气体：`O2:2000, N2:0` 友好文本（也兼容旧 JSON/对象）——
+        // 未知气体/语法错标红提示且不提交（与上面 solutes 的校验方式一致）
+        const parsed = parseGasesText(el.value);
+        const bad = [...parsed.bad, ...Object.keys(parsed.gases ?? {}).filter((id) => C.SUBSTANCES[id]?.state !== 'gas')];
+        el.style.border = bad.length ? '1px solid #ff6a6a' : '1px solid var(--edge)';
+        if (bad.length) {
+          $('status').textContent = `气室初始气体无效：${bad.join('、')}（用 气体id:质量g，逗号分隔，如 O2:2000, N2:0；留空=复制外部大气）`;
+          return;
+        }
+        val = parsed.gases; // null = 复制外部大气
       }
       else if (el.dataset.kind === 'number') val = parseFloat(el.value) || 0;
       else val = el.value;
@@ -2446,6 +2610,13 @@ function dslLine(item) {
       const opts = { volume: o.solution.volume, solutes: mapToObj(o.solution.solutes), gasHeight: o.gasHeight !== 80 ? o.gasHeight : undefined, hidden: HID, id: o.id };
       return `.pool(${pos}, ${R(o.w)}, ${R(o.h)}${fmtOpts(opts) ? ', ' + fmtOpts(opts) : ''})`;
     }
+    case 'elepool':
+    case 'heatpool':
+    case 'hotpool': {
+      // 池变种：同药品池，多 switchId（开关控制电解/加热/高温条件；留空=常开）
+      const opts = { volume: o.solution.volume, solutes: mapToObj(o.solution.solutes), gasHeight: o.gasHeight !== 80 ? o.gasHeight : undefined, switchId: o.switchId || undefined, hidden: HID, id: o.id };
+      return `.${t}(${pos}, ${R(o.w)}, ${R(o.h)}${fmtOpts(opts) ? ', ' + fmtOpts(opts) : ''})`;
+    }
     case 'block': {
       // 有 w/h（像素模式）→ 省略 mass，导出的形状与编辑器一致；否则 mass 定形状
       const opts = { substance: o.substance, mass: (o.w && o.h) ? undefined : (o.mass ?? 50), w: o.w, h: o.h, pushable: o.pushable === false ? false : undefined, noLift: o.noLift ? true : undefined, hidden: HID, id: o.id };
@@ -2481,7 +2652,18 @@ function dslLine(item) {
     case 'portal': return `.portal(${pos}, ${fmtOpts({ w: o.w, h: o.h, color: o.color, uses: Number.isFinite(o.uses) ? o.uses : undefined, switchId: o.switchId || undefined, group: o.group || undefined, inventory: o.inventory || undefined, clearInventory: o.clearInventory ? true : undefined, hidden: HID, id: o.id })})`;
     case 'gasdetector': return `.gasdetector(${pos}, ${fmtOpts({ gas: o.gas, threshold: o.threshold, opening: o.opening, and: o.and, deleteId: o.deleteId || undefined, showId: o.showId || undefined, igniteId: o.igniteId || undefined, extinguishId: o.extinguishId || undefined, openId: o.openId || undefined, hidden: HID, id: o.id })})`;
     case 'extractor': return `.extractor(${pos}, ${fmtOpts({ w: o.w, h: o.h, poolId: o.poolId, switchId: o.switchId, rate: o.rate, hidden: HID, id: o.id })})`;
-    case 'gastube': return `.gastube(${pos}, ${fmtOpts({ inId: o.inId, outId: o.outId, hidden: HID, id: o.id })})`;
+    case 'gastube': {
+      // 多输出：outIds 数组 / valves 对象（空则省略）；两端都没接好时装置不显示
+      const outIds = (o.outIds ?? []).length ? o.outIds : undefined;
+      const valves = o.valves && Object.keys(o.valves).length ? o.valves : undefined;
+      return `.gastube(${pos}, ${fmtOpts({ inId: o.inId, outIds, valves, hidden: HID, id: o.id })})`;
+    }
+    case 'gaschamber': {
+      // gases 用对象导出（_initialGases；空=复制外部大气 → 省略）
+      const gases = o._initialGases && Object.keys(o._initialGases).length ? o._initialGases : undefined;
+      const extra = fmtOpts({ gases, hidden: HID, id: o.id });
+      return `.gaschamber(${pos}, ${R(o.w)}, ${R(o.h)}${extra ? ', ' + extra : ''})`;
+    }
     case 'beaker': {
       // water = 容量时为满杯（旧默认）；只在实际水量 ≠ 容量时导出（空杯/半杯）
       const water = Math.round(o.solution.water * 10) / 10;
@@ -2528,7 +2710,7 @@ function buildScript() {
     `const canvas = document.getElementById('game');`,
     `Chezzle.fitCanvasToWindow(canvas);`, // 高清+窗口自适应（缓冲 ×devicePixelRatio）
     `window.addEventListener('resize', () => Chezzle.fitCanvasToWindow(canvas));`,
-    `const L = new Chezzle.LevelBuilder(canvas, { worldW: ${state.worldW}, worldH: ${state.worldH}, hideTouchGrab: ${!!state.hideTouchGrab} });`,
+    `const L = new Chezzle.LevelBuilder(canvas, { worldW: ${state.worldW}, worldH: ${state.worldH} });`,
     'L',
   ];
   if ($('cbDebug') && $('cbDebug').checked) lines.push(`  // 调试模式：打开本关时 URL 加 ?debug=1（.debugmode() 已废弃，导出仅留提示）`); // 可选：提示调试模式开启方式
@@ -2667,8 +2849,9 @@ function exportHTML() {
 <!-- 启动/加载动画：与选关页"进入关卡"过场同款（见 levels/boot.js；导出到 levels/ 下时直接可用） -->
 <script src="boot.js"><\/script>
 <canvas id="game"></canvas>
-<script src="../prefs.js?vmvc6l20g"><\/script>
-<script src="../dist/chezzle.js?vmvc6l20g"><\/script>
+<script src="../prefs.js?vmvmdw3n4"><\/script>
+<script src="../audio.js?vmvmdw3n4"><\/script>
+<script src="../dist/chezzle.js?vmvmdw3n4"><\/script>
 ${pluginTags()}
 <script src="report.js"><\/script>
 <script>
@@ -2687,44 +2870,127 @@ function downloadFile(name, content, mime) {
   URL.revokeObjectURL(a.href);
 }
 
-// ---- 自动保存到浏览器 localStorage（刷新不丢） ----
-const STORAGE_KEY = 'chezzle-level-editor-v2'; // v2：旧 v1 存档先迁移去重，再启用（根治重复）
-const LEGACY_KEY = 'chezzle-level-editor-v1';
-function saveState() {
-  try {
-    // ★ 场景同步钩子先跑：chapters 等插件把当前场景快照 = 顶层画布的最新状态，
-    //   再序列化进 editorState——否则多场景下"改属性不保存"（刷新/切场景还原旧快照）
-    for (const fns of editorSceneSyncHooks.values()) {
-      for (const fn of fns) { try { fn(); } catch (e) { /* 插件同步失败不阻断保存 */ } }
-    }
-    const data = {
-      version: 2,
-      levelId, // 关卡ID随存档保存：刷新/换电脑不丢
-      // ★ 世界宽高必须在这里存一份：顶层 state 是"当前场景"的编辑态，
-      //   多场景下快照(chapters)另有一份，但单场景（无章节插件）时只有这份
-      worldW: state.worldW,
-      worldH: state.worldH,
-      plugins: state.plugins, // 插件引用清单（源码缓存另存 localStorage，刷新自动恢复）
-      rx: state.customReactions,
-      atmosphere: state.atmosphere, // 编辑器自带：关卡大气（多场景下随场景快照保存）
-      tips: state.tips, // 条件提示清单（文本 + 条件组）
-      hideTouchGrab: state.hideTouchGrab, // 隐藏移动端"拾取/吸液"按钮（=电脑端 C 键）
-      editorState: Object.fromEntries([...editorStates].map(([k, v]) => [k, v])), // 编辑器插件的持久化状态
-      objects: state.placed.map((p) => ({ type: p.type, opts: byType[p.type].collect(p.obj) })),
-    };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  } catch (e) { /* 隐私模式等忽略 */ }
+// ---- 项目存储：一个项目 = 一份完整关卡编辑数据，自动保存在浏览器 ----
+// 索引（PROJ_INDEX_KEY）只放元数据；正文按项目分键保存——保存一个项目只写它自己，
+// 不随项目数量变慢；刷新后回到上次打开的项目。
+const PROJ_INDEX_KEY = 'chezzle-editor-projects-v1';
+const PROJ_DATA_PREFIX = 'chezzle-editor-project-v1:';
+const LEGACY_V2_KEY = 'chezzle-level-editor-v2';
+const LEGACY_V1_KEY = 'chezzle-level-editor-v1';
+const DEFAULT_PROJECT_NAME = '未命名项目';
+const projectStore = { currentId: null, items: [] }; // items: [{id,name,createdAt,updatedAt}]
+let projectSaveFailed = false; // 存储写失败只提示一次（否则每次编辑都刷状态栏）
+let projFormMode = null; // 'new' | 'rename'
+let projFormId = null;
+let projPendingDelete = null; // 列表中等待二次确认删除的项目 id
+let projBusy = false; // 项目操作进行中（切换/删除/新建是异步的）：防止双击并发导致状态互踩
+
+function newProjectId() {
+  return 'p' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
 }
-/** 旧 v1 存档 → v2：迁移后清掉 v1。旧版 bug 可能存了"种子关卡 + 你的关卡"两份，去重 + 剥种子。 */
-function migrateLegacy() {
+function cleanProjectName(name) {
+  // 名称只用于显示/文件名：去掉换行和首尾空白，空名回落默认名
+  const s = String(name ?? '').replace(/[\r\n\t]+/g, ' ').trim();
+  return (s || DEFAULT_PROJECT_NAME).slice(0, 60);
+}
+function currentProjectMeta() {
+  return projectStore.items.find((p) => p.id === projectStore.currentId) ?? null;
+}
+function projectName() {
+  return currentProjectMeta()?.name ?? DEFAULT_PROJECT_NAME;
+}
+function readProjectIndex() {
   try {
-    const raw = localStorage.getItem(LEGACY_KEY);
+    const raw = localStorage.getItem(PROJ_INDEX_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw);
+    if (!d || !Array.isArray(d.projects)) return null;
+    return {
+      currentId: typeof d.currentId === 'string' ? d.currentId : null,
+      projects: d.projects
+        .filter((p) => p && typeof p.id === 'string' && typeof p.name === 'string')
+        .map((p) => ({ id: p.id, name: cleanProjectName(p.name), createdAt: +p.createdAt || 0, updatedAt: +p.updatedAt || 0 })),
+    };
+  } catch (e) { return null; }
+}
+function writeProjectIndex() {
+  try {
+    localStorage.setItem(PROJ_INDEX_KEY, JSON.stringify({ version: 1, currentId: projectStore.currentId, projects: projectStore.items }));
+    return true;
+  } catch (e) { return false; }
+}
+function readProjectData(id) {
+  try {
+    const raw = localStorage.getItem(PROJ_DATA_PREFIX + id);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+function writeProjectData(id, data) {
+  localStorage.setItem(PROJ_DATA_PREFIX + id, JSON.stringify(data)); // 失败抛给 saveState 统一提示
+}
+function removeProjectData(id) {
+  try { localStorage.removeItem(PROJ_DATA_PREFIX + id); } catch (e) { /* 忽略 */ }
+}
+
+/** 当前编辑态序列化（自动存档 / 导出 JSON 共用）。
+ *  先跑场景同步钩子：chapters 等插件把"当前场景快照"回写成顶层最新状态，否则多场景下会存旧快照。 */
+function collectEditorData() {
+  for (const fns of editorSceneSyncHooks.values()) {
+    for (const fn of fns) { try { fn(); } catch (e) { /* 插件同步失败不阻断保存 */ } }
+  }
+  return {
+    version: 2,
+    levelId, // 关卡ID随项目保存：刷新/换电脑不丢
+    worldW: state.worldW,
+    worldH: state.worldH,
+    plugins: state.plugins, // 插件引用清单（源码缓存另存 localStorage，刷新自动恢复）
+    rx: state.customReactions,
+    atmosphere: state.atmosphere,
+    tips: state.tips,
+    editorState: Object.fromEntries([...editorStates].map(([k, v]) => [k, v])),
+    objects: state.placed.map((p) => ({ type: p.type, opts: byType[p.type].collect(p.obj) })),
+  };
+}
+
+/** 保存当前项目（项目未就绪时跳过：切换/加载到一半不能把空画布写进目标项目） */
+function saveState() {
+  if (!projectStore.currentId) return;
+  try {
+    writeProjectData(projectStore.currentId, collectEditorData());
+    const meta = currentProjectMeta();
+    if (meta) { meta.updatedAt = Date.now(); writeProjectIndex(); }
+    projectSaveFailed = false;
+  } catch (e) {
+    if (!projectSaveFailed) {
+      projectSaveFailed = true;
+      statusMsg = '⚠ 项目保存失败：浏览器本地存储已满（可导出 JSON 备份，或删除无用项目）';
+      $('status').textContent = statusMsg;
+      if (typeof console !== 'undefined') console.error('[projects] 保存失败', e);
+    }
+  }
+}
+
+/** 还原编辑器插件的持久化状态（就地清空，保插件闭包拿着的引用）——切换项目时防止旧项目数据串入。
+ *  先还原插件默认形状（如 checkpoint 的 points: []），再叠加目标项目存档；
+ *  只清空的话，项目里没有的字段会变成 undefined，插件面板会显示 "undefined"。 */
+function resetEditorStates() {
+  for (const [reg, v] of editorStates) {
+    if (!v || typeof v !== 'object') continue;
+    for (const k of Object.keys(v)) delete v[k];
+    const def = editorStateDefaults.get(reg);
+    if (def) for (const [k, dv] of Object.entries(def)) v[k] = JSON.parse(JSON.stringify(dv));
+  }
+}
+/** 旧 v1 存档 → 当前结构：迁移后清掉 v1。旧版 bug 可能存了"种子关卡 + 你的关卡"两份，去重 + 剥种子。 */
+function migrateLegacyV1() {
+  try {
+    const raw = localStorage.getItem(LEGACY_V1_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw);
     const objs = (data.objects || [])
       .filter((o) => byType[o.type])
       .map((o) => ({ type: o.type, obj: byType[o.type].construct(gridOpts(o.type, o.opts)) }));
-    if (!objs.length) { localStorage.removeItem(LEGACY_KEY); return null; }
+    if (!objs.length) { localStorage.removeItem(LEGACY_V1_KEY); return null; }
     state.worldW = data.worldW || 3000;
     state.worldH = data.worldH || 800;
     $('inW').value = state.worldW;
@@ -2732,15 +2998,27 @@ function migrateLegacy() {
     if (typeof data.levelId === 'string') { levelId = data.levelId; $('inLevelId').value = levelId; }
     state.placed = objs;
     cleanPlaced();
-    localStorage.removeItem(LEGACY_KEY);
-    return state.placed.length;
+    return state.placed.length; // 旧键由调用方在成功写进项目后再删（迁移失败不能把用户数据弄丢）
   } catch (e) { return null; }
 }
-async function loadState(errors) {
+/** 旧 v2 单槽自动存档：读出整份数据（不删旧键——写进项目成功后才删，避免迁移中途失败丢数据） */
+function readLegacyV2() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return false;
+    const raw = localStorage.getItem(LEGACY_V2_KEY);
+    if (!raw) return null;
     const data = JSON.parse(raw);
+    if (!data || typeof data !== 'object') return null;
+    return data;
+  } catch (e) { return null; }
+}
+/** 迁移成功/确认旧数据不需要了：删旧键 */
+function dropLegacyKey(key) {
+  try { localStorage.removeItem(key); } catch (e) { /* 忽略 */ }
+}
+/** 把一份关卡数据填进编辑器（打开项目 / 恢复自动存档 / 导入 JSON 共用）。
+ *  插件按引用自动加载（已加载 → 磁盘 plugin/ → 浏览器缓存），加载失败只记入 errors（软提示）。 */
+async function loadEditorData(data, errors) {
+  try {
     // 插件自动加载（JSON 同源）：磁盘 plugin/ → 浏览器缓存；拉不到记入 errors（软提示，不阻断）
     const refs = Array.isArray(data.plugins) ? data.plugins : [];
     const res = await ensurePluginsFrom(refs);
@@ -2748,9 +3026,9 @@ async function loadState(errors) {
     if (location.protocol === 'file:' && res.fromCache.length) errors?.push(`${res.fromCache.join('、')}（来自浏览器缓存——file:// 读不到磁盘 plugin/；用 http 服务打开编辑器）`);
     if (typeof data.levelId === 'string') { levelId = data.levelId; $('inLevelId').value = levelId; }
     state.plugins = refs.map((p) => ({ file: p.file, reg: p.reg ?? pluginLib.get(p.file)?.reg, name: p.name ?? p.file, enabled: p.enabled !== false }));
-    // 编辑器插件持久化状态（chapters 等插件用它存自己的数据）。
-    // ★ 就地填充：插件自动加载在前，def.editor() 已把 state 引用放进 Map——
-    //   直接 set 新对象会让插件的 ed.state 脱引用（刷新后场景数据"消失"的根因）。
+    // ★ 先清掉上一个项目的编辑器插件状态，再就地填充本项目的：
+    //   直接 set 新对象会让插件闭包里的 ed.state 脱引用；不清则切换项目后旧场景/旧剧本会串进来。
+    resetEditorStates();
     for (const [k, v] of Object.entries(data.editorState ?? {})) {
       const cur = editorStates.get(k);
       if (cur && typeof cur === 'object') Object.assign(cur, v);
@@ -2771,8 +3049,10 @@ async function loadState(errors) {
     state.customReactions = Array.isArray(src.rx) ? src.rx : (src.rx ? [src.rx] : []);
     state.atmosphere = { ...(src.atmosphere ?? {}) };
     state.tips = Array.isArray(src.tips) ? src.tips.map((t) => ({ text: t.text ?? '', mode: t.mode ?? 'and', items: Array.isArray(t.items) ? t.items : [] })) : [];
-    state.hideTouchGrab = !!src.hideTouchGrab;
-    $('cbHideGrab').checked = state.hideTouchGrab;
+    openTip = -1; // 上一个项目展开的提示序号，对新项目无效
+    tipRectPick = null; // 上一个项目正在框选的提示条件：切走后回调目标已不存在
+    pickRectCb = null;
+    pickRectDrag = null;
     refreshAtmInput();
     renderTipPanel();
     state.placed = (src.objects || [])
@@ -2785,6 +3065,379 @@ async function loadState(errors) {
     cleanPlaced();
     return true;
   } catch (e) { return false; }
+}
+
+// ---- 项目管理：新建 / 打开 / 删除 / 重命名（数据自动保存） ----
+function formatProjectTime(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+function projectStats(id) {
+  const data = readProjectData(id);
+  if (!data) return '⚠ 数据缺失';
+  const n = Array.isArray(data.objects) ? data.objects.length : 0;
+  const meta = projectStore.items.find((p) => p.id === id);
+  return `${n} 个物体 · 更新 ${formatProjectTime(meta?.updatedAt)}`;
+}
+function refreshProjectBadge() {
+  const name = projectName();
+  const el = $('projName');
+  if (el) el.textContent = name;
+  document.title = `${name} — Chezzle 关卡编辑器`;
+  const btn = $('btnProjects');
+  if (btn) btn.title = `项目：新建 / 打开 / 删除（当前：${name}）`;
+}
+function addProjectRecord(name) {
+  const now = Date.now();
+  const meta = { id: newProjectId(), name: cleanProjectName(name), createdAt: now, updatedAt: now };
+  projectStore.items.push(meta);
+  writeProjectIndex();
+  return meta;
+}
+function emptyProjectData() {
+  return { version: 2, levelId: '', worldW: 3000, worldH: 800, plugins: [], rx: [], atmosphere: {}, tips: [], editorState: {}, objects: [] };
+}
+function refreshEditorAfterLoad() {
+  buildRenderScene();
+  resizeCanvas();          // fitView + renderEdit
+  refreshProps();
+  renderRxPanel();
+  renderTipPanel();
+  renderPluginPanel();
+  refreshExport();
+  refreshShelfEmpty();
+}
+/** 切换到一份项目数据。不负责保存旧项目；currentId 在加载成功后才切换——
+ *  加载期间插件初始化若触发 saveState，也不会把半截状态写进任何项目。 */
+async function switchToProjectData(id, data, errors) {
+  const prev = projectStore.currentId;
+  projectStore.currentId = null;
+  const ok = await loadEditorData(data, errors);
+  if (!ok) {
+    // 加载失败：尽力把原项目内容读回来，别让编辑器停在半截状态
+    const prevData = prev ? readProjectData(prev) : null;
+    if (prevData) { projectStore.currentId = null; await loadEditorData(prevData, []); refreshEditorAfterLoad(); }
+    projectStore.currentId = prev;
+    writeProjectIndex();
+    refreshProjectBadge();
+    return false;
+  }
+  projectStore.currentId = id;
+  writeProjectIndex();
+  refreshProjectBadge();
+  saveState();             // 规范化（去重/稳定 id 等清洗结果）后立即落盘
+  refreshEditorAfterLoad();
+  return true;
+}
+/** 新建并打开一个空项目（失败自动清掉刚建的记录） */
+async function newEmptyProject(name) {
+  const meta = addProjectRecord(name);
+  const data = emptyProjectData();
+  try {
+    writeProjectData(meta.id, data);
+  } catch (e) { // 本地存储满/不可用：不留半截项目
+    projectStore.items = projectStore.items.filter((p) => p.id !== meta.id);
+    writeProjectIndex();
+    return null;
+  }
+  const ok = await switchToProjectData(meta.id, data, []);
+  if (!ok) {
+    removeProjectData(meta.id);
+    projectStore.items = projectStore.items.filter((p) => p.id !== meta.id);
+    writeProjectIndex();
+    refreshProjectBadge();
+    return null;
+  }
+  return meta;
+}
+async function openProjectById(id, opts = {}) {
+  if (state.playing) { setProjMsg('试玩中：先退出试玩再切换项目', true); return false; }
+  const meta = projectStore.items.find((p) => p.id === id);
+  if (!meta) return false;
+  if (id === projectStore.currentId) { closeProjectModal(); return true; }
+  const data = readProjectData(id);
+  if (!data) { setProjMsg(`项目「${meta.name}」的数据缺失`, true); return false; }
+  saveState();             // 先保存当前项目
+  const errors = [];
+  const ok = await switchToProjectData(id, data, errors);
+  if (!ok) {
+    setProjMsg(`打开项目「${meta.name}」失败`, true);
+    statusMsg = `打开项目失败：${meta.name}`;
+    $('status').textContent = statusMsg;
+    return false;
+  }
+  meta.updatedAt = Date.now();
+  writeProjectIndex();
+  statusMsg = `已打开项目「${meta.name}」（${state.placed.length} 个物体）` + (errors.length ? ` ⚠ ${errors.join('；')}` : '');
+  $('status').textContent = statusMsg;
+  closeProjectModal();
+  return true;
+}
+async function createProject(name) {
+  if (state.playing) { setProjMsg('试玩中：先退出试玩再新建项目', true); return false; }
+  saveState();             // 当前项目先落盘
+  const meta = await newEmptyProject(name);
+  if (!meta) { setProjMsg('新建项目失败（浏览器本地存储不可用）', true); return false; }
+  statusMsg = `已新建项目「${meta.name}」`;
+  $('status').textContent = statusMsg;
+  hideProjectForm();
+  renderProjectList();
+  return true;
+}
+function renameProject(id, name) {
+  const meta = projectStore.items.find((p) => p.id === id);
+  if (!meta) return;
+  meta.name = cleanProjectName(name);
+  writeProjectIndex();
+  if (id === projectStore.currentId) refreshProjectBadge();
+  statusMsg = `项目已重命名为「${meta.name}」`;
+  $('status').textContent = statusMsg;
+}
+async function deleteProject(id) {
+  const meta = projectStore.items.find((p) => p.id === id);
+  if (!meta) return;
+  projPendingDelete = null;
+  const wasCurrent = id === projectStore.currentId;
+  removeProjectData(id);
+  projectStore.items = projectStore.items.filter((p) => p.id !== id);
+  if (!wasCurrent) {
+    writeProjectIndex();
+    renderProjectList();
+    statusMsg = `已删除项目「${meta.name}」`;
+    $('status').textContent = statusMsg;
+    return;
+  }
+  // 删的是当前项目：切到最近更新的剩余项目；没有剩余就新建空项目（编辑器始终有一个项目可编辑）
+  projectStore.currentId = null;
+  writeProjectIndex();
+  refreshProjectBadge();
+  const next = [...projectStore.items].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
+  let ok = false;
+  if (next) {
+    const data = readProjectData(next.id);
+    ok = !!data && await switchToProjectData(next.id, data, []);
+    if (ok) {
+      next.updatedAt = Date.now();
+      writeProjectIndex();
+      statusMsg = `已删除项目「${meta.name}」，已打开「${next.name}」`;
+      $('status').textContent = statusMsg;
+    }
+  }
+  if (!ok) {
+    const m2 = await newEmptyProject(DEFAULT_PROJECT_NAME);
+    statusMsg = m2 ? `已删除项目「${meta.name}」，已新建空项目` : `已删除项目「${meta.name}」`;
+    $('status').textContent = statusMsg;
+  }
+  renderProjectList();
+}
+/** JSON 导入 = 新建项目（不覆盖当前项目）；失败自动回滚项目记录 */
+async function importLevelData(data, fallbackName) {
+  if (state.playing) { $('status').textContent = '试玩中：先退出试玩再导入'; return false; }
+  const name = cleanProjectName((typeof data?.levelId === 'string' && data.levelId) || fallbackName || '导入项目');
+  saveState();             // 当前项目先落盘
+  const meta = addProjectRecord(name);
+  const prev = projectStore.currentId;
+  projectStore.currentId = meta.id;
+  writeProjectIndex();
+  refreshProjectBadge();
+  try {
+    await applyLevel(data); // 内部会校验插件引用（失败在改画布之前抛错）并在末尾 saveState 到新项目
+  } catch (e) {
+    removeProjectData(meta.id);
+    projectStore.items = projectStore.items.filter((p) => p.id !== meta.id);
+    projectStore.currentId = prev;
+    writeProjectIndex();
+    refreshProjectBadge();
+    // applyLevel 可能已经改了一半画布（插件/物体构造异常）：把原项目内容读回来，别让编辑器停在半截状态
+    const prevData = prev ? readProjectData(prev) : null;
+    if (prevData) {
+      projectStore.currentId = null;
+      await loadEditorData(prevData, []);
+      projectStore.currentId = prev;
+      writeProjectIndex();
+      refreshProjectBadge();
+      refreshEditorAfterLoad();
+    }
+    renderProjectList();
+    throw e;
+  }
+  meta.updatedAt = Date.now();
+  writeProjectIndex();
+  refreshProjectBadge();
+  statusMsg = `已导入为新项目「${meta.name}」（${state.placed.length} 个物体）`;
+  $('status').textContent = statusMsg;
+  return true;
+}
+
+// ---- 项目管理弹窗 UI ----
+function setProjMsg(msg, isErr = false) {
+  const el = $('projMsg');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.classList.toggle('err', !!isErr);
+}
+function hideProjectForm() {
+  projFormMode = null;
+  projFormId = null;
+  $('projForm').classList.remove('open');
+  setProjMsg('');
+}
+function showProjectForm(mode, opts = {}) {
+  projFormMode = mode;
+  projFormId = opts.id ?? null;
+  $('projForm').classList.add('open');
+  $('projNameInput').value = mode === 'rename' ? (projectStore.items.find((p) => p.id === opts.id)?.name ?? '') : DEFAULT_PROJECT_NAME;
+  setProjMsg('');
+  $('projNameInput').focus();
+  $('projNameInput').select();
+}
+async function submitProjectForm() {
+  if (projBusy) return;
+  projBusy = true;
+  try {
+    const name = cleanProjectName($('projNameInput').value);
+    if (projFormMode === 'new') { await createProject(name); }
+    else if (projFormMode === 'rename') {
+      if (projFormId) renameProject(projFormId, name);
+      hideProjectForm();
+      renderProjectList();
+    }
+  } finally { projBusy = false; }
+}
+function renderProjectList() {
+  const box = $('projList');
+  if (!box) return;
+  const items = [...projectStore.items].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  if (!items.length) { box.innerHTML = '<div class="proj-empty">还没有项目</div>'; return; }
+  box.innerHTML = items.map((p) => {
+    const cur = p.id === projectStore.currentId;
+    if (projPendingDelete === p.id) {
+      return `<div class="proj-row${cur ? ' current' : ''}" data-id="${escHtml(p.id)}">
+        <span class="proj-confirm">删除「${escHtml(p.name)}」？不可恢复</span>
+        <span class="proj-btns"><button class="btn proj-del" data-act="delete-confirm">删除</button><button class="btn" data-act="delete-cancel">取消</button></span>
+      </div>`;
+    }
+    return `<div class="proj-row${cur ? ' current' : ''}" data-id="${escHtml(p.id)}">
+      <div class="proj-main">
+        <div class="proj-title">${escHtml(p.name)}${cur ? '<span class="proj-cur">当前</span>' : ''}</div>
+        <div class="proj-meta">${projectStats(p.id)}</div>
+      </div>
+      <span class="proj-btns">
+        <button class="btn" data-act="open" ${cur ? 'disabled' : ''}>打开</button>
+        <button class="btn" data-act="rename" title="重命名项目">改名</button>
+        <button class="btn proj-del" data-act="delete" title="删除项目">删除</button>
+      </span>
+    </div>`;
+  }).join('');
+}
+function openProjectModal() {
+  if (state.playing) { $('status').textContent = '试玩中：先退出试玩再管理项目'; return; }
+  hideProjectForm();
+  projPendingDelete = null;
+  refreshProjectBadge();
+  renderProjectList();
+  $('projModal').classList.add('open');
+  $('projModal').setAttribute('aria-hidden', 'false');
+}
+function closeProjectModal() {
+  $('projModal').classList.remove('open');
+  $('projModal').setAttribute('aria-hidden', 'true');
+  hideProjectForm();
+}
+$('btnProjects').onclick = openProjectModal;
+$('projClose').onclick = closeProjectModal;
+$('projNew').onclick = () => showProjectForm('new');
+$('projFormOk').onclick = () => { submitProjectForm(); };
+$('projFormCancel').onclick = () => { hideProjectForm(); renderProjectList(); };
+$('projNameInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); submitProjectForm(); }
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); hideProjectForm(); renderProjectList(); }
+});
+$('projModal').addEventListener('mousedown', (e) => { if (e.target === $('projModal')) closeProjectModal(); });
+$('projList').addEventListener('click', async (e) => {
+  const btn = e.target.closest?.('button[data-act]');
+  if (!btn || projBusy) return;
+  const id = btn.closest('.proj-row')?.dataset.id;
+  const act = btn.dataset.act;
+  if (act === 'open' || act === 'delete-confirm') {
+    projBusy = true;
+    try { await (act === 'open' ? openProjectById(id) : deleteProject(id)); } finally { projBusy = false; }
+  }
+  else if (act === 'rename') showProjectForm('rename', { id });
+  else if (act === 'delete') { projPendingDelete = id; renderProjectList(); }
+  else if (act === 'delete-cancel') { projPendingDelete = null; renderProjectList(); }
+});
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && $('projModal').classList.contains('open')) closeProjectModal();
+});
+
+/** 启动：打开上次的项目；没有项目时迁移旧单槽自动存档（v2 → v1），再没有就新建空项目。 */
+async function initProjectStore(errors) {
+  const idx = readProjectIndex();
+  if (idx && idx.projects.length) {
+    projectStore.items = idx.projects;
+    const ordered = [...idx.projects].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    const first = idx.projects.find((p) => p.id === idx.currentId) ?? ordered[0];
+    const queue = [first, ...ordered.filter((p) => p !== first)];
+    let failed = 0;
+    for (const meta of queue) {
+      const data = readProjectData(meta.id);
+      if (!data) { // 索引里有、正文丢了：清掉这条（可能是旧版清理/存储被清）
+        removeProjectData(meta.id);
+        projectStore.items = projectStore.items.filter((p) => p.id !== meta.id);
+        continue;
+      }
+      const errs = [];
+      const ok = await switchToProjectData(meta.id, data, errs);
+      for (const e of errs) errors.push(e);
+      if (!ok) { failed++; continue; } // 项目保留（可能是插件暂不可用/数据损坏），再看下一个
+      return { status: `已打开项目「${meta.name}」（${state.placed.length} 个物体）`, ok: true };
+    }
+    // 一个都没打开：保留项目列表（用户可继续排查/导出），先新建空项目让编辑器可用
+    projectStore.currentId = null;
+    writeProjectIndex();
+    refreshProjectBadge();
+    const m0 = await newEmptyProject(DEFAULT_PROJECT_NAME);
+    return { status: m0 ? `已新建项目「${m0.name}」` + (failed ? ` ⚠ ${failed} 个项目无法打开` : '') : '项目初始化失败（浏览器本地存储不可用）', ok: !!m0 };
+  }
+  // 迁移旧 v2 单槽自动存档
+  const legacy = readLegacyV2();
+  if (legacy) {
+    const meta = addProjectRecord(legacy.levelId ? `关卡 ${legacy.levelId}` : '旧自动存档');
+    try {
+      writeProjectData(meta.id, legacy);
+      dropLegacyKey(LEGACY_V2_KEY); // 数据已安全写进项目，旧槽可以删了
+    } catch (e) {
+      // 本地存储满：旧槽保留（下次启动还能再迁移），回退到新建空项目
+      projectStore.items = projectStore.items.filter((p) => p.id !== meta.id);
+      writeProjectIndex();
+      refreshProjectBadge();
+      const m = await newEmptyProject(DEFAULT_PROJECT_NAME);
+      return { status: m ? '旧自动存档迁移失败（浏览器本地存储已满），旧存档已保留；已新建空项目' : '旧自动存档迁移失败（浏览器本地存储已满）', ok: !!m };
+    }
+    const errs = [];
+    const ok = await switchToProjectData(meta.id, legacy, errs);
+    for (const e of errs) errors.push(e);
+    return { status: `已把旧自动存档迁移为项目「${meta.name}」（${ok ? state.placed.length : 0} 个物体）`, ok };
+  }
+  // 迁移旧 v1 存档
+  const migrated = migrateLegacyV1();
+  if (migrated != null) {
+    const meta = addProjectRecord(levelId ? `关卡 ${levelId}` : '旧自动存档');
+    projectStore.currentId = meta.id;
+    writeProjectIndex();
+    refreshProjectBadge();
+    saveState();
+    const saved = !projectSaveFailed;
+    if (saved) dropLegacyKey(LEGACY_V1_KEY); // 成功写进项目才删旧键（保存失败旧键保留，下次启动重试）
+    refreshEditorAfterLoad();
+    return { status: saved ? `已迁移旧存档为项目「${meta.name}」（${state.placed.length} 个物体）` : '旧存档迁移失败：浏览器本地存储已满（旧存档已保留，可导出 JSON 备份）', ok: saved };
+  }
+  // 全新打开：新建空项目（不摆默认关卡）
+  const meta = await newEmptyProject(DEFAULT_PROJECT_NAME);
+  return { status: meta ? `已新建项目「${meta.name}」` : '项目初始化失败（浏览器本地存储不可用）', ok: !!meta };
 }
 /** 加载后的清洗：去完全重复 + 剥旧版遗留种子 + 分配稳定 id。任何来源的重复数据都被清掉。 */
 function cleanPlaced() {
@@ -2864,7 +3517,7 @@ function togglePlay() {
   // 重建 Scene 试玩：用**新构造**的对象（编辑器里的对象不被物理移动污染）
   ensureStableIds(); // 试玩对象 id 稳定（延迟出现/接线按 id 引用）
   enterPlayView(); // 试玩视口 = 导出实机（1100×700 等比）+ 编辑器提示隐藏
-  const scene = new C.Scene({ worldW: state.worldW, worldH: state.worldH, hideTouchGrab: state.hideTouchGrab });
+  const scene = new C.Scene({ worldW: state.worldW, worldH: state.worldH });
   for (const p of state.placed) {
     if (p.type === 'rope') continue; // 绳子走后置接线（需要引用重建后的物体）
     const obj = buildPlayObject(p);  // 插件组件经 C.Plugin.create 生成真实对象
@@ -2990,7 +3643,7 @@ function togglePlay() {
   };
   playStop = C.startLoop(scene, renderer, { hud });
   playScene = scene; // 调试/测试可访问当前试玩场景
-  $('status').textContent = '试玩中：A/D 移动 · 空格跳 · Q 收集 · Shift 放置 · C 拾取物品/吸液/按住集气 · X 倒出/按住通气 · 滴管：点胶头滴液/按住持续滴(液下长按=吸取)/玻璃段拖动 · V 鸟瞰 · 悬停查来源 · F5暂停';
+  $('status').textContent = '试玩中：A/D 移动 · 空格跳 · Q 拾取/收集 · Shift 放置 · 选中物品后 C/X 执行该物品的操作（烧杯吸液/倒出、滴管吸液/滴加、集气瓶集气/通气） · 滴管：点胶头滴液/按住持续滴(液下长按=吸取)/玻璃段拖动 · V 鸟瞰 · 悬停查来源 · F5暂停';
   notifyPlayState(true);
 }
 
@@ -3062,28 +3715,18 @@ function resizeCanvas() {
   fitView();
   renderEdit();
 }
-// 保存 / 加载关卡（JSON）
+// 导出当前项目为 JSON（导入端会把它作为新项目打开）
 function saveJSON() {
-  const data = {
-    version: 2,
-    levelId, // 关卡ID随 JSON 保存/加载
-    worldW: state.worldW, // ★ 世界宽高（顶层=当前场景；多场景下另有快照）
-    worldH: state.worldH,
-    plugins: state.plugins, // 插件引用清单（加载 JSON 时自动从 plugin/ 目录或缓存加载；找不到=报错）
-    rx: state.customReactions,
-    atmosphere: state.atmosphere, // 编辑器自带：关卡大气
-    tips: state.tips, // 条件提示清单（文本 + 条件组）
-    hideTouchGrab: state.hideTouchGrab, // 隐藏移动端"拾取/吸液"按钮
-    editorState: Object.fromEntries([...editorStates].map(([k, v]) => [k, v])),
-    objects: state.placed.map((p) => ({ type: p.type, opts: byType[p.type].collect(p.obj) })),
-  };
+  const data = collectEditorData();
+  const base = cleanProjectName(projectName()).replace(/[\\/:*?"<>|\s]+/g, '_') || 'level';
+  const fname = `${base}.json`;
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'level.json';
+  a.download = fname;
   a.click();
   URL.revokeObjectURL(a.href);
-  $('status').textContent = '已保存 level.json';
+  $('status').textContent = `已导出 ${fname}`;
 }
 async function applyLevel(data) {
   // 0. 自动加载 JSON 里引用的插件：已加载 → 磁盘 plugin/ 目录 → 浏览器缓存。
@@ -3099,7 +3742,8 @@ async function applyLevel(data) {
     : '';
   if (typeof data.levelId === 'string') { levelId = data.levelId; $('inLevelId').value = levelId; }
   state.plugins = refs.map((p) => ({ file: p.file, reg: p.reg ?? pluginLib.get(p.file)?.reg, name: p.name ?? p.file, enabled: p.enabled !== false }));
-  // 编辑器插件状态：就地填充（保引用一致，否则插件面板数据刷新后消失）
+  // 编辑器插件状态：先清掉旧项目的（切项目/覆盖导入不串数据），再就地填充（保引用一致，否则插件面板数据刷新后消失）
+  resetEditorStates();
   for (const [k, v] of Object.entries(data.editorState ?? {})) {
     const cur = editorStates.get(k);
     if (cur && typeof cur === 'object') Object.assign(cur, v);
@@ -3120,8 +3764,7 @@ async function applyLevel(data) {
   state.customReactions = Array.isArray(src.rx) ? src.rx : (src.rx ? [src.rx] : []);
   state.atmosphere = { ...(src.atmosphere ?? {}) };
   state.tips = Array.isArray(src.tips) ? src.tips.map((t) => ({ text: t.text ?? '', mode: t.mode ?? 'and', items: Array.isArray(t.items) ? t.items : [] })) : [];
-  state.hideTouchGrab = !!src.hideTouchGrab;
-  $('cbHideGrab').checked = state.hideTouchGrab;
+  openTip = -1; // 上一个关卡展开的提示序号，对新关卡无效
   refreshAtmInput();
   renderTipPanel();
   state.placed = (src.objects || [])
@@ -3143,6 +3786,7 @@ async function applyLevel(data) {
 }
 
 function loadJSON() {
+  if (state.playing) { $('status').textContent = '试玩中：先退出试玩再导入'; return; }
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = '.json';
@@ -3151,13 +3795,16 @@ function loadJSON() {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = async () => {
+      if (projBusy) return;
+      projBusy = true;
       try {
-        await applyLevel(JSON.parse(reader.result));
+        // JSON 导入 = 新建项目（当前项目不会被覆盖）；插件引用缺失时在改画布之前抛错并回滚
+        await importLevelData(JSON.parse(reader.result), file.name.replace(/\.json$/i, ''));
       } catch (e) {
-        // 插件未就绪等：直接报错（alert + 状态栏），当前关卡保持不变
-        alert('JSON 加载失败：' + e.message);
-        $('status').textContent = 'JSON 加载失败: ' + e.message;
-      }
+        alert('JSON 导入失败：' + e.message);
+        statusMsg = 'JSON 导入失败: ' + e.message;
+        $('status').textContent = statusMsg;
+      } finally { projBusy = false; }
     };
     reader.readAsText(file);
   };
@@ -3248,13 +3895,13 @@ $('btnExportHTML').onclick = () => {
 };
 $('inW').onchange = () => { const v = +$('inW').value || 3000; if (v === state.worldW) return; pushUndo(); state.worldW = v; buildRenderScene(); resizeCanvas(); saveState(); };
 $('inH').onchange = () => { const v = +$('inH').value || 800; if (v === state.worldH) return; pushUndo(); state.worldH = v; buildRenderScene(); resizeCanvas(); saveState(); };
-$('cbHideGrab').onchange = () => { state.hideTouchGrab = !!$('cbHideGrab').checked; saveState(); refreshExport(); };
 $('inLevelId').addEventListener('change', () => {
   const v = $('inLevelId').value;
   if (v === levelId) return;
   pushUndo();          // 快照里 levelId 还是旧值（levelId 变量尚未更新）
   levelId = v;
   refreshExport();
+  saveState();         // 关卡ID也是项目数据：立即存（否则要等下一次编辑才落盘）
 });
 // ---- 自定义反应管理面板（列表 + 添加 + 删除） ----
 function renderRxPanel() {
@@ -3499,33 +4146,22 @@ window.addEventListener('resize', resizeCanvas);
 
 buildPalette();
 buildSubstanceList();
-// 没有默认关卡。加载顺序：v2 存档 → 旧 v1 存档（迁移+去重+剥种子）→ 都没有就空画布。
+// 项目制启动：打开上次的项目 → 迁移旧单槽自动存档（v2 再 v1）→ 全新打开时新建空项目。
 // 插件不是"恢复全部缓存"，而是按引用自动加载（磁盘 plugin/ → 浏览器缓存）——
-// 引用缺源时记入 bootErrors（软提示），JSON 加载（applyLevel）则是硬报错。
+// 引用缺源时记入 bootErrors（软提示），JSON 导入（applyLevel）则是硬报错。
 (async () => {
   const bootErrors = [];
-  const migrated = migrateLegacy();           // 迁移旧 v1（自动清掉）
-  let loadedFromStorage = await loadState(bootErrors); // 读 v2（自动加载引用的插件）
-  if (!loadedFromStorage) {
-    if (migrated != null) {
-      loadedFromStorage = true;               // v1 迁过来的关卡视为已恢复
-      saveState();
-      statusMsg = `已迁移旧存档并清理重复（${state.placed.length} 个物体）`;
-    } else {
-      state.placed = [];                      // 全新打开：空画布，不摆默认关卡
-      state.selected = null;
-      statusMsg = '就绪（空画布）';
-    }
-  } else {
-    saveState();                              // 重新规范化存档（已去重/剥种子）
-    statusMsg = `已恢复自动存档（${state.placed.length} 个物体）`;
-  }
+  projBusy = true; // 启动加载期间不接受项目操作（按钮点不出并发加载）
+  let boot;
+  try { boot = await initProjectStore(bootErrors); } finally { projBusy = false; }
+  statusMsg = boot.status;
   if (bootErrors.length) statusMsg += ` ⚠ 插件未恢复：${bootErrors.join('；')}`;
   refreshExport();
   renderRxPanel();                          // 渲染自定义反应列表
   renderTipPanel();                          // 渲染条件提示列表
   renderPluginPanel();                      // 渲染插件面板（含已恢复的插件引用）
   refreshShelfEmpty();
+  refreshEditorAfterLoad();                  // 画布/属性/试玩视图与已加载项目保持一致
   $('status').textContent = statusMsg;
   // 容器尺寸一变化就重设画布：ResizeObserver 在 observe 时立即回调一次，之后每次布局
   // 变化都拿到**真实尺寸**，根治"刷新后模糊、要手动缩放才正常"；老浏览器退化用多次兜底。

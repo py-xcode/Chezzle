@@ -1,4 +1,4 @@
-// 传送门物品栏重置 / 移动端隐藏拾取按钮 测试
+// 传送门物品栏重置 / 可拾取物品按钮（旧 hideTouchGrab 已移除） 测试
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Scene } from '../src/core/scene.js';
@@ -100,17 +100,12 @@ test('portal：clearInventory 只清空；未配置的门不动物品栏', () =>
   assert.ok(two.player.inventory.slots.some((s) => s && s.substance === 'Cu'), '无配置 → 物品栏不动');
 });
 
-// ---- 4. 移动端隐藏"拾取"按钮 ------------------------------------------------
-test('hideTouchGrab：场景开关隐藏 grab 按钮（其余按钮保留）；默认显示', () => {
+// ---- 4. 旧场景的 hideTouchGrab 开关（已移除）：旧关卡 JSON 传了也不影响 ---------
+test('hideTouchGrab 已移除：旧数据里的字段被忽略，按钮只由选中物品决定', () => {
   const mk = (scene) => new TouchUI({ width: 800, height: 600, style: {}, addEventListener: () => {} }, () => ({ scene, hud: null }));
-  const s1 = new Scene({ worldW: 800, worldH: 600, hideTouchGrab: true });
-  s1.addObject(new Player({ x: 100, y: 400 }));
-  const keys1 = mk(s1).buttonRects().map((r) => r.key);
-  assert.ok(!keys1.includes('grab'), 'grab 应被隐藏');
-  assert.ok(keys1.includes('use') && keys1.includes('collect') && keys1.includes('place'), '其余按钮保留');
-
-  const s2 = new Scene({ worldW: 800, worldH: 600 });
-  s2.addObject(new Player({ x: 100, y: 400 }));
-  const keys2 = mk(s2).buttonRects().map((r) => r.key);
-  assert.ok(keys2.includes('grab'), '默认应显示 grab');
+  const s = new Scene({ worldW: 800, worldH: 600, hideTouchGrab: true });
+  s.addObject(new Player({ x: 100, y: 400 }));
+  assert.equal('hideTouchGrab' in s, false, '场景不再保存该开关');
+  const keys = mk(s).buttonRects().map((r) => r.key).sort();
+  assert.deepEqual(keys, ['collect', 'place'], '未选中物品：只有 Q 拾取与 ⇧ 放置');
 });

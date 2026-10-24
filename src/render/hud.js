@@ -13,11 +13,21 @@ import { solutionColor } from './liquidrender.js';
 import { CFG } from '../core/config.js';
 import { GasColumn } from '../objects/gascolumn.js';
 import { Block } from '../objects/block.js';
-import { inventorySlotRects, uiMargins, overviewButtonRect, fullscreenButtonRect, hudTopOffset, touchInsetsOf, compactView, tinyView, tipPanelRect } from '../level/click.js';
+import { inventorySlotRects, uiMargins, overviewButtonRect, fullscreenButtonRect, restartButtonRect, restartMenuLayout, hudTopOffset, touchInsetsOf, compactView, tinyView, tipPanelRect } from '../level/click.js';
 import { joyGeom, touchButtonRects } from '../core/touch.js';
 import { fullscreenSupported } from '../core/fullscreen.js';
+import { Savepoint } from '../core/savepoint.js';
 import { canvasLW, canvasLH, canvasTransformDpr, uiScaleOf } from './canvas.js';
 import { drawFaded } from './fade.js';
+import { hexToRgb } from './color.js';
+import { carryActionsOf } from '../level/items.js';
+import { actionKeyLabel } from '../core/prefs.js';
+
+/** 十六进制色 + 透明度 → rgba 字符串（HUD 物品缩略图共用） */
+function rgbaOf(hex, a) {
+  const c = hexToRgb(hex);
+  return `rgba(${c.r},${c.g},${c.b},${a})`;
+}
 
 // 溯源 kind → 中文（调试悬停显示物体"为何存在"）
 const ORIGIN_LABELS = {
@@ -131,6 +141,11 @@ export class Hud {
     this.scene = scene;
     this.showTip = false;
     this.slotSize = 46; // 旧版统一槽宽（现为兼容字段；实际几何走 inventorySlotRects）
+    // 选中物品说明面板：切换格子的淡入/淡出动画状态（只存快照，不影响游戏逻辑）
+    this._infoKey = null;   // 当前显示的 "槽位:物品类型"（空 = 没选物品）
+    this._infoCur = null;   // 当前面板快照（数据 + 布局）
+    this._infoPrev = null;  // 切换前旧面板快照（用于淡出）
+    this._infoT = 0;        // 本次切换的起始时间（scene time）
   }
 
   /** 当前是否触屏端（移动端 HUD 压缩/全屏按钮都以它为准） */
@@ -169,10 +184,14 @@ export class Hud {
     // 不支持（iPhone 上的 Safari 全系不支持元素全屏）时它只会白占一个按钮位，
     // 点下去还弹一句"此浏览器不支持全屏"——极窄屏上寸土寸金，直接不画。
     if (this._isTouch() && fullscreenSupported()) this.fsButton(ctx, W, top, right);
+    // 重开按钮：右上按钮排最左（单击记时刻，400ms 内双击 = 打开重开菜单）
+    this.restartButton(ctx, W, top, right);
     this.tipButton(ctx, W, top, right, time);
     this.notice(ctx, scene, W, H, time);
     this.bigBanner(ctx, scene, W, H, time);
     this.touchControls(ctx, scene, W, H, time);
+    // 存档点提示（Savepoint.toast 写入 scene._saveToast）画在左上信息卡下方
+    this.saveToast(ctx, scene, top);
   }
 
   /** 鸟瞰淡出用的离屏层（尺寸跟随画布；无 DOM 环境返回 null → 直接画，不淡出） */
@@ -224,6 +243,7 @@ export class Hud {
       // 干净的全局视图——只画返回按钮/操作提示/玩家魂标
       this.overviewUI(ctx, scene, W, H, time);
       this.rotateHint(ctx, scene, W, H);
+      this.restartMenu(ctx, scene, W, H, time);
       this.overlay(ctx, scene, W, H);
       ctx.restore();
       return;
@@ -251,6 +271,7 @@ export class Hud {
       ctx.restore();
     }
     this.rotateHint(ctx, scene, W, H);
+    this.restartMenu(ctx, scene, W, H, time);
     this.overlay(ctx, scene, W, H);
     ctx.restore();
   }
@@ -300,6 +321,135 @@ export class Hud {
     ctx.textAlign = 'center';
     ctx.fillText('⛶', r.x + r.w / 2, r.y + 23);
     ctx.textAlign = 'left';
+  }
+
+  /** 重开按钮（右上按钮排最左；图标 = 环形箭头）：斜牌底同全屏按钮（冷色底 +
+   *  细青描边 + 轻辉光），图标用 canvas 矢量画"圆弧 + 金色箭头"的旋转箭头。
+   *  单次点击只记时刻，400ms 内双击才打开重开菜单（见 click.js handleSceneClick）。 */
+  restartButton(ctx, W, top = 10, right = 0) {
+    const withFs = this._isTouch() && fullscreenSupported();
+    const r = restartButtonRect(W, top, right, withFs);
+    ctx.save();
+    para(ctx, r.x, r.y, r.w, r.h, 8);
+    const g = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.h);
+    g.addColorStop(0, '#2a3a5e');
+    g.addColorStop(1, '#141d38');
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(191,230,255,0.7)';
+    ctx.lineWidth = 1.5;
+    ctx.shadowColor = 'rgba(127,224,255,0.5)';
+    ctx.shadowBlur = 4;
+    ctx.stroke();
+    ctx.restore();
+    this._restartIcon(ctx, r.x + r.w / 2, r.y + r.h / 2 + 0.5);
+  }
+
+  /** 重开图标：约 300° 的圆形弧（缺口在右上）+ 弧端切向的三角箭头。
+   *  弧 = 青色（与全屏/鸟瞰按钮图标同色），箭头 = 金色（HUD 主强调色）。 */
+  _restartIcon(ctx, cx, cy) {
+    const R = 8.6;
+    const a0 = -0.35;
+    const a1 = 4.9; // 顺时针扫过 ≈301°，缺口停在右上方
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    // 外圈轻辉光（让弧在深色斜牌上浮起来）
+    ctx.strokeStyle = 'rgba(127,224,255,0.28)';
+    ctx.lineWidth = 4.4;
+    ctx.beginPath();
+    ctx.arc(0, 0, R, a0, a1);
+    ctx.stroke();
+    // 主弧（青）
+    ctx.strokeStyle = '#bfe6ff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, R, a0, a1);
+    ctx.stroke();
+    // 箭头（金）：弧终点处的切线方向 = 旋转方向（顺时针）
+    const ex = R * Math.cos(a1);
+    const ey = R * Math.sin(a1);
+    const tx = -Math.sin(a1);
+    const ty = Math.cos(a1);
+    const nx = -ty;
+    const ny = tx;
+    ctx.beginPath();
+    ctx.moveTo(ex + tx * 5.4, ey + ty * 5.4);
+    ctx.lineTo(ex - tx * 1.6 + nx * 3.6, ey - ty * 1.6 + ny * 3.6);
+    ctx.lineTo(ex - tx * 1.6 - nx * 3.6, ey - ty * 1.6 - ny * 3.6);
+    ctx.closePath();
+    ctx.fillStyle = '#ffd76a';
+    ctx.shadowColor = 'rgba(255,215,106,0.75)';
+    ctx.shadowBlur = 5;
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /** 存档点提示（"已存档 / 已回到存档点"）：左上信息卡下方的小斜牌，金描边 +
+   *  深紫渐变底 + 小金色对勾。淡入 ~0.16s，1.6s 后淡出；年龄按**墙钟**算
+   *  （菜单/死亡暂停时游戏时钟会停，墙钟不会）。
+   *  scene._saveToast = { text, at:墙钟ms, dur }（Savepoint.toast 写入）。 */
+  saveToast(ctx, scene, top = 10) {
+    const t = scene._saveToast;
+    if (!t) return;
+    const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    const age = now - t.at;
+    const dur = Number(t.dur) > 0 ? Number(t.dur) : 1600;
+    if (!(age >= 0) || age > dur) { // 过期：清掉（下一句提示重新创建）
+      scene._saveToast = null;
+      return;
+    }
+    const fadeIn = Math.min(1, age / 160);
+    const fadeOut = Math.min(1, Math.max(0, (dur - age) / 380));
+    const a = Math.max(0, Math.min(fadeIn, fadeOut));
+    if (a <= 0.01) return;
+    const uiK = this._uiK || 1;
+    // 位置：左上信息卡正下方（信息卡左缘 + 10，卡底 + 8；_leftH 是卡的实际高度）
+    const x = 10 / uiK + (touchInsetsOf(scene, uiK).left || 0) + 10;
+    const leftH = Number.isFinite(this._leftH) && this._leftH > 0 ? this._leftH : 100;
+    const y = top + leftH + 8;
+    ctx.save();
+    ctx.font = 'bold 12px "Segoe UI", "Microsoft YaHei", sans-serif';
+    const tw = ctx.measureText(t.text).width;
+    const h = 24;
+    const w = tw + 26 + 14;
+    ctx.restore();
+    // 透明度走 drawFaded（带辉光的描边在 iPadOS WebKit 上不吃 globalAlpha；
+    // 与 HUD 横幅/路标同一套离屏合成方案）
+    drawFaded(ctx, a, (c) => {
+      c.save();
+      para(c, x, y, w, h, 7);
+      const g = c.createLinearGradient(x, y, x, y + h);
+      g.addColorStop(0, 'rgba(38,32,74,0.94)');
+      g.addColorStop(1, 'rgba(14,11,36,0.94)');
+      c.fillStyle = g;
+      c.fill();
+      c.strokeStyle = 'rgba(232,184,75,0.85)';
+      c.lineWidth = 1.2;
+      c.shadowColor = 'rgba(232,184,75,0.55)';
+      c.shadowBlur = 8;
+      c.stroke();
+      c.shadowBlur = 0;
+      // 小金色对勾（存档成功；不加说明文字）
+      const mx = x + 16;
+      const my = y + h / 2;
+      c.strokeStyle = '#ffd76a';
+      c.lineWidth = 2;
+      c.lineCap = 'round';
+      c.lineJoin = 'round';
+      c.beginPath();
+      c.moveTo(mx - 4, my);
+      c.lineTo(mx - 1, my + 3.5);
+      c.lineTo(mx + 5, my - 4);
+      c.stroke();
+      c.font = 'bold 12px "Segoe UI", "Microsoft YaHei", sans-serif';
+      c.fillStyle = '#ffe9b0';
+      c.textAlign = 'left';
+      c.textBaseline = 'alphabetic';
+      c.fillText(t.text, x + 27, y + 16.5);
+      c.restore();
+    });
   }
 
   // ---- 鸟瞰（灵魂出窍）界面：返回按钮 + 操作提示（干净的全局视图）-----------
@@ -396,13 +546,17 @@ export class Hud {
     ctx.strokeStyle = ui.joy ? 'rgba(255,215,106,0.85)' : 'rgba(232,184,75,0.4)';
     ctx.lineWidth = ui.joy ? 2 : 1.2;
     ctx.stroke();
-    // —— 右下：四键（按住=长按语义同键盘；无玩家场景不画）。
-    //     键位字母（C/X/Q/⇧）对触屏玩家无意义 → 换成语义 SVG 矢量图标 +
-    //     下方二字说明（拾取/倒出/收集/放置）——
+    // —— 右下：Q 拾取 / ⇧ 放置常驻；选中可拾取物品时上排出现该物品的操作键
+    //     （烧杯=吸液/倒出，滴管=吸液/滴加，集气瓶=集气/通气；名称/图标由物品定义，
+    //       见 level/items.js carryActionsOf）。触屏不用键位字母，用矢量图标+二字说明。
     if (scene.player) {
-      const LABELS = { grab: '拾取', use: '倒出', collect: '收集', place: '放置' };
+      const actions = carryActionsOf(scene.player.inventory.selectedItem());
+      const byKey = new Map(actions.map((a) => [a.action, a]));
+      const BASE = { collect: { label: '拾取', icon: 'pickup' }, place: { label: '放置', icon: 'place' } };
       for (const r of ui.buttonRects()) {
-        const cap = LABELS[r.key] ?? '';
+        const meta = byKey.get(r.key) ?? BASE[r.key];
+        if (!meta) continue;
+        const cap = meta.label ?? '';
         const down = ui.isPressed(r.key);
         ctx.save();
         rr(ctx, r.x, r.y, r.size, r.size, 14);
@@ -420,7 +574,7 @@ export class Hud {
         ctx.stroke();
         ctx.shadowBlur = 0;
         ctx.textAlign = 'center';
-        this._touchIcon(ctx, r.key, r.x + r.size / 2, r.y + r.size / 2 - 7, down ? '#fff6d8' : '#ffe9b0');
+        this._touchIcon(ctx, meta.icon, r.x + r.size / 2, r.y + r.size / 2 - 7, down ? '#fff6d8' : '#ffe9b0');
         ctx.fillStyle = down ? '#ffd76a' : 'rgba(255,233,176,0.62)';
         ctx.font = '11px "Segoe UI", "Microsoft YaHei", sans-serif';
         ctx.fillText(cap, r.x + r.size / 2, r.y + r.size - 10);
@@ -431,10 +585,84 @@ export class Hud {
   }
 
   /** 触控按钮矢量图标（canvas 路径画的"SVG 小图"，原点 = 图标中心）：
-   *  grab=上举箭头+烧杯（拾取容器；与"放置"下箭头成对） / use=倾斜烧杯倒液（倒出） /
-   *  collect=马蹄磁铁（吸集） / place=落点箭头（放置到地上）。
-   *  （"手"造型尝试过多版（四指/捏取/握拳）都读不出来，按用户指示改走抽象图标。） */
-  _touchIcon(ctx, key, cx, cy, color) {
+   *  pickup=收进物品栏（托盘+下箭头） / place=落点箭头（放置到地上） /
+   *  beakerSuck=小烧杯+上吸箭头 / beakerPour=倾斜烧杯+液滴 /
+   *  dropperSuck=滴管+上吸箭头 / dropperDrip=滴管+下落液滴 /
+   *  bottleCollect=集气瓶+上升气泡 / bottleInject=集气瓶+注入箭头。
+   *  图标名来自物品的操作定义（items.carryActionsOf），新增物品只加一条即可。 */
+  _touchIcon(ctx, icon, cx, cy, color) {
+    // 小烧杯（白描边 + 青色液体）；(ox,oy) 为杯心偏移，sc 缩放
+    const beaker = (ox, oy, sc = 1) => {
+      ctx.save();
+      ctx.translate(ox, oy);
+      ctx.scale(sc, sc);
+      ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+      ctx.lineWidth = 1.3;
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-2.6, -5.2);
+      ctx.lineTo(-2.6, -0.6);
+      ctx.quadraticCurveTo(-2.6, 4.2, 0, 4.2);
+      ctx.quadraticCurveTo(2.6, 4.2, 2.6, -0.6);
+      ctx.lineTo(2.6, -5.2);
+      ctx.moveTo(-3.3, -5.2);
+      ctx.lineTo(3.3, -5.2);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(122,224,255,0.75)';
+      ctx.beginPath();
+      ctx.moveTo(-2.1, 3.6);
+      ctx.lineTo(-2.1, 1.4);
+      ctx.quadraticCurveTo(-2.1, 3.3, 0, 3.3);
+      ctx.quadraticCurveTo(2.1, 3.3, 2.1, 1.4);
+      ctx.lineTo(2.1, 3.6);
+      ctx.fill();
+      ctx.restore();
+    };
+    // 小滴管（红胶头 + 玻璃细管 + 锥形滴嘴）；(ox,oy) 为管心偏移，sc 缩放
+    const dropper = (oy = 0, sc = 1, ox = 0) => {
+      ctx.save();
+      ctx.translate(ox, oy);
+      ctx.scale(sc, sc);
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.ellipse(0, -6.0, 2.6, 3.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(210,232,255,0.95)';
+      ctx.lineWidth = 1.35;
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-1.3, -2.6);
+      ctx.lineTo(-1.3, 4.4);
+      ctx.lineTo(-0.5, 7.6);
+      ctx.lineTo(0.5, 7.6);
+      ctx.lineTo(1.3, 4.4);
+      ctx.lineTo(1.3, -2.6);
+      ctx.stroke();
+      ctx.restore();
+    };
+    // 小集气瓶（细瓶口 + 玻璃瓶身 + 底部圆角）
+    const bottle = (ox = 0) => {
+      ctx.save();
+      ctx.translate(ox, 0);
+      ctx.strokeStyle = 'rgba(210,240,255,0.95)';
+      ctx.lineWidth = 1.3;
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-2.6, -8.4);
+      ctx.lineTo(-2.6, -5.4);
+      ctx.lineTo(-4.8, -2.6);
+      ctx.lineTo(-4.8, 5.4);
+      ctx.quadraticCurveTo(-4.8, 8.2, -1.8, 8.2);
+      ctx.lineTo(1.8, 8.2);
+      ctx.quadraticCurveTo(4.8, 8.2, 4.8, 5.4);
+      ctx.lineTo(4.8, -2.6);
+      ctx.lineTo(2.6, -5.4);
+      ctx.lineTo(2.6, -8.4);
+      ctx.moveTo(-3.2, -8.4);
+      ctx.lineTo(3.2, -8.4);
+      ctx.stroke();
+      ctx.restore();
+    };
     ctx.save();
     ctx.translate(cx, cy);
     ctx.scale(1.15, 1.15);
@@ -443,42 +671,60 @@ export class Hud {
     ctx.lineWidth = 2.2;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    ctx.beginPath();
-    if (key === 'grab') {
-      // 拾取：上举箭头（左）+ 小烧杯（右）——"拿起容器"；箭头方向与"放置"（下）成对
-      ctx.lineWidth = 3.0;
-      ctx.moveTo(-5.0, 9.0); ctx.lineTo(-5.0, -2.2); // 箭杆
-      ctx.stroke();
+    if (icon === 'pickup') {
+      // 拾取：原地小物件 + 向上箭头（把物品拿起来）——与"放置"的向下箭头成对
+      ctx.lineWidth = 2.0;
       ctx.beginPath();
-      ctx.moveTo(-7.6, -1.6); ctx.lineTo(-5.0, -6.8); ctx.lineTo(-2.4, -1.6); // 箭头
+      ctx.moveTo(-3.4, 2.8);
+      ctx.lineTo(3.4, 2.8);
+      ctx.lineTo(3.4, 8.4);
+      ctx.lineTo(-3.4, 8.4);
       ctx.closePath();
-      ctx.fill();
-      // 小烧杯（白描边 + 青色液体）
-      ctx.strokeStyle = 'rgba(255,255,255,0.92)';
-      ctx.lineWidth = 1.3;
-      ctx.beginPath();
-      ctx.moveTo(2.6, -4.8); ctx.lineTo(2.6, -0.2);
-      ctx.quadraticCurveTo(2.6, 4.0, 4.6, 4.0);
-      ctx.quadraticCurveTo(6.6, 4.0, 6.6, -0.2);
-      ctx.lineTo(6.6, -4.8);
-      ctx.moveTo(1.9, -4.8); ctx.lineTo(7.3, -4.8); // 杯沿
       ctx.stroke();
-      ctx.fillStyle = 'rgba(122,224,255,0.75)';
       ctx.beginPath();
-      ctx.moveTo(3.2, 3.5); ctx.lineTo(3.2, 1.4);
-      ctx.quadraticCurveTo(3.2, 3.4, 4.6, 3.4);
-      ctx.quadraticCurveTo(6.0, 3.4, 6.0, 1.4);
-      ctx.lineTo(6.0, 3.5);
-      ctx.fill();
-      // 星闪（右下侧)
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 1.1;
-      ctx.beginPath();
-      ctx.moveTo(8.6, -8.0); ctx.lineTo(8.6, -5.6); ctx.moveTo(7.4, -6.8); ctx.lineTo(9.8, -6.8);
+      ctx.moveTo(0, -9.0);
+      ctx.lineTo(0, -0.4);
+      ctx.moveTo(-3.6, -5.4);
+      ctx.lineTo(0, -9.0);
+      ctx.lineTo(3.6, -5.4);
       ctx.stroke();
-    } else if (key === 'use') {
+    } else if (icon === 'place') {
+      // 放置：上方小物件 + 向下箭头落到地面基线
+      ctx.lineWidth = 2.0;
+      ctx.beginPath();
+      ctx.moveTo(-3.4, -8.4);
+      ctx.lineTo(3.4, -8.4);
+      ctx.lineTo(3.4, -2.8);
+      ctx.lineTo(-3.4, -2.8);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0, -1.4);
+      ctx.lineTo(0, 6.2);
+      ctx.moveTo(-3.4, 2.8);
+      ctx.lineTo(0, 6.4);
+      ctx.lineTo(3.4, 2.8);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-8.5, 8.8);
+      ctx.lineTo(8.5, 8.8);
+      ctx.stroke();
+    } else if (icon === 'beakerSuck') {
+      // 上吸箭头（左）+ 小烧杯（右）
+      ctx.lineWidth = 2.8;
+      ctx.beginPath();
+      ctx.moveTo(-5.2, 8.6);
+      ctx.lineTo(-5.2, -2.4);
+      ctx.moveTo(-7.8, -1.8);
+      ctx.lineTo(-5.2, -7.0);
+      ctx.lineTo(-2.6, -1.8);
+      ctx.stroke();
+      beaker(4.4, 1.0, 0.85);
+    } else if (icon === 'beakerPour') {
       // 倾斜小烧杯（顺时针倒向右侧）+ 液滴从口沿洒落
+      ctx.save();
       ctx.rotate(0.55);
+      ctx.beginPath();
       ctx.moveTo(-6, -5);
       ctx.lineTo(-6, 5);
       ctx.quadraticCurveTo(-6, 7.5, -3.5, 7.5);
@@ -486,32 +732,43 @@ export class Hud {
       ctx.quadraticCurveTo(6, 7.5, 6, 5);
       ctx.lineTo(6, -5);
       ctx.stroke();
-      ctx.rotate(-0.55);
-      ctx.beginPath(); ctx.arc(10.5, -1, 1.6, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(13, 4.5, 1.9, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(11.5, 10.5, 2.2, 0, Math.PI * 2); ctx.fill();
-    } else if (key === 'collect') {
-      // 马蹄磁铁（开口朝下，两极短杠）——"吸集"沉淀
-      ctx.moveTo(-7.5, 5);
-      ctx.lineTo(-7.5, -1);
-      ctx.arc(0, -1, 7.5, Math.PI, 0);
-      ctx.lineTo(7.5, 5);
-      ctx.moveTo(-3, 5);
-      ctx.lineTo(-3, -1);
-      ctx.arc(0, -1, 3, Math.PI, 0);
-      ctx.lineTo(3, 5);
+      ctx.restore();
+      ctx.beginPath(); ctx.arc(9.6, -1.4, 1.5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(11.2, 3.8, 1.8, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(9.8, 9.4, 2.1, 0, Math.PI * 2); ctx.fill();
+    } else if (icon === 'dropperSuck') {
+      // 上吸箭头（右）+ 小滴管（左）
+      dropper(1.2, 0.9, -2.0);
+      ctx.lineWidth = 2.6;
+      ctx.beginPath();
+      ctx.moveTo(7.6, 8.4);
+      ctx.lineTo(7.6, -2.6);
+      ctx.moveTo(5.2, -2.0);
+      ctx.lineTo(7.6, -6.8);
+      ctx.lineTo(10.0, -2.0);
       ctx.stroke();
-      ctx.fillRect(-7.5, 6.6, 4.5, 3);
-      ctx.fillRect(3, 6.6, 4.5, 3);
-    } else if (key === 'place') {
-      // 下落箭头 + 地面基线（"放下去"）
-      ctx.moveTo(0, -10);
-      ctx.lineTo(0, 2);
-      ctx.moveTo(-4.5, -2.5);
-      ctx.lineTo(0, 2);
-      ctx.lineTo(4.5, -2.5);
-      ctx.moveTo(-8.5, 8);
-      ctx.lineTo(8.5, 8);
+    } else if (icon === 'dropperDrip') {
+      // 小滴管（左）+ 右侧一串下落液滴（避免看起来像感叹号）
+      dropper(-2.6, 0.9, -3.2);
+      ctx.beginPath(); ctx.arc(4.2, 8.0, 2.4, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(6.6, 3.2, 1.4, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(5.2, -0.8, 0.9, 0, Math.PI * 2); ctx.fill();
+    } else if (icon === 'bottleCollect') {
+      // 集气瓶 + 上升气泡
+      bottle(-2.4);
+      ctx.beginPath(); ctx.arc(6.6, 5.2, 1.4, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(9.0, 0.6, 1.8, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(6.8, -4.4, 1.2, 0, Math.PI * 2); ctx.fill();
+    } else if (icon === 'bottleInject') {
+      // 集气瓶 + 向瓶内注入的下箭头
+      bottle(-2.4);
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(7.8, -8.0);
+      ctx.lineTo(7.8, 2.4);
+      ctx.moveTo(5.6, 0.2);
+      ctx.lineTo(7.8, 3.0);
+      ctx.lineTo(10.0, 0.2);
       ctx.stroke();
     }
     ctx.restore();
@@ -969,7 +1226,8 @@ export class Hud {
     // 极窄视口（无全屏的手机横屏）再缩一档：0.76 → 0.60
     const k = tinyView(canvasLW(ctx.canvas), canvasLH(ctx.canvas)) ? 0.60
       : compactView(canvasLW(ctx.canvas), canvasLH(ctx.canvas)) ? 0.76 : 1;
-    const atm = scene.atmosphere;
+    // 大气数据源：玩家在气室内时显示气室内部大气（与外部独立），否则显示场景大气
+    const atm = typeof scene.atmosphereForPlayer === 'function' ? scene.atmosphereForPlayer() : scene.atmosphere;
     // 身体组成（多物质才显示，单物质=血量本身）
     const masses = p.grid ? p.grid.masses() : null;
     const entries = masses
@@ -1203,12 +1461,14 @@ export class Hud {
     const rects = inventorySlotRects(W, H, slots, uiMargins(this.scene, this._uiK || 1));
     if (!this._pop) this._pop = {}; // 物品格弹跳计时 {i:{sig,t}}
     let minTop = Infinity;
+    let invRight = 0;
     for (let i = 0; i < rects.length; i++) {
       const r = rects[i];
       const x = r.x;
       const sy = r.y;
       const size = r.size;
       minTop = Math.min(minTop, sy);
+      invRight = Math.max(invRight, x + size);
       const sel = i === p.inventory.selected;
       // 弹跳：物品格内容变化（新装/吸液/倒出/收气）时缩放脉冲一下
       const s = slots[i];
@@ -1259,67 +1519,170 @@ export class Hud {
       }
       ctx.restore();
     }
-    // 选中物品 → 在物品栏上方显示"名称 + 内容组成 + 质量"（槽内不再挤文字，
-    // 说明文字也撤掉——内容一眼即懂）
+    // 桌面端：只有选中"有自定义操作的可拾取物品"时，才在物品栏上方显示该物品的键位提示
+    // （Q/⇧ 是通用操作，不常驻提示；未选物品/物品没有自定义操作时不显示任何提示条）。
+    const touch = this._isTouch();
     const selItem = p.inventory.selectedItem();
-    if (selItem) {
-      // 注意：selectedItem() 返回的就是物品实例本身（不是槽位条目），直接读它
-      const o = selItem;
-      let title = '';
-      let comp = '';
-      let mass = '';
-      let color = '#fff6dd';
-      if (selItem.isCarryItem === 'beaker') {
-        const total = o.solution ? o.solution.totalMass() : 0;
-        title = '烧杯';
-        comp = this._contentLine(o.solution ? [...o.solution.solutes.entries()] : [], total > 0.05 ? '水' : '空');
-        mass = `${total.toFixed(1)}g`;
-        if (o.solution && comp !== '空' && comp !== '水') color = solutionColor(o.solution).color;
-      } else if (selItem.isCarryItem === 'dropper') {
-        title = '滴管';
-        comp = o.liquid > 1e-9 ? (o.substance === 'H2O' ? '水' : o.substance) : '空';
-        mass = o.liquid > 1e-9 ? `${o.liquid.toFixed(1)}g` : '';
-        if (o.liquid > 1e-9 && o.substance !== 'H2O') color = o.liquidColor().color;
-      } else {
-        title = '集气瓶';
-        comp = o.totalGas() > 1e-9 ? this._contentLine([...o.gases.entries()], '') : '空';
-        mass = o.totalGas() > 1e-9 ? `${o.totalGas().toFixed(2)}g / ${o.capacity.toFixed(0)}g` : '';
-        if (o.totalGas() > 1e-9) color = o.gasColor();
-      }
-      ctx.save();
-      ctx.font = 'bold 12.5px "Segoe UI", "Microsoft YaHei", sans-serif';
-      const w1 = ctx.measureText(`${title}　${mass}`).width;
-      ctx.font = 'bold 11px monospace';
-      const w2 = ctx.measureText(comp).width;
-      const bw = Math.max(w1, w2) + 24;
-      const bx = W - (this._isTouch() ? (this.scene._touchUI.insets.right || 0) : 0) - bw - 12; // 右对齐：贴物品栏右缘上方
-      let by = minTop - 56;
-      // 触屏端：物品栏上方是 C/X/Q/⇧ 按钮块——面板再往上挪，不叠在按钮上
-      if (this._isTouch()) {
-        const ui = this.scene._touchUI;
-        const btns = touchButtonRects(W, H, slots, ui && ui.insets ? ui.insets : {});
-        let btnTop = Infinity;
-        for (const b of btns) btnTop = Math.min(btnTop, b.y);
-        if (btnTop < Infinity) by = btnTop - 50;
-      }
-      rr(ctx, bx, by, bw, 44, 9);
-      const g = ctx.createLinearGradient(bx, by, bx, by + 44);
-      g.addColorStop(0, 'rgba(26,22,52,0.95)');
-      g.addColorStop(1, 'rgba(12,10,30,0.95)');
-      ctx.fillStyle = g;
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(232,184,75,0.5)';
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      ctx.textAlign = 'left';
-      ctx.font = 'bold 12.5px "Segoe UI", "Microsoft YaHei", sans-serif';
-      ctx.fillStyle = '#ffe9b0';
-      ctx.fillText(`${title}　${mass}`, bx + 12, by + 18);
-      ctx.font = 'bold 11px monospace';
-      ctx.fillStyle = color;
-      ctx.fillText(comp, bx + 12, by + 36);
-      ctx.restore();
+    const actions = carryActionsOf(selItem);
+    let hintY = null;
+    if (!touch && actions.length) {
+      hintY = minTop - 34;
+      this._actionHints(ctx, invRight, hintY, actions);
     }
+    // ---- 选中物品说明面板：切换槽位时旧面板淡出、新面板淡入（不是硬切） ----
+    const selKey = selItem ? `${p.inventory.selected}:${selItem.isCarryItem}` : '';
+    if (this._infoKey !== selKey) {
+      if (this._infoCur) this._infoPrev = this._infoCur;
+      this._infoKey = selKey;
+      this._infoT = time;
+    }
+    const info = selItem ? this._itemInfoData(selItem) : null;
+    if (info) {
+      const layout = this._itemInfoLayout(ctx, W, H, touch, slots, actions, minTop, invRight, hintY, info);
+      this._infoCur = { ...info, ...layout };
+    } else {
+      this._infoCur = null;
+    }
+    const animDur = 0.17;
+    const animK = Math.max(0, Math.min(1, (time - this._infoT) / animDur));
+    const ease = (v) => v * v * (3 - 2 * v);
+    const e = ease(animK);
+    if (this._infoPrev) {
+      const a = 1 - e;
+      if (a > 0.01) this._drawItemInfo(ctx, this._infoPrev, a, -5 * e, 1);
+      if (animK >= 1) this._infoPrev = null;
+    }
+    if (this._infoCur) {
+      this._drawItemInfo(ctx, this._infoCur, e, (1 - e) * 6, 0.97 + 0.03 * e);
+    }
+  }
+
+  /** 选中物品说明面板的数据（名称 / 组成 / 质量 / 颜色） */
+  _itemInfoData(o) {
+    let title = '';
+    let comp = '';
+    let mass = '';
+    let color = '#fff6dd';
+    if (o.isCarryItem === 'beaker') {
+      const total = o.solution ? o.solution.totalMass() : 0;
+      title = '烧杯';
+      comp = this._contentLine(o.solution ? [...o.solution.solutes.entries()] : [], total > 0.05 ? '水' : '空');
+      mass = `${total.toFixed(1)}g`;
+      if (o.solution && comp !== '空' && comp !== '水') color = solutionColor(o.solution).color;
+    } else if (o.isCarryItem === 'dropper') {
+      title = '滴管';
+      comp = o.liquid > 1e-9 ? (o.substance === 'H2O' ? '水' : o.substance) : '空';
+      mass = o.liquid > 1e-9 ? `${o.liquid.toFixed(1)}g` : '';
+      if (o.liquid > 1e-9 && o.substance !== 'H2O') color = o.liquidColor().color;
+    } else {
+      title = '集气瓶';
+      comp = o.totalGas() > 1e-9 ? this._contentLine([...o.gases.entries()], '') : '空';
+      mass = o.totalGas() > 1e-9 ? `${o.totalGas().toFixed(2)}g / ${o.capacity.toFixed(0)}g` : '';
+      if (o.totalGas() > 1e-9) color = o.gasFillColor();
+    }
+    return { title, comp, mass, color };
+  }
+
+  /** 说明面板布局（右对齐物品栏；触屏端让开动态按钮块） */
+  _itemInfoLayout(ctx, W, H, touch, slots, actions, minTop, invRight, hintY, info) {
+    ctx.save();
+    ctx.font = 'bold 12.5px "Segoe UI", "Microsoft YaHei", sans-serif';
+    const w1 = ctx.measureText(`${info.title}　${info.mass}`).width;
+    ctx.font = 'bold 11px monospace';
+    const w2 = ctx.measureText(info.comp).width;
+    ctx.restore();
+    const bw = Math.max(w1, w2) + 24;
+    const bx = Math.max(6, invRight - bw);
+    let by;
+    if (touch) {
+      // 触屏端：物品栏上方是动态按钮块（基础 Q/⇧ + 物品操作）——面板再往上挪
+      const ui = this.scene._touchUI;
+      const btns = touchButtonRects(W, H, slots, ui && ui.insets ? ui.insets : {}, actions);
+      let btnTop = Infinity;
+      for (const b of btns) btnTop = Math.min(btnTop, b.y);
+      by = btnTop - 50;
+    } else {
+      by = hintY != null ? hintY - 6 - 44 : minTop - 56;
+    }
+    return { bx, by, bw };
+  }
+
+  /** 画一帧说明面板（alpha/dy/scale 供切换动画用） */
+  _drawItemInfo(ctx, snap, alpha, dy, scale) {
+    if (alpha <= 0.005) return;
+    const bx = snap.bx;
+    const by = snap.by + dy;
+    const cx = bx + snap.bw / 2;
+    const cy = by + 22;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+    if (Math.abs(scale - 1) > 0.001) {
+      ctx.translate(cx, cy);
+      ctx.scale(scale, scale);
+      ctx.translate(-cx, -cy);
+    }
+    rr(ctx, bx, by, snap.bw, 44, 9);
+    const g = ctx.createLinearGradient(bx, by, bx, by + 44);
+    g.addColorStop(0, 'rgba(26,22,52,0.95)');
+    g.addColorStop(1, 'rgba(12,10,30,0.95)');
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(232,184,75,0.5)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.textAlign = 'left';
+    ctx.font = 'bold 12.5px "Segoe UI", "Microsoft YaHei", sans-serif';
+    ctx.fillStyle = '#ffe9b0';
+    ctx.fillText(`${snap.title}　${snap.mass}`, bx + 12, by + 18);
+    ctx.font = 'bold 11px monospace';
+    ctx.fillStyle = snap.color;
+    ctx.fillText(snap.comp, bx + 12, by + 36);
+    ctx.restore();
+  }
+
+  /** 桌面端物品操作键位提示条（物品栏上方；只在选中物品有自定义操作时显示）：
+   *  只列该物品自己的操作（名称/键位来自 items.carryActionsOf + 设置里的键位；
+   *  按住类加"按住"前缀）。Q/⇧ 是通用操作，不在这里常驻。 */
+  _actionHints(ctx, right, y, actions) {
+    const entries = actions.map((a) => ({ key: a.action, label: a.hold ? `按住${a.label}` : a.label }));
+    const h = 22;
+    ctx.save();
+    ctx.font = '10.5px "Segoe UI", "Microsoft YaHei", sans-serif';
+    const items = entries.map((e) => {
+      const kt = actionKeyLabel(e.key);
+      const kw = Math.max(16, ctx.measureText(kt).width + 10);
+      const lw = ctx.measureText(e.label).width;
+      return { ...e, kt, kw, lw, w: kw + 4 + lw };
+    });
+    const gap = 10;
+    const pad = 10;
+    const total = items.reduce((s, it) => s + it.w, 0) + gap * (items.length - 1) + pad * 2;
+    let x = Math.max(6, right - total);
+    rr(ctx, x, y, total, h, 6);
+    ctx.fillStyle = 'rgba(10,10,26,0.72)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(232,184,75,0.28)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    x += pad;
+    const cy = y + h / 2;
+    for (const it of items) {
+      rr(ctx, x, cy - 8, it.kw, 16, 4);
+      ctx.fillStyle = 'rgba(30,26,60,0.95)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(232,184,75,0.55)';
+      ctx.stroke();
+      ctx.fillStyle = '#ffd76a';
+      ctx.font = 'bold 10px "Segoe UI", "Microsoft YaHei", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(it.kt, x + it.kw / 2, cy + 3.5);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#cfe0ff';
+      ctx.font = '10.5px "Segoe UI", "Microsoft YaHei", sans-serif';
+      ctx.fillText(it.label, x + it.kw + 4, cy + 3.5);
+      x += it.w + gap;
+    }
+    ctx.restore();
   }
 
   /** 物质格：元素色圆点 + 名称 + 质量 */
@@ -1355,172 +1718,317 @@ export class Hud {
   }
 
   /** 物品格图标（烧杯/滴管/集气瓶——不堆叠，一物一格）。
-   *  槽内**只画物体本身**（成分/名称挪到上方"选中物品"面板，免得文字糊住造型）；
-   *  仅右下角保留一个小小的质量数字。 */
+   *  小尺寸新风格缩略图：暗紫玻璃 + 黄铜口沿/卡箍 + 液体/气体元素色，只画物体本身；
+   *  右下角保留一个小小的质量数字（成分/名称在上方"选中物品"面板）。
+   *  约 18~24px，细节克制（无随机、无动画）；空槽/选中态由外层 HUD 面板负责。 */
   drawItemIcon(ctx, s, r, time) {
     const o = s.obj;
     const size = r.size;
     const cx = r.x + size / 2;
     const cy = r.y + size / 2 + 1;
+    // 紧凑/极小视口下物品格会缩到 50/41px：图标同比例缩，避免压到质量小字
+    const k = Math.max(0.58, Math.min(1, size / 70));
+    // 小图标共用黄铜渐变（亮铜 → 铜 → 暗铜；竖渐变足够）
+    const brass = (x, y, w, h) => {
+      const g = ctx.createLinearGradient(x, y, x, y + h);
+      g.addColorStop(0, THEME.gold.light);
+      g.addColorStop(0.5, THEME.gold.base);
+      g.addColorStop(1, THEME.gold.deep);
+      return g;
+    };
     ctx.save();
     ctx.textAlign = 'center';
     if (s.item === 'beaker') {
-      // 迷你烧杯：U 形玻璃 + 按液量比例的液面
-      const bw = 21;
-      const bh = 27;
-      const bx = cx - bw / 2;
-      const by = cy - bh / 2 + 3;
+      // ---- 迷你烧杯：暗紫玻璃 U 形 + 黄铜口沿 + 刻度 + 液体 ----
+      const bw = 22;
+      const bh = 26;
+      const botR = 3.5;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.scale(k, k);
+      const bx = -bw / 2;
+      const by = -bh / 2 + 1;
+      const glassPath = () => {
+        ctx.beginPath();
+        ctx.moveTo(bx, by + 1.6);
+        ctx.lineTo(bx, by + bh - botR);
+        ctx.arcTo(bx, by + bh, bx + botR, by + bh, botR);
+        ctx.lineTo(bx + bw - botR, by + bh);
+        ctx.arcTo(bx + bw, by + bh, bx + bw, by + bh - botR, botR);
+        ctx.lineTo(bx + bw, by + 1.6);
+        ctx.closePath();
+      };
+      // 玻璃体（暗紫玻璃）
+      glassPath();
+      const glass = ctx.createLinearGradient(bx, by, bx, by + bh);
+      glass.addColorStop(0, 'rgba(150,130,230,0.26)');
+      glass.addColorStop(0.5, 'rgba(80,70,150,0.16)');
+      glass.addColorStop(1, 'rgba(120,110,200,0.22)');
+      ctx.fillStyle = glass;
+      ctx.fill();
+      // 液体（按液量比例从杯底升起；溶液色沿用世界渲染取色）
       const { color, alpha } = o.solution ? solutionColor(o.solution) : { color: '#9adcff', alpha: 0.2 };
       const vol = o.solution && o.solution.volume > 0 ? o.solution.volume : CFG.item.beakerCapacity;
       const frac = Math.max(0, Math.min(1, (o.solution ? o.solution.totalMass() : 0) / vol));
-      const lh = Math.max(0.01, (bh - 4) * frac);
       if (frac > 0.01) {
-        ctx.globalAlpha = Math.max(alpha, 0.35);
+        ctx.save();
+        glassPath();
+        ctx.clip();
+        const lh = Math.max(1.5, (bh - 4) * frac);
+        const ly = by + bh - 2 - lh;
+        ctx.globalAlpha = Math.max(alpha, 0.42);
         ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.roundRect(bx + 1, by + bh - 1 - lh, bw - 2, lh, 2);
-        ctx.fill();
-        // 液面亮线
-        ctx.globalAlpha = Math.min(1, alpha + 0.25);
-        ctx.fillStyle = 'rgba(255,255,255,0.55)';
-        ctx.fillRect(bx + 1.5, by + bh - 1 - lh, bw - 3, 1);
+        ctx.fillRect(bx + 1, ly, bw - 2, lh + 1.5);
         ctx.globalAlpha = 1;
+        // 液面亮线
+        ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        ctx.fillRect(bx + 1.4, ly, bw - 2.8, 0.9);
+        ctx.restore();
       }
-      ctx.strokeStyle = 'rgba(225,245,255,0.88)';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(bx + 0.5, by);
-      ctx.lineTo(bx + 0.5, by + bh - 3);
-      ctx.quadraticCurveTo(bx + 0.5, by + bh - 0.5, bx + 3, by + bh - 0.5);
-      ctx.lineTo(bx + bw - 3, by + bh - 0.5);
-      ctx.quadraticCurveTo(bx + bw - 0.5, by + bh - 0.5, bx + bw - 0.5, by + bh - 3);
-      ctx.lineTo(bx + bw - 0.5, by);
+      // 玻璃描边 + 左侧高光
+      glassPath();
+      ctx.strokeStyle = 'rgba(205,225,255,0.75)';
+      ctx.lineWidth = 1.1;
       ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.30)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(bx + 1.2, by + 3);
+      ctx.lineTo(bx + 1.2, by + bh - botR - 1);
+      ctx.stroke();
+      // 杯口开口：深色扁椭圆 + 两侧极短铜口沿（不是盖在杯口的横梁）
+      ctx.beginPath();
+      ctx.ellipse(0, by + 1.2, bw / 2 - 0.8, Math.max(1.2, bw * 0.05), 0, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(7,10,26,0.6)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(205,225,255,0.65)';
+      ctx.lineWidth = 0.9;
+      ctx.stroke();
+      const tickW = 2.4;
+      for (const sx of [bx - 0.2, bx + bw - tickW + 0.2]) {
+        rr(ctx, sx, by - 0.4, tickW, 2.0, 0.7);
+        ctx.fillStyle = brass(sx, by - 0.4, tickW, 2.0);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(30,20,6,0.7)';
+        ctx.lineWidth = 0.6;
+        ctx.stroke();
+      }
+      // 右侧刻度（两道短线）
+      ctx.strokeStyle = 'rgba(226,236,255,0.38)';
+      ctx.lineWidth = 0.8;
+      for (const [gy2, len] of [[by + bh * 0.42, 4.5], [by + bh * 0.62, 3.2]]) {
+        ctx.beginPath();
+        ctx.moveTo(bx + bw - 2, gy2);
+        ctx.lineTo(bx + bw - 2 - len, gy2);
+        ctx.stroke();
+      }
+      ctx.restore(); // 图标缩放结束（质量小字用未缩放坐标）
       this._slotGrams(ctx, `${(o.solution ? o.solution.totalMass() : 0).toFixed(0)}g`, cx, r.y + size - 5);
     } else if (s.item === 'dropper') {
-      // 迷你滴管：胶头泪滴 → 颈环 → 锥形玻璃管（内充液体、液面高光）→ 尖嘴 → 刻度线
+      // ---- 迷你滴管：黄铜卡箍 + 暗紫玻璃细管 + 红胶头 + 管内液面 ----
       ctx.save();
-      ctx.translate(cx, cy - 3);
-      const { color } = o.liquid > 1e-9 ? o.liquidColor() : { color: '#9fdcff' };
+      ctx.translate(cx, cy);
+      ctx.scale(k, k);
+      const { color: lcolor, alpha: lalpha } = o.liquid > 1e-9 ? o.liquidColor() : { color: '#9fdcff', alpha: 0.5 };
       const frac = Math.max(0, Math.min(1, o.liquid / o.capacity));
-      // 胶头（红色泪滴：圆肩收腰）
-      const bg = ctx.createRadialGradient(-1.5, -22, 1, 0, -18, 10);
-      bg.addColorStop(0, '#e2596a');
-      bg.addColorStop(1, '#a12634');
-      ctx.fillStyle = bg;
-      ctx.beginPath();
-      ctx.moveTo(-5.2, -11);
-      ctx.bezierCurveTo(-7.5, -19, -4.5, -24.5, 0, -24.5);
-      ctx.bezierCurveTo(4.5, -24.5, 7.5, -19, 5.2, -11);
-      ctx.closePath();
+      const tubeTop = -7;
+      const tubeBot = 12;
+      const tubeHalfTop = 2.8;
+      const tubeHalfBot = 1.4;
+      const tubePath = () => {
+        ctx.beginPath();
+        ctx.moveTo(-tubeHalfTop, tubeTop);
+        ctx.lineTo(tubeHalfTop, tubeTop);
+        ctx.lineTo(tubeHalfBot, tubeBot);
+        ctx.lineTo(-tubeHalfBot, tubeBot);
+        ctx.closePath();
+      };
+      // 玻璃细管（暗紫玻璃）
+      tubePath();
+      const tg = ctx.createLinearGradient(-tubeHalfTop, 0, tubeHalfTop, 0);
+      tg.addColorStop(0, 'rgba(190,215,255,0.34)');
+      tg.addColorStop(0.45, 'rgba(110,95,190,0.20)');
+      tg.addColorStop(1, 'rgba(190,215,255,0.28)');
+      ctx.fillStyle = tg;
       ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,0.45)';
-      ctx.beginPath();
-      ctx.ellipse(-2, -20, 1.5, 2.6, -0.4, 0, Math.PI * 2);
-      ctx.fill();
-      // 颈环（固定胶头的金属箍）
-      ctx.fillStyle = '#d8b45c';
-      ctx.fillRect(-4.4, -11.5, 8.8, 2.4);
-      // 玻璃管（上宽下窄的锥形）
-      const tubeTop = -9;
-      const tubeBot = 13;
-      ctx.beginPath();
-      ctx.moveTo(-2.8, tubeTop);
-      ctx.lineTo(2.8, tubeTop);
-      ctx.lineTo(1.15, tubeBot);
-      ctx.lineTo(-1.15, tubeBot);
-      ctx.closePath();
-      ctx.fillStyle = 'rgba(215,235,255,0.14)';
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(225,245,255,0.85)';
+      // 管内液体（按比例自底向上；液面小椭圆高光）
+      if (frac > 0.01) {
+        ctx.save();
+        tubePath();
+        ctx.clip();
+        const hInner = tubeBot - tubeTop - 1.2;
+        const lh = hInner * frac;
+        const ly = tubeBot - 0.6 - lh;
+        ctx.globalAlpha = Math.max(lalpha, 0.45);
+        ctx.fillStyle = lcolor;
+        ctx.fillRect(-tubeHalfTop - 0.5, ly, tubeHalfTop * 2 + 1, lh + 1.5);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = 'rgba(255,255,255,0.6)';
+        ctx.beginPath();
+        ctx.ellipse(0, ly + 0.5, tubeHalfBot * 0.85, 0.5, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      // 玻璃描边 + 左缘高光
+      tubePath();
+      ctx.strokeStyle = 'rgba(210,230,255,0.8)';
       ctx.lineWidth = 1;
       ctx.stroke();
-      // 管内液体（按比例自底向上；顶部液面小椭圆高光）
-      if (frac > 0.01) {
-        const hInner = tubeBot - tubeTop - 1.6;
-        const lh = hInner * frac;
-        const ly = tubeBot - 0.8 - lh;
-        ctx.save();
+      ctx.strokeStyle = 'rgba(255,255,255,0.42)';
+      ctx.lineWidth = 0.7;
+      ctx.beginPath();
+      ctx.moveTo(-tubeHalfTop + 0.7, tubeTop + 1);
+      ctx.lineTo(-tubeHalfBot + 0.3, tubeBot - 1);
+      ctx.stroke();
+      // 黄铜卡箍（胶头/玻璃管交界）
+      rr(ctx, -4.6, -10.2, 9.2, 2.6, 1.1);
+      ctx.fillStyle = brass(0, -10.2, 9.2, 2.6);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(30,20,6,0.75)';
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+      // 红橡胶胶头（泪滴：圆肩 → 收腰进卡箍；高光）
+      const bg = ctx.createRadialGradient(-2, -17, 0.5, 0, -16, 8);
+      bg.addColorStop(0, '#ff9298');
+      bg.addColorStop(0.55, '#d23a46');
+      bg.addColorStop(1, '#8e1f2a');
+      ctx.fillStyle = bg;
+      ctx.beginPath();
+      ctx.moveTo(-3.3, -10.4);
+      ctx.bezierCurveTo(-6.7, -13.6, -6.2, -20.2, 0, -20.4);
+      ctx.bezierCurveTo(6.2, -20.2, 6.7, -13.6, 3.3, -10.4);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(70,12,18,0.5)';
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.45)';
+      ctx.beginPath();
+      ctx.ellipse(-2.2, -17.2, 1.4, 2.2, -0.5, 0, Math.PI * 2);
+      ctx.fill();
+      // 锥形滴嘴 + 尖端小液珠（有液体时）
+      ctx.beginPath();
+      ctx.moveTo(-tubeHalfBot, tubeBot);
+      ctx.lineTo(0, tubeBot + 6.4);
+      ctx.lineTo(tubeHalfBot, tubeBot);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(190,215,255,0.22)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(210,230,255,0.7)';
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+      if (o.liquid > 1e-9) {
+        ctx.globalAlpha = Math.max(lalpha, 0.5);
+        ctx.fillStyle = lcolor;
         ctx.beginPath();
-        ctx.moveTo(-2.25, tubeTop + 0.6);
-        ctx.lineTo(2.25, tubeTop + 0.6);
-        ctx.lineTo(0.95, tubeBot - 0.8);
-        ctx.lineTo(-0.95, tubeBot - 0.8);
-        ctx.closePath();
-        ctx.clip();
-        ctx.globalAlpha = Math.max(0.42, o.liquidColor().alpha ?? 0.6);
-        ctx.fillStyle = color;
-        ctx.fillRect(-3, ly, 6, lh + 2);
-        ctx.restore();
-        ctx.fillStyle = 'rgba(255,255,255,0.65)';
+        ctx.arc(0, tubeBot + 7.6, 1.15, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = 'rgba(255,255,255,0.7)';
         ctx.beginPath();
-        ctx.ellipse(0, ly + 0.6, 1.9 - (1.05 * (lh / hInner)), 0.55, 0, 0, Math.PI * 2);
+        ctx.arc(-0.35, tubeBot + 7.2, 0.35, 0, Math.PI * 2);
         ctx.fill();
       }
-      // 尖嘴（细口）
-      ctx.beginPath();
-      ctx.moveTo(-1.15, tubeBot);
-      ctx.lineTo(0, tubeBot + 6.5);
-      ctx.lineTo(1.15, tubeBot);
-      ctx.closePath();
-      ctx.fillStyle = 'rgba(215,235,255,0.2)';
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(215,235,255,0.75)';
-      ctx.stroke();
-      // 刻度短线（右侧三道）
-      ctx.strokeStyle = 'rgba(235,245,255,0.55)';
-      ctx.lineWidth = 0.8;
-      for (let i = 1; i <= 3; i++) {
-        const yy = tubeBot - i * 4.5;
-        const half = 2.6 - i * 0.45;
+      // 右侧刻度短线（两道）
+      ctx.strokeStyle = 'rgba(235,245,255,0.5)';
+      ctx.lineWidth = 0.7;
+      for (const yy of [tubeTop + 5, tubeTop + 9]) {
         ctx.beginPath();
-        ctx.moveTo(half, yy);
-        ctx.lineTo(half + 2.4, yy);
+        ctx.moveTo(tubeHalfTop - 1, yy);
+        ctx.lineTo(tubeHalfTop + 1.6, yy);
         ctx.stroke();
       }
       ctx.restore();
       this._slotGrams(ctx, o.liquid > 1e-9 ? `${o.liquid.toFixed(1)}g` : '', cx, r.y + size - 5);
     } else if (s.item === 'bottle') {
-      // 迷你集气瓶：玻璃瓶 + 气体填充 + 盖板横杠
-      const bw = 18;
-      const bh = 26;
-      const bx = cx - bw / 2;
-      const by = cy - bh / 2 + 4;
+      // ---- 迷你集气瓶：瓶口敞开 + 暗紫玻璃瓶身 + 充满瓶内的淡气体雾 ----
+      const bw = 19;
+      const bh = 22;
+      const botR = 3;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.scale(k, k);
+      const bx = -bw / 2;
+      const bodyY = -6;
+      const color = o.gasFillColor();
       const frac = Math.max(0, Math.min(1, o.totalGas() / o.capacity));
-      const color = o.gasColor();
+      // 玻璃瓶身（暗紫玻璃）
+      rr(ctx, bx, bodyY, bw, bh, botR);
+      const glass = ctx.createLinearGradient(bx, bodyY, bx, bodyY + bh);
+      glass.addColorStop(0, 'rgba(150,130,230,0.26)');
+      glass.addColorStop(0.5, 'rgba(80,70,150,0.15)');
+      glass.addColorStop(1, 'rgba(120,110,200,0.22)');
+      ctx.fillStyle = glass;
+      ctx.fill();
+      // 气体：整瓶均匀淡雾（没有液面/没有底部堆积）
       if (frac > 0.01) {
-        const hex = color.replace('#', '');
-        const cr = parseInt(hex.slice(0, 2), 16);
-        const cg = parseInt(hex.slice(2, 4), 16);
-        const cb = parseInt(hex.slice(4, 6), 16);
-        ctx.globalAlpha = 0.45 + 0.2 * frac;
-        ctx.fillStyle = `rgb(${cr},${cg},${cb})`;
-        ctx.shadowColor = color;
-        ctx.shadowBlur = 5;
+        ctx.save();
         ctx.beginPath();
-        ctx.roundRect(bx + 1, by + bh - 13 * frac, bw - 2, 13 * frac, 2);
-        ctx.fill();
-        ctx.shadowBlur = 0;
+        ctx.roundRect(bx + 0.8, bodyY + 0.8, bw - 1.6, bh - 1.6, Math.max(1.5, botR - 1));
+        ctx.clip();
+        ctx.globalAlpha = 0.16 + 0.20 * frac;
+        ctx.fillStyle = color;
+        ctx.fillRect(bx + 1, bodyY + 1, bw - 2, bh - 2);
         ctx.globalAlpha = 1;
+        // 两缕很淡的漂移气团
+        for (const [px, py, pr] of [[bx + bw * 0.36, bodyY + bh * 0.34, bw * 0.34], [bx + bw * 0.64, bodyY + bh * 0.64, bw * 0.3]]) {
+          const g = ctx.createRadialGradient(px, py, 1, px, py, pr);
+          g.addColorStop(0, rgbaOf(color, 0.22 + 0.12 * frac));
+          g.addColorStop(1, rgbaOf(color, 0));
+          ctx.fillStyle = g;
+          ctx.fillRect(px - pr, py - pr, pr * 2, pr * 2);
+        }
+        ctx.restore();
       }
-      ctx.strokeStyle = 'rgba(215,235,255,0.85)';
-      ctx.lineWidth = 1.3;
-      ctx.beginPath();
-      ctx.roundRect(bx, by, bw, bh, 3);
+      // 玻璃描边 + 左侧高光
+      rr(ctx, bx, bodyY, bw, bh, botR);
+      ctx.strokeStyle = 'rgba(205,225,255,0.75)';
+      ctx.lineWidth = 1.1;
       ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+      ctx.lineWidth = 0.9;
       ctx.beginPath();
-      ctx.moveTo(bx + 4, by);
-      ctx.lineTo(bx + 5, by - 4);
-      ctx.lineTo(bx + bw - 5, by - 4);
-      ctx.lineTo(bx + bw - 4, by);
+      ctx.moveTo(bx + 1.3, bodyY + 2);
+      ctx.lineTo(bx + 1.3, bodyY + bh - botR - 1);
       ctx.stroke();
-      // 盖板（横杠盖在瓶口上方）
-      ctx.strokeStyle = 'rgba(240,250,255,0.95)';
-      ctx.lineWidth = 1.5;
+      // 瓶颈（玻璃梯形）
       ctx.beginPath();
-      ctx.moveTo(bx + 1, by - 6);
-      ctx.lineTo(bx + bw - 1, by - 6);
+      ctx.moveTo(bx + 4, bodyY);
+      ctx.lineTo(bx + 5, bodyY - 4);
+      ctx.lineTo(bx + bw - 5, bodyY - 4);
+      ctx.lineTo(bx + bw - 4, bodyY);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(140,120,220,0.20)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(205,225,255,0.7)';
+      ctx.lineWidth = 1;
       ctx.stroke();
+      // 黄铜卡箍（瓶身/瓶颈交界）
+      rr(ctx, bx + 2, bodyY - 1.4, bw - 4, 2.4, 1);
+      ctx.fillStyle = brass(0, bodyY - 1.4, bw, 2.4);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(30,20,6,0.7)';
+      ctx.lineWidth = 0.7;
+      ctx.stroke();
+      // 敞开瓶口：暗色椭圆 + 细玻璃口沿（没有盖板）
+      ctx.beginPath();
+      ctx.ellipse(0, bodyY - 3.8, bw / 2 - 5, 1.2, 0, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(7,10,26,0.62)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(205,225,255,0.7)';
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+      // 下部黄铜卡箍 + 底部暗钢圈
+      rr(ctx, bx + 0.5, bodyY + bh - 7.5, bw - 1, 2, 1);
+      ctx.fillStyle = brass(0, bodyY + bh - 7.5, bw, 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(30,20,6,0.6)';
+      ctx.lineWidth = 0.6;
+      ctx.stroke();
+      rr(ctx, bx, bodyY + bh - 2.4, bw, 2.4, 1);
+      ctx.fillStyle = 'rgba(58,63,92,0.95)';
+      ctx.fill();
+      ctx.restore(); // 图标缩放结束（质量小字用未缩放坐标）
       this._slotGrams(ctx, o.totalGas() > 1e-9 ? `${o.totalGas().toFixed(1)}g` : '', cx, r.y + size - 5);
     }
     ctx.restore();
@@ -1651,6 +2159,121 @@ export class Hud {
     ctx.restore();
   }
 
+  // ---- 重开选择菜单（HUD 画布弹层；scene.restartMenuOpen 时绘制，游戏已暂停）----
+
+  /** 重开菜单：全屏暗场 + 居中深紫金边面板（与通关/死亡面板同款），顶部 mono
+   *  kicker「CHEZZLE · RESTART」+ 标题「重开」，两个平行四边形按钮竖排：
+   *  主按钮「回到存档点」（金色渐变深色字；无存档 = 灰暗禁用态）、
+   *  次按钮「整局重开」（冷色斜牌）。几何与命中同源（click.js restartMenuLayout）。 */
+  restartMenu(ctx, scene, W, H, time) {
+    if (!scene.restartMenuOpen) { this._menuAt = null; return; }
+    const L = restartMenuLayout(W, H);
+    const pr = L.panel;
+    const hasSave = Savepoint.has(scene);
+    // 入场淡入（墙钟：菜单打开时游戏时钟已暂停，time 不再前进）
+    const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    if (this._menuAt == null) this._menuAt = now;
+    const t = Math.max(0, (now - this._menuAt) / 1000);
+    const easeOut = (x) => 1 - Math.pow(1 - Math.max(0, Math.min(1, x)), 3);
+    const a = easeOut(t / 0.22);
+    const inY = (1 - a) * 10;
+    // 主按钮轻微呼吸辉光（用墙钟，暂停时仍缓慢脉动）
+    const pulse = 0.5 + 0.5 * Math.sin(now / 420);
+    ctx.save();
+    ctx.globalAlpha = a;
+    // 暗场：与通关/死亡遮罩同一套深紫渐晕
+    const vg = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.12, W / 2, H / 2, Math.max(W, H) * 0.8);
+    vg.addColorStop(0, 'rgba(18,14,46,0.55)');
+    vg.addColorStop(1, 'rgba(5,4,16,0.86)');
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, W, H);
+    // 中央很淡的主题底光
+    const glow = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.min(W, H) * 0.42);
+    glow.addColorStop(0, 'rgba(232,184,75,0.09)');
+    glow.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, W, H);
+    // 面板（深紫渐变 + 金描边 + 8px 辉光，与通关/死亡面板同款）
+    panel(ctx, pr.x, pr.y + inY, pr.w, pr.h, THEME.gold.deep, 12);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    // 顶部 mono kicker
+    ctx.fillStyle = 'rgba(232,184,75,0.75)';
+    ctx.font = 'bold 10px ui-monospace, Consolas, monospace';
+    ctx.fillText('CHEZZLE · RESTART', W / 2, pr.y + inY + 22);
+    // 分隔线（中间亮、两端淡）
+    const lg = ctx.createLinearGradient(pr.x + 40, 0, pr.x + pr.w - 40, 0);
+    lg.addColorStop(0, 'rgba(232,184,75,0)');
+    lg.addColorStop(0.5, 'rgba(232,184,75,0.45)');
+    lg.addColorStop(1, 'rgba(232,184,75,0)');
+    ctx.strokeStyle = lg;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(pr.x + 40, pr.y + inY + 36);
+    ctx.lineTo(pr.x + pr.w - 40, pr.y + inY + 36);
+    ctx.stroke();
+    // 标题「重开」
+    ctx.fillStyle = THEME.gold.text;
+    ctx.font = 'bold 24px "Segoe UI", "Microsoft YaHei", sans-serif';
+    ctx.shadowColor = 'rgba(232,184,75,0.55)';
+    ctx.shadowBlur = 10;
+    ctx.fillText('重开', W / 2, pr.y + inY + 70);
+    ctx.shadowBlur = 0;
+    // 按钮（斜牌）：主按钮金色渐变深色字（无存档 = 灰暗禁用），次按钮冷色斜牌
+    const cp = { ...L.checkpoint, y: L.checkpoint.y + inY };
+    const fl = { ...L.full, y: L.full.y + inY };
+    this._menuButton(ctx, cp, hasSave ? 'gold' : 'disabled', '回到存档点', pulse);
+    this._menuButton(ctx, fl, 'cold', '整局重开', 0);
+    ctx.textBaseline = 'alphabetic';
+    ctx.textAlign = 'left';
+    ctx.restore();
+  }
+
+  /** 重开菜单按钮（平行四边形斜牌）：kind = gold（主按钮）/ disabled（无存档禁用态）/
+   *  cold（次按钮，冷色底 + 青描边）。文字居中、保持正立。 */
+  _menuButton(ctx, r, kind, label, pulse = 0) {
+    const sk = Math.min(12, r.h * 0.26);
+    ctx.save();
+    para(ctx, r.x, r.y, r.w, r.h, sk);
+    const g = ctx.createLinearGradient(0, r.y, 0, r.y + r.h);
+    if (kind === 'gold') {
+      g.addColorStop(0, '#ffd76a');
+      g.addColorStop(0.5, '#e8b84b');
+      g.addColorStop(1, '#b9821f');
+    } else if (kind === 'disabled') {
+      g.addColorStop(0, 'rgba(74,64,52,0.55)');
+      g.addColorStop(1, 'rgba(32,27,25,0.55)');
+    } else {
+      g.addColorStop(0, '#2a3a5e');
+      g.addColorStop(1, '#141d38');
+    }
+    ctx.fillStyle = g;
+    ctx.fill();
+    if (kind === 'gold') {
+      ctx.strokeStyle = 'rgba(255,240,200,0.95)';
+      ctx.lineWidth = 1.6;
+      ctx.shadowColor = 'rgba(255,215,106,0.85)';
+      ctx.shadowBlur = 8 + 4 * pulse;
+    } else if (kind === 'disabled') {
+      ctx.strokeStyle = 'rgba(232,184,75,0.28)';
+      ctx.lineWidth = 1.2;
+      ctx.shadowBlur = 0;
+    } else {
+      ctx.strokeStyle = 'rgba(191,230,255,0.75)';
+      ctx.lineWidth = 1.2;
+      ctx.shadowColor = 'rgba(127,216,255,0.55)';
+      ctx.shadowBlur = 6;
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = kind === 'gold' ? '#221605' : kind === 'disabled' ? 'rgba(255,233,176,0.38)' : '#bfe6ff';
+    ctx.font = 'bold 16px "Segoe UI", "Microsoft YaHei", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, r.x + r.w / 2, r.y + r.h / 2 + 0.5);
+    ctx.restore();
+  }
+
   // ---- 通关 / 死亡遮罩（与 HUD 同一套"神话·元素"面板风格：圆角深紫面板 + 金描边，
   //      入场只做淡入 + 轻推；不再用大红/荧光色或大徽记，避免和游戏整体风格脱节。
   //      通关若已有关卡页 DOM 浮层，画布这边只铺暗场，避免两套 UI 叠一起）----
@@ -1763,8 +2386,12 @@ export class Hud {
     ctx.fillText(sub, cx, py + 132);
     // 操作提示：与游戏按钮同款"斜牌 + 冷色底 + 细描边"
     if (!win) {
-      const touch = scene._touchUI && scene._touchUI.enabled();
-      const hintTxt = touch ? '轻触屏幕重新开始' : '按 R 重开';
+      const touch = this._isTouch();
+      // 有存档点：点击/轻触 = 回存档点；R 键 = 整局重开（刷新页面，快照随内存清空）
+      const hasSave = Savepoint.has(scene);
+      const hintTxt = touch
+        ? (hasSave ? '轻触屏幕回到存档点' : '轻触屏幕重新开始')
+        : (hasSave ? '点击屏幕回到存档点 · R 整局重开' : '点击屏幕重新开始 · R 重开');
       ctx.font = 'bold 11px "Segoe UI", "Microsoft YaHei", sans-serif';
       const hw = ctx.measureText(hintTxt).width + 26;
       const hx = cx - hw / 2;
