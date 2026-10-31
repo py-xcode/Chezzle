@@ -37,6 +37,9 @@ export class GasChamber extends Obj {
 
   constructor({ x = 0, y = 0, w = 160, h = 120, gases = null, id = '', ...rest } = {}) {
     super({ x, y, w, h, solid: false, physicsKind: 'none', id, ...rest });
+    // 气室的玻璃/框架画在腔内物体之后（renderer 按 layer 升序）：
+    // 外部能明显看出"里面的东西隔着一层玻璃"，探测器/玩家进入气室后也会被玻璃罩住。
+    if (!Number.isFinite(rest.layer)) this.layer = 1.5;
     this.atmosphere = new Atmosphere(); // 气室内部大气（独立于 scene.atmosphere）
     this._initialGases = gases; // { 气体id: 质量g }；null/空对象 = 不配置 → 复制外部大气
     this._seeded = false; // 幂等初始化标记（Scene 首刻前 seed；update 里补一次）
@@ -251,6 +254,69 @@ export class GasChamber extends Obj {
       ctx.lineWidth = 1;
       rr(ctx, x + 2, y + 2, Math.max(2, w - 4), Math.max(2, h - 4), 2);
       ctx.stroke();
+    }
+    if (!small) this._renderGasReadout(ctx, x, y, w, h, frame);
+    ctx.restore();
+  }
+
+  /** 从外面能看到气室内当前气体：底部小读数条（主气体色点 + 气体名/质量百分比）。
+   *  未 seed（编辑器预览）时退回 initial gases，避免空腔读数缺失。 */
+  _renderGasReadout(ctx, x, y, w, h, frame) {
+    let entries = [...this.atmosphere.gas.entries()].filter(([, m]) => m > 1e-9);
+    if (!entries.length && this._initialGases) {
+      entries = Object.entries(this._initialGases).filter(([, m]) => Number(m) > 1e-9).map(([id, m]) => [id, Number(m)]);
+    }
+    if (!entries.length) return;
+    entries.sort((a, b) => b[1] - a[1]);
+    const total = entries.reduce((s, [, m]) => s + m, 0);
+    if (!(total > 0)) return;
+    const fs = Math.max(8, Math.min(12, Math.min(w, h) * 0.055));
+    const padX = Math.max(5, fs * 0.55);
+    const padY = Math.max(2.5, fs * 0.3);
+    const maxW = Math.max(8, w - frame * 2 - fs);
+    const parts = entries.slice(0, 3).map(([id, m]) => ({
+      id,
+      // 亚 1% 显示 <1%，不要显示成 0%（避免误以为"0% 也有这种气体"）
+      pct: Math.round((m / total) * 100),
+      pctText: (m / total) * 100 >= 1 ? `${Math.round((m / total) * 100)}%` : '<1%',
+      color: getSubstance(id)?.gasColor || NEUTRAL_HAZE,
+    }));
+    ctx.save();
+    ctx.font = `bold ${fs}px ui-monospace, Consolas, monospace`;
+    const measure = (s) => {
+      try {
+        const m = ctx.measureText(s);
+        return m && Number.isFinite(m.width) ? m.width : s.length * fs * 0.62;
+      } catch (e) { return s.length * fs * 0.62; }
+    };
+    // 优先显示多的气体；太窄就只显示主成分
+    let text = parts.map((p) => `${p.id} ${p.pctText}`).join('  ');
+    const pieceW = () => parts.reduce((s, p) => s + measure(`${p.id} ${p.pctText}`) + 14, 0);
+    while (parts.length > 1 && pieceW() > maxW - padX * 2) {
+      parts.pop();
+      text = parts.map((p) => `${p.id} ${p.pctText}`).join('  ');
+    }
+    const tw = Math.min(maxW, pieceW() + padX * 2);
+    const bx = x + frame + 5;
+    const by = y + h - frame - (fs + padY * 2) - 5;
+    rr(ctx, bx, by, tw, fs + padY * 2, 3);
+    ctx.fillStyle = 'rgba(7,6,22,0.62)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(232,184,75,0.28)';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+    // 主气体色点 + 读数（每段前一个小圆点）
+    let dx = bx + padX;
+    const cy = by + (fs + padY * 2) / 2;
+    for (const p of parts) {
+      ctx.beginPath();
+      ctx.arc(dx, cy, Math.max(1.3, fs * 0.15), 0, Math.PI * 2);
+      ctx.fillStyle = p.color;
+      ctx.fill();
+      ctx.fillStyle = 'rgba(232,240,255,0.88)';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`${p.id} ${p.pctText}`, dx + 4, cy + 0.5);
+      dx += measure(`${p.id} ${p.pctText}`) + 14;
     }
     ctx.restore();
   }

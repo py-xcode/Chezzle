@@ -50,6 +50,7 @@ Object.assign(exports, __require('src/objects/beaker.js'));;
 Object.assign(exports, __require('src/objects/rope.js'));;
 Object.assign(exports, __require('src/objects/gascolumn.js'));;
 Object.assign(exports, __require('src/objects/sign.js'));;
+Object.assign(exports, __require('src/objects/checkpoint.js'));;
 Object.assign(exports, __require('src/objects/bubble.js'));;
 Object.assign(exports, __require('src/objects/spark.js'));;
 Object.assign(exports, __require('src/objects/portal.js'));;
@@ -154,7 +155,7 @@ const CFG = {
   lampRange: 70, // px（灯提供加热/点燃的半径）
   lampLightRange: 180, // px（灯提供"光照"条件的半径——见光分解如 HClO）
   placeLampRange: 120, // px（放置沉淀到灯上的半径）
-  inventory: { slots: 5, capacity: 100, slotPx: 56, itemSlotPx: 70 }, // 物品格在 HUD 中放大（装烧杯/滴管/集气瓶看得清）
+  inventory: { slots: 5, capacity: 100, slotPx: 56, itemSlotPx: 70 }, // slotPx=桌面槽宽；itemSlotPx 只用于小屏槽宽缩放（5 格统一，不单独放大）
 
   // 相机视窗（世界坐标）：设计基准 1000×800；画布宽高比与之不同时按比例展开
   // （见 Camera.compute），可见范围被这两条夹住——太大会糊成一片，太小会看不到周边。
@@ -253,6 +254,7 @@ class Scene {
     this.lamps = [];
     this.gasTubes = []; // 导气管（输入端产气 → 多个输出端；见 objects/gastube.js）
     this.gasChambers = []; // 气室（内部独立大气区域；见 objects/gaschamber.js）
+    this.checkpoints = []; // 存档点（玩家进入区域/进入场景时自动存档；见 objects/checkpoint.js）
     this.doors = [];
     this.portals = [];
     this.particles = [];
@@ -588,6 +590,7 @@ class Scene {
     if (obj.isLamp) this.lamps.push(obj);
     if (obj.isGasTube) this.gasTubes.push(obj);
     if (obj.isGasChamber) this.gasChambers.push(obj); // 气室：独立大气区域
+    if (obj.isCheckpoint) this.checkpoints.push(obj); // 存档点
     if (obj.isDoor) this.doors.push(obj);
     if (obj instanceof Portal) this.portals.push(obj);
     if (obj instanceof Particle) this.particles.push(obj);
@@ -618,7 +621,7 @@ class Scene {
    *  延迟出现/开关隐藏的物体必须**物理也不计算**：半空摆的玩家隐身时不能坠地。 */
   _deindex(obj) {
     const arrays = [this.objects, this.dynamics, this.statics, this.particles,
-      this.containers, this.lamps, this.gasTubes, this.gasChambers, this.doors, this.portals, this.hidden];
+      this.containers, this.lamps, this.gasTubes, this.gasChambers, this.doors, this.portals, this.checkpoints, this.hidden];
     for (const arr of arrays) {
       const i = arr.indexOf(obj);
       if (i >= 0) arr.splice(i, 1);
@@ -631,7 +634,10 @@ class Scene {
    *  与「初始隐藏(靠开关)」互不干扰：已 hidden 的物体不抢（开关负责它）。
    *  ★ 隐藏 = 物理/逻辑完全冻结（半空玩家隐身期间不下落，到时在原地开始下落）。 */
   applyAppearDelays() {
-    for (const o of this.objects.filter((x) => Number(x.appearDelay) > 0)) {
+    // ★ 存档点不参与"延迟出现"：它是无碰撞触发区，隐藏后 update 完全不执行，
+    //   玩家在它显形前走过去会漏存档（教程关卡最末端存档点复现）。标记的延迟
+    //   可以不做；触发判定必须在整段关卡期间有效。
+    for (const o of this.objects.filter((x) => Number(x.appearDelay) > 0 && !x.isCheckpoint)) {
       const d = Number(o.appearDelay);
       o.hidden = true;
       this._deindex(o);
@@ -976,6 +982,14 @@ class Scene {
     return c ? (c._reactGas ??= {}) : this._reactGas;
   }
 
+  /** 只记录"反应产气"到指定区域（不触发气泡柱/截留/吸收）。
+   *  用于直接写大气的反应产物；chamber=null → 外部大气。 */
+  recordReactionGas(id, mass, chamber = null) {
+    if (!id || !(mass > 1e-12)) return;
+    const rg = chamber ? (chamber._reactGas ??= {}) : this._reactGas;
+    rg[id] = (rg[id] ?? 0) + mass;
+  }
+
   /** 某区域的点燃源：气室只认与它重叠的灯；外部不认气室内的灯（大气互不影响） */
   _litLampsIn(chamber) {
     return this.lamps.filter((l) => {
@@ -1015,10 +1029,20 @@ class Scene {
       globalIgnited: this._litLampsIn(chamber).length > 0,
       emit: (product, origin) => this.routeProduct(product, origin),
       onGas: (id, mass, ctx) => this.onGas(id, mass, ctx),
+      // 只记录反应产气（气体探测器数据源），不冒气泡柱/不截留——供反应直接写大气的
+      // 场景（如 NH3+Cl2 气相归中）使用；否则生成的气体探测器看不见。
+      recordGas: (id, mass) => this.recordReactionGas(id, mass, chamber),
       onReaction: (text) => this.onReaction(text),
       onSpark: () => this.onSpark(), // 金属燃烧的火星（火星四射）
       customReactions: this.customReactions, // 关卡自定义反应（L0 最高优先级）
       debugMode: this.debugMode,
+      // 电解池阳极产生的 Cl2 是电极处直接逸出的，不参与同池碱液的"尾气吸收"；
+      // 否则 NaOH/Ba(OH)2 会把刚生成的黄绿色氯气立刻吃掉，只剩 H2/O2 的观感。
+      absorbBlocked: (gas) => {
+        const c = obj && (obj instanceof Container ? obj : obj._container);
+        return !!(gas === 'Cl2' && c && c.isVariantPool && c.mode === 'electric'
+          && typeof c.active === 'function' && c.active(this));
+      },
       explode: (point, strength, cause) => this.explode(point ?? null, strength, cause),
       // 爆炸中心：当前反应点；大气爆炸（无反应点）取该区域第一个点燃灯的火苗位置
       explodePoint: this._emitCtx
@@ -1377,6 +1401,9 @@ class Scene {
           deferAtmosphere: true, // 多余部分交回本方法（先在管口冒柱、再入大气）
         });
         if (leftover > 1e-9) {
+          // 输出池端的"反应产气"记录：输出端气体探测器/气敏开关要能看到经管道送来的气
+          target._reactGas = target._reactGas ?? {};
+          target._reactGas[id] = (target._reactGas[id] ?? 0) + leftover;
           const region = this.gasChamberFor(target);
           const captured = this._gasPlume(id, leftover, {
             bubbleDir: -1, // 管口多余气体：冒柱（液下气泡上浮）
@@ -1596,6 +1623,16 @@ class Scene {
       else if (vp.mode === 'heat') heat = true;
       else if (vp.mode === 'electric') electric = true;
     }
+    // 容器受热会传给容器内的物体（烧杯放在灯上 → 杯内固体也受热）。
+    // 只看一层容器，避免容器自引用递归。
+    const owner = obj && obj.containerMaterial && obj.containerMaterial.owner;
+    if (owner && owner !== obj && !owner.isLamp) {
+      const c = this.conditionsFor(owner);
+      heat = heat || c.heat;
+      highTemp = highTemp || c.highTemp;
+      electric = electric || c.electric;
+      light = light || c.light;
+    }
     const ignited = heat || highTemp || (obj && obj.isBurning);
     const hasCatalyst = (id) => this.catalystNear(obj, id);
     return { heat, highTemp, electric, ignited, light, hasCatalyst };
@@ -1619,6 +1656,9 @@ class Scene {
   }
 
   catalystNear(obj, id) {
+    // 同容器内的催化剂（池里/灯上的 MnO2 粉末）也要算——旧实现跳过 o===obj，
+    // 而容器材料的 avail 已包含自身沉淀，导致"MnO2 撒在 H2O2 池里不催化"。
+    if (obj && obj.material && obj.material.avail(id) > 0) return true;
     for (const o of this.objects) {
       if (o === obj || !o.material) continue;
       if (o.material.avail(id) > 0 && overlaps(o, obj, 1)) return true;
@@ -1670,25 +1710,35 @@ class Scene {
         // 产物落点成为容器"最近落点"——后续反应/气泡/沉淀围绕它（不再回池中央）
         if (ctx.point) cont.depositAt = { x: ctx.point.x, y: ctx.point.y };
         cont.addPrecipitate(product.id, product.mass, ctx.point, origin);
-        this._precipFx(product.id, ctx.point); // 沉淀生成：物色尘雾（限频，视觉反馈）
+        this._precipFx(product.id, ctx.point, ctx.spread ?? 8); // 沉淀生成：物色尘雾（限频，视觉反馈）
         return;
       }
     }
     // 游离固体产物：落到干燥地面/灯面/玩家身上的是**可拾取粉末**，与它是否溶于水无关
     // （Na2CO3 等可溶盐也会先以固体掉出来；溶解只影响遇水后的行为，不影响 Q 拾取）。
     // 旧逻辑用 !isSoluble 当 collectible，导致 NaHCO3 受热生成的 Na2CO3 掉在地上捡不起来。
-    this.spawnParticles(product.id, product.mass, ctx.point, true, false, origin);
-    this._precipFx(product.id, ctx.point); // 游离沉淀：同款尘雾反馈
+    // 沉淀生成范围跟随反应上下文：气室大气反应 spread≈半个舱体，白烟/盐粉不会全从
+    // 气室中心一个点冒出来；普通接触/容器反应仍用紧凑的 8px。
+    this.spawnParticles(product.id, product.mass, ctx.point, true, false, origin, ctx.spread ?? 8);
+    this._precipFx(product.id, ctx.point, ctx.spread ?? 8); // 游离沉淀：同款尘雾反馈
   }
 
-  /** 沉淀生成时的物色尘雾（纯视觉；0.22s 限频，避免每 tick 刷对象） */
-  _precipFx(id, point) {
+  /** 沉淀生成时的物色尘雾（纯视觉；0.22s 限频，避免每 tick 刷对象）。
+   *  spread 跟随反应上下文：气室白烟/尘雾用大范围，普通反应保持紧凑。 */
+  _precipFx(id, point, spread = 9) {
     if (!point) return;
     if (this.time - (this._fxPrecipT ?? -10) < 0.22) return;
     this._fxPrecipT = this.time;
     const solid = getSubstance(id).solid?.[0] ?? '#c9c0b0';
     const c = hexToRgb(solid);
-    puffFx(this, point.x, point.y, { color: `${c.r},${c.g},${c.b}`, r: 3.2, spread: 9, life: 0.32, n: 3 });
+    const cloudSpread = Math.max(9, Math.min(90, spread * 0.7));
+    puffFx(this, point.x, point.y, {
+      color: `${c.r},${c.g},${c.b}`,
+      r: 3.2,
+      spread: cloudSpread,
+      life: 0.32,
+      n: cloudSpread > 20 ? 6 : 3,
+    });
   }
 
   /** placed=true 的粒子有碰撞箱（放置的沉淀可垫脚）；origin 记录产物来源（调试悬停显示）。
@@ -1704,7 +1754,8 @@ class Scene {
       this.addObject(
         new Particle({
           x: point.x + (Math.random() - 0.5) * spread,
-          y: point.y - (i % 3) * 2,
+          // 大范围（气室白烟/大滩沉淀）额外给 y 抖动，避免所有颗粒排成一条中心竖线
+          y: point.y - (i % 3) * 2 + (spread > 16 ? (Math.random() - 0.5) * spread * 0.35 : 0),
           substance: id,
           amount,
           collectible,
@@ -2019,7 +2070,7 @@ function phaseFactor(p1, p2) {
 /** 是否"真实溶液"（含水介质）：干式台子（酒精灯/喷灯/开关 volume=0 无水）上的
  *  沉淀粉末是固体、不电离，不能当溶液用（phase 恒为 'solution' 是适配器实现细节） */
 function hasSolution(m) {
-  return !!(m && m.phase === 'solution' && m.solution && m.solution.volume > 0);
+  return !!(m && m.phase === 'solution' && m.solution && m.solution.liquidVolume() > 0);
 }
 
 /** 条件判定：heat/highTemp/ignited/催化/浓+加热/氧分压分支（组合条件全部满足才算真） */
@@ -2037,16 +2088,24 @@ function conditionMet(cond, env, ctx) {
     if (cond.heat !== undefined && !(env.conditions.heat || env.conditions.highTemp)) return false;
     if (cond.highTemp !== undefined && !env.conditions.highTemp) return false;
     if (cond.electric !== undefined && !env.conditions.electric) return false; // 电解（电解池）
-    if (cond.ignited !== undefined && !(env.conditions.ignited && env.atmosphere.o2Fraction() > COMBUSTION_MIN_O2)) return false;
+    if (cond.ignited !== undefined && !env.conditions.ignited) return false;
+    // 卤素燃烧（Cu/Fe + Cl2）不依赖 O2：例如纯 Cl2 气室里没有氧气，仍应能点燃。
+    // cond.gas 指定氧化性气体；不写 gas 的旧 ignited 规则仍要求 O2 达标。
+    if (cond.ignited !== undefined) {
+      if (cond.gas) {
+        if (!(env.atmosphere.mass(cond.gas) > 1e-6)) return false;
+      } else if (!(env.atmosphere.o2Fraction() > COMBUSTION_MIN_O2)) return false;
+    }
     if (cond.light !== undefined && !env.conditions.light) return false; // 见光反应（HClO 分解等）
     if (cond.o2 !== undefined) {
       const f = env.atmosphere.o2Fraction();
       if (cond.o2 === 'low' && !(f < 0.15 && f > COMBUSTION_MIN_O2)) return false;
       if (cond.o2 === 'high' && !(f >= 0.15)) return false;
+      if (cond.o2 === 'pure' && !(f >= 0.6)) return false; // 纯氧/富氧（空气 0.2 不算）
     }
     if (cond.concHigh !== undefined && !(ctx && ctx.acidConc >= CONC_HIGH)) return false;
     // 需"真实溶液"介质（容器有水，volume>0）：干式台子/开阔地固固不满足
-    if (cond.solution !== undefined && !(ctx.containerMat && ctx.containerMat.solution && ctx.containerMat.solution.volume > 0)) return false;
+    if (cond.solution !== undefined && !(ctx.containerMat && ctx.containerMat.solution && ctx.containerMat.solution.liquidVolume() > 0)) return false;
     return true; // 组合条件全部满足
   }
   return false;
@@ -2108,12 +2167,14 @@ class ChemistryEngine {
     // + 灯上 CuSO4 粉末没有水就不该生成 Cu(OH)2。纯固-固接触只走特例表（铝热等）
     // 与高温固固还原（CuO+C 等）
     const bothSolid = !hasSolution(matA) && !hasSolution(matB);
+    if (!bothSolid) this._tryRedoxPair(matA, matB, dt, env, ctx);
+    // 特例优先于通用离子交换（双水解/配合物/沉淀转化不能被普通复分解抢先）；
+    // 固-固特例（Fe+S、铝热等）也走这里，不能在 !bothSolid 分支里被跳过
+    this._trySpecialPairs(matA, matB, dt, env, ctx);
     if (!bothSolid) {
-      this._tryRedoxPair(matA, matB, dt, env, ctx);
       this._tryIonic(matA, matB, dt, env, ctx);
       this._tryDisplacement(matA, matB, dt, env, ctx);
     }
-    this._trySpecialPairs(matA, matB, dt, env, ctx);
     this._trySolidReduction(matA, matB, dt, env, ctx);
   }
 
@@ -2166,14 +2227,14 @@ class ChemistryEngine {
     // 同材料特例：Na2O2 遇大气 CO2、CaCO3/Na2CO3 遇大气 CO2 成酸式盐
     this._trySpecialSelf(mat, dt, env, ctx);
     // 同材料特例配对（同一材料里两种溶质/沉淀混合：K2Cr2O7+NaOH 同池、
-    // Na2CO3+HCl 分步、Al(OH)3+NaOH 两性溶解等）
+    // Na2CO3+HCl 分步、Al(OH)3+NaOH 两性溶解、双水解等）；气体规则交给 _trySpecialSelf。
     for (const rule of SPECIAL_PAIR_RULES) {
-      const [r0, r1] = rule.reactants;
-      if (getSubstance(r0.id).state === 'gas' || getSubstance(r1.id).state === 'gas') continue; // 气体规则由 _trySpecialSelf 处理
-      if (rule.waterNeeded) continue; // 需水规则（CaCO3/Na2CO3+CO2）由 _trySpecialSelf 处理
-      if (mat.avail(r0.id) > 0 && mat.avail(r1.id) > 0) {
-        this._runRule(rule, { [r0.id]: mat, [r1.id]: mat }, dt, env, ctx);
-      }
+      if (rule.atmosphereOnly) continue;
+      // 气体反应物通常交给 _trySpecialSelf / reactAtmosphere；但如果该气体
+      // 以溶质形式真的存在于本材料（如关卡把 H2S 写进池水），仍要允许特例
+      // 在同一溶液内反应——否则 H2S + HClO/FeCl2 永远被跳过。
+      if (rule.reactants.some((r) => getSubstance(r.id).state === 'gas' && !(mat.avail(r.id) > 0))) continue;
+      this._runPairDataRule(rule, mat, mat, dt, env, ctx);
     }
     // 同材料离子反应（同池溶质混合：FeCl3+KSCN、NaOH+CuSO4 同池、AgNO3+NaCl 等）
     this._tryIonic(mat, mat, dt, env, ctx);
@@ -2261,6 +2322,7 @@ class ChemistryEngine {
     const ctx = this._ctxOf(baseMat, baseMat, dt, env);
     for (const id of baseMat.ids()) {
       for (const gas of ['CO2', 'SO2', 'Cl2', 'NH3']) {
+        if (env.absorbBlocked?.(gas)) continue; // 电解池阳极 Cl2 直接逸出，不被同池碱液吸收
         const rule = acidGasRuleFor(gas, id);
         if (!rule) continue;
         const gasAvail = env.atmosphere.mass(gas);
@@ -2302,39 +2364,93 @@ class ChemistryEngine {
       // 原因只列"显著"燃料（≥10% 总量，主导者在前），避免把残留的微量 H2 写进爆鸣原因误导
       const cause = `${FUELS.filter((f) => atm.mass(f) > fuel * 0.1).sort((a, b) => atm.mass(b) - atm.mass(a)).join('+') || '可燃气体'} 爆鸣`;
       atm._cause = cause; // 盖章：爆鸣消耗燃料/O2 的原因
-      for (const g of FUELS) atm.remove(g, atm.mass(g));
-      atm.remove('O2', Math.min(atm.mass('O2'), fuel * 2.5));
+      // 质量守恒：按各燃料完全燃烧计量消耗 O2 并生成产物（O2 不足时按比例不完全燃烧）
+      const need = { H2: 8, CO: 0.571, CH4: 4, H2S: 1.412 }; // 每 g 燃料所需 O2 g
+      let o2Need = 0;
+      for (const g of FUELS) o2Need += atm.mass(g) * (need[g] ?? 2);
+      const o2Have = atm.mass('O2');
+      const k = o2Need > 0 ? Math.min(1, o2Have / o2Need) : 1;
+      const prod = { H2O: 0, CO2: 0, SO2: 0 };
+      for (const g of FUELS) {
+        const m = atm.mass(g) * k;
+        atm.remove(g, m);
+        if (g === 'H2') prod.H2O += m * 9;
+        else if (g === 'CO') prod.CO2 += m * (44 / 28);
+        else if (g === 'CH4') { prod.CO2 += m * (44 / 16); prod.H2O += m * (36 / 16); }
+        else if (g === 'H2S') { prod.SO2 += m * (64 / 34); prod.H2O += m * (18 / 34); }
+      }
+      atm.remove('O2', Math.min(o2Have, o2Need * k));
+      for (const [id, m] of Object.entries(prod)) if (m > 1e-9) atm.add(id, m);
       if (env.explode) env.explode(env.explodePoint ?? null, strength, cause);
       return;
+    }
+    // 常温/见光的大气反应（不依赖点燃）：2NO+O2、2H2S+SO2、H2+Cl2 等
+    const atmMat = this._atmMat(env);
+    const ctx = this._ctxOf(atmMat, atmMat, dt, env);
+    const ambientRule = (rule) => rule.condition === 'normal'
+      || (rule.condition && typeof rule.condition === 'object' && rule.condition.light !== undefined);
+    for (const rule of ATMOSPHERE_SPECIAL_RULES) {
+      if (!ambientRule(rule)) continue;
+      const s = {};
+      for (const r of rule.reactants) s[r.id] = atmMat;
+      this._runRule(rule, s, dt, env, ctx);
+    }
+    // 气相归中：2NH3 + 3Cl2 → N2 + 6HCl(g)（氨过量时下一步白烟继续把 HCl 变成 NH4Cl）。
+    // 直接写大气，不走 _runRule 的产气钩子（否则 HCl 会被截成气泡柱，无法继续与 NH3 反应）。
+    {
+      const mmNH3 = getSubstance('NH3').mm;
+      const mmCl2 = getSubstance('Cl2').mm;
+      const mmN2 = getSubstance('N2').mm;
+      const mmHCl = getSubstance('HCl(g)').mm;
+      const nh3 = atm.mass('NH3');
+      const cl2 = atm.mass('Cl2');
+      if (nh3 > 1e-9 && cl2 > 1e-9) {
+        const maxByCl2 = (cl2 * 2 * mmNH3) / (3 * mmCl2);
+        const takeNH3 = Math.min(nh3, maxByCl2, RATE.special * dt * 0.5);
+        if (takeNH3 > 1e-9) {
+          const units = takeNH3 / (2 * mmNH3);
+          this._stamp(ctx, reactionEquation(['NH3', 'Cl2'], ['N2', 'HCl(g)']));
+          atm.remove('NH3', takeNH3);
+          atm.remove('Cl2', units * 3 * mmCl2);
+          const n2Mass = units * mmN2;
+          const hclMass = units * 6 * mmHCl;
+          atm.add('N2', n2Mass);
+          atm.add('HCl(g)', hclMass);
+          // 气相产物也要进气体探测器数据源（它们没走 _emitGas 的产气钩子）
+          ctx.env.recordGas?.('N2', n2Mass);
+          ctx.env.recordGas?.('HCl(g)', hclMass);
+        }
+      }
+    }
+    // 白烟：NH3 + HCl(g) → NH4Cl（大气中相遇成固体小颗粒；常温即可，不需点燃）
+    {
+      const nh3 = atm.mass('NH3');
+      const hcl = atm.mass('HCl(g)');
+      if (nh3 > 1e-9 && hcl > 1e-9) {
+        const mmNH3 = getSubstance('NH3').mm;
+        const mmHCl = getSubstance('HCl(g)').mm;
+        const m = Math.min(nh3, (hcl * mmNH3) / mmHCl, RATE.special * dt);
+        if (m > 1e-9) {
+          this._stamp(ctx, reactionEquation(['NH3', 'HCl(g)'], ['NH4Cl']));
+          atm.remove('NH3', m);
+          atm.remove('HCl(g)', (m * mmHCl) / mmNH3);
+          ctx.env.emit({ id: 'NH4Cl', mass: m * (1 + mmHCl / mmNH3), phase: 'particle' }, ctx.lastRxText);
+        }
+      }
     }
     if (!env.globalIgnited) return;
     // 缓慢燃烧（低浓度）与大气特殊反应（合成氨、氨催化氧化）
     const env2 = { ...env, conditions: { ...env.conditions, ignited: true } };
-    const atmMat = this._atmMat(env);
-    const ctx = this._ctxOf(atmMat, atmMat, dt, env2);
     for (const rule of ATMOSPHERE_COMBUSTION_RULES) {
       const s = {};
       for (const r of rule.reactants) s[r.id] = atmMat;
       this._runRule(rule, s, dt, env2, ctx);
     }
     for (const rule of ATMOSPHERE_SPECIAL_RULES) {
+      if (ambientRule(rule)) continue;
       const s = {};
       for (const r of rule.reactants) s[r.id] = atmMat;
       this._runRule(rule, s, dt, env2, ctx);
-    }
-    // 白烟：NH3 + HCl → NH4Cl（大气中相遇成固体小颗粒）
-    const nh3 = atm.mass('NH3');
-    const hcl = atm.mass('HCl');
-    if (nh3 > 1e-9 && hcl > 1e-9) {
-      const mmNH3 = getSubstance('NH3').mm;
-      const mmHCl = getSubstance('HCl').mm;
-      const m = Math.min(nh3, (hcl * mmNH3) / mmHCl, RATE.special * dt);
-      if (m > 1e-9) {
-        this._stamp(ctx, reactionEquation(['NH3', 'HCl'], ['NH4Cl']));
-        atm.remove('NH3', m);
-        atm.remove('HCl', (m * mmHCl) / mmNH3);
-        ctx.env.emit({ id: 'NH4Cl', mass: m * (1 + mmHCl / mmNH3), phase: 'particle' }, ctx.lastRxText);
-      }
     }
   }
 
@@ -2365,9 +2481,10 @@ class ChemistryEngine {
       for (const id of mat.ids()) {
         if (OXIDIZERS[id]) list.push({ oxId: id });
         // 非氧化性酸（HCl/稀 H2SO4）→ 归一为 H+ 氧化剂（金属+酸产 H2）；
-        // HNO3 是氧化性酸走 NO3- 还原（表中 HNO3 条目）
+        // HNO3 是氧化性酸走 NO3- 还原（表中 HNO3 条目）。H2SO4 同时保留"浓硫酸氧化"
+        // 分支：稀硫酸走 H+ 产氢，浓+加热才走 SO2（见 _isPassivated / push 过滤）。
         const s = getSubstance(id);
-        if (s.ions?.cat === 'H+' && s.kind === 'acid' && id !== 'HNO3' && id !== 'H2SO4') {
+        if (s.ions?.cat === 'H+' && s.kind === 'acid' && id !== 'HNO3') {
           list.push({ oxId: 'H+', acidId: id });
         }
         if (id === 'H2SO4') list.push({ oxId: 'H2SO4', acidId: 'H2SO4' }); // 浓硫酸氧化（稀/常温不氧化见 _isPassivated）
@@ -2381,6 +2498,10 @@ class ChemistryEngine {
           if (oxId === redId) continue;
           const red = REDUCERS[redId];
           if (!red) continue;
+          // 浓硫酸+加热时只走 H2SO4→SO2 分支，不再同时走 H+→H2（否则一边产 SO2 一边产 H2）
+          if (oxId === 'H+' && acidId === 'H2SO4'
+            && ctx.acidConc >= PASSIVATION_CONC
+            && (env.conditions.heat || env.conditions.highTemp)) continue;
           // 氧化剂强度门槛（I2 氧化性不足，不能氧化 Fe2+）
           if (red.minOx && (ox.strength ?? 0) < red.minOx) continue;
           if (this._isPassivated(oxId, redId, env, ctx)) continue;
@@ -2417,14 +2538,16 @@ class ChemistryEngine {
   }
 
   /** 还原剂"还原性强弱"（同共享氧化剂时强者先反应：I- > Fe2+ > Br-） */
-  _pickRedKey(oxId, redId, env, ctx) {
+  _pickRedKey(oxId, redId, env, ctx, oxMat, redMat) {
     const red = REDUCERS[redId];
     if (!red.branches) return undefined;
     if (red.branches.weak && red.branches.strong) {
       if (oxId === 'HNO3') {
         // Fe + HNO3 计量比：酸过量（n≥4×nFe）→ Fe3+；Fe 过量 → Fe2+
-        const nHNO3 = this._molesOf(ctx, oxId);
-        const nFe = this._molesOf(ctx, redId);
+        // ★ 必须从**实际含 Fe 的材料**取摩尔数：固体 Fe 不在容器溶液里，旧实现 nFe=0 →
+        //   比值无穷大永远走 Fe3+（铁过量也生成 Fe3+，与量变设计相反）。
+        const nHNO3 = this._molesIn(oxMat ?? ctx.containerMat, oxId);
+        const nFe = this._molesIn(redMat, redId);
         return nHNO3 / Math.max(1e-9, nFe) >= 4 ? 'strong' : 'weak';
       }
       return (OXIDIZERS[oxId].strength ?? 0) >= STRONG_OXIDIZER ? 'strong' : 'weak';
@@ -2436,17 +2559,33 @@ class ChemistryEngine {
     return undefined;
   }
 
+  /** 某材料里 id 的摩尔数（容器/固体/玩家通用） */
+  _molesIn(mat, id) {
+    if (!mat || typeof mat.avail !== 'function') return 0;
+    return mat.avail(id) / getSubstance(id).mm;
+  }
+
   /** 配平执行：摩尔推进（质量守恒） */
   _runRedox(cand, dt, env, ctx) {
     const { oxMat, redMat, oxId, redId } = cand;
-    const redKey = this._pickRedKey(oxId, redId, env, ctx);
+    const redKey = this._pickRedKey(oxId, redId, env, ctx, oxMat, redMat);
     const acidId = cand.acidId ?? (oxId === 'HNO3' || oxId === 'H+' ? (ctx.acidId || 'H2SO4') : ctx.acidId);
+    // 强碱中 KMnO4 遇过渡金属还原剂：按中性分支（MnO2 + 金属氢氧化物）配平，
+    // 避免把 MnO4^2- 与 Fe3+/Cu2+/Zn2+ 配成 Fe2(MnO4)3 之类不存在的盐。
+    let medium = ctx.medium;
+    let oxKey;
+    if (oxId === 'KMnO4' && ctx.medium === 'base'
+      && ['FeSO4', 'FeCl2', 'Fe', 'Cu', 'Zn', 'Mg', 'Al'].includes(redId)) {
+      medium = 'neutral';
+      oxKey = 'neutral';
+    }
     const eq = balanceRedox(oxId, redId, {
-      medium: ctx.medium,
+      medium,
       acidId,
       baseId: ctx.baseId,
       conc: ctx.acidConc,
       redKey,
+      oxKey,
     });
     if (!eq) return;
     // 防呆：产物与反应物完全同集（如 CuSO4+Cu 同元素往返）→ 跳过
@@ -2565,11 +2704,12 @@ class ChemistryEngine {
   _stepwiseCarbonate(matA, matB, idA, idB, eA, eB, dt, env, ctx) {
     const pick = (acidId, acidE, acidMat, carbId, carbE, carbMat) => {
       if (!acidE.ions || !carbE.ions) return null;
-      if (acidE.ions.cat !== 'H+' || (acidE.ions.catCount ?? 1) !== 1) return null;
+      if (acidE.ions.cat !== 'H+') return null;
       if (carbE.ions.an !== 'CO3^2-') return null;
       if (!isSoluble(carbId)) return null; // 不溶碳酸盐：表面直接分解（走离子路径产 CO2）
       return {
         acidId, acidMat, carbId, carbMat, acidE, carbE,
+        acidH: acidE.ions.catCount ?? 1, // 一元酸=1；二元/多元酸一次可质子化多个碳酸根
         bicarb: ensureSalt(carbE.ions.cat, 'HCO3-').id,
         bysalt: ensureSalt(carbE.ions.cat, acidE.ions.an).id,
       };
@@ -2583,12 +2723,13 @@ class ChemistryEngine {
     const rate = RATE.ionic * phaseFactor(m.acidMat.phase, m.carbMat.phase)
       * this._concFactorFor(m.acidMat, m.acidId) * this._concFactorFor(m.carbMat, m.carbId)
       * this._strengthFactor(m.acidMat, m.acidId);
-    const units = Math.min(availAcid, availCarb, (rate * dt) / mmAcid);
+    // 1 分子酸（含 acidH 个质子）+ acidH 个碳酸根 → acidH 个碳酸氢根 + 1 个酸根盐
+    const units = Math.min(availAcid, availCarb / m.acidH, (rate * dt) / mmAcid);
     // 组合成立但本 tick 推进量为 0：仍返回 true —— 只要碳酸根还在，产气那一步就得让路
     if (!(units > 1e-12)) return true;
     this._stamp(ctx, reactionEquation([m.acidId, m.carbId], [m.bicarb, m.bysalt]));
     const takeAcid = units * mmAcid;
-    const takeCarb = units * mmCarb;
+    const takeCarb = units * m.acidH * mmCarb;
     const remAcid = m.acidMat.consume(m.acidId, takeAcid);
     const remCarb = m.carbMat.consume(m.carbId, takeCarb);
     const scale = Math.min(
@@ -2597,7 +2738,7 @@ class ChemistryEngine {
     );
     if (!(scale > 1e-9)) return true;
     const act = units * scale;
-    this._emit(m.bicarb, act * getSubstance(m.bicarb).mm, ctx);
+    this._emit(m.bicarb, act * m.acidH * getSubstance(m.bicarb).mm, ctx);
     this._emit(m.bysalt, act * getSubstance(m.bysalt).mm, ctx);
     this._logReaction(ctx, [m.acidId, m.carbId], [m.bicarb, m.bysalt]);
     return true;
@@ -2732,15 +2873,35 @@ class ChemistryEngine {
     }
     if (catId === 'H+' && anId === 'HCO3-') return { drives: true, products: [{ id: 'CO2', coeff: 1 }, { id: 'H2O', coeff: 1 }] };
     if (catId === 'H+' && anId === 'SO3^2-') return { drives: true, products: [{ id: 'SO2', coeff: 1 }, { id: 'H2O', coeff: 1 }] };
-    if (catId === 'H+' && anId === 'S2-') return { drives: true, products: [{ id: 'H2S', coeff: 1 }] };
+    if (catId === 'H+' && anId === 'S2-') {
+      // CuS/Ag2S/PbS 不溶于非氧化性稀酸（溶度积很小）；FeS/ZnS 可溶
+      if (['CuS', 'Ag2S', 'PbS'].includes(idA) || ['CuS', 'Ag2S', 'PbS'].includes(idB)) {
+        return { drives: false, products: [] };
+      }
+      return { drives: true, products: [{ id: 'H2S', coeff: 1 }] };
+    }
     if (catId === 'H+' && anId === 'SiO3^2-') return { drives: true, products: [{ id: 'H2SiO3', coeff: 1 }] }; // 硅酸胶状沉淀（水玻璃+酸）
+    // 弱酸盐酸化（弱酸根 + H+ → 弱酸分子）
+    if (catId === 'H+' && anId === 'CH3COO-') return { drives: true, products: [{ id: 'CH3COOH', coeff: 1 }] };
+    if (catId === 'H+' && anId === 'C2O4^2-') return { drives: true, products: [{ id: 'H2C2O4', coeff: 1 }] };
+    if (catId === 'H+' && anId === 'ClO-') return { drives: true, products: [{ id: 'HClO', coeff: 1 }] };
+    if (catId === 'H+' && anId === 'PO4^3-') return { drives: true, products: [{ id: 'H3PO4', coeff: 1 }] };
+    // 偏铝酸盐 + 酸需要水参与（NaAlO2+HCl+H2O→Al(OH)3+NaCl），交给特例表，避免离子路径少水
+    if (catId === 'H+' && anId === 'AlO2-') return { drives: false, products: [] };
+    // 三价金属 + CO3/HCO3/S2：走双水解特例（不能按普通复分解生成 Fe2(CO3)3/Al2(CO3)3 等不存在的盐）
+    if ((catId === 'Fe3+' || catId === 'Al3+' || catId === 'Cr3+')
+      && (anId === 'CO3^2-' || anId === 'HCO3-' || anId === 'S2-')) return { drives: false, products: [] };
+    // Cu2+ + CO3 生成碱式碳酸铜（双水解特例），不走普通 CuCO3 沉淀
+    if (catId === 'Cu2+' && (anId === 'CO3^2-' || anId === 'HCO3-')) return { drives: false, products: [] };
     if (catId === 'NH4+' && anId === 'OH-') return { drives: true, products: [{ id: 'NH3', coeff: 1 }, { id: 'H2O', coeff: 1 }] };
     // 检验铁离子：Fe3+ + 3SCN- → 血红色溶液（显色驱动）
     if (catId === 'Fe3+' && anId === 'SCN-') return { drives: true, products: [{ id: 'Fe(SCN)3', coeff: 1 }] };
     const salt = ensureSalt(catId, anId);
     if (salt.id === idA || salt.id === idB) return { drives: false, products: [] };
     // 驱动判据：不溶 → 沉淀；**微溶**（solubilityLimit，如 Ca(OH)2/Ag2SO4/CaSO4/PbCl2）
-    // → 也生成（进溶液，超过饱和浓度时析出——"滴到一定量后溶液变浑浊"）
+    // → 也生成（进溶液，超过饱和浓度时析出——"滴到一定量后溶液变浑浊"）。
+    // 即使不驱动，也返回产物：复分解里"一边沉淀/产气、另一边是旁观可溶盐"时，
+    // 旁观盐仍要生成，否则质量会凭空消失（AgCl+NH3 的 NH4Cl 等）。
     return { drives: salt.soluble !== 'soluble' || salt.solubilityLimit > 0, products: [{ id: salt.id, coeff: 1 }] };
   }
 
@@ -2758,42 +2919,67 @@ class ChemistryEngine {
 
   _runPairDataRule(rule, matA, matB, dt, env, ctx) {
     if (rule.atmosphereOnly) return; // 仅大气反应（NH3+HCl 白烟在 reactAtmosphere）
-    // 碳酸盐+CO2→酸式盐需有水且非强酸性（酸性环境碳酸盐直接被酸分解产 CO2，不会积累酸式盐）
-    if (rule.waterNeeded && !(ctx.inContainer && ctx.containerMat.avail('H2O') > 0)) return;
-    if (rule.waterNeeded && ctx.medium === 'acid') return;
-    const [r0, r1] = rule.reactants;
-    const gas0 = getSubstance(r0.id).state === 'gas';
-    const gas1 = getSubstance(r1.id).state === 'gas';
-    const src0 = gas0 ? this._atmMat(env) : null;
-    const src1 = gas1 ? this._atmMat(env) : null;
-    const has0 = (m) => (gas0 ? src0.avail(r0.id) > 0 : m.avail(r0.id) > 0);
-    const has1 = (m) => (gas1 ? src1.avail(r1.id) > 0 : m.avail(r1.id) > 0);
-    if (has0(matA) && has1(matB)) {
-      this._runRule(rule, { [r0.id]: gas0 ? src0 : matA, [r1.id]: gas1 ? src1 : matB }, dt, env, ctx);
-    } else if (has0(matB) && has1(matA)) {
-      this._runRule(rule, { [r0.id]: gas0 ? src0 : matB, [r1.id]: gas1 ? src1 : matA }, dt, env, ctx);
+    const sources = {};
+    for (const r of rule.reactants) {
+      if (getSubstance(r.id).state === 'gas') {
+        // 气体也可能以"溶质"形式存在于溶液（编辑器/关卡把 H2S 直接写进 solutes）；
+        // 先取溶液里的同 id 气体，再退回大气。否则 Fe + 溶解 H2S 永远只看到大气。
+        if (matA.avail(r.id) > 0) sources[r.id] = matA;
+        else if (matB.avail(r.id) > 0) sources[r.id] = matB;
+        else sources[r.id] = this._atmMat(env);
+        continue;
+      }
+      if (r.id === 'H2O') {
+        // 水通常不在两个反应物材料里：优先容器溶液，其次任一侧材料
+        if (ctx.containerMat && ctx.containerMat.avail('H2O') > 0) sources[r.id] = ctx.containerMat;
+        else if (matA.avail('H2O') > 0) sources[r.id] = matA;
+        else if (matB.avail('H2O') > 0) sources[r.id] = matB;
+        continue;
+      }
+      if (matA.avail(r.id) > 0) sources[r.id] = matA;
+      else if (matB.avail(r.id) > 0) sources[r.id] = matB;
     }
+    for (const r of rule.reactants) {
+      if (!sources[r.id]) return;
+      if (sources[r.id].avail(r.id) <= 0) return;
+    }
+    // 碳酸盐 + 大气 CO2 成酸式盐：强酸环境不积累（直接分解产 CO2）；
+    // 加热环境下 CO2 溶解度下降、碳酸氢盐反而分解，不做碳酸化（否则加热池会自我反转）
+    if (rule.reactants.some((r) => r.id === 'CO2') && rule.reactants.some((r) => r.id === 'H2O')
+      && (ctx.medium === 'acid' || env.conditions.heat || env.conditions.highTemp)) return;
+    if (rule.co2Over && env.atmosphere.mass('CO2') < rule.co2Over) return;
+    this._runRule(rule, sources, dt, env, ctx);
   }
 
-  /** 同材料自反应特例：Na2O2 遇大气 CO2、碳酸盐遇过量 CO2 成酸式盐 */
+  /** 同材料自反应特例：Na2O2 遇大气 CO2、碳酸盐遇过量 CO2 成酸式盐。
+   *  规则统一从 SPECIAL_PAIR_RULES 里找"含气体的特例"，并把 H2O 从容器溶液补进来。 */
   _trySpecialSelf(mat, dt, env, ctx) {
     const atm = env.atmosphere;
-    // Na2O2 + CO2（大气）→ Na2CO3 + O2
-    if (mat.avail('Na2O2') > 0 && atm.mass('CO2') > 1e-9) {
-      const rule = SPECIAL_PAIR_RULES.find((r) => r.reactants[0].id === 'Na2O2' && r.reactants[1].id === 'CO2');
-      if (rule) this._runRule(rule, { Na2O2: mat, CO2: this._atmMat(env) }, dt, env, ctx);
-    }
-    // 溶液/池中的碳酸盐 + 过量大气 CO2 → 碳酸氢盐（少量 CO2 先生成正盐，过量后转化；酸性环境不转化）
-    if (ctx.inContainer && ctx.medium !== 'acid' && atm.mass('CO2') > 1e-9 && ctx.containerMat.avail('H2O') > 0) {
-      for (const rule of SPECIAL_PAIR_RULES) {
-        const [r0, r1] = rule.reactants;
-        const gasId = getSubstance(r0.id).state === 'gas' ? r0.id : getSubstance(r1.id).state === 'gas' ? r1.id : null;
-        if (gasId !== 'CO2') continue;
-        const solidId = r0.id === 'CO2' ? r1.id : r0.id;
-        if (mat.avail(solidId) > 0) {
-          this._runRule(rule, { [solidId]: mat, CO2: this._atmMat(env) }, dt, env, ctx);
+    for (const rule of SPECIAL_PAIR_RULES) {
+      const gasIds = rule.reactants.filter((r) => getSubstance(r.id).state === 'gas').map((r) => r.id);
+      if (!gasIds.length) continue;
+      // 目前同材料特例只处理大气 CO2（Na2O2 碳化、碳酸盐→酸式盐）
+      if (gasIds.some((id) => id !== 'CO2')) continue;
+      const solid = rule.reactants.find((r) => getSubstance(r.id).state !== 'gas' && r.id !== 'H2O');
+      if (!solid || !(mat.avail(solid.id) > 0)) continue;
+      const sources = {};
+      for (const r of rule.reactants) {
+        if (getSubstance(r.id).state === 'gas') { sources[r.id] = this._atmMat(env); continue; }
+        if (r.id === 'H2O') {
+          if (mat.avail('H2O') > 0) sources[r.id] = mat;
+          else if (ctx.containerMat && ctx.containerMat.avail('H2O') > 0) sources[r.id] = ctx.containerMat;
+          continue;
         }
+        if (mat.avail(r.id) > 0) sources[r.id] = mat;
+        else if (ctx.containerMat && ctx.containerMat.avail(r.id) > 0) sources[r.id] = ctx.containerMat;
       }
+      if (rule.reactants.some((r) => !sources[r.id])) continue;
+      if (rule.reactants.some((r) => !(sources[r.id].avail(r.id) > 0))) continue;
+      // 强酸/加热环境：碳酸盐优先与酸反应或分解，不积累酸式盐
+      if (rule.reactants.some((r) => r.id === 'H2O')
+        && (ctx.medium === 'acid' || env.conditions.heat || env.conditions.highTemp)) continue;
+      if (rule.co2Over && atm.mass('CO2') < rule.co2Over) continue;
+      this._runRule(rule, sources, dt, env, ctx);
     }
   }
 
@@ -2807,10 +2993,15 @@ class ChemistryEngine {
       const B = swapped ? matA : matB;
       for (const idM of A.ids()) {
         if (getSubstance(idM).kind !== 'metal') continue;
+        // Na/K/Li 遇盐溶液：先与水反应（特例），不直接置换金属
+        if (idM === 'Na' || idM === 'K' || idM === 'Li') continue;
         for (const idE of B.ids()) {
           const e = getSubstance(idE);
           if (!e.ions) continue;
           if (e.kind !== 'salt') continue; // 酸由 REDOX 的 H+ 氧化剂处理
+          // 金属盐（CuSO4/CuCl2/AgNO3/FeCl3…）已由 L1 REDOX 统一处理，
+          // 再走置换会双路执行（同一 tick 消耗两倍）
+          if (OXIDIZERS[idE]) continue;
           this._displaceOne(A, B, idM, idE, dt, env, ctx);
         }
       }
@@ -2978,7 +3169,7 @@ class ChemistryEngine {
       const info = mediaInfo(sol);
       medium = info.medium;
       acidId = info.acidId;
-      if (acidId) acidConc = (sol.mass(acidId) / sol.volume) * 1000;
+      if (acidId) acidConc = (sol.mass(acidId) / sol.liquidVolume()) * 1000;
       if (info.baseId) baseId = info.baseId;
       if (medium === 'acid' && !acidId) medium = 'neutral';
     }
@@ -2990,7 +3181,7 @@ class ChemistryEngine {
       // 干式台子（灯/开关 volume=0）只是"承载面"——可溶产物**不能**进它的溶液
       // （幽灵溶质：不可见、不可收集、质量凭空消失——用户确认的根因），
       // 要落回台面成固体粉末。
-      inLiquid: !!(containerMat && containerMat.solution && containerMat.solution.volume > 0),
+      inLiquid: !!(containerMat && containerMat.solution && containerMat.solution.liquidVolume() > 0),
       containerMat,
       playerInvolved: matA.isPlayer || matB.isPlayer,
       solidObj,
@@ -3021,8 +3212,21 @@ class ChemistryEngine {
       // 水只进"真容器"（池/烧杯等有水介质）；干式台子（灯/开关 volume=0）与开阔地
       // 的水蒸发不建模——否则灯上反应（NH4Cl+Ca(OH)2 制氨等）会把水积进灯里，
       // 干式台子被"弄湿"后触发本不该发生的遇水反应
-      if (ctx.inContainer && ctx.containerMat.solution && ctx.containerMat.solution.volume > 0) {
+      if (ctx.inContainer && ctx.containerMat.solution && ctx.containerMat.solution.liquidVolume() > 0) {
         ctx.containerMat.add('H2O', mass);
+      } else if (ctx.env && ctx.env.atmosphere) {
+        // 大气反应（燃烧等）生成的水：进大气（水蒸气），保证质量守恒
+        ctx.env.atmosphere.add('H2O', mass);
+      }
+      return;
+    }
+    // 液体产物（H2O2/HCl/Br2 等）：有真容器就进溶液；干台/开阔地生成液滴粒子
+    // （旧实现会落成"可垫脚的固体球"）
+    if (sub.state === 'liquid') {
+      if (ctx.inContainer && ctx.containerMat.solution && ctx.containerMat.solution.liquidVolume() > 0) {
+        ctx.containerMat.add(id, mass, ctx.lastRxText);
+      } else {
+        ctx.env.emit({ id, mass, phase: 'particle' }, ctx.lastRxText);
       }
       return;
     }
@@ -3135,8 +3339,8 @@ class ChemistryEngine {
         if (leftover <= 1e-9) return 0;
       }
     }
-    // 2. 水溶解气体（CO2→H2CO3、SO2→H2SO3、SO3→H2SO4、NO2→HNO3+NO、NH3→氨水、
-    //    Cl2→氯水溶质）；消耗等摩尔水（防止 H2CO3⇌CO2+H2O 循环无限产水）
+    // 2. 水溶解气体（CO2→H2CO3、SO2→H2SO3、SO3→H2SO4、NO2→2HNO3+NO、NH3→氨水、
+    //    Cl2→HCl+HClO）；严格按 GAS_WATER_RULES 的水/产物系数消耗水并生成产物
     if (leftover > 1e-9 && baseMat && baseMat.avail('H2O') > 0) {
       for (const gw of GAS_WATER_RULES) {
         if (gw.gas !== id) continue;
@@ -3147,19 +3351,11 @@ class ChemistryEngine {
         if (gw.gas === 'CO2' || gw.gas === 'SO2' || gw.gas === 'NO2' || gw.gas === 'Cl2') {
           if (!opts.forceDissolve) continue;
         }
-        const gasMM = getSubstance(id).mm;
         const diss = Math.min(leftover, RATE.acidGas * ctx.dt * 0.15);
         if (diss <= 1e-9) break;
-        const waterNeed = diss / gasMM; // 1 mol 气体配 1 mol 水（简化）
-        if (baseMat.avail('H2O') < waterNeed) break;
-        baseMat.consume('H2O', waterNeed);
-        if (getSubstance(gw.acid).state === 'gas') {
-          baseMat.add(gw.acid, (diss * getSubstance(gw.acid).mm) / gasMM, ctx.lastRxText); // 气体溶质（氯水）
-        } else {
-          this._emit(gw.acid, (diss * getSubstance(gw.acid).mm) / gasMM, ctx);
-        }
-        if (gw.byGas) this._emit(gw.byGas, (diss * getSubstance(gw.byGas).mm) / gasMM, ctx);
-        leftover -= diss;
+        const done = this._dissolveGas(gw, diss, ctx);
+        if (!done) break; // 水不够（或产品无法入账）→ 留给大气
+        leftover -= done;
         break;
       }
     }
@@ -3170,6 +3366,32 @@ class ChemistryEngine {
     return 0;
   }
 
+  /** 按 GAS_WATER_RULES 把 mass 克气体溶入容器水：消耗 waterCoeff mol 水，
+   *  按 products 系数生成产物（气体产物进大气，液体/固体产物进溶液）。
+   *  返回实际溶解的气体质量；水不足/无产品时返回 0（气体留在大气）。 */
+  _dissolveGas(gw, mass, ctx) {
+    const cm = ctx.containerMat;
+    if (!cm || !(mass > 0)) return 0;
+    const gasMM = getSubstance(gw.gas).mm;
+    const moles = mass / gasMM;
+    const waterNeed = moles * (gw.water ?? 1) * getSubstance('H2O').mm;
+    if (cm.avail('H2O') < waterNeed) return 0;
+    const products = gw.products ?? [{ id: gw.acid, coeff: 1 }];
+    const list = [];
+    for (const p of products) {
+      const pMass = moles * p.coeff * getSubstance(p.id).mm;
+      if (pMass > 1e-12) list.push({ id: p.id, mass: pMass });
+    }
+    if (!list.length) return 0;
+    cm.consume('H2O', waterNeed);
+    this._stamp(ctx, reactionEquation([gw.gas, 'H2O'], products.map((p) => p.id)));
+    for (const p of list) {
+      if (getSubstance(p.id).state === 'gas') this._emit(p.id, p.mass, ctx);
+      else cm.add(p.id, p.mass, ctx.lastRxText);
+    }
+    return mass;
+  }
+
   /**
    * 溶液浓度因子：反应物浓度越低反应越慢（相对其饱和显色浓度；无色溶质用默认参照）。
    * 固体/气体返回 1。范围钳制在 [0.05, 1]，避免反应永远无法完成。
@@ -3178,12 +3400,12 @@ class ChemistryEngine {
     if (!mat || mat.phase !== 'solution' || !mat.solution) return 1;
     // 干式台子（酒精灯/喷灯 volume=0，内部无水）不参与浓度计算——
     // 否则 mass/0 = NaN 会污染 rate → 反应推进 NaN → 溶液写入 NaN
-    if (!(mat.solution.volume > 0)) return 1;
+    if (!(mat.solution.liquidVolume() > 0)) return 1;
     if (id === 'H2O') return 1; // 溶剂浓度恒定（避免 water=0 时反应被压到 5%）
     if (mat.owner && mat.owner.precipitates && (mat.owner.precipitates.get(id) ?? 0) > 0) return 1;
     const sub = getSubstance(id);
     const sat = sub.ionColor ? sub.ionColor.sat : 100;
-    const gPerL = (mat.solution.mass(id) / mat.solution.volume) * 1000;
+    const gPerL = (mat.solution.mass(id) / mat.solution.liquidVolume()) * 1000;
     if (!Number.isFinite(gPerL) || gPerL <= 0) return 0.05;
     return Math.max(0.05, Math.min(1, gPerL / sat));
   }
@@ -3243,22 +3465,13 @@ class ChemistryEngine {
 
       const gasAvail = atm.mass(gw.gas);
       if (gasAvail <= MIN_ENTRY) continue;
-      const gasMM = getSubstance(gw.gas).mm;
       const absorb = Math.min(gasAvail, RATE.acidGas * dt * 0.1);
       // 微量不吸收：吸收量不足 MIN_ENTRY 时让气体留在大气（空气计可见），
       // 避免在溶液里反复生成"0.000g 级"的微量溶质（NH3·H2O 条目翻转）
       if (absorb <= MIN_ENTRY) continue;
-      const waterNeed = absorb / gasMM;
-      if (ctx.containerMat.avail('H2O') < waterNeed) continue;
-      this._stamp(ctx, reactionEquation([gw.gas], [gw.acid, gw.byGas].filter(Boolean)));
-      ctx.containerMat.consume('H2O', waterNeed);
-      atm.remove(gw.gas, absorb);
-      if (getSubstance(gw.acid).state === 'gas') {
-        ctx.containerMat.add(gw.acid, (absorb * getSubstance(gw.acid).mm) / gasMM, ctx.lastRxText); // 氯水溶质
-      } else {
-        this._emit(gw.acid, (absorb * getSubstance(gw.acid).mm) / gasMM, ctx);
-      }
-      if (gw.byGas) this._emit(gw.byGas, (absorb * getSubstance(gw.byGas).mm) / gasMM, ctx);
+      const done = this._dissolveGas(gw, absorb, ctx);
+      if (!done) continue;
+      atm.remove(gw.gas, done);
     }
   }
 
@@ -3340,7 +3553,8 @@ const IONS = {
   'PO4^3-':  { symbol: 'PO4', poly: true, charge: -3, mass: 95   },
   'SiO3^2-': { symbol: 'SiO3', poly: true, charge: -2, mass: 76  },
   'C2O4^2-': { symbol: 'C2O4', poly: true, charge: -2, mass: 88  },
-  'CrO2-':   { symbol: 'CrO2', poly: true, charge: -1, mass: 68  },
+  'ZnO2^2-': { symbol: 'ZnO2', poly: true, charge: -2, mass: 97  },
+  'CrO2-':   { symbol: 'CrO2', poly: true, charge: -1, mass: 84  },
 };
 
 // 有色离子在溶液中的显色（饱和浓度参照，单位 g 离子 / L 溶液，可调）
@@ -3395,12 +3609,16 @@ function solubilityOf(catId, anId) {
   if (anId === 'NO3-') return 'soluble';                       // 硝酸盐全溶
   if (catId === 'Na+' || catId === 'K+' || catId === 'NH4+') return 'soluble'; // 碱金属/铵盐全溶
   if (anId === 'Cl-' || anId === 'Br-' || anId === 'I-') {
-    // 卤化银难溶（AgCl 白 / AgBr 淡黄 / AgI 黄——检验卤离子）；其余卤化物可溶（Hg2Cl2/PbCl2 微溶省略）
-    return catId === 'Ag+' ? 'insoluble' : 'soluble';
+    // 卤化银难溶（AgCl 白 / AgBr 淡黄 / AgI 黄——检验卤离子）；PbI2 黄↓；其余卤化物可溶
+    if (catId === 'Ag+') return 'insoluble';
+    if (catId === 'Pb2+' && anId === 'I-') return 'insoluble';
+    return 'soluble';
   }
-  if (anId === 'SO4^2-') return catId === 'Ba2+' ? 'insoluble' : 'soluble';    // 硫酸盐除 BaSO4（CaSO4/PbSO4 微溶省略）
+  if (anId === 'SO4^2-') return ['Ba2+', 'Pb2+', 'Sr2+'].includes(catId) ? 'insoluble' : 'soluble'; // 硫酸盐除 BaSO4（CaSO4/PbSO4 微溶省略）
   if (anId === 'CO3^2-' || anId === 'SO3^2-') return 'insoluble';              // 碳酸盐/亚硫酸盐不溶（碱金属铵盐已在上面返回）
   if (anId === 'S2-') return 'insoluble';                      // 硫化物：碱金属/铵盐溶（上面返回），其余 FeS/CuS/ZnS 不溶
+  if (anId === 'PO4^3-') return 'insoluble';                   // 磷酸盐：钠/钾/铵盐已在上面返回，其余难溶
+  if (anId === 'C2O4^2-') return ['Ca2+', 'Ba2+', 'Pb2+', 'Ag+'].includes(catId) ? 'insoluble' : 'soluble'; // 草酸盐
   if (anId === 'CrO4^2-') {
     // 铬酸盐：Ba/Pb/Sr/Ag 难溶（BaCrO4 黄、PbCrO4 铬黄、SrCrO4 黄、Ag2CrO4 砖红），其余溶
     return ['Ba2+', 'Pb2+', 'Sr2+', 'Ag+'].includes(catId) ? 'insoluble' : 'soluble';
@@ -3467,11 +3685,13 @@ SUBSTANCES['H2CO3'] = { id: 'H2CO3', mm: 62, state: 'liquid', kind: 'acid', solu
 
 // --- 酸（acidStrength: 强酸全电离 / 弱酸部分电离，影响 pH）---
 SUBSTANCES['HCl'] = { id: 'HCl', mm: 36.5, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'H+', an: 'Cl-', catCount: 1, anCount: 1 }, solid: ['#e9e9e9'] };
+// 氯化氢气体（NH4Cl 受热分解/浓盐酸挥发）：与盐酸溶液区分，否则热分解产物会被当成"固体沉淀"
+SUBSTANCES['HCl(g)'] = { id: 'HCl(g)', mm: 36.5, state: 'gas', kind: 'acidicGas', soluble: 'na', gasColor: '#f0f0ff', solid: [] };
 SUBSTANCES['H2SO4'] = { id: 'H2SO4', mm: 98, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'H+', an: 'SO4^2-', catCount: 2, anCount: 1 }, solid: ['#e9e9e9'] };
 SUBSTANCES['HNO3'] = { id: 'HNO3', mm: 63, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'H+', an: 'NO3-', catCount: 1, anCount: 1 }, solid: ['#e9e9e9'] };
 SUBSTANCES['H2SO3'] = { id: 'H2SO3', mm: 82, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'weak', ions: { cat: 'H+', an: 'SO3^2-', catCount: 2, anCount: 1 }, solid: ['#e9e9e9'] };
 SUBSTANCES['H3PO4'] = { id: 'H3PO4', mm: 98, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'weak', ions: { cat: 'H+', an: 'PO4^3-', catCount: 3, anCount: 1 }, solid: ['#e9e9e9'] };
-SUBSTANCES['HClO'] = { id: 'HClO', mm: 52.5, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'weak', ions: { cat: 'H+', an: 'ClO-', catCount: 1, anCount: 1 }, solid: ['#e9e9e9'] };
+SUBSTANCES['HClO'] = { id: 'HClO', mm: 52.5, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'weak', ions: { cat: 'H+', an: 'ClO-', catCount: 1, anCount: 1 }, ionColor: { color: '#d8f0a0', sat: 50 }, solid: ['#e9e9e9'] };
 SUBSTANCES['CH3COOH'] = { id: 'CH3COOH', mm: 60, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'weak', ions: { cat: 'H+', an: 'CH3COO-', catCount: 1, anCount: 1 }, solid: ['#e9e9e9'] };
 
 // --- 碱（acidStrength 同用于碱的电离强弱）---
@@ -3479,7 +3699,7 @@ SUBSTANCES['NaOH'] = { id: 'NaOH', mm: 40, state: 'solid', kind: 'base', soluble
 SUBSTANCES['KOH'] = { id: 'KOH', mm: 56, state: 'solid', kind: 'base', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'K+', an: 'OH-', catCount: 1, anCount: 1 }, solid: ['#ffffff'] };
 SUBSTANCES['Ca(OH)2'] = { id: 'Ca(OH)2', mm: 74, state: 'solid', kind: 'base', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'Ca2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#f4f4f4'], solubilityLimit: 12 }; // 微溶（游戏值 12g/L：200ml 池滴约 3~4 次才达饱和——先浑浊后沉淀）
 SUBSTANCES['Cu(OH)2'] = { id: 'Cu(OH)2', mm: 98, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Cu2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#00afff'] };
-SUBSTANCES['Fe(OH)3'] = { id: 'Fe(OH)3', mm: 107, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Fe3+', an: 'OH-', catCount: 1, anCount: 3 }, solid: ['#002929'] };
+SUBSTANCES['Fe(OH)3'] = { id: 'Fe(OH)3', mm: 107, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Fe3+', an: 'OH-', catCount: 1, anCount: 3 }, solid: ['#a64b2a'] };
 SUBSTANCES['Mg(OH)2'] = { id: 'Mg(OH)2', mm: 58, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Mg2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#f2f2f2'] };
 SUBSTANCES['Fe(OH)2'] = { id: 'Fe(OH)2', mm: 90, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Fe2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#c9ffd4'] };
 
@@ -3520,6 +3740,7 @@ defineSalt('K+', 'CO3^2-', { solid: ['#ffffff'] });
 defineSalt('Na+', 'SO3^2-', { solid: ['#ffffff'] });
 defineSalt('Ca2+', 'SO3^2-', { solid: ['#f2f2f2'] });
 defineSalt('NH4+', 'Cl-', { solid: ['#ffffff'] });
+defineSalt('NH4+', 'NO3-', { solid: ['#ffffff'] }); // 硝酸铵（铵盐/硝酸盐全溶）
 defineSalt('Na+', 'NO3-', { solid: ['#ffffff'] });
 defineSalt('K+', 'MnO4-', { solid: ['#d8b3e8'] });
 defineSalt('K+', 'MnO4^2-', { solid: ['#a8d8b8'] });
@@ -3565,6 +3786,46 @@ defineSalt('Cu2+', 'S2-', { solid: ['#2a2a2a'] });     // CuS 黑↓
 defineSalt('NH4+', 'SO4^2-', { solid: ['#ffffff'] });  // (NH4)2SO4
 defineSalt('NH4+', 'HCO3-', { solid: ['#ffffff'] });   // NH4HCO3 碳酸氢铵
 
+// --- 常见难溶盐/铬酸盐/硝酸盐补全（旧表缺失时会走兜底 mm=100 的"幽灵盐"）---
+defineSalt('Pb2+', 'SO4^2-', { solid: ['#ffffff'], dense: true });   // PbSO4 白↓
+defineSalt('Pb2+', 'I-', { solid: ['#ffe14d'] });                    // PbI2 黄↓（金雨实验）
+defineSalt('Sr2+', 'SO4^2-', { solid: ['#ffffff'] });                 // SrSO4 白↓
+defineSalt('Ag+', 'PO4^3-', { solid: ['#ffe066'] });                  // Ag3PO4 黄↓
+defineSalt('Ca2+', 'PO4^3-', { solid: ['#ffffff'] });                 // Ca3(PO4)2 白↓
+defineSalt('Ca2+', 'C2O4^2-', { solid: ['#ffffff'] });                // CaC2O4 白↓（草酸钙）
+defineSalt('Ca2+', 'S2-', { solid: ['#f2f2f2'] });                   // CaS
+defineSalt('Ca2+', 'SiO3^2-', { solid: ['#f0f0f0'] });                // CaSiO3 白↓
+defineSalt('Cu2+', 'S2-', { solid: ['#1f1f1f'], dense: true });       // CuS 黑↓
+defineSalt('Ag+', 'S2-', { solid: ['#111111'], dense: true });        // Ag2S 黑↓
+defineSalt('Pb2+', 'S2-', { solid: ['#141414'], dense: true });       // PbS 黑↓
+defineSalt('Zn2+', 'S2-', { solid: ['#f2f2f2'] });                    // ZnS 白↓
+defineSalt('Na+', 'CrO4^2-', { solid: ['#ffd23f'] });                 // Na2CrO4 黄
+defineSalt('Na+', 'PO4^3-', { solid: ['#ffffff'] });                  // Na3PO4
+defineSalt('Na+', 'CH3COO-', { solid: ['#ffffff'] });                 // CH3COONa
+defineSalt('Na+', 'C2O4^2-', { solid: ['#ffffff'] });                 // Na2C2O4
+defineSalt('K+', 'AlO2-', { solid: ['#ffffff'] });                    // KAlO2
+defineSalt('K+', 'SiO3^2-', { solid: ['#ffffff'] });                  // K2SiO3
+defineSalt('Na+', 'ZnO2^2-', { solid: ['#ffffff'] });                 // Na2ZnO2
+SUBSTANCES['Zn(OH)2'] = { id: 'Zn(OH)2', mm: 99, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Zn2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#f2f2f2'] };
+// 银氨/铜氨配合物（沉淀转化/配位）
+SUBSTANCES['[Ag(NH3)2]Cl'] = { id: '[Ag(NH3)2]Cl', mm: 177.5, state: 'solid', kind: 'other', soluble: 'soluble', solid: ['#f0f0f0'] };
+SUBSTANCES['[Cu(NH3)4](OH)2'] = { id: '[Cu(NH3)4](OH)2', mm: 166, state: 'solid', kind: 'base', soluble: 'soluble', solid: ['#1f6fbf'] };
+SUBSTANCES['Ag2O'] = { id: 'Ag2O', mm: 232, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: { cat: 'Ag+', an: 'O2-', catCount: 2, anCount: 1 }, solid: ['#3a2a1a'] };
+SUBSTANCES['AgOH'] = { id: 'AgOH', mm: 125, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Ag+', an: 'OH-', catCount: 1, anCount: 1 }, solid: ['#d8d0b0'] };
+defineSalt('Zn2+', 'NO3-', { solid: ['#ffffff'] });
+defineSalt('Mg2+', 'NO3-', { solid: ['#ffffff'] });
+defineSalt('Al3+', 'NO3-', { solid: ['#ffffff'] });
+defineSalt('Fe2+', 'NO3-', { solid: ['#c9ffd4'] });
+defineSalt('Mn2+', 'NO3-', { solid: ['#f2e3d8'] });
+defineSalt('Cr3+', 'NO3-', { solid: ['#2fbf7f'] });
+defineSalt('K+', 'SO4^2-', { solid: ['#ffffff'] });                   // K2SO4
+defineSalt('Na+', 'S2-', { solid: ['#ffffff'] });                     // Na2S
+defineSalt('K+', 'S2-', { solid: ['#ffffff'] });                      // K2S
+defineSalt('Ca2+', 'NO3-', { solid: ['#ffffff'] });
+defineSalt('Ba2+', 'NO3-', { solid: ['#ffffff'] });
+defineSalt('Sr2+', 'Cl-', { solid: ['#ffffff'] });
+defineSalt('Mg2+', 'NO3-', { solid: ['#ffffff'] });
+
 // --- 金属氧化物（视为"电解质"，离子中阴离子为 O2-，可参与离子双置换）---
 SUBSTANCES['CuO'] = { id: 'CuO', mm: 80, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: { cat: 'Cu2+', an: 'O2-', catCount: 1, anCount: 1 }, solid: ['#222222'] };
 SUBSTANCES['FeO'] = { id: 'FeO', mm: 72, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: { cat: 'Fe2+', an: 'O2-', catCount: 1, anCount: 1 }, solid: ['#3a3a3a'] };
@@ -3576,6 +3837,7 @@ SUBSTANCES['Al2O3'] = { id: 'Al2O3', mm: 102, state: 'solid', kind: 'oxide', sol
 SUBSTANCES['P2O5'] = { id: 'P2O5', mm: 142, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: null, solid: ['#e8e8e8'] };
 // --- 高中扩展氧化物（钠/过氧化钠、铬绿、硅、碱式碳酸铜）---
 SUBSTANCES['K2O'] = { id: 'K2O', mm: 94, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: { cat: 'K+', an: 'O2-', catCount: 2, anCount: 1 }, solid: ['#e8e8e8'] };
+SUBSTANCES['Li2O'] = { id: 'Li2O', mm: 30, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: { cat: 'Li+', an: 'O2-', catCount: 2, anCount: 1 }, solid: ['#f2f2f2'] };
 SUBSTANCES['Na2O'] = { id: 'Na2O', mm: 62, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: { cat: 'Na+', an: 'O2-', catCount: 2, anCount: 1 }, solid: ['#e8e8e8'] };
 SUBSTANCES['Na2O2'] = { id: 'Na2O2', mm: 78, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: null, peroxide: true, solid: ['#f2f2f2'] }; // 过氧化钠：遇水/CO2 歧化放 O2
 SUBSTANCES['Cr2O3'] = { id: 'Cr2O3', mm: 152, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: { cat: 'Cr3+', an: 'O2-', catCount: 2, anCount: 3 }, amphoteric: true, solid: ['#2fbf7f'] };
@@ -3585,7 +3847,7 @@ SUBSTANCES['Cu2(OH)2CO3'] = { id: 'Cu2(OH)2CO3', mm: 222, state: 'solid', kind: 
 // --- 金属（含活动性序与置换化合价）---
 // 活动性：数值越小越活泼（按金属活动性顺序 K Ca Na Mg Al Zn Fe Sn Pb (H) Cu Hg Ag Pt Au 编号 1..15，H=10）。
 SUBSTANCES['Cu'] = { id: 'Cu', mm: 64, state: 'solid', kind: 'metal', soluble: 'na', valence: 2, activity: 11, flammable: true, dense: true, solid: ['#ff8f46'] }; // 还原产物金属致密（低浓度时不阻断——见 _isDense 占比阈值）
-SUBSTANCES['Fe'] = { id: 'Fe', mm: 56, state: 'solid', kind: 'metal', soluble: 'na', valence: 2, activity: 7, flammable: true, solid: ['#fdfdfd'] };
+SUBSTANCES['Fe'] = { id: 'Fe', mm: 56, state: 'solid', kind: 'metal', soluble: 'na', valence: 2, activity: 7, flammable: true, solid: ['#9aa3ad', '#6f7683'] }; // 铁：银灰金属色（旧 #fdfdfd 会被误认为白色沉淀）
 SUBSTANCES['Zn'] = { id: 'Zn', mm: 65, state: 'solid', kind: 'metal', soluble: 'na', valence: 2, activity: 6, flammable: true, solid: ['#c8c8c8'] };
 SUBSTANCES['Mg'] = { id: 'Mg', mm: 24, state: 'solid', kind: 'metal', soluble: 'na', valence: 2, activity: 4, flammable: true, solid: ['#cfcfcf'] };
 SUBSTANCES['Al'] = { id: 'Al', mm: 27, state: 'solid', kind: 'metal', soluble: 'na', valence: 3, activity: 5, flammable: true, solid: ['#d9d9d9'] };
@@ -3593,8 +3855,8 @@ SUBSTANCES['Ag'] = { id: 'Ag', mm: 108, state: 'solid', kind: 'metal', soluble: 
 
 // --- 碱金属（极活泼：遇水剧烈反应产 H2，火焰变色）---
 SUBSTANCES['Na'] = { id: 'Na', mm: 23, state: 'solid', kind: 'metal', soluble: 'na', valence: 1, activity: 3, flammable: true, flameColor: '#ffd23f', solid: ['#e0e0e0'] };
-SUBSTANCES['K'] = { id: 'K', mm: 39, state: 'solid', kind: 'metal', soluble: 'na', valence: 1, activity: 1, flammable: true, flameColor: '#c78bff', solid: ['#cfcfe8'] };
-SUBSTANCES['Li'] = { id: 'Li', mm: 7, state: 'solid', kind: 'metal', soluble: 'na', valence: 1, activity: 2, flammable: true, flameColor: '#ff5fd0', solid: ['#d8d8f0'] }; // 锂：焰色紫红
+SUBSTANCES['K'] = { id: 'K', mm: 39, state: 'solid', kind: 'metal', soluble: 'na', valence: 1, activity: 2, flammable: true, flameColor: '#c78bff', solid: ['#cfcfe8'] };
+SUBSTANCES['Li'] = { id: 'Li', mm: 7, state: 'solid', kind: 'metal', soluble: 'na', valence: 1, activity: 1, flammable: true, flameColor: '#ff5fd0', solid: ['#d8d8f0'] }; // 锂：活动性最强（Li>K>Na），焰色紫红
 
 // --- 非金属单质（可燃）---
 SUBSTANCES['C'] = { id: 'C', mm: 12, state: 'solid', kind: 'nonmetal', soluble: 'na', flammable: true, solid: ['#2a2a2a'] };
@@ -3621,6 +3883,8 @@ SUBSTANCES['CO'] = { id: 'CO', mm: 28, state: 'gas', kind: 'gas', soluble: 'na',
 SUBSTANCES['NH3'] = { id: 'NH3', mm: 17, state: 'gas', kind: 'gas', soluble: 'na', solid: [] };
 SUBSTANCES['Cl2'] = { id: 'Cl2', mm: 71, state: 'gas', kind: 'gas', soluble: 'na', gasColor: '#b8e01f', solid: [] };   // 黄绿（有毒，需碱液吸收）
 SUBSTANCES['H2S'] = { id: 'H2S', mm: 34, state: 'gas', kind: 'acidicGas', soluble: 'na', flammable: true, gasColor: '#ffe9a8', gasFlameColor: '#7fd4ff', solid: [] }; // 臭鸡蛋气
+// 硫化氢水溶液（弱酸；H2S 气体溶水后的溶质形态，Fe 等活泼金属可按 H+ 路径反应）
+SUBSTANCES['H2S(aq)'] = { id: 'H2S(aq)', mm: 34, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'weak', ions: { cat: 'H+', an: 'S2-', catCount: 2, anCount: 1 }, ionColor: { color: '#e8e0b0', sat: 28 }, solid: ['#f2efd8'] };
 SUBSTANCES['NO'] = { id: 'NO', mm: 30, state: 'gas', kind: 'gas', soluble: 'na', solid: [] };                          // 无色
 SUBSTANCES['NO2'] = { id: 'NO2', mm: 46, state: 'gas', kind: 'gas', soluble: 'na', gasColor: '#ff6a3d', solid: [] };   // 红棕
 SUBSTANCES['CH4'] = { id: 'CH4', mm: 16, state: 'gas', kind: 'gas', soluble: 'na', flammable: true, gasFlameColor: '#7fd4ff', solid: [] };
@@ -3826,15 +4090,27 @@ exports.reactionStrError = reactionStrError;
 // ============================================================================
 // 溶液模型
 // ----------------------------------------------------------------------------
-// 固定体积（液面不下降），溶质按质量存储。水作为溶剂单独跟踪（中和反应会累积水）。
-// concentration(id) = 溶质质量 / 体积  → 供显色与饱和度参照。
-// pH()：由酸/碱溶质的浓度与强弱（电离度）计算——强酸/强碱完全电离，
-// 弱酸/弱碱（CH3COOH、H2CO3、NH3·H2O 等）按 2% 电离。
+// volume = 容器容量（mL），不是当前液体体积；实际液体体积见 liquidVolume()。
+// 溶质按质量存储；水作为溶剂单独跟踪（中和反应会累积水）。
+// concentration(id) = 溶质质量 / **实际液体体积**  → 供显色/饱和度/反应速率参照。
+// pH()：由酸/碱溶质的浓度与强弱（电离度）计算；盐类水解按弱酸根/弱碱阳离子近似。
 // ============================================================================
 
 const { getSubstance, normId } = __require('src/chem/substances.js');;
 
 const WEAK_IONIZATION = 0.02; // 弱酸/弱碱电离度（简化）
+
+/** 盐类水解近似：弱酸根（碱式）/ 弱碱阳离子（酸式）对应的水解常数。
+ *  只用于 pH 方向与量级（不追求精确的多元电离），够指示剂/pH 标签使用。 */
+const ANION_KB = {
+  'CO3^2-': 2e-4, 'HCO3-': 2e-8, 'SO3^2-': 1e-7, 'S2-': 1e-2,
+  'ClO-': 3e-7, 'CH3COO-': 5.6e-10, 'PO4^3-': 1e-2, 'SiO3^2-': 1e-2,
+  'AlO2-': 1e-2, 'C2O4^2-': 1e-10, 'CrO2-': 1e-8,
+};
+const CATION_KA = {
+  'NH4+': 5.6e-10, 'Fe3+': 6e-3, 'Al3+': 1e-5, 'Cr3+': 1e-4,
+  'Cu2+': 1e-8, 'Fe2+': 1e-6, 'Zn2+': 1e-9, 'Mg2+': 1e-11,
+};
 
 /** 溶液条目的最小记账质量（g）：
  *  低于此质量的溶质不建立条目（add 总量不足不入账、remove 后剩余不足则删除并
@@ -3855,11 +4131,26 @@ class Solution {
     }
   }
 
-  /** 溶液 pH：由强/弱酸碱的摩尔浓度计算（弱电解质按 2% 电离） */
+  /** 实际液体体积（mL）。
+   *  - 有水：按质量近似（水 + 溶质 ≈ 1 g/mL），并夹在容器容量内；
+   *  - 没有水（测试夹具/干容器预设）：沿用容量，兼容"只给 solute 不写 water"的旧语义；
+   *  - 容量为 0（干式台子）：0（不能当液体）。 */
+  liquidVolume() {
+    let soluteMass = 0;
+    for (const m of this.solutes.values()) soluteMass += m;
+    const total = this.water + soluteMass;
+    if (this.water > 1e-9) {
+      const cap = this.volume > 0 ? this.volume : total;
+      return Math.max(0, Math.min(cap, total));
+    }
+    return this.volume > 0 ? this.volume : 0;
+  }
+
+  /** 溶液 pH：由强/弱酸碱的摩尔浓度计算（弱电解质按 2% 电离），再叠加盐类水解。 */
   pH() {
     let h = 0;
     let oh = 0;
-    const volL = this.volume / 1000;
+    const volL = this.liquidVolume() / 1000;
     if (volL <= 0) return 7;
     for (const [id, mass] of this.solutes) {
       const sub = getSubstance(id);
@@ -3871,9 +4162,15 @@ class Solution {
       } else if (sub.kind === 'base' && sub.ions?.an === 'OH-') {
         const ion = sub.acidStrength === 'strong' ? 1 : WEAK_IONIZATION;
         oh += molPerL * sub.ions.anCount * ion;
+      } else if (sub.kind === 'salt' && sub.ions) {
+        // 盐类水解：弱酸根显碱、弱碱阳离子显酸（强酸盐如 NaCl 两项都不命中 → pH 7）
+        const kb = ANION_KB[sub.ions.an];
+        if (kb) oh += Math.sqrt(kb * molPerL);
+        const ka = CATION_KA[sub.ions.cat];
+        if (ka) h += Math.sqrt(ka * molPerL);
       }
     }
-    // 强酸强碱同存时相互中和（简化：取优势方）
+    // 强酸强碱同存时相互中和（简化：取优势方；水解量级小，不会压过强酸碱）
     if (h > 1e-12 && h >= oh) return Math.max(0, -Math.log10(h));
     if (oh > 1e-12 && oh > h) return Math.min(14, 14 + Math.log10(oh));
     return 7;
@@ -3884,7 +4181,8 @@ class Solution {
   }
 
   concentration(id) {
-    return this.mass(id) / this.volume;
+    const vol = this.liquidVolume();
+    return vol > 0 ? this.mass(id) / vol : 0;
   }
 
   /** 增加溶质（负值按移除处理）；id 归一化（NH4OH → NH3·H2O）。
@@ -3904,14 +4202,21 @@ class Solution {
     // 微溶饱和：溶液先持续**变浑浊**（渲染按浓度/饱和线），拉到饱和浓度后才开始析出；
     // 再留一段"过饱和带"（1.25×）才真正出沉淀——"过了过饱和线才开始出沉淀颗粒"
     const sub = getSubstance(id);
-    if (sub && sub.solubilityLimit > 0 && this.volume > 0 && typeof this.onOversaturate === 'function') {
-      const satMass = sub.solubilityLimit * (this.volume / 1000); // 饱和浓度对应的质量
-      const overMass = satMass * 1.25; // 过饱和带（1.25× 后才析出）
-      if (next > overMass) {
-        const excess = next - overMass;
-        this.solutes.set(id, overMass);
-        this.onOversaturate(id, excess);
-        return;
+    if (sub && sub.solubilityLimit > 0 && typeof this.onOversaturate === 'function') {
+      // 饱和量按**实际液体体积**算（加水稀释后饱和线随之抬高）
+      const totalAfter = this.totalMass() + m;
+      const vol = this.water > 1e-9
+        ? (this.volume > 0 ? Math.min(this.volume, totalAfter) : totalAfter)
+        : (this.volume > 0 ? this.volume : 0);
+      if (vol > 0) {
+        const satMass = sub.solubilityLimit * (vol / 1000); // 饱和浓度对应的质量
+        const overMass = satMass * 1.25; // 过饱和带（1.25× 后才析出）
+        if (next > overMass) {
+          const excess = next - overMass;
+          this.solutes.set(id, overMass);
+          this.onOversaturate(id, excess);
+          return;
+        }
       }
     }
     this.solutes.set(id, next);
@@ -4075,12 +4380,12 @@ const RATE = {
 // ---- 自反应：加热/高温分解 ----
 const THERMAL_RULES = [
   { type: 'thermal', reactants: [{ id: 'Cu(OH)2', coeff: 1 }], products: [{ id: 'CuO', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'heat', rate: RATE.thermal },
-  { type: 'thermal', reactants: [{ id: 'Fe(OH)3', coeff: 1 }], products: [{ id: 'Fe2O3', coeff: 1 }, { id: 'H2O', coeff: 3 }], condition: 'heat', rate: RATE.thermal },
+  { type: 'thermal', reactants: [{ id: 'Fe(OH)3', coeff: 2 }], products: [{ id: 'Fe2O3', coeff: 1 }, { id: 'H2O', coeff: 3 }], condition: 'heat', rate: RATE.thermal },
   { type: 'thermal', reactants: [{ id: 'Mg(OH)2', coeff: 1 }], products: [{ id: 'MgO', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'heat', rate: RATE.thermal },
   { type: 'thermal', reactants: [{ id: 'Fe(OH)2', coeff: 1 }], products: [{ id: 'FeO', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'heat', rate: RATE.thermal },
   { type: 'thermal', reactants: [{ id: 'CaCO3', coeff: 1 }], products: [{ id: 'CaO', coeff: 1 }, { id: 'CO2', coeff: 1 }], condition: 'highTemp', rate: RATE.thermal },
   // NH4Cl --△--> NH3↑ + HCl↑（两种气体）
-  { type: 'thermal', reactants: [{ id: 'NH4Cl', coeff: 1 }], products: [{ id: 'NH3', coeff: 1 }, { id: 'HCl', coeff: 1 }], condition: 'heat', rate: RATE.thermal },
+  { type: 'thermal', reactants: [{ id: 'NH4Cl', coeff: 1 }], products: [{ id: 'NH3', coeff: 1 }, { id: 'HCl(g)', coeff: 1 }], condition: 'heat', rate: RATE.thermal },
   // NH4HCO3 --△--> NH3↑ + H2O + CO2↑
   { type: 'thermal', reactants: [{ id: 'NH4HCO3', coeff: 1 }], products: [{ id: 'NH3', coeff: 1 }, { id: 'H2O', coeff: 1 }, { id: 'CO2', coeff: 1 }], condition: 'heat', rate: RATE.thermal },
   // 2NaHCO3 --△--> Na2CO3 + H2O + CO2↑
@@ -4116,6 +4421,8 @@ const COMBUSTION_RULES = [
   // 金属燃烧：火花四射（sparks）；块状金属氧化是表面过程，慢而真实（Mg/Al/Na/K 本身易燃快）
   { type: 'combustion', reactants: [{ id: 'Mg', coeff: 2 }, { id: 'O2', coeff: 1 }], products: [{ id: 'MgO', coeff: 2 }], condition: 'ignited', rate: RATE.combustion, sparks: true },
   { type: 'combustion', reactants: [{ id: 'Al', coeff: 4 }, { id: 'O2', coeff: 3 }], products: [{ id: 'Al2O3', coeff: 2 }], condition: 'ignited', rate: RATE.combustion, sparks: true },
+  // 3Fe + 2O2 --纯氧/富氧点燃--> Fe3O4（纯氧燃烧生成四氧化三铁；空气中生成 Fe2O3 见下条）
+  { type: 'combustion', reactants: [{ id: 'Fe', coeff: 3 }, { id: 'O2', coeff: 2 }], products: [{ id: 'Fe3O4', coeff: 1 }], condition: { ignited: true, o2: 'pure' }, rate: RATE.combustion * 0.003, sparks: true },
   // 4Fe + 3O2 --点燃--> 2Fe2O3：铁在**空气**中点燃/氧化生成三氧化二铁（铁锈红）；
   // 块状铁氧化是缓慢的表面过程（约 0.06 g/s——一块铁锈完以分钟计），火花四射；
   // Fe3O4 仅在纯氧/富氧燃烧出现（默认空气 O2 分压 0.2 对应 Fe2O3）
@@ -4128,9 +4435,11 @@ const COMBUSTION_RULES = [
   // 2Na2O + O2 --加热--> 2Na2O2（钠在空气中加热得到的是过氧化钠：先常温氧化出的 Na2O
   //   上了灯还要继续被氧化。缺这条规则时，钠块在灯上会停在 Na2O+Na2O2 的混合物上不动）
   { type: 'combustion', reactants: [{ id: 'Na2O', coeff: 2 }, { id: 'O2', coeff: 1 }], products: [{ id: 'Na2O2', coeff: 2 }], condition: 'heat', rate: RATE.thermal },
-  { type: 'combustion', reactants: [{ id: 'K', coeff: 2 }, { id: 'O2', coeff: 1 }], products: [{ id: 'K2O', coeff: 1 }], condition: 'ignited', rate: RATE.combustion, sparks: true },
+  { type: 'combustion', reactants: [{ id: 'K', coeff: 4 }, { id: 'O2', coeff: 1 }], products: [{ id: 'K2O', coeff: 2 }], condition: 'ignited', rate: RATE.combustion, sparks: true },
   // 3Mg + N2 --点燃--> Mg3N2（镁在氮气中燃烧）
   { type: 'combustion', reactants: [{ id: 'Mg', coeff: 3 }, { id: 'N2', coeff: 1 }], products: [{ id: 'Mg3N2', coeff: 1 }], condition: 'ignited', rate: RATE.combustion * 0.5 },
+  // 4Li + O2 --点燃--> 2Li2O（锂燃烧只生成氧化锂，不生成过氧化锂）
+  { type: 'combustion', reactants: [{ id: 'Li', coeff: 4 }, { id: 'O2', coeff: 1 }], products: [{ id: 'Li2O', coeff: 2 }], condition: 'ignited', rate: RATE.combustion, sparks: true },
   // 2Mg + CO2 --点燃--> 2MgO + C（镁在二氧化碳中燃烧）
   { type: 'combustion', reactants: [{ id: 'Mg', coeff: 2 }, { id: 'CO2', coeff: 1 }], products: [{ id: 'MgO', coeff: 2 }, { id: 'C', coeff: 1 }], condition: 'ignited', rate: RATE.combustion * 0.5 },
   // CH4 + 2O2 --点燃--> CO2 + 2H2O
@@ -4144,12 +4453,18 @@ const COMBUSTION_RULES = [
 
 // ---- 自反应：自发分解 ----
 const AUTO_DECOMP_RULES = [
-  // H2CO3 是"CO2 溶于水"——分解即 CO2 逸出（不额外产水，避免 H2CO3⇌CO2 循环无限积累水）
-  { type: 'autoDecomp', reactants: [{ id: 'H2CO3', coeff: 1 }], products: [{ id: 'CO2', coeff: 1 }], condition: 'normal', rate: RATE.autoDecomp },
+  // H2CO3 是"CO2 溶于水"——分解即 CO2 逸出 + 水回到溶剂（质量守恒；与 CO2+H2O⇌H2CO3 循环净零）
+  { type: 'autoDecomp', reactants: [{ id: 'H2CO3', coeff: 1 }], products: [{ id: 'CO2', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'normal', rate: RATE.autoDecomp },
   // 2HClO --见光--> 2HCl + O2↑（氯水见光失效；需要"光照"条件，如灯旁）
   { type: 'autoDecomp', reactants: [{ id: 'HClO', coeff: 2 }], products: [{ id: 'HCl', coeff: 2 }, { id: 'O2', coeff: 1 }], condition: { light: true }, rate: RATE.autoDecomp * 0.05 },
   // 4Fe(OH)2 + O2 + 2H2O → 4Fe(OH)3（白色→红棕色，需大气 O2）
   { type: 'autoDecomp', reactants: [{ id: 'Fe(OH)2', coeff: 4 }, { id: 'O2', coeff: 1 }, { id: 'H2O', coeff: 2 }], products: [{ id: 'Fe(OH)3', coeff: 4 }], condition: 'normal', rate: RATE.autoDecomp * 0.01 },
+  // 2AgCl --光照--> 2Ag + Cl2（见光分解，AgCl 变黑）
+  { type: 'autoDecomp', reactants: [{ id: 'AgCl', coeff: 2 }], products: [{ id: 'Ag', coeff: 2 }, { id: 'Cl2', coeff: 1 }], condition: { light: true }, rate: RATE.autoDecomp * 0.02 },
+  // 4HNO3 --光照--> 4NO2 + O2 + 2H2O（浓硝酸见光分解）
+  { type: 'autoDecomp', reactants: [{ id: 'HNO3', coeff: 4 }], products: [{ id: 'NO2', coeff: 4 }, { id: 'O2', coeff: 1 }, { id: 'H2O', coeff: 2 }], condition: { light: true }, rate: RATE.autoDecomp * 0.005 },
+  // 2AgOH → Ag2O + H2O（AgOH 不稳定，立即脱水）
+  { type: 'autoDecomp', reactants: [{ id: 'AgOH', coeff: 2 }], products: [{ id: 'Ag2O', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'normal', rate: RATE.autoDecomp },
 ];
 
 // ---- 自反应：电解（"电解池"变种提供 electric 条件；见 engine.reactSelf）----
@@ -4166,6 +4481,12 @@ const ELECTROLYSIS_RULES = [
   { type: 'electrolysis', reactants: [{ id: 'HCl', coeff: 2 }], products: [{ id: 'H2', coeff: 1 }, { id: 'Cl2', coeff: 1 }], condition: { electric: true, solution: true }, rate: RATE.electrolysis * 0.5, skipAbsorb: true },
   // 2NaCl + 2H2O --通电--> 2NaOH + H2↑ + Cl2↑（氯碱工业：阴极氢气、阳极氯气、溶液留碱）
   { type: 'electrolysis', reactants: [{ id: 'NaCl', coeff: 2 }, { id: 'H2O', coeff: 2 }], products: [{ id: 'H2', coeff: 1 }, { id: 'Cl2', coeff: 1 }, { id: 'NaOH', coeff: 2 }], condition: { electric: true, solution: true }, rate: RATE.electrolysis, skipAbsorb: true },
+  // BaCl2 + 2H2O --通电--> Ba(OH)2 + H2↑ + Cl2↑（氯化钡溶液电解；混合 NaOH 时 NaOH 只作导电介质）
+  { type: 'electrolysis', reactants: [{ id: 'BaCl2', coeff: 1 }, { id: 'H2O', coeff: 2 }], products: [{ id: 'Ba(OH)2', coeff: 1 }, { id: 'H2', coeff: 1 }, { id: 'Cl2', coeff: 1 }], condition: { electric: true, solution: true }, rate: RATE.electrolysis, skipAbsorb: true },
+  // 2CuSO4 + 2H2O --通电--> 2Cu + O2↑ + 2H2SO4（硫酸铜溶液电解）
+  { type: 'electrolysis', reactants: [{ id: 'CuSO4', coeff: 2 }, { id: 'H2O', coeff: 2 }], products: [{ id: 'Cu', coeff: 2 }, { id: 'O2', coeff: 1 }, { id: 'H2SO4', coeff: 2 }], condition: { electric: true, solution: true }, rate: RATE.electrolysis * 0.5, skipAbsorb: true },
+  // 4AgNO3 + 2H2O --通电--> 4Ag + O2↑ + 4HNO3（硝酸银溶液电解）
+  { type: 'electrolysis', reactants: [{ id: 'AgNO3', coeff: 4 }, { id: 'H2O', coeff: 2 }], products: [{ id: 'Ag', coeff: 4 }, { id: 'O2', coeff: 1 }, { id: 'HNO3', coeff: 4 }], condition: { electric: true, solution: true }, rate: RATE.electrolysis * 0.5, skipAbsorb: true },
   // 2H2O --通电--> 2H2↑ + O2↑（电解水：放在最后 = 电解液耗尽后才轮到水）
   { type: 'electrolysis', reactants: [{ id: 'H2O', coeff: 2 }], products: [{ id: 'H2', coeff: 2 }, { id: 'O2', coeff: 1 }], condition: 'electric', rate: RATE.electrolysis * 0.5 },
 ];
@@ -4176,6 +4497,11 @@ const GAS_REDUCTION_RULES = [
   { type: 'reduction', reactants: [{ id: 'CuO', coeff: 1 }, { id: 'H2', coeff: 1 }], products: [{ id: 'Cu', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'highTemp', rate: RATE.reduction },
   { type: 'reduction', reactants: [{ id: 'Fe2O3', coeff: 1 }, { id: 'CO', coeff: 3 }], products: [{ id: 'Fe', coeff: 2 }, { id: 'CO2', coeff: 3 }], condition: 'highTemp', rate: RATE.reduction },
   { type: 'reduction', reactants: [{ id: 'Fe2O3', coeff: 1 }, { id: 'H2', coeff: 3 }], products: [{ id: 'Fe', coeff: 2 }, { id: 'H2O', coeff: 3 }], condition: 'highTemp', rate: RATE.reduction },
+  // FeO 还原：FeO + CO → Fe + CO2；FeO + H2 → Fe + H2O
+  { type: 'reduction', reactants: [{ id: 'FeO', coeff: 1 }, { id: 'CO', coeff: 1 }], products: [{ id: 'Fe', coeff: 1 }, { id: 'CO2', coeff: 1 }], condition: 'highTemp', rate: RATE.reduction },
+  { type: 'reduction', reactants: [{ id: 'FeO', coeff: 1 }, { id: 'H2', coeff: 1 }], products: [{ id: 'Fe', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'highTemp', rate: RATE.reduction },
+  // Fe + H2S --高温--> FeS + H2（铁在高温干燥硫化氢中腐蚀；常温弱酸 H2S 不算 H+ 氧化剂）
+  { type: 'reduction', reactants: [{ id: 'Fe', coeff: 1 }, { id: 'H2S', coeff: 1 }], products: [{ id: 'FeS', coeff: 1 }, { id: 'H2', coeff: 1 }], condition: 'highTemp', rate: RATE.reduction },
   { type: 'reduction', reactants: [{ id: 'Fe3O4', coeff: 1 }, { id: 'CO', coeff: 4 }], products: [{ id: 'Fe', coeff: 3 }, { id: 'CO2', coeff: 4 }], condition: 'highTemp', rate: RATE.reduction },
   { type: 'reduction', reactants: [{ id: 'Fe3O4', coeff: 1 }, { id: 'H2', coeff: 4 }], products: [{ id: 'Fe', coeff: 3 }, { id: 'H2O', coeff: 4 }], condition: 'highTemp', rate: RATE.reduction },
   // C + CO2 --高温--> 2CO
@@ -4189,14 +4515,6 @@ const SOLID_REDUCTION_RULES = [
   { type: 'reduction', reactants: [{ id: 'Fe3O4', coeff: 1 }, { id: 'C', coeff: 2 }], products: [{ id: 'Fe', coeff: 3 }, { id: 'CO2', coeff: 2 }], condition: 'highTemp', rate: RATE.reduction },
   // 2Al + Fe2O3 --高温--> Al2O3 + 2Fe（铝热反应，爆炸）
   { type: 'reduction', reactants: [{ id: 'Al', coeff: 2 }, { id: 'Fe2O3', coeff: 1 }], products: [{ id: 'Al2O3', coeff: 1 }, { id: 'Fe', coeff: 2 }], condition: 'highTemp', rate: RATE.reduction * 3, explosive: true },
-  // CaCO3 + CO2 + H2O → Ca(HCO3)2（过量 CO2 变清，石灰水先浑后清；需有水，见 _trySpecialSelf）
-  { type: 'special', reactants: [{ id: 'CaCO3', coeff: 1 }, { id: 'CO2', coeff: 1 }], products: [{ id: 'Ca(HCO3)2', coeff: 1 }], condition: 'normal', rate: RATE.special, waterNeeded: true },
-  // Na2CO3 + CO2 + H2O → 2NaHCO3（CO2 过量转化为碳酸氢钠）
-  { type: 'special', reactants: [{ id: 'Na2CO3', coeff: 1 }, { id: 'CO2', coeff: 1 }], products: [{ id: 'NaHCO3', coeff: 2 }], condition: 'normal', rate: RATE.special, waterNeeded: true },
-  // Na2O2 + CO2 → Na2CO3 + O2（过氧化钠与二氧化碳）
-  { type: 'special', reactants: [{ id: 'Na2O2', coeff: 2 }, { id: 'CO2', coeff: 2 }], products: [{ id: 'Na2CO3', coeff: 2 }, { id: 'O2', coeff: 1 }], condition: 'normal', rate: RATE.special },
-  // 氨气+氯化氢（白烟，大气中相遇；引擎在 reactAtmosphere 特判处理）
-  { type: 'special', reactants: [{ id: 'NH3', coeff: 1 }, { id: 'HCl', coeff: 1 }], products: [{ id: 'NH4Cl', coeff: 1 }], condition: 'normal', rate: RATE.special * 2, atmosphereOnly: true },
 ];
 
 // ---- 成对反应：特例表（分步/两性/活泼金属遇水/浓酸制气等）----
@@ -4209,13 +4527,61 @@ const SPECIAL_PAIR_RULES = [
   { type: 'special', reactants: [{ id: 'NaHCO3', coeff: 1 }, { id: 'HCl', coeff: 1 }], products: [{ id: 'NaCl', coeff: 1 }, { id: 'CO2', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'normal', rate: RATE.special },
   // 酸式盐中和：NaHCO3 + NaOH → Na2CO3 + H2O（同钠离子，离子引擎不驱动，显式列出）
   { type: 'special', reactants: [{ id: 'NaHCO3', coeff: 1 }, { id: 'NaOH', coeff: 1 }], products: [{ id: 'Na2CO3', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'normal', rate: RATE.ionic },
+  // 碳酸化（CO2 过量，需有水）：CaCO3 + CO2 + H2O → Ca(HCO3)2（石灰水先浑后清）
+  // 只有大气 CO2 明显过量（>3g）才慢慢把沉淀溶回去，避免少量通气就看不到白色浑浊
+  { type: 'special', reactants: [{ id: 'CaCO3', coeff: 1 }, { id: 'CO2', coeff: 1 }, { id: 'H2O', coeff: 1 }], products: [{ id: 'Ca(HCO3)2', coeff: 1 }], condition: 'normal', rate: RATE.special * 0.03, co2Over: 3 },
+  // Na2CO3 + CO2 + H2O → 2NaHCO3（CO2 过量转化为碳酸氢钠）
+  { type: 'special', reactants: [{ id: 'Na2CO3', coeff: 1 }, { id: 'CO2', coeff: 1 }, { id: 'H2O', coeff: 1 }], products: [{ id: 'NaHCO3', coeff: 2 }], condition: 'normal', rate: RATE.special },
+  // Na2O2 + CO2 → Na2CO3 + O2（过氧化钠与二氧化碳，不需水）
+  { type: 'special', reactants: [{ id: 'Na2O2', coeff: 2 }, { id: 'CO2', coeff: 2 }], products: [{ id: 'Na2CO3', coeff: 2 }, { id: 'O2', coeff: 1 }], condition: 'normal', rate: RATE.special },
+  // 氨气+氯化氢气体（白烟，大气中相遇；引擎在 reactAtmosphere 特判处理）
+  { type: 'special', reactants: [{ id: 'NH3', coeff: 1 }, { id: 'HCl(g)', coeff: 1 }], products: [{ id: 'NH4Cl', coeff: 1 }], condition: 'normal', rate: RATE.special * 2, atmosphereOnly: true },
+  // ---- 双水解（三价金属盐 + 碳酸盐/硫化物；不能按普通复分解生成 Fe2(CO3)3 之类不存在的盐）----
+  { type: 'special', reactants: [{ id: 'FeCl3', coeff: 2 }, { id: 'Na2CO3', coeff: 3 }, { id: 'H2O', coeff: 3 }], products: [{ id: 'Fe(OH)3', coeff: 2 }, { id: 'CO2', coeff: 3 }, { id: 'NaCl', coeff: 6 }], condition: { solution: true }, rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'AlCl3', coeff: 2 }, { id: 'Na2CO3', coeff: 3 }, { id: 'H2O', coeff: 3 }], products: [{ id: 'Al(OH)3', coeff: 2 }, { id: 'CO2', coeff: 3 }, { id: 'NaCl', coeff: 6 }], condition: { solution: true }, rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'CrCl3', coeff: 2 }, { id: 'Na2CO3', coeff: 3 }, { id: 'H2O', coeff: 3 }], products: [{ id: 'Cr(OH)3', coeff: 2 }, { id: 'CO2', coeff: 3 }, { id: 'NaCl', coeff: 6 }], condition: { solution: true }, rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'FeCl3', coeff: 2 }, { id: 'Na2S', coeff: 1 }], products: [{ id: 'FeCl2', coeff: 2 }, { id: 'S', coeff: 1 }, { id: 'NaCl', coeff: 2 }], condition: { solution: true }, rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'AlCl3', coeff: 2 }, { id: 'Na2S', coeff: 3 }, { id: 'H2O', coeff: 6 }], products: [{ id: 'Al(OH)3', coeff: 2 }, { id: 'H2S', coeff: 3 }, { id: 'NaCl', coeff: 6 }], condition: { solution: true }, rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'CrCl3', coeff: 2 }, { id: 'Na2S', coeff: 3 }, { id: 'H2O', coeff: 6 }], products: [{ id: 'Cr(OH)3', coeff: 2 }, { id: 'H2S', coeff: 3 }, { id: 'NaCl', coeff: 6 }], condition: { solution: true }, rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'CuSO4', coeff: 2 }, { id: 'Na2CO3', coeff: 2 }, { id: 'H2O', coeff: 1 }], products: [{ id: 'Cu2(OH)2CO3', coeff: 1 }, { id: 'Na2SO4', coeff: 2 }, { id: 'CO2', coeff: 1 }], condition: { solution: true }, rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'FeCl3', coeff: 1 }, { id: 'NaHCO3', coeff: 3 }], products: [{ id: 'Fe(OH)3', coeff: 1 }, { id: 'CO2', coeff: 3 }, { id: 'NaCl', coeff: 3 }], condition: { solution: true }, rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'AlCl3', coeff: 1 }, { id: 'NaHCO3', coeff: 3 }], products: [{ id: 'Al(OH)3', coeff: 1 }, { id: 'CO2', coeff: 3 }, { id: 'NaCl', coeff: 3 }], condition: { solution: true }, rate: RATE.special },
+  // ---- 偏铝酸盐/硅酸盐 + 酸或 CO2 ----
+  { type: 'special', reactants: [{ id: 'NaAlO2', coeff: 1 }, { id: 'HCl', coeff: 1 }, { id: 'H2O', coeff: 1 }], products: [{ id: 'Al(OH)3', coeff: 1 }, { id: 'NaCl', coeff: 1 }], condition: { solution: true }, rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'NaAlO2', coeff: 1 }, { id: 'CO2', coeff: 1 }, { id: 'H2O', coeff: 2 }], products: [{ id: 'Al(OH)3', coeff: 1 }, { id: 'NaHCO3', coeff: 1 }], condition: { solution: true }, rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'Na2SiO3', coeff: 1 }, { id: 'CO2', coeff: 1 }, { id: 'H2O', coeff: 1 }], products: [{ id: 'H2SiO3', coeff: 1 }, { id: 'Na2CO3', coeff: 1 }], condition: { solution: true }, rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'Ca(OH)2', coeff: 1 }, { id: 'NaHCO3', coeff: 1 }], products: [{ id: 'CaCO3', coeff: 1 }, { id: 'NaOH', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: { solution: true }, rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'Ba(OH)2', coeff: 1 }, { id: 'CO2', coeff: 1 }], products: [{ id: 'BaCO3', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'normal', rate: RATE.ionic },
+  // ---- 两性物 + KOH / 铬绿 / 锌 ----
+  { type: 'special', reactants: [{ id: 'Al(OH)3', coeff: 1 }, { id: 'KOH', coeff: 1 }], products: [{ id: 'KAlO2', coeff: 1 }, { id: 'H2O', coeff: 2 }], condition: 'normal', rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'Al2O3', coeff: 1 }, { id: 'KOH', coeff: 2 }], products: [{ id: 'KAlO2', coeff: 2 }, { id: 'H2O', coeff: 1 }], condition: { solution: true }, rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'SiO2', coeff: 1 }, { id: 'KOH', coeff: 2 }], products: [{ id: 'K2SiO3', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: { solution: true }, rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'Cr2O3', coeff: 1 }, { id: 'NaOH', coeff: 2 }], products: [{ id: 'NaCrO2', coeff: 2 }, { id: 'H2O', coeff: 1 }], condition: { solution: true }, rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'Zn', coeff: 1 }, { id: 'NaOH', coeff: 2 }], products: [{ id: 'Na2ZnO2', coeff: 1 }, { id: 'H2', coeff: 1 }], condition: { solution: true }, rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'Zn(OH)2', coeff: 1 }, { id: 'NaOH', coeff: 2 }], products: [{ id: 'Na2ZnO2', coeff: 1 }, { id: 'H2O', coeff: 2 }], condition: 'normal', rate: RATE.special },
+  // ---- 沉淀转化/配合（弱酸/弱碱环境）----
+  { type: 'special', reactants: [{ id: 'AgCl', coeff: 1 }, { id: 'NaBr', coeff: 1 }], products: [{ id: 'AgBr', coeff: 1 }, { id: 'NaCl', coeff: 1 }], condition: 'normal', rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'AgCl', coeff: 1 }, { id: 'KI', coeff: 1 }], products: [{ id: 'AgI', coeff: 1 }, { id: 'KCl', coeff: 1 }], condition: 'normal', rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'BaCO3', coeff: 1 }, { id: 'Na2SO4', coeff: 1 }], products: [{ id: 'BaSO4', coeff: 1 }, { id: 'Na2CO3', coeff: 1 }], condition: 'normal', rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'Mg(OH)2', coeff: 1 }, { id: 'NH4Cl', coeff: 2 }], products: [{ id: 'MgCl2', coeff: 1 }, { id: 'NH3·H2O', coeff: 2 }], condition: 'normal', rate: RATE.special },
+  // 配位溶解：AgCl + 2NH3·H2O → [Ag(NH3)2]Cl + 2H2O；Cu(OH)2 + 4NH3·H2O → [Cu(NH3)4](OH)2 + 4H2O
+  { type: 'special', reactants: [{ id: 'AgCl', coeff: 1 }, { id: 'NH3·H2O', coeff: 2 }], products: [{ id: '[Ag(NH3)2]Cl', coeff: 1 }, { id: 'H2O', coeff: 2 }], condition: 'normal', rate: RATE.special * 0.5 },
+  { type: 'special', reactants: [{ id: 'Cu(OH)2', coeff: 1 }, { id: 'NH3·H2O', coeff: 4 }], products: [{ id: '[Cu(NH3)4](OH)2', coeff: 1 }, { id: 'H2O', coeff: 4 }], condition: 'normal', rate: RATE.special * 0.5 },
+  // ---- 其他经典无机 ----
+  { type: 'special', reactants: [{ id: 'K2Cr2O7', coeff: 1 }, { id: 'HCl', coeff: 14 }], products: [{ id: 'KCl', coeff: 2 }, { id: 'CrCl3', coeff: 2 }, { id: 'Cl2', coeff: 3 }, { id: 'H2O', coeff: 7 }], condition: { solution: true }, rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'Na2O2', coeff: 1 }, { id: 'HCl', coeff: 2 }], products: [{ id: 'NaCl', coeff: 2 }, { id: 'H2O2', coeff: 1 }], condition: { solution: true }, rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'K2O', coeff: 1 }, { id: 'H2O', coeff: 1 }], products: [{ id: 'KOH', coeff: 2 }], condition: 'normal', rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'Li2O', coeff: 1 }, { id: 'H2O', coeff: 1 }], products: [{ id: 'LiOH', coeff: 2 }], condition: 'normal', rate: RATE.special },
+  { type: 'special', reactants: [{ id: 'Mg', coeff: 1 }, { id: 'H2O', coeff: 2 }], products: [{ id: 'Mg(OH)2', coeff: 1 }, { id: 'H2', coeff: 1 }], condition: 'heat', rate: RATE.special * 0.5 },
+  { type: 'special', reactants: [{ id: 'P2O5', coeff: 1 }, { id: 'H2O', coeff: 3 }], products: [{ id: 'H3PO4', coeff: 2 }], condition: 'normal', rate: RATE.special },
   // 两性溶解：Al(OH)3 + NaOH → NaAlO2 + 2H2O（过量碱）；Cr(OH)3 同理
   { type: 'special', reactants: [{ id: 'Al(OH)3', coeff: 1 }, { id: 'NaOH', coeff: 1 }], products: [{ id: 'NaAlO2', coeff: 1 }, { id: 'H2O', coeff: 2 }], condition: 'normal', rate: RATE.special },
   { type: 'special', reactants: [{ id: 'Cr(OH)3', coeff: 1 }, { id: 'NaOH', coeff: 1 }], products: [{ id: 'NaCrO2', coeff: 1 }, { id: 'H2O', coeff: 2 }], condition: 'normal', rate: RATE.special },
-  // 金属+碱：2Al + 2NaOH + 2H2O → 2NaAlO2 + 3H2↑（铝与碱反应）
-  { type: 'special', reactants: [{ id: 'Al', coeff: 2 }, { id: 'NaOH', coeff: 2 }], products: [{ id: 'NaAlO2', coeff: 2 }, { id: 'H2', coeff: 3 }], condition: 'normal', rate: RATE.special },
+  // 金属+碱：2Al + 2NaOH + 2H2O → 2NaAlO2 + 3H2↑（铝与碱反应；必须有水）
+  { type: 'special', reactants: [{ id: 'Al', coeff: 2 }, { id: 'NaOH', coeff: 2 }, { id: 'H2O', coeff: 2 }], products: [{ id: 'NaAlO2', coeff: 2 }, { id: 'H2', coeff: 3 }], condition: { solution: true }, rate: RATE.special },
   // 铬酸碱互变（量变/指示剂式应用）：Cr2O7^2- + 2OH- → 2CrO4^2- + H2O（橙红→黄）
-  { type: 'special', reactants: [{ id: 'K2Cr2O7', coeff: 1 }, { id: 'NaOH', coeff: 2 }], products: [{ id: 'K2CrO4', coeff: 2 }, { id: 'H2O', coeff: 1 }], condition: 'normal', rate: RATE.special },
+  // 钠的去处是 Na2CrO4（旧式把钠丢掉会凭空多 32g/摩尔）
+  { type: 'special', reactants: [{ id: 'K2Cr2O7', coeff: 1 }, { id: 'NaOH', coeff: 2 }], products: [{ id: 'K2CrO4', coeff: 1 }, { id: 'Na2CrO4', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'normal', rate: RATE.special },
   // 2CrO4^2- + 2H+ → Cr2O7^2- + H2O（黄→橙红）
   { type: 'special', reactants: [{ id: 'K2CrO4', coeff: 2 }, { id: 'HCl', coeff: 2 }], products: [{ id: 'K2Cr2O7', coeff: 1 }, { id: 'KCl', coeff: 2 }, { id: 'H2O', coeff: 1 }], condition: 'normal', rate: RATE.special },
   // 活泼金属遇水（爆炸）：2Na + 2H2O → 2NaOH + H2↑
@@ -4237,6 +4603,12 @@ const SPECIAL_PAIR_RULES = [
   { type: 'special', reactants: [{ id: 'HCl', coeff: 1 }, { id: 'HClO', coeff: 1 }], products: [{ id: 'Cl2', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'normal', rate: RATE.special },
   // 漂白液遇酸放出氯气（危险）：NaClO + 2HCl → NaCl + Cl2↑ + H2O
   { type: 'special', reactants: [{ id: 'NaClO', coeff: 1 }, { id: 'HCl', coeff: 2 }], products: [{ id: 'NaCl', coeff: 1 }, { id: 'Cl2', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'normal', rate: RATE.special },
+  // 次氯酸钾 + 盐酸同样放出氯气：KClO + 2HCl → KCl + Cl2↑ + H2O
+  // （与 NaClO 同型；显式列出，避免只靠 HClO+HCl 间接路径在固/液接触顺序下漏反应）
+  { type: 'special', reactants: [{ id: 'KClO', coeff: 1 }, { id: 'HCl', coeff: 2 }], products: [{ id: 'KCl', coeff: 1 }, { id: 'Cl2', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: 'normal', rate: RATE.special },
+  // 氯酸钾 + 浓盐酸：KClO3 + 6HCl → KCl + 3Cl2↑ + 3H2O（实验室制氯气的另一条经典路径）
+  // 反应很快，不用缓慢特例速率，否则低浓度尾巴看起来像"没反应"
+  { type: 'special', reactants: [{ id: 'KClO3', coeff: 1 }, { id: 'HCl', coeff: 6 }], products: [{ id: 'KCl', coeff: 1 }, { id: 'Cl2', coeff: 3 }, { id: 'H2O', coeff: 3 }], condition: 'normal', rate: RATE.special * 3 },
   // MnO2 + 4HCl（浓）--△--> MnCl2 + Cl2↑ + 2H2O（实验室制氯气）
   { type: 'special', reactants: [{ id: 'MnO2', coeff: 1 }, { id: 'HCl', coeff: 4 }], products: [{ id: 'MnCl2', coeff: 1 }, { id: 'Cl2', coeff: 1 }, { id: 'H2O', coeff: 2 }], condition: { concHigh: true, heat: true }, rate: RATE.special },
   // 3Fe + 4H2O(g) --高温--> Fe3O4 + 4H2（铁与水蒸气，游戏简化为浸水+高温）
@@ -4258,20 +4630,26 @@ const SPECIAL_PAIR_RULES = [
   // 金属 + 硫粉（固-固化合，金属块 × 灯上硫粉等成对触发）：
   // Fe + S --点燃--> FeS（黑色）：化合反应快（快于铁/硫各自的燃烧），点燃即优先化合
   { type: 'special', reactants: [{ id: 'Fe', coeff: 1 }, { id: 'S', coeff: 1 }], products: [{ id: 'FeS', coeff: 1 }], condition: 'ignited', rate: RATE.special * 3 },
+  // Fe + 溶解 H2S → FeS↓ + H2↑（关卡可把 H2S 直接写进池水；H2S 是气体 id，
+  // 但它在溶液里同样能被 Fe 置换出 H2——配合 _runPairDataRule 的"溶液优先"取源）
+  { type: 'special', reactants: [{ id: 'Fe', coeff: 1 }, { id: 'H2S', coeff: 1 }], products: [{ id: 'FeS', coeff: 1 }, { id: 'H2', coeff: 1 }], condition: { solution: true }, rate: RATE.special },
   // Cu + S --点燃--> CuS（黑色）
   { type: 'special', reactants: [{ id: 'Cu', coeff: 1 }, { id: 'S', coeff: 1 }], products: [{ id: 'CuS', coeff: 1 }], condition: 'ignited', rate: RATE.special },
+  // 氯水/次氯酸氧化 H2S 与 Fe2+（Cl2 通气后先生成 HClO；显式计量，避免 FeCl3 配平质量缺口）
+  { type: 'special', reactants: [{ id: 'HClO', coeff: 1 }, { id: 'H2S', coeff: 1 }], products: [{ id: 'S', coeff: 1 }, { id: 'HCl', coeff: 1 }, { id: 'H2O', coeff: 1 }], condition: { solution: true }, rate: RATE.special * 3 },
+  { type: 'special', reactants: [{ id: 'HClO', coeff: 1 }, { id: 'FeCl2', coeff: 2 }, { id: 'HCl', coeff: 1 }], products: [{ id: 'FeCl3', coeff: 2 }, { id: 'H2O', coeff: 1 }], condition: { solution: true }, rate: RATE.special * 3 },
   // 注：NH3+HCl 白烟、CaCO3/Na2CO3+大气CO2→酸式盐、Na2O2+CO2 放在引擎的
   // reactAtmosphere / _trySpecialSelf（需要大气 CO2 且仅在有水环境转酸式盐）
 ];
 
 // ---- 金属与大气卤素的化合（点燃；气体来自大气，能附着金属表面）----
 const METAL_NONMETAL_RULES = [
-  // 2Na + Cl2 --点燃--> 2NaCl（白烟）
-  { type: 'special', reactants: [{ id: 'Na', coeff: 2 }, { id: 'Cl2', coeff: 1 }], products: [{ id: 'NaCl', coeff: 2 }], condition: 'ignited', rate: RATE.special },
-  // 2Fe + 3Cl2 --点燃--> 2FeCl3（棕烟）
-  { type: 'special', reactants: [{ id: 'Fe', coeff: 2 }, { id: 'Cl2', coeff: 3 }], products: [{ id: 'FeCl3', coeff: 2 }], condition: 'ignited', rate: RATE.special },
-  // Cu + Cl2 --点燃--> CuCl2（棕黄烟）
-  { type: 'special', reactants: [{ id: 'Cu', coeff: 1 }, { id: 'Cl2', coeff: 1 }], products: [{ id: 'CuCl2', coeff: 1 }], condition: 'ignited', rate: RATE.special },
+  // 2Na + Cl2 --点燃--> 2NaCl（白烟；纯 Cl2 气室无需 O2）
+  { type: 'special', reactants: [{ id: 'Na', coeff: 2 }, { id: 'Cl2', coeff: 1 }], products: [{ id: 'NaCl', coeff: 2 }], condition: { ignited: true, gas: 'Cl2' }, rate: RATE.special },
+  // 2Fe + 3Cl2 --点燃--> 2FeCl3（棕烟；纯 Cl2 气室无需 O2）
+  { type: 'special', reactants: [{ id: 'Fe', coeff: 2 }, { id: 'Cl2', coeff: 3 }], products: [{ id: 'FeCl3', coeff: 2 }], condition: { ignited: true, gas: 'Cl2' }, rate: RATE.special },
+  // Cu + Cl2 --点燃--> CuCl2（棕黄烟；纯 Cl2 气室无需 O2）
+  { type: 'special', reactants: [{ id: 'Cu', coeff: 1 }, { id: 'Cl2', coeff: 1 }], products: [{ id: 'CuCl2', coeff: 1 }], condition: { ignited: true, gas: 'Cl2' }, rate: RATE.special },
 ];
 
 // ---- 碱吸收酸性气体（气体在含碱容器中产生/大气被碱吸收时发生）----
@@ -4285,9 +4663,17 @@ const ACID_GAS_RULES = [
   // Cl2 尾气处理（有毒）：Cl2 + 2NaOH → NaCl + NaClO + H2O
   { gas: 'Cl2', base: 'NaOH', baseCoeff: 2, products: [{ id: 'NaCl', coeff: 1 }, { id: 'NaClO', coeff: 1 }, { id: 'H2O', coeff: 1 }] },
   { gas: 'Cl2', base: 'KOH', baseCoeff: 2, products: [{ id: 'KCl', coeff: 1 }, { id: 'KClO', coeff: 1 }, { id: 'H2O', coeff: 1 }] },
-  // NH3 碱性气体被酸吸收：NH3 + HCl → NH4Cl
+  // 2Cl2 + 2Ca(OH)2 → Ca(ClO)2 + CaCl2 + 2H2O（漂白粉；按每 mol Cl2 配 1 mol Ca(OH)2、0.5 mol 产物）
+  { gas: 'Cl2', base: 'Ca(OH)2', baseCoeff: 1, products: [{ id: 'Ca(ClO)2', coeff: 0.5 }, { id: 'CaCl2', coeff: 0.5 }, { id: 'H2O', coeff: 1 }] },
+  // H2S 尾气：H2S + 2NaOH → Na2S + 2H2O；H2S + Ca(OH)2 → CaS + 2H2O
+  { gas: 'H2S', base: 'NaOH', baseCoeff: 2, products: [{ id: 'Na2S', coeff: 1 }, { id: 'H2O', coeff: 2 }] },
+  { gas: 'H2S', base: 'KOH', baseCoeff: 2, products: [{ id: 'K2S', coeff: 1 }, { id: 'H2O', coeff: 2 }] },
+  { gas: 'H2S', base: 'Ca(OH)2', baseCoeff: 1, products: [{ id: 'CaS', coeff: 1 }, { id: 'H2O', coeff: 2 }] },
+  // CO2 被氨水吸收：CO2 + NH3·H2O → NH4HCO3
+  { gas: 'CO2', base: 'NH3·H2O', baseCoeff: 1, products: [{ id: 'NH4HCO3', coeff: 1 }] },
+  // NH3 被酸吸收：baseCoeff = 每 mol 气体需要的**酸分子** mol（NH3:H2SO4 = 2:1）
   { gas: 'NH3', base: 'HCl', baseCoeff: 1, products: [{ id: 'NH4Cl', coeff: 1 }] },
-  { gas: 'NH3', base: 'H2SO4', baseCoeff: 2, products: [{ id: '(NH4)2SO4', coeff: 1 }] },
+  { gas: 'NH3', base: 'H2SO4', baseCoeff: 0.5, products: [{ id: '(NH4)2SO4', coeff: 1 }] },
 ];
 
 function acidGasRuleFor(gas, base) {
@@ -4298,21 +4684,36 @@ function acidGasRuleFor(gas, base) {
 }
 
 // ---- 气体溶于水（CO2→H2CO3、SO2→H2SO3、SO3→H2SO4、NO2 歧化、氨水、Cl2 氯水）----
-// acid 产物是气体（Cl2）时作为"溶质"直接入溶液（氯水，可继续参与氧化还原）
+// 质量/计量严格按方程式：
+//   CO2+H2O→H2CO3、SO2+H2O→H2SO3、SO3+H2O→H2SO4、NH3+H2O→NH3·H2O；
+//   3NO2+H2O→2HNO3+NO；Cl2+H2O→HCl+HClO。
+// water：每 mol 气体消耗的水 mol；products：按 mol 系数。
+// （旧字段 acid/byGas 仍保留兼容，但引擎优先用 products。）
 const GAS_WATER_RULES = [
-  { gas: 'CO2', acid: 'H2CO3' },
-  { gas: 'SO2', acid: 'H2SO3' },
-  { gas: 'SO3', acid: 'H2SO4' },
-  { gas: 'NO2', acid: 'HNO3', byGas: 'NO' }, // 3NO2 + H2O → 2HNO3 + NO（简化 1:1）
-  { gas: 'NH3', acid: 'NH3·H2O' },
-  { gas: 'Cl2', acid: 'Cl2' },               // 氯气溶于水 → 氯水（溶质）
+  { gas: 'CO2', water: 1, products: [{ id: 'H2CO3', coeff: 1 }], acid: 'H2CO3' },
+  { gas: 'SO2', water: 1, products: [{ id: 'H2SO3', coeff: 1 }], acid: 'H2SO3' },
+  { gas: 'SO3', water: 1, products: [{ id: 'H2SO4', coeff: 1 }], acid: 'H2SO4' },
+  { gas: 'NO2', water: 1, products: [{ id: 'HNO3', coeff: 2 }, { id: 'NO', coeff: 1 }], acid: 'HNO3', byGas: 'NO' },
+  { gas: 'NH3', water: 1, products: [{ id: 'NH3·H2O', coeff: 1 }], acid: 'NH3·H2O' },
+  // H2S 不自动做"气体→氢硫酸"吸收：FeS 等硫化物遇酸会再生 H2S 气体，
+  // 再被水吸回去会形成 H2S(g)↔H2S(aq) 的鬼畜循环。需要氢硫酸时请在编辑器
+  // 直接放 H2S(aq) 溶质；H2S 气体仍按大气规则参与反应。
+  { gas: 'HCl(g)', water: 0, products: [{ id: 'HCl', coeff: 1 }], acid: 'HCl' }, // 氯化氢气体溶于水 → 盐酸
+  { gas: 'Cl2', water: 1, products: [{ id: 'HCl', coeff: 1 }, { id: 'HClO', coeff: 1 }], acid: 'Cl2' }, // 氯水（HCl+HClO）
 ];
 
 // ---- 大气可燃气体：不设"缓慢燃烧"----
 // 酒精灯/喷灯只是点火源与加热源，其火焰不消耗大气 O2、不产生 CO2。
 // 可燃气体（H2/CO/CH4/H2S）遇点燃源只有两种结局：积累到爆炸下限 → 爆鸣；
 // 浓度不足 → 不反应（气体留在大气里，玩家可通过气泡柱标签观察）。
-const ATMOSPHERE_COMBUSTION_RULES = [];
+// 补：低浓度点燃时的缓慢燃烧（不触发爆鸣的残余气体），按方程式守恒。
+const ATMOSPHERE_COMBUSTION_RULES = [
+  { type: 'combustion', reactants: [{ id: 'H2', coeff: 2 }, { id: 'O2', coeff: 1 }], products: [{ id: 'H2O', coeff: 2 }], condition: 'ignited', rate: RATE.gasCombustion * 0.2 },
+  { type: 'combustion', reactants: [{ id: 'CO', coeff: 2 }, { id: 'O2', coeff: 1 }], products: [{ id: 'CO2', coeff: 2 }], condition: 'ignited', rate: RATE.gasCombustion * 0.2 },
+  { type: 'combustion', reactants: [{ id: 'CH4', coeff: 1 }, { id: 'O2', coeff: 2 }], products: [{ id: 'CO2', coeff: 1 }, { id: 'H2O', coeff: 2 }], condition: 'ignited', rate: RATE.gasCombustion * 0.2 },
+  { type: 'combustion', reactants: [{ id: 'H2S', coeff: 2 }, { id: 'O2', coeff: 3 }], products: [{ id: 'SO2', coeff: 2 }, { id: 'H2O', coeff: 2 }], condition: { ignited: true, o2: 'high' }, rate: RATE.gasCombustion * 0.2 },
+  { type: 'combustion', reactants: [{ id: 'H2S', coeff: 2 }, { id: 'O2', coeff: 1 }], products: [{ id: 'S', coeff: 2 }, { id: 'H2O', coeff: 2 }], condition: { ignited: true, o2: 'low' }, rate: RATE.gasCombustion * 0.2 },
+];
 
 // ---- 大气特殊反应：合成氨、氨催化氧化 ----
 const ATMOSPHERE_SPECIAL_RULES = [
@@ -4322,6 +4723,18 @@ const ATMOSPHERE_SPECIAL_RULES = [
   { type: 'special', reactants: [{ id: 'NH3', coeff: 4 }, { id: 'O2', coeff: 5 }], products: [{ id: 'NO', coeff: 4 }, { id: 'H2O', coeff: 6 }], condition: 'ignited', rate: RATE.special * 0.5 },
   // 2NO + O2 → 2NO2（无色 NO 遇空气氧化成红棕 NO₂；慢速便于观察"无色→红棕"）
   { type: 'special', reactants: [{ id: 'NO', coeff: 2 }, { id: 'O2', coeff: 1 }], products: [{ id: 'NO2', coeff: 2 }], condition: 'normal', rate: RATE.special * 0.05 },
+  // 2H2S + SO2 → 3S + 2H2O（气相归中，常温缓慢）
+  { type: 'special', reactants: [{ id: 'H2S', coeff: 2 }, { id: 'SO2', coeff: 1 }], products: [{ id: 'S', coeff: 3 }, { id: 'H2O', coeff: 2 }], condition: 'normal', rate: RATE.special * 0.05 },
+  // 2NH3 + 3Cl2 → N2 + 6HCl(g)（氯气与氨气在气相归中；氨过量时生成的 HCl 继续
+  // 与 NH3 生成 NH4Cl 白烟，见 reactAtmosphere 的白烟步骤）
+  // 注：由 engine.reactAtmosphere 直接处理（气相直接写入大气，不经过产气柱/吸收管线），
+  // 避免 _runRule 的产气钩子把 HCl 截留成气泡柱后无法与 NH3 继续生成白烟。
+  // ---- H2S + Cl2 → S + 2HCl(g)（硫化氢被氯气氧化；产物是氯化氢气体）
+  { type: 'special', reactants: [{ id: 'H2S', coeff: 1 }, { id: 'Cl2', coeff: 1 }], products: [{ id: 'S', coeff: 1 }, { id: 'HCl(g)', coeff: 2 }], condition: 'normal', rate: RATE.special * 0.2 },
+  // H2 + Cl2 --光照--> 2HCl(g)（氢气在氯气中燃烧/光照爆鸣）
+  { type: 'special', reactants: [{ id: 'H2', coeff: 1 }, { id: 'Cl2', coeff: 1 }], products: [{ id: 'HCl(g)', coeff: 2 }], condition: { light: true }, rate: RATE.special },
+  // 2SO2 + O2 ⇌ 2SO3（催化氧化；游戏用高温近似）
+  { type: 'special', reactants: [{ id: 'SO2', coeff: 2 }, { id: 'O2', coeff: 1 }], products: [{ id: 'SO3', coeff: 2 }], condition: 'highTemp', rate: RATE.special * 0.2 },
 ];
 
 exports.RATE = RATE;
@@ -4356,7 +4769,7 @@ exports.ATMOSPHERE_SPECIAL_RULES = ATMOSPHERE_SPECIAL_RULES;
 //   - CO2 与碱少量/过量 → 正盐 / 酸式盐（engine 侧计量比分支）
 // ============================================================================
 
-const { buildSalt, getSubstance, IONS } = __require('src/chem/substances.js');;
+const { buildSalt, ensureSalt, getSubstance, IONS } = __require('src/chem/substances.js');;
 
 const gcd = (a, b) => (b === 0 ? a : gcd(b, a % b));
 
@@ -4392,6 +4805,12 @@ const OXIDIZERS = {
       dilute: { gain: 3, product: { id: 'NO', charge: 0, o: 1 } },                    // 稀硝酸→NO 无色
     },
     strength: 8,
+  },
+  // 氯酸钾：强氧化剂，酸性条件下 ClO3- → Cl-（得 6e-）
+  KClO3: {
+    ion: { charge: -1, o: 3 }, cation: 'K+', cationN: 1,
+    branches: { any: { gain: 6, product: { id: 'Cl-', charge: -1, o: 0 } } },
+    strength: 10,
   },
   H2SO4: {
     // 浓硫酸（S+6→+4，每分子得 2e）。离子为 SO4^2-（电荷 -2，O4）；H+ 由 medH 统一补
@@ -4461,13 +4880,13 @@ const REDUCERS = {
   SO2:   { ion: { charge: 0, o: 2 }, loss: 2, product: { id: 'SO4^2-', charge: -2, o: 4 } },   // +4S→+6S
   H2SO3: { ion: { charge: 0, o: 3, h: 2 }, loss: 2, product: { id: 'SO4^2-', charge: -2, o: 4 } },
   Na2SO3:{ ion: { charge: -2, o: 3 }, cation: 'Na+', cationN: 2, loss: 2, product: { id: 'SO4^2-', charge: -2, o: 4 } }, // 旁观阳离子（碱金属盐）
-  H2S:   { ion: { charge: 0, o: 0, h: 2 }, loss: 2, product: { id: 'S', charge: 0, o: 0 } },   // -2S→0
+  H2S:   { ion: { charge: 0, o: 0, h: 2 }, loss: 2, product: { id: 'S', charge: 0, o: 0 }, minOx: 5 },   // -2S→0
   FeS:   { ion: { charge: 0, o: 0 }, loss: 2, product: { id: 'S', charge: 0, o: 0 } },        // FeS→Fe2+ + S
-  H2O2:  { ion: { charge: 0, o: 2, h: 2 }, loss: 2, product: { id: 'O2', charge: 0, o: 2 } },  // 还原性（被强氧化剂）
-  KI:    { ion: { charge: -1, o: 0 }, cation: 'K+', loss: 1, product: { id: 'I2', charge: 0, o: 0, count: 0.5 } },
-  NaI:   { ion: { charge: -1, o: 0 }, cation: 'Na+', loss: 1, product: { id: 'I2', charge: 0, o: 0, count: 0.5 } },
-  KBr:   { ion: { charge: -1, o: 0 }, cation: 'K+', loss: 1, product: { id: 'Br2', charge: 0, o: 0, count: 0.5 } },
-  NaBr:  { ion: { charge: -1, o: 0 }, cation: 'Na+', loss: 1, product: { id: 'Br2', charge: 0, o: 0, count: 0.5 } },
+  H2O2:  { ion: { charge: 0, o: 2, h: 2 }, loss: 2, product: { id: 'O2', charge: 0, o: 2 }, minOx: 8 },  // 还原性（只被强氧化剂氧化，I2 不够）
+  KI:    { ion: { charge: -1, o: 0 }, cation: 'K+', loss: 1, product: { id: 'I2', charge: 0, o: 0, count: 0.5 }, minOx: 5 },
+  NaI:   { ion: { charge: -1, o: 0 }, cation: 'Na+', loss: 1, product: { id: 'I2', charge: 0, o: 0, count: 0.5 }, minOx: 5 },
+  KBr:   { ion: { charge: -1, o: 0 }, cation: 'K+', loss: 1, product: { id: 'Br2', charge: 0, o: 0, count: 0.5 }, minOx: 8 },
+  NaBr:  { ion: { charge: -1, o: 0 }, cation: 'Na+', loss: 1, product: { id: 'Br2', charge: 0, o: 0, count: 0.5 }, minOx: 8 },
   CO:    { ion: { charge: 0, o: 1 }, loss: 2, product: { id: 'CO2', charge: 0, o: 2 } },
   H2:    { ion: { charge: 0, o: 0, h: 2 }, loss: 2, product: { id: 'H2O', charge: 0, o: 1, h: 2 } },
   // 注：C 不进 REDOX 表——碳常温不参与离子氧化还原（不跟酸/盐溶液反应），
@@ -4536,6 +4955,9 @@ function balanceRedox(oxId, redId, opts = {}) {
   const ox = OXIDIZERS[oxId];
   const red = REDUCERS[redId];
   if (!ox || !red) return null;
+  // 氧化剂强度不足时不配平（I2 不能把 Br- 氧化成 Br2；I2 不能氧化 H2O2 放 O2）
+  if (red.minOx && (ox.strength ?? 0) < red.minOx) return null;
+  if (!ox || !red) return null;
   const { medium = 'acid', conc = 0, redKey = 'weak', oxKey } = opts;
   const ob = oxKey ? ox.branches[oxKey] ?? ox.branches.any : oxBranch(ox, medium, conc);
   const rb = redBranch(red, redKey);
@@ -4559,7 +4981,8 @@ function balanceRedox(oxId, redId, opts = {}) {
   if (Math.abs(dq) > 1e-9) {
     if (medium === 'acid') medH = dq;        // dq>0 左补 H+；dq<0 右补 H+
     else if (medium === 'base') medOH = dq;  // dq>0 左补 OH-；dq<0 右补 OH-
-    else medH = dq < 0 ? dq : 0;             // 中性：仅 dq<0（产物酸）成立
+    else if (dq > 0) medOH = dq;             // 中性 dq>0：产物补 OH-（KMnO4→MnO2 等）
+    else medH = dq;                          // 中性 dq<0：产物酸（H2S+Cl2→HCl 等）
   }
   // 校验电荷：qRx + 左介质电荷 = qPd + 右介质电荷
   const qL = qRx + (medH > 0 ? medH : 0) + (medOH < 0 ? medOH : 0);
@@ -4667,12 +5090,18 @@ function balanceRedox(oxId, redId, opts = {}) {
     let rest = catN;
     for (const [anId, anN] of aMap) {
       if (anN <= 1e-9 || rest <= 1e-9) continue;
-      const salt = buildSalt(catId, anId);
-      const take = Math.min(rest / salt.catCount, anN / salt.anCount);
+      // ★ 用 ensureSalt（而不是只有 buildSalt）：未知盐（Zn(NO3)2/Mg(NO3)2/Fe(NO3)2…）
+      //   会被注册进物质表，摩尔质量/离子/溶解性正确；否则 getSubstance 走兜底 mm=100，
+      //   生成永不电离的"幽灵盐"，质量还会凭空消失。
+      const salt = ensureSalt(catId, anId);
+      // H+ + OH- 的"盐"是 H2O（已有物质、无 ions 字段）：按 1:1 处理，不崩
+      const catCount = salt.ions?.catCount ?? 1;
+      const anCount = salt.ions?.anCount ?? 1;
+      const take = Math.min(rest / catCount, anN / anCount);
       if (take <= 1e-9) continue;
-      pd.push({ id: salt.formula, coeff: take });
-      rest -= take * salt.catCount;
-      aMap.set(anId, anN - take * salt.anCount);
+      pd.push({ id: salt.id, coeff: take });
+      rest -= take * catCount;
+      aMap.set(anId, anN - take * anCount);
     }
   }
   // 合并同 id 产物（H2O 可能出现两次）
@@ -4961,7 +5390,33 @@ function resolveEmbed(b, o) {
   if (p.bottom < pen) { side = 'bottom'; pen = p.bottom; }
   if (p.left < pen) { side = 'left'; pen = p.left; }
   if (p.right < pen) { side = 'right'; pen = p.right; }
+  // 反向残余解算（b=物块，o=玩家）：移动物块会把"站在物块上/贴着物块"的玩家
+  // 脚下的物块抽走；横向推挤由玩家侧（b=玩家）的 X 轴处理。这里直接跳过。
+  if (!b.isPlayerObj && o.isPlayerObj) return false;
   if (side === null || pen === Infinity) return false;
+  // 侧面嵌入误判成"站在顶上"：玩家网格被反应腐蚀后只剩左边一列很短的格子，
+  // 这一列的 bottom 可能只比物块顶低 1~2px → MTV 选 top，但整个身体 AABB 的
+  // 底其实还在物块顶下方几十 px（身体贴在物块侧面）。此时把 top 当成落地会
+  // 让玩家挂在一格窄边上"卡在半空"，并且 blockedX 卡死。身体明显跨过物块顶
+  // 且顶在物块顶之上 → 按左右最小穿透解算，绝不给 onGround。
+  if (side === 'top' && p.top <= 4 && !o.static && b.top < o.top && b.bottom > o.top + 8) {
+    // 短列侧贴物块：不能当 top 落地（否则 onGround 让玩家卡半空）。
+    // 玩家正朝物块方向顶时，把物块让开，保持玩家正常速度；否则只跳过
+    // 这次残余解算，绝不给 onGround。
+    const hSide = p.left <= p.right ? 'left' : 'right';
+    if (o.pushable && ((hSide === 'left' && b.vel.x < -1) || (hSide === 'right' && b.vel.x > 1))) {
+      o.x += (hSide === 'left' ? -1 : 1) * Math.min(hSide === 'left' ? p.left : p.right, MAX_RESOLVE_X);
+      return true;
+    }
+    return false;
+  }
+  // 常规侧推：玩家正朝可推物块方向移动时，把物块沿同方向让开，而不是把玩家
+  // 反向推回（后者每帧吃掉一部分输入，推动速度只剩 ~70px/s）。
+  if (side !== 'top' && !o.static && o.pushable && b.isPlayerObj && b.bottom > o.top + 8
+      && ((side === 'left' && b.vel.x < -1) || (side === 'right' && b.vel.x > 1))) {
+    o.x += (side === 'left' ? -1 : 1) * Math.min(pen, MAX_RESOLVE_X);
+    return true;
+  }
   // 方向修正：MTV 选了"向下推出"（穿透最小的面在下方），但 b 的顶已在 o 的顶之上
   // ——b 不可能在 o 下方（否则顶不会高过 o 的顶），它只可能是从上方嵌入的，改判落地。
   // 典型：大物块放进池里时底边嵌进池底壁（旧代码的"宽面抬升"就为此存在），
@@ -5835,6 +6290,7 @@ class Particle extends Obj {
     });
     this.substance = substance;
     this.amount = amount;
+    this.liquid = getSubstance(substance).state === 'liquid'; // 液体（Br2/H2O2/HCl…）渲染为液滴，不画成固体球
     this.collectible = collectible ?? !isSoluble(substance);
     this.placed = placed;
     this.mat = new ParticleMaterial(this); // 让浸入容器的沉淀能参与反应（Zn+HCl 等）
@@ -5847,12 +6303,32 @@ class Particle extends Obj {
   /** 调试悬停显示：沉淀 · 物质 ×合并数（几颗 0.5g 合并；大堆合并颗粒会 >容器上限） */
   get hoverLabel() {
     const n = Math.max(1, Math.ceil(this.amount / CFG.maxParticleMass));
-    return `沉淀·${this.substance} ×${n}`;
+    return `${this.liquid ? '液滴' : '沉淀'}·${this.substance} ×${n}`;
   }
 
   render(ctx) {
     const sub = getSubstance(this.substance);
-    const c = sub.solid && sub.solid.length ? sub.solid[0] : '#c9b46a';
+    const c = sub.ionColor?.color ?? (sub.solid && sub.solid.length ? sub.solid[0] : '#c9b46a');
+    if (this.liquid) {
+      // 液滴：扁椭圆 + 高光（不再画成可垫脚的固体球）
+      const w = this.w * 1.35;
+      const h = this.h * 0.7;
+      const cx = this.x + this.w / 2;
+      const cy = this.y + this.h - h / 2;
+      ctx.save();
+      ctx.globalAlpha = 0.82;
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, w / 2, h / 2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 0.55;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.ellipse(cx - w * 0.12, cy - h * 0.14, w * 0.12, h * 0.16, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      return;
+    }
     renderPrecipitateBall(ctx, this.x + this.w / 2, this.y + this.h / 2, this.w, c);
   }
 }
@@ -8229,7 +8705,7 @@ class Container extends Obj {
     for (const [id, mass] of this.solution.solutes) {
       if (mass >= MIN_ENTRY) {
         // 酸类标注浓/稀（阈值：≥300 g/L = 浓，与引擎"浓酸"判定一致——MnO2+浓盐酸制氯气等）
-        const c = acidLabelOf(id, mass, this.solution.volume / 1000);
+        const c = acidLabelOf(id, mass, this.solution.liquidVolume() / 1000);
         // 显示名：指示剂（酚酞/石蕊）显示中文名，其余显示化学式
         parts.push(c ? `${displayName(id)}(${c})` : displayName(id)); // 微量溶质不显示化学式（防"出现/消失"闪烁）
       }
@@ -8370,10 +8846,16 @@ class Container extends Obj {
     return { x: this.x, y: this.y, w: this.w, h: this.h };
   }
 
-  /** 物体是否在容器内 */
+  /** 物体是否在容器内。
+   *  玩家额外要求**真正踏入**内区：只擦到池边/池沿 1~5px 不算浸入，避免跳过药品池
+   *  时被判定成与池液反应（玩家宽 85px，贴边擦过的接触面积和真正落进池里不同）。
+   *  其他物体（物块/沉淀）保持原语义，避免影响原本的溶解/反应。 */
   containsObj(obj) {
     const r = this.innerRect();
-    return obj.right > r.x && obj.left < r.x + r.w && obj.bottom > r.y && obj.top < r.y + r.h;
+    const hOverlap = Math.min(obj.right - r.x, r.x + r.w - obj.left);
+    const vOverlap = Math.min(obj.bottom - r.y, r.y + r.h - obj.top);
+    const minPen = obj && obj.isPlayerObj ? 6 : 0;
+    return hOverlap > minPen && vOverlap > minPen;
   }
 
   /**
@@ -9145,9 +9627,16 @@ class Portal extends Obj {
     Portal._groupOn ||= new Set();
     const key = this.group ? 'g:' + this.group : 'c:' + this.color;
     const sw = scene.byId[this.switchId];
-    const on = sw ? (typeof sw.effectiveOpen === 'function' ? !!sw.effectiveOpen(scene) : !!sw.open) : false;
-    if (on) Portal._groupOn.add(key);
-    return on || Portal._groupOn.has(key);
+    // 同场景存在绑定开关：必须看它**当前**是否有效开启。不能再用组级"开过就永久算开"
+    // 的记忆——否则开关关掉后同组传送门仍会直接传送（用户复现：绑定开关的关卡门一直开）。
+    if (sw) {
+      const on = typeof sw.effectiveOpen === 'function' ? !!sw.effectiveOpen(scene) : !!sw.open;
+      if (!on) Portal._groupOn.delete(key);
+      else Portal._groupOn.add(key);
+      return on;
+    }
+    // 跨场景配对时对侧场景可能没有同名开关：保留组级激活记忆作为兜底。
+    return Portal._groupOn.has(key);
   }
 
   /**
@@ -9444,8 +9933,11 @@ const CARRY_ACTIONS = {
   ],
 };
 
-/** 选中某个可拾取物品时提供的操作（无物品/未知物品 = []） */
+/** 选中某个可拾取物品时提供的操作（无物品/未知物品 = []）。
+ *  插件物品可直接在自己的对象上挂 `carryActions`（与内置条目同结构），
+ *  这样自定义物品也能复用 HUD 键位提示/触屏按钮，而不必改引擎表。 */
 function carryActionsOf(item) {
+  if (item && Array.isArray(item.carryActions)) return item.carryActions;
   const kind = item && item.isCarryItem;
   return (kind && CARRY_ACTIONS[kind]) || [];
 }
@@ -9987,6 +10479,7 @@ const { hexToRgb, rgbToHex, mix } = __require('src/render/color.js');;
  * 不传（测试/单次取色）→ 直出目标色。
  */
 function solutionColor(solution, frame = undefined) {
+  const vol = solution.liquidVolume ? solution.liquidVolume() : solution.volume;
   let idx = 0;
   let r = 0;
   let g = 0;
@@ -9995,7 +10488,7 @@ function solutionColor(solution, frame = undefined) {
   for (const [id, mass] of solution.solutes) {
     const sub = getSubstance(id);
     if (!sub.ionColor) continue;
-    const gPerL = (mass / solution.volume) * 1000; // volume 单位 mL → g/L
+    const gPerL = vol > 0 ? (mass / vol) * 1000 : 0; // volume 单位 mL → g/L（按实际液体体积）
     const f = gPerL / sub.ionColor.sat; // 相对饱和浓度
     if (f <= 0) continue;
     const c = hexToRgb(sub.ionColor.color);
@@ -10017,7 +10510,7 @@ function solutionColor(solution, frame = undefined) {
   for (const [id, mass] of solution.solutes) {
     const sub = getSubstance(id);
     if (!(sub.solubilityLimit > 0)) continue;
-    const concFrac = (mass * 1000) / (solution.volume * sub.solubilityLimit); // 浓度 / 饱和线
+    const concFrac = vol > 0 ? (mass * 1000) / (vol * sub.solubilityLimit) : 0; // 浓度 / 饱和线
     turb = Math.max(turb, Math.min(1, concFrac / 1.25));
   }
   if (turb > 0.02) {
@@ -10041,7 +10534,7 @@ function solutionColor(solution, frame = undefined) {
       if (pH >= cut) color = c;
     }
     if (sub.indicator.transparent && color === sub.indicator.stops[0][1]) continue; // 无色段
-    const gPerL = (mass / solution.volume) * 1000;
+    const gPerL = vol > 0 ? (mass / vol) * 1000 : 0;
     const f = Math.min(1, gPerL / 10); // ≥10g/L 视为指示剂饱和显色
     const c = hexToRgb(color);
     ir += c.r * f;
@@ -11903,21 +12396,21 @@ function pushNotice(scene, text) {
 }
 
 /** 物品栏槽位几何（HUD 渲染与点击命中**共用这一套数字**，保证点哪是哪）：
- *  普通格 CFG.inventory.slotPx，装物品的格子放大为 itemSlotPx；底边对齐、右缘贴边。
- *  margins：触屏设备传 {bottom, right}（含安全区），桌面默认 10。
- *  小屏（compactView）槽位缩 0.72×——否则 5 格 70px 占 350px，寸屏全被物品栏吃掉。 */
+ *  5 个槽**始终统一大小**：普通格/物品格混排时一大一小最显眼（用户反馈"有物品时比例
+ *  很不合理"）。统一后物品图标有更大的绘制空间，反而比"单独放大物品格"更清楚。
+ *  桌面/大屏：CFG.inventory.slotPx；小屏（compactView）按 itemSlotPx 的缩放比例、
+ *  下限 38px——56px 的普通格缩到 0.58× 只有 32px，图标会小到看不清。
+ *  margins：触屏设备传 {bottom, right}（含安全区），桌面默认 10。 */
 function inventorySlotRects(W, H, slots, margins = { bottom: 10, right: 10 }) {
   const k = compactK(W, H);
   const gap = Math.max(3, Math.round(4 * k));
-  const margin = 10;
+  const compact = compactView(W, H);
+  const size = Math.max(compact ? 38 : 34,
+    Math.round((compact ? CFG.inventory.itemSlotPx : CFG.inventory.slotPx) * k));
   const n = slots.length;
   const rects = new Array(n);
   let right = W - (margins.right ?? 10);
   for (let i = n - 1; i >= 0; i--) {
-    const size = Math.max(
-      34,
-      Math.round((slots[i] && slots[i].item ? CFG.inventory.itemSlotPx : CFG.inventory.slotPx) * k),
-    );
     right -= size;
     rects[i] = { x: right, y: H - (margins.bottom ?? 10) - size, size };
     right -= gap;
@@ -12046,14 +12539,24 @@ function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   // ③ 重开按钮（右上按钮排最左）：单击只记录时刻（播点击音），400ms 内双击才
   //    打开重开菜单（单次点击不重开）。★ 必须在全屏按钮之前判定：iOS 不支持
   //    元素全屏时 HUD 不画全屏按钮、重开按钮左移到它的位置，两者命中区重叠。
-  if (inRect(restartButtonRect(W, top, right, withFs), x, y)) {
+  //    编辑器试玩 scene.hideRestartButton：按钮没画 → 命中区也不处理。
+  if (!scene.hideRestartButton && inRect(restartButtonRect(W, top, right, withFs), x, y)) {
     const now = wallNow();
     const last = Number(scene._restartTapAt) || 0;
-    if (last > 0 && now - last <= RESTART_DOUBLE_MS
-        && typeof scene.openRestartMenu === 'function' && scene.openRestartMenu()) {
-      scene._restartTapAt = 0;
-      sfx('ui.open');
-      onInfo?.({ type: 'restart-menu-open' });
+    if (last > 0 && now - last <= RESTART_DOUBLE_MS) {
+      // 没有任何存档（未设置存档点 / 还没走到存档点）→ 只有"整局重开"一种选择，
+      // 不再弹只有一个可用按钮的菜单，直接重开。
+      if (!Savepoint.has(scene)) {
+        scene._restartTapAt = 0;
+        Savepoint.fullRestart(scene);
+        onInfo?.({ type: 'restart-full' });
+      } else if (typeof scene.openRestartMenu === 'function' && scene.openRestartMenu()) {
+        scene._restartTapAt = 0;
+        sfx('ui.open');
+        onInfo?.({ type: 'restart-menu-open' });
+      } else {
+        scene._restartTapAt = now;
+      }
     } else {
       scene._restartTapAt = now;
       sfx('ui.click');
@@ -12767,7 +13270,7 @@ function applyObjectState(obj, state) {
 // ---------------------------------------------------------------------------
 // 场景快照
 // ---------------------------------------------------------------------------
-const ARRAY_KEYS = ['objects', 'dynamics', 'statics', 'containers', 'lamps', 'gasTubes', 'gasChambers', 'doors', 'portals', 'particles', 'hidden'];
+const ARRAY_KEYS = ['objects', 'dynamics', 'statics', 'containers', 'lamps', 'gasTubes', 'gasChambers', 'checkpoints', 'doors', 'portals', 'particles', 'hidden'];
 
 function captureScene(scene) {
   const owners = new Set([...scene.objects, ...scene.hidden]);
@@ -13155,7 +13658,8 @@ function bindKeyboard(scene) {
     HELD.add(e.code); // 先记物理态（非方向键 keyup 也要精确释放）
     const action = actionOfCode(e.code);
     if (action === 'restart') {
-      scene.restart();
+      // 编辑器试玩：重开按钮/R 键都禁用，避免刷新编辑器丢掉未导出的编辑
+      if (!scene.hideRestartButton) scene.restart();
       e.preventDefault();
       return;
     }
@@ -13199,10 +13703,37 @@ function bindKeyboard(scene) {
     const action = actionOfCode(e.code);
     if (action) scene.control.delete(action);
   };
+  // 桌面端：鼠标滚轮 / 数字键 1~5 切换物品栏选中格（不需要点格子）
+  const slotCount = () => scene.player?.inventory?.slots?.length ?? 0;
+  const onWheel = (e) => {
+    const n = slotCount();
+    if (!n || scene.status !== 'running' || scene.overview || scene.restartMenuOpen) return;
+    const inv = scene.player.inventory;
+    const dir = e.deltaY > 0 ? 1 : e.deltaY < 0 ? -1 : 0;
+    if (!dir) return;
+    inv.selected = (inv.selected + dir + n) % n;
+    e.preventDefault();
+  };
+  const onSlotKey = (e) => {
+    const m = /^(?:Digit|Numpad)([1-9])$/.exec(e.code);
+    if (!m) return;
+    const idx = Number(m[1]) - 1;
+    if (idx < 0 || idx >= slotCount()) return;
+    if (scene.status !== 'running' || scene.overview || scene.restartMenuOpen) return;
+    scene.player.inventory.selected = idx;
+    e.preventDefault();
+  };
+  const onContext = (e) => {
+    // 桌面端禁用右键菜单（游戏内右键无用途，还会吞 keyup / 弹菜单打断操作）
+    e.preventDefault();
+    onClear();
+  };
   window.addEventListener('keydown', onDown);
   window.addEventListener('keyup', onUp);
+  window.addEventListener('wheel', onWheel, { passive: false });
+  window.addEventListener('keydown', onSlotKey);
   window.addEventListener('blur', onClear);
-  window.addEventListener('contextmenu', onClear); // 右键菜单会吞 keyup
+  window.addEventListener('contextmenu', onContext); // 右键菜单会吞 keyup；同时禁用右键菜单
   window.addEventListener('focusout', onClear); // 焦点移出（点击别处、切换焦点）
   document.addEventListener('visibilitychange', onClear);
   // ★ 恢复仍按住的键（Multiscene.switchTo 重绑时会调 bindKeyboard——按住方向键
@@ -13214,8 +13745,10 @@ function bindKeyboard(scene) {
   return () => {
     window.removeEventListener('keydown', onDown);
     window.removeEventListener('keyup', onUp);
+    window.removeEventListener('wheel', onWheel);
+    window.removeEventListener('keydown', onSlotKey);
     window.removeEventListener('blur', onClear);
-    window.removeEventListener('contextmenu', onClear);
+    window.removeEventListener('contextmenu', onContext);
     window.removeEventListener('focusout', onClear);
     document.removeEventListener('visibilitychange', onClear);
     // 只移除监听器——HELD 是"物理按住态"，由 keyup/blur/contextmenu 清除；
@@ -14060,7 +14593,8 @@ class Hud {
     // 点下去还弹一句"此浏览器不支持全屏"——极窄屏上寸土寸金，直接不画。
     if (this._isTouch() && fullscreenSupported()) this.fsButton(ctx, W, top, right);
     // 重开按钮：右上按钮排最左（单击记时刻，400ms 内双击 = 打开重开菜单）
-    this.restartButton(ctx, W, top, right);
+    // 编辑器试玩等场景可设 hideRestartButton：不画/不响应，避免"重开=刷新编辑器"丢失编辑。
+    if (!scene.hideRestartButton) this.restartButton(ctx, W, top, right);
     this.tipButton(ctx, W, top, right, time);
     this.notice(ctx, scene, W, H, time);
     this.bigBanner(ctx, scene, W, H, time);
@@ -14433,9 +14967,15 @@ class Hud {
         if (!meta) continue;
         const cap = meta.label ?? '';
         const down = ui.isPressed(r.key);
+        // 按钮在极小屏会缩到 39px：图标/圆角/文字全部按按钮边长等比缩放，
+        // 否则固定 20px 图标 + 11px 文字在小按钮里会挤成一团（用户：比例不合理）。
+        const bs = r.size;
+        const kBtn = Math.max(0.7, Math.min(1, bs / CFG.touch.btnSize));
+        const rad = Math.min(14, bs * 0.24);
+        const fs = Math.max(9, Math.min(11, Math.round(bs * 0.17)));
         ctx.save();
-        rr(ctx, r.x, r.y, r.size, r.size, 14);
-        const gr = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.size);
+        rr(ctx, r.x, r.y, bs, bs, rad);
+        const gr = ctx.createLinearGradient(r.x, r.y, r.x, r.y + bs);
         gr.addColorStop(0, down ? 'rgba(90,64,20,0.95)' : 'rgba(38,32,74,0.88)');
         gr.addColorStop(1, down ? 'rgba(48,32,10,0.95)' : 'rgba(14,11,36,0.88)');
         ctx.fillStyle = gr;
@@ -14449,10 +14989,10 @@ class Hud {
         ctx.stroke();
         ctx.shadowBlur = 0;
         ctx.textAlign = 'center';
-        this._touchIcon(ctx, meta.icon, r.x + r.size / 2, r.y + r.size / 2 - 7, down ? '#fff6d8' : '#ffe9b0');
+        this._touchIcon(ctx, meta.icon, r.x + bs / 2, r.y + bs * 0.4, down ? '#fff6d8' : '#ffe9b0', kBtn);
         ctx.fillStyle = down ? '#ffd76a' : 'rgba(255,233,176,0.62)';
-        ctx.font = '11px "Segoe UI", "Microsoft YaHei", sans-serif';
-        ctx.fillText(cap, r.x + r.size / 2, r.y + r.size - 10);
+        ctx.font = `${fs}px "Segoe UI", "Microsoft YaHei", sans-serif`;
+        ctx.fillText(cap, r.x + bs / 2, r.y + bs - Math.max(4, bs * 0.095));
         ctx.restore();
       }
     }
@@ -14465,7 +15005,8 @@ class Hud {
    *  dropperSuck=滴管+上吸箭头 / dropperDrip=滴管+下落液滴 /
    *  bottleCollect=集气瓶+上升气泡 / bottleInject=集气瓶+注入箭头。
    *  图标名来自物品的操作定义（items.carryActionsOf），新增物品只加一条即可。 */
-  _touchIcon(ctx, icon, cx, cy, color) {
+  _touchIcon(ctx, icon, cx, cy, color, scale = 1) {
+    const S = 1.15 * Math.max(0.55, Math.min(1.2, scale));
     // 小烧杯（白描边 + 青色液体）；(ox,oy) 为杯心偏移，sc 缩放
     const beaker = (ox, oy, sc = 1) => {
       ctx.save();
@@ -14540,7 +15081,7 @@ class Hud {
     };
     ctx.save();
     ctx.translate(cx, cy);
-    ctx.scale(1.15, 1.15);
+    ctx.scale(S, S);
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
     ctx.lineWidth = 2.2;
@@ -14979,7 +15520,7 @@ class Hud {
     for (const [id, mass] of c.solution.solutes) {
       if (mass < MIN_ENTRY) continue; // 微量溶质不显示：防"0.0g ↔ 无"的条目抖动
       // 酸类标注浓/稀（≥300 g/L = 浓，与引擎判定一致）
-      const note = acidLabelOf(id, mass, c.solution.volume / 1000);
+      const note = acidLabelOf(id, mass, c.solution.liquidVolume() / 1000);
       out.push({ id, mass, origin: c.solOrigins?.get(id) ?? null, note });
     }
     for (const [id, mass] of c.precipitates) {
@@ -15352,7 +15893,10 @@ class Hud {
         const o = s.obj;
         const sig = s.item === 'beaker' ? `${o.solution ? o.solution.totalMass() : 0}`
           : s.item === 'dropper' ? `${o.liquid}${o.substance}`
-            : `${o.totalGas()}${o.gases.size}`;
+            : s.item === 'bottle' ? `${o.totalGas()}${o.gases.size}`
+              // 插件自定义物品：不能走集气瓶的 totalGas()/gases（会抛错中断整个物品栏绘制）。
+              // 有 carrySig() 用它，否则用物品类型做稳定签名。
+              : `${s.item}:${typeof o.carrySig === 'function' ? o.carrySig() : ''}`;
         const rec = this._pop[i];
         if (!rec || rec.sig !== sig) this._pop[i] = { sig, t: time };
         const pt = time - this._pop[i].t;
@@ -15434,6 +15978,11 @@ class Hud {
 
   /** 选中物品说明面板的数据（名称 / 组成 / 质量 / 颜色） */
   _itemInfoData(o) {
+    // 插件物品可自带 carryInfo()，返回与内置物品相同的 {title, comp, mass, color}
+    if (o && typeof o.carryInfo === 'function') {
+      const info = o.carryInfo();
+      if (info && info.title) return info;
+    }
     let title = '';
     let comp = '';
     let mass = '';
@@ -15600,9 +16149,21 @@ class Hud {
     const o = s.obj;
     const size = r.size;
     const cx = r.x + size / 2;
-    const cy = r.y + size / 2 + 1;
-    // 紧凑/极小视口下物品格会缩到 50/41px：图标同比例缩，避免压到质量小字
-    const k = Math.max(0.58, Math.min(1, size / 70));
+    // ★ 图标略偏上：下方留给质量小字。统一用槽高的 42% 做图标中心，70/50/41px
+    //   三档槽宽下图标与质量字都不会叠在一起。
+    const cy = r.y + size * 0.42;
+    // 紧凑/极小视口下物品格会缩到 50/41px：图标同比例缩
+    const k = Math.max(0.55, Math.min(1.1, size / 70));
+    ctx.save();
+    ctx.textAlign = 'center';
+    // 插件物品自带矢量图标：drawHudIcon(ctx,cx,cy,size,k)
+    if (o && typeof o.drawHudIcon === 'function') {
+      ctx.save();
+      ctx.textAlign = 'center';
+      try { o.drawHudIcon(ctx, cx, cy, size, k); } catch (e) { /* 插件图标失败不拖垮 HUD */ }
+      ctx.restore();
+      return;
+    }
     // 小图标共用黄铜渐变（亮铜 → 铜 → 暗铜；竖渐变足够）
     const brass = (x, y, w, h) => {
       const g = ctx.createLinearGradient(x, y, x, y + h);
@@ -15620,7 +16181,7 @@ class Hud {
       const botR = 3.5;
       ctx.save();
       ctx.translate(cx, cy);
-      ctx.scale(k, k);
+      ctx.scale(k * 1.5, k * 1.5); // 1.5×：56px 槽里约占 26×31，41px 槽里也不再是小点
       const bx = -bw / 2;
       const by = -bh / 2 + 1;
       const glassPath = () => {
@@ -15698,12 +16259,12 @@ class Hud {
         ctx.stroke();
       }
       ctx.restore(); // 图标缩放结束（质量小字用未缩放坐标）
-      this._slotGrams(ctx, `${(o.solution ? o.solution.totalMass() : 0).toFixed(0)}g`, cx, r.y + size - 5);
+      this._slotGrams(ctx, `${(o.solution ? o.solution.totalMass() : 0).toFixed(0)}g`, r, size);
     } else if (s.item === 'dropper') {
       // ---- 迷你滴管：黄铜卡箍 + 暗紫玻璃细管 + 红胶头 + 管内液面 ----
       ctx.save();
       ctx.translate(cx, cy);
-      ctx.scale(k, k);
+      ctx.scale(k * 1.16, k * 1.16); // 1.16×：滴管本来就细长，放大后仍能塞进槽内
       const { color: lcolor, alpha: lalpha } = o.liquid > 1e-9 ? o.liquidColor() : { color: '#9fdcff', alpha: 0.5 };
       const frac = Math.max(0, Math.min(1, o.liquid / o.capacity));
       const tubeTop = -7;
@@ -15814,7 +16375,7 @@ class Hud {
         ctx.stroke();
       }
       ctx.restore();
-      this._slotGrams(ctx, o.liquid > 1e-9 ? `${o.liquid.toFixed(1)}g` : '', cx, r.y + size - 5);
+      this._slotGrams(ctx, o.liquid > 1e-9 ? `${o.liquid.toFixed(1)}g` : '', r, size);
     } else if (s.item === 'bottle') {
       // ---- 迷你集气瓶：瓶口敞开 + 暗紫玻璃瓶身 + 充满瓶内的淡气体雾 ----
       const bw = 19;
@@ -15822,7 +16383,7 @@ class Hud {
       const botR = 3;
       ctx.save();
       ctx.translate(cx, cy);
-      ctx.scale(k, k);
+      ctx.scale(k * 1.5, k * 1.5); // 1.5×：与烧杯同一视觉重量
       const bx = -bw / 2;
       const bodyY = -6;
       const color = o.gasFillColor();
@@ -15904,17 +16465,21 @@ class Hud {
       ctx.fillStyle = 'rgba(58,63,92,0.95)';
       ctx.fill();
       ctx.restore(); // 图标缩放结束（质量小字用未缩放坐标）
-      this._slotGrams(ctx, o.totalGas() > 1e-9 ? `${o.totalGas().toFixed(1)}g` : '', cx, r.y + size - 5);
+      this._slotGrams(ctx, o.totalGas() > 1e-9 ? `${o.totalGas().toFixed(1)}g` : '', r, size);
     }
     ctx.restore();
   }
 
-  /** 槽内唯一的小字：质量（空则不画） */
-  _slotGrams(ctx, str, cx, y) {
+  /** 槽内唯一的小字：质量（空则不画）。右下角对齐、字号随槽宽缩放（41px 槽不再用 10.5px
+   *  大字），既不完全压住图标，也不会在窄槽里挤成一团。 */
+  _slotGrams(ctx, str, r, size) {
     if (!str) return;
-    ctx.font = '10.5px monospace';
+    const fs = Math.max(7.5, Math.min(10.5, size * 0.15));
+    ctx.font = `${fs.toFixed(1)}px monospace`;
     ctx.fillStyle = 'rgba(255,255,255,0.92)';
-    ctx.fillText(str, cx, y);
+    ctx.textAlign = 'right';
+    ctx.fillText(str, r.x + size - Math.max(3.5, size * 0.075), r.y + size - Math.max(3, size * 0.07));
+    ctx.textAlign = 'center';
   }
 
   // ---- 提示按钮（有可点提示闪光；面板在按钮正下方、右对齐，动画开合） ----
@@ -17230,7 +17795,10 @@ function startLoop(scene, renderer, opts = {}) {
       if (active && active.scene) {
         const S = active.scene;
         let guard = 0;
-        if (S.overview) {
+        if (typeof window !== 'undefined' && window.__CZ_LANDSCAPE_BLOCKED) {
+          // 竖屏遮罩（levels/boot.js 注入）：暂停推进、保持画面，转横屏后自动继续
+          acc = 0;
+        } else if (S.overview) {
           // 鸟瞰（灵魂出窍）：暂停推进（保持画面），自由缩放/平移由输入管线驱动
           acc = 0;
         } else if (S.debugMode && S.debugPaused) {
@@ -17851,6 +18419,7 @@ const { Beaker } = __require('src/objects/beaker.js');;
 const { Rope } = __require('src/objects/rope.js');;
 const { GasColumn } = __require('src/objects/gascolumn.js');;
 const { Sign } = __require('src/objects/sign.js');;
+const { Checkpoint } = __require('src/objects/checkpoint.js');;
 const { Portal } = __require('src/objects/portal.js');;
 const { GasDetector } = __require('src/objects/gasdetector.js');;
 const { Extractor } = __require('src/objects/extractor.js');;
@@ -17928,6 +18497,11 @@ class LevelBuilder {
 
   sign(x, y, text, opts = {}) {
     return this.add(new Sign({ x, y, text, ...opts }));
+  }
+
+  /** 存档点：玩家进入矩形区域自动存档；opts.on='enter' = 进入场景即存档 */
+  checkpoint(x, y, w = 220, h = 160, opts = {}) {
+    return this.add(new Checkpoint({ x, y, w, h, ...opts }));
   }
 
   portal(x, y, opts = {}) {
@@ -18337,7 +18911,10 @@ class Renderer {
     ctx.save();
     this.camera.apply(ctx, canvasLW(this.canvas), canvasLH(this.canvas), opts.focus);
     const particles = [];
-    for (const obj of objects) {
+    // 按 layer 升序绘制（稳定排序：同层保持场景对象原顺序）：
+    //   地板/墙 = -10（背景层）→ 普通物体 0 → 导气管 = 1（装置压在地板上）。
+    const drawList = objects.slice().sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0));
+    for (const obj of drawList) {
       if (obj instanceof Particle) { particles.push(obj); continue; }
       if (obj && typeof obj.render === 'function') {
         // 淡入（延迟出现/开关显现后）：appearTime=显现时刻，按 appearFade 秒渐入。
@@ -18677,6 +19254,8 @@ class Floor extends Obj {
   }
   constructor({ x, y, w, h, color = null, ice = false, trim = null, ...rest } = {}) {
     super({ x, y, w, h, solid: true, static: true, physicsKind: 'static', ...rest });
+    // 地板/墙是背景层：永远先画，导气管等装置才能压在地板上面（见 renderer 的 layer 排序）
+    if (!Number.isFinite(rest.layer)) this.layer = -10;
     this.color = color;
     this.ice = !!ice;
     this.trim = trim; // 视觉：'left'|'right'|'bottom'（池壁用）；null = 普通地板
@@ -19131,15 +19710,15 @@ class Inventory {
     return put;
   }
 
-  /** 从选中格放置 amount g（不足也按 amount 扣到 0），返回 {substance, mass} 或 null。
-   *  物品格不通过 place 放置（Shift 走物品放置流程），返回 null。 */
+  /** 从选中格放置 amount g（不足时只扣剩余量），返回 {substance, mass} 或 null。 */
   place(amount) {
     const slot = this.selectedSlot();
     if (!slot || slot.item) return null;
     if (slot.mass <= 0) return null;
-    slot.mass = Math.max(0, slot.mass - amount);
+    const take = Math.min(slot.mass, amount);
+    slot.mass = Math.max(0, slot.mass - take);
     if (slot.mass <= 0) this.slots[this.selected] = null;
-    return { substance: slot.substance, mass: amount };
+    return { substance: slot.substance, mass: take };
   }
 
   clearSelected() {
@@ -19506,9 +20085,10 @@ class Player extends Obj {
       && !container.canAcceptSubstance(sel.substance)) {
       return;
     }
-    const amount = CFG.placeAmount;
-    const res = this.inventory.place(amount);
+    const res = this.inventory.place(CFG.placeAmount);
     if (!res) return;
+    const amount = res.mass; // ★ 实际扣除量（不足 0.5g 时不能凭空多出质量）
+    const st = getSubstance(res.substance).state;
     const placeOrigin = { kind: 'place' };
     if (container) {
       // 落点=玩家脚下/台边吸附点（反应/气泡围绕玩家放下的位置，不再默认容器中心）
@@ -19520,8 +20100,10 @@ class Player extends Obj {
         container.depositAt = { x: px, y: Math.max(ir.y + 4, this.bottom - 6) };
       }
       // 可溶物质放进液体容器（池）→ 溶解进溶液（CuSO4 不会变成永不溶解的沉淀颗粒）；
-      // 不溶物（Cu(OH)2 等）才作为沉淀放置
-      if (container.solution && container.solution.water > 0 && isSoluble(res.substance)) {
+      // 液体物质（Br2/H2O2/HCl…）也进溶液，不再变成"固体球"；其余不溶物才作为沉淀放置
+      if (container.solution && container.solution.volume > 0
+        && (container.solution.water > 0 || st === 'liquid')
+        && (isSoluble(res.substance) || st === 'liquid')) {
         container.solution.add(res.substance, amount);
         if (container.noteSolOrigin) container.noteSolOrigin(res.substance, { kind: 'place' });
       } else {
@@ -19537,7 +20119,7 @@ class Player extends Obj {
       sfx('item.place');
       return;
     }
-    if (lamp) {
+    if (lamp && st !== 'liquid') {
       lamp.addPrecipitate(res.substance, amount, null, placeOrigin);
       this._placeFeedback(
         scene,
@@ -21489,10 +22071,119 @@ class Sign extends Obj {
 exports.Sign = Sign;
 
   };
+  __modules["src/objects/checkpoint.js"] = function (module, exports, __require) {
+// ============================================================================
+// 存档点（Checkpoint）——原版关卡对象（不再是插件）
+// ----------------------------------------------------------------------------
+// 玩家中心进入矩形区域时自动存档（on:'pos'，默认）；也可设为 on:'enter'：
+// 进入本场景/关卡时自动存档（章节入口）。只有放置了至少一个存档点的关卡才会
+// 自动存档——没有存档点的关卡不会产生任何内存存档。
+//
+// 视觉：区域上方悬着一个向下的金色三角标记（已触发后实心发光）——玩家一眼能看出
+// "这里是检查点"。区域本身不参与碰撞、不可拾取。
+//
+// 编辑器/JSON：类型 `checkpoint`，字段 x/y/w/h/id/on。导出的 HTML 会生成
+//   .checkpoint(x, y, w, h, { id, on })
+// ============================================================================
+
+const { Obj } = __require('src/objects/obj.js');;
+const { Savepoint } = __require('src/core/savepoint.js');;
+
+class Checkpoint extends Obj {
+  constructor({ x, y, w = 220, h = 160, id = '', on = 'pos', label = '', ...rest } = {}) {
+    super({ x, y, w, h, id, solid: false, physicsKind: 'none', ...rest });
+    this.isCheckpoint = true;
+    this.checkpointId = String(id || '');
+    this.saveOn = on === 'enter' ? 'enter' : 'pos';
+    this.label = String(label || '');
+    this._inside = false;
+    this._enterSaved = false;
+    this._saved = false;
+    this._pulse = 0;
+  }
+
+  get hoverLabel() {
+    return '存档点';
+  }
+
+  _save(scene) {
+    const ok = Savepoint.save(scene, { id: this.checkpointId || null, force: true });
+    if (ok) {
+      this._saved = true;
+      this._pulse = 1;
+    }
+  }
+
+  update(dt, scene) {
+    this._pulse = Math.max(0, (this._pulse || 0) - dt);
+    if (!scene || scene.status !== 'running' || !scene.player || this.hidden) return;
+    const blocked = Savepoint.isRestoring() || Savepoint.restoredRecently();
+    if (this.saveOn === 'enter') {
+      if (!this._enterSaved) {
+        this._enterSaved = true;
+        if (!blocked) this._save(scene);
+      }
+      return;
+    }
+    const p = scene.player;
+    const cx = p.x + (p.w ?? 0) / 2;
+    const cy = p.y + (p.h ?? 0) / 2;
+    const inside = cx >= this.x && cx <= this.x + this.w && cy >= this.y && cy <= this.y + this.h;
+    if (inside && !this._inside && !blocked) this._save(scene);
+    this._inside = inside;
+  }
+
+  /** 只画"悬在上方的倒三角"标记；不画区域框，避免遮挡关卡内容 */
+  render(ctx, opts = {}) {
+    const time = opts.time ?? 0;
+    const cx = this.x + this.w / 2;
+    const top = this.y;
+    const pulse = 0.5 + 0.5 * Math.sin(time * 2.2 + this.x * 0.01);
+    const bob = Math.sin(time * 1.6 + this.x * 0.02) * 2;
+    const y = top - 20 + bob;
+    ctx.save();
+    ctx.translate(cx, y);
+    ctx.shadowColor = this._saved ? 'rgba(150,232,176,.85)' : 'rgba(255,215,106,.85)';
+    ctx.shadowBlur = 10 + pulse * (this._pulse > 0 ? 10 : 3);
+    ctx.beginPath();
+    ctx.moveTo(-8, -7);
+    ctx.lineTo(8, -7);
+    ctx.lineTo(0, 7);
+    ctx.closePath();
+    if (this._saved) {
+      ctx.fillStyle = `rgba(150,232,176,${0.85 + 0.15 * pulse})`;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(220,255,235,.95)';
+    } else {
+      ctx.fillStyle = `rgba(255,215,106,${0.16 + 0.12 * pulse})`;
+      ctx.fill();
+      ctx.strokeStyle = `rgba(255,215,106,${0.75 + 0.25 * pulse})`;
+    }
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
+    // 触发脉冲：三角外扩一圈
+    if (this._pulse > 0.01) {
+      ctx.globalAlpha = this._pulse * 0.8;
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(0, 0, 12 + (1 - this._pulse) * 18, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+exports.Checkpoint = Checkpoint;
+
+  };
   __modules["src/objects/gasdetector.js"] = function (module, exports, __require) {
 // ============================================================================
 // 气体探测器：和开关同理，但"开启条件"是大气中某气体含量超过阈值。
 // 复用 Switch 的 onOpen/onClose 接线与 effectiveOpen（"&"联锁）逻辑。
+// 注意：它只按气体判定；Switch 的"开启物质/预设开启物"在气体探测器上不是设计用法
+// （气体本身也无法被"放入"），构造时清掉，避免被误当成化学旁路开关。
+// 如果以后需要旁路，应另做显式开关，而不是复用探测器的字段。
 // ============================================================================
 
 const { Switch } = __require('src/objects/switch.js');;
@@ -21510,6 +22201,8 @@ class GasDetector extends Switch {
     color = '#3fa8e0', onOpen, onClose, ...rest
   } = {}) {
     super({ x, y, w, h, mode: 'chemical', color, onOpen, onClose, ...rest });
+    this.opening = null; // 只认气体；不再沿用 Switch 的化学旁路
+    if (this.precipitates && typeof this.precipitates.clear === 'function') this.precipitates.clear();
     this.gas = gas; // 检测的气体 id
     this.threshold = threshold; // 触发阈值（g）
     // 纯视觉：指针摆动/气量条缓动（0..1，确定性，不参与判定）
@@ -21517,7 +22210,9 @@ class GasDetector extends Switch {
     this._needle = 0;
   }
 
-  /** 当前检测到的目标气体质量（含气室分区语义；render/update 共用） */
+  /** 当前检测到的目标气体质量（含气室分区语义；render/update 共用）。
+   *  这里读的是 `_reactGas`（反应产气累积），不是大气背景成分——否则外部空气里的
+   *  N2/O2 会让随便一个 N2/O2 探测器永久开启。气室反应产物也按气室隔离记录。 */
   _gasMass(scene) {
     const reactGas = scene && typeof scene.reactGasFor === 'function'
       ? scene.reactGasFor(this)
@@ -21536,9 +22231,10 @@ class GasDetector extends Switch {
     this._needle += (nTarget - this._needle) * (1 - Math.exp(-8 * dt));
   }
 
-  /** 检测开态：只有"反应产生的气体"超标 或 放入开启物质（任一满足即开；其余复用 Switch.update + "&"联锁）。
-   *  不检测大气里预置的气体（如初始 atmosphere.add('H2', 8)），只检测反应正在产生的那种气体。
-   *  气室内部：只读取该气室内部的产气（外部产气不会激活内部探测器，反之亦然）。 */
+  /** 检测开态：只有"反应产生的气体"超过阈值 或 放入开启物质（兼容旧数据；编辑器已不再暴露后者）。
+   *  不检测大气里预置的气体（如初始 atmosphere.add('H2', 8)），否则外部空气的 N2/O2
+   *  会让 N2/O2 探测器永久开启。气室内部只看该气室内部的产气。
+   *  其余复用 Switch.update + "&"联锁。 */
   _isOpenTarget(scene) {
     const gasOn = this.gas ? this._gasMass(scene) > this.threshold : false;
     const openingOn = this.opening ? this.openingMass() > 0 : false;
@@ -21761,18 +22457,21 @@ class Extractor extends Obj {
     if (!pool || !pool.material) return;
     if (!active) return;
     let pumped = false; // 本 tick 是否真的抽出物质（决定抽气声）
-    // 池内所有物质：只提取能以固体形式出现的（state==='solid'）
-    for (const id of pool.material.ids()) {
+    // 只提取**溶液里的溶质**；沉淀（BaSO4/CuS 等）属于另一套 material.ids()，
+    // 提取器不能把沉淀当溶质抽出来。仍保留"以固体形式输出"的视觉约束，
+    // 因此酸/水等液态溶质不会被这台提取器抽成颗粒。
+    for (const [id, soluteMass] of [...pool.solution.solutes]) {
       const sub = getSubstance(id);
       if (!sub || sub.state !== 'solid') continue;
-      const avail = pool.material.avail(id);
+      const avail = Math.min(Number(soluteMass) || 0, pool.solution.mass(id));
       const take = Math.min(avail, this.rate * dt);
       if (take <= 1e-9) continue;
-      pool.material.consume(id, take);
+      const removed = pool.solution.remove(id, take);
+      if (!(removed > 1e-9)) continue;
       pumped = true;
       // 质量累积：每攒满一个粒子（0.1g）才吐出一个，避免小量提取被 spawnParticles
       // 的取整放大（round(0.01/0.1)=1 → 凭空多出 10 倍质量）。
-      this._acc[id] = (this._acc[id] ?? 0) + take;
+      this._acc[id] = (this._acc[id] ?? 0) + removed;
       while (this._acc[id] >= CFG.cellMass) {
         this._acc[id] -= CFG.cellMass;
         // 从地表矩形顶部冒出可收集沉淀（可溶的也能收；实心 false）
@@ -21971,6 +22670,10 @@ class GasTube extends Obj {
 
   constructor({ x = 0, y = 0, w = 90, h = 70, inId = '', outId = '', outIds = null, valves = null, ...rest } = {}) {
     super({ x, y, w, h, solid: false, physicsKind: 'none', ...rest });
+    // 导气管是装在地板/墙面上的装置：画在地板之后（renderer 按 layer 升序绘制），
+    // 否则先放管子再放地板时，管口和竖直段会被地板整段盖住。气室玻璃在 1.5，
+    // 管子（2）压在最上面，法兰/管口不会被气室框架吃掉。
+    if (!Number.isFinite(rest.layer)) this.layer = 2;
     this.inId = inId ?? ''; // 输入端药品池 id（必须是药品池）
     this.outId = outId ?? ''; // 旧字段：单输出（outIds 缺省时生效，编辑器/旧关卡兼容）
     // 输出端 id 列表：新配置 outIds 优先；否则旧 outId 视为单输出
@@ -22721,13 +23424,6 @@ class GasTube extends Obj {
     dome();
     ctx.stroke();
     ctx.shadowBlur = 0;
-    // 玻璃高光（左侧一道弧）
-    ctx.beginPath();
-    ctx.moveTo(h.x + h.w * 0.16, h.y + h.h - 10);
-    ctx.quadraticCurveTo(h.x + h.w * 0.08, h.y + h.h * 0.42, h.x + h.w * 0.26, h.y + h.h * 0.1);
-    ctx.strokeStyle = 'rgba(255,255,255,0.13)';
-    ctx.lineWidth = 2.5;
-    ctx.stroke();
     // 底部法兰：压在池口地面线上（"罩住整个池"的底座）+ 金上沿 + 铆钉
     rr(ctx, h.x - 6, h.y + h.h - 7, h.w + 12, 11, 4);
     const fg = ctx.createLinearGradient(0, h.y + h.h - 7, 0, h.y + h.h + 4);
@@ -22911,6 +23607,9 @@ class GasChamber extends Obj {
 
   constructor({ x = 0, y = 0, w = 160, h = 120, gases = null, id = '', ...rest } = {}) {
     super({ x, y, w, h, solid: false, physicsKind: 'none', id, ...rest });
+    // 气室的玻璃/框架画在腔内物体之后（renderer 按 layer 升序）：
+    // 外部能明显看出"里面的东西隔着一层玻璃"，探测器/玩家进入气室后也会被玻璃罩住。
+    if (!Number.isFinite(rest.layer)) this.layer = 1.5;
     this.atmosphere = new Atmosphere(); // 气室内部大气（独立于 scene.atmosphere）
     this._initialGases = gases; // { 气体id: 质量g }；null/空对象 = 不配置 → 复制外部大气
     this._seeded = false; // 幂等初始化标记（Scene 首刻前 seed；update 里补一次）
@@ -23125,6 +23824,69 @@ class GasChamber extends Obj {
       ctx.lineWidth = 1;
       rr(ctx, x + 2, y + 2, Math.max(2, w - 4), Math.max(2, h - 4), 2);
       ctx.stroke();
+    }
+    if (!small) this._renderGasReadout(ctx, x, y, w, h, frame);
+    ctx.restore();
+  }
+
+  /** 从外面能看到气室内当前气体：底部小读数条（主气体色点 + 气体名/质量百分比）。
+   *  未 seed（编辑器预览）时退回 initial gases，避免空腔读数缺失。 */
+  _renderGasReadout(ctx, x, y, w, h, frame) {
+    let entries = [...this.atmosphere.gas.entries()].filter(([, m]) => m > 1e-9);
+    if (!entries.length && this._initialGases) {
+      entries = Object.entries(this._initialGases).filter(([, m]) => Number(m) > 1e-9).map(([id, m]) => [id, Number(m)]);
+    }
+    if (!entries.length) return;
+    entries.sort((a, b) => b[1] - a[1]);
+    const total = entries.reduce((s, [, m]) => s + m, 0);
+    if (!(total > 0)) return;
+    const fs = Math.max(8, Math.min(12, Math.min(w, h) * 0.055));
+    const padX = Math.max(5, fs * 0.55);
+    const padY = Math.max(2.5, fs * 0.3);
+    const maxW = Math.max(8, w - frame * 2 - fs);
+    const parts = entries.slice(0, 3).map(([id, m]) => ({
+      id,
+      // 亚 1% 显示 <1%，不要显示成 0%（避免误以为"0% 也有这种气体"）
+      pct: Math.round((m / total) * 100),
+      pctText: (m / total) * 100 >= 1 ? `${Math.round((m / total) * 100)}%` : '<1%',
+      color: getSubstance(id)?.gasColor || NEUTRAL_HAZE,
+    }));
+    ctx.save();
+    ctx.font = `bold ${fs}px ui-monospace, Consolas, monospace`;
+    const measure = (s) => {
+      try {
+        const m = ctx.measureText(s);
+        return m && Number.isFinite(m.width) ? m.width : s.length * fs * 0.62;
+      } catch (e) { return s.length * fs * 0.62; }
+    };
+    // 优先显示多的气体；太窄就只显示主成分
+    let text = parts.map((p) => `${p.id} ${p.pctText}`).join('  ');
+    const pieceW = () => parts.reduce((s, p) => s + measure(`${p.id} ${p.pctText}`) + 14, 0);
+    while (parts.length > 1 && pieceW() > maxW - padX * 2) {
+      parts.pop();
+      text = parts.map((p) => `${p.id} ${p.pctText}`).join('  ');
+    }
+    const tw = Math.min(maxW, pieceW() + padX * 2);
+    const bx = x + frame + 5;
+    const by = y + h - frame - (fs + padY * 2) - 5;
+    rr(ctx, bx, by, tw, fs + padY * 2, 3);
+    ctx.fillStyle = 'rgba(7,6,22,0.62)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(232,184,75,0.28)';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+    // 主气体色点 + 读数（每段前一个小圆点）
+    let dx = bx + padX;
+    const cy = by + (fs + padY * 2) / 2;
+    for (const p of parts) {
+      ctx.beginPath();
+      ctx.arc(dx, cy, Math.max(1.3, fs * 0.15), 0, Math.PI * 2);
+      ctx.fillStyle = p.color;
+      ctx.fill();
+      ctx.fillStyle = 'rgba(232,240,255,0.88)';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(`${p.id} ${p.pctText}`, dx + 4, cy + 0.5);
+      dx += measure(`${p.id} ${p.pctText}`) + 14;
     }
     ctx.restore();
   }
@@ -24346,4 +25108,4 @@ exports.Multiscene = Multiscene;
   };
   global.Chezzle = __require("src/index.js");
 })(typeof window !== 'undefined' ? window : globalThis);
-console.log('[Chezzle] 引擎构建 "vmvmdw3n4"');
+console.log('[Chezzle] 引擎构建 "vmvwagucl"');

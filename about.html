@@ -13,8 +13,8 @@
 })();
 </script>
 <!-- 偏好 + 音效：prefs.js 供 audio.js 读 sfxVolume/sfxMuted；返回/去选关的点击音用 data-sfx 覆盖默认 -->
-<script src="prefs.js?vmvmdw3n4"></script>
-<script src="audio.js?vmvmdw3n4"></script>
+<script src="prefs.js?vmvwagucl"></script>
+<script src="audio.js?vmvwagucl"></script>
 <style>
   :root { --gold: #e8b84b; --gold-l: #ffd76a; --cyan: #7fd8ff; --panel: #141a40; --edge: #2b3047; --txt: #dfe8f2; --dim: #9fb2c8; }
   * { box-sizing: border-box; margin: 0; }
@@ -105,6 +105,22 @@
     #wipe.on i { transition: none; }
     .card, header, .foot { opacity: 1; transform: none; transition: none; }
   }
+  /* —— 竖屏强制横屏：整页绕左上角顺时针转 90°（与主页/选关同一套） ——
+     转的是 **body**（不是 html）：放在根元素上会让移动端把布局视口一起撑大，
+     整页按放大后的尺寸排版、内容被裁在屏幕外。
+     容器尺寸由脚本 applyRotSize() 按 innerWidth/innerHeight 写死 px（iOS 的 100vh
+     比 innerHeight 大，纯 CSS 会和 JS 换算打架）。这里只留首帧兜底。 */
+  @media (orientation: portrait) {
+    html { height: 100%; overflow: hidden; overscroll-behavior: none; }
+    body { position: absolute; top: 0; left: 100vw; width: 100vh; height: 100vw;
+      transform: rotate(90deg); transform-origin: left top; overflow-y: auto; overflow-x: hidden;
+      -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
+      /* ★ 原样式有 min-height:100%；旋转后会把 body 撑到 innerHeight 高，
+         超出的部分落到屏幕外且无法滚动到 → 这里覆盖为 0，高度严格等于旋转容器。 */
+      min-height: 0; }
+    .wrap { max-width: calc(100vh - 44px); }
+    header { margin-bottom: 14px; }
+  }
 </style>
 </head>
 <body>
@@ -147,7 +163,7 @@
     <span class="k"><kbd>V</kbd> 鸟瞰（灵魂出窍）：暂停 + 滚轮缩放 + 拖动平移，看整关布局</span>
     <span class="k"><kbd>F5</kbd> 暂停 <kbd>F6</kbd> 步进（调试模式，URL 加 <kbd>?debug=1</kbd> 开启）</span>
   </div>
-  <p>悬停物体可以查看它的<b>来源与成分</b>（调试模式）。鼠标点击右下角的物品栏格子可以切换收集槽——装着烧杯/滴管/集气瓶的格子会放大显示，里面装的液体和气体成分一目了然；选中可拾取物品时，物品栏上方会显示该物品的操作与键位（移动端则在右下直接出现对应按钮）。<b>移动端</b>：左下摇杆 + 右下 Q/⇧ 与物品操作按键，首次触屏自动全屏（右上 ⛶ 可切换），左上信息合并成一张卡；鸟瞰模式单指拖动平移、双指捏合缩放。</p>
+  <p>悬停物体可以查看它的<b>来源与成分</b>（调试模式）。鼠标点击右下角的物品栏格子可以切换收集槽——5 个格子大小一致，装着烧杯/滴管/集气瓶的格子会画出物品缩略图与质量，里面装的液体和气体成分一目了然；选中可拾取物品时，物品栏上方会显示该物品的操作与键位（移动端则在右下直接出现对应按钮）。<b>移动端</b>：左下摇杆 + 右下 Q/⇧ 与物品操作按键，首次触屏自动全屏（右上 ⛶ 可切换），左上信息合并成一张卡；鸟瞰模式单指拖动平移、双指捏合缩放。</p>
   <p><a href="levels/items-demo.html" style="color:#ffd76a"><b>▶ 打开物品演示关</b></a>（烧杯 / 滴管 / 集气瓶的操作用例）。</p>
 </div>
 
@@ -189,8 +205,47 @@
 <div class="foot">Chezzle · 化学 × 解谜 —— 每个关卡都是一道化学题</div>
 </div>
 <script>
+/* 竖屏强制横屏的坐标换算（与主页/选关一致）：旋转后局部视口 = innerHeight × innerWidth。
+   容器尺寸用 JS 按 innerWidth/innerHeight 写死 px，避免 iOS 100vh 与 JS 页面高度打架。 */
+(function () {
+  var PROPS = ['position', 'top', 'left', 'width', 'height', 'transform', 'transformOrigin', 'overflowY', 'overflowX', 'minHeight'];
+  function isRot() { try { return matchMedia('(orientation: portrait)').matches; } catch (e) { return false; } }
+  function applyRotSize() {
+    var b = document.body;
+    if (!b) return;
+    if (isRot()) {
+      b.style.position = 'absolute';
+      b.style.top = '0';
+      b.style.left = innerWidth + 'px';
+      b.style.width = innerHeight + 'px';
+      b.style.height = innerWidth + 'px';
+      b.style.transformOrigin = 'left top';
+      b.style.transform = 'rotate(90deg)';
+      b.style.overflowY = 'auto';
+      b.style.overflowX = 'hidden';
+      b.style.minHeight = '0px';
+    } else {
+      for (var i = 0; i < PROPS.length; i++) b.style[PROPS[i]] = '';
+    }
+  }
+  var vw = function () { return isRot() ? innerHeight : innerWidth; };
+  var vh = function () { return isRot() ? innerWidth : innerHeight; };
+  window.__czAboutRot = { isRot: isRot, vw: vw, vh: vh, applyRotSize: applyRotSize };
+  applyRotSize();
+  var pending = false;
+  function onViewport() {
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(function () { pending = false; applyRotSize(); });
+  }
+  addEventListener('resize', onViewport);
+  addEventListener('orientationchange', function () { setTimeout(onViewport, 200); });
+})();
+</script>
+<script>
 (function () {
   const REDUCE = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const ROT = window.__czAboutRot || { isRot: () => false, vw: () => innerWidth, vh: () => innerHeight };
   // ---- 星野（纯装饰；低档少画几颗） ----
   const box = document.getElementById('stars');
   if (!REDUCE && box) {
@@ -201,8 +256,8 @@
       const sz = 1 + Math.random() * 2;
       s.style.width = sz + 'px';
       s.style.height = sz + 'px';
-      s.style.left = (Math.random() * 100) + 'vw';
-      s.style.top = (Math.random() * 100) + 'vh';
+      s.style.left = (Math.random() * ROT.vw()) + 'px';
+      s.style.top = (Math.random() * ROT.vh()) + 'px';
       s.style.animationDuration = (2.6 + Math.random() * 5) + 's';
       s.style.animationDelay = (Math.random() * 5) + 's';
       box.appendChild(s);
@@ -210,7 +265,9 @@
   }
   // ---- 滚动渐显：滚到眼前的卡片才浮上来（不提前把入场动画演完） ----
   const items = [document.querySelector('header'), ...document.querySelectorAll('.card'), document.querySelector('.foot')].filter(Boolean);
-  if (REDUCE || !('IntersectionObserver' in window)) {
+  // 竖屏强制横屏时 body 是滚动容器，IntersectionObserver 的 root 仍是物理视口 →
+  // 滚到后面的卡片可能永远不触发"渐显"。旋转模式直接全部显示（信息页不需要滚动编排）。
+  if (REDUCE || ROT.isRot() || !('IntersectionObserver' in window)) {
     for (const el of items) el.classList.add('in');
   } else {
     const io = new IntersectionObserver((entries) => {
@@ -233,11 +290,16 @@
     sPending = true;
     requestAnimationFrame(() => {
       sPending = false;
-      const max = Math.max(1, document.documentElement.scrollHeight - innerHeight);
-      sfill.style.width = Math.min(100, Math.max(0, (scrollY / max) * 100)).toFixed(2) + '%';
+      // 旋转模式下页面滚动发生在 body 上（window.scrollY 恒为 0）→ 用实际滚动容器的度量
+      const rot = ROT.isRot();
+      const sc = rot ? document.body : (document.scrollingElement || document.documentElement);
+      const max = Math.max(1, sc.scrollHeight - sc.clientHeight);
+      const top = rot ? document.body.scrollTop : (window.scrollY || sc.scrollTop || 0);
+      sfill.style.width = Math.min(100, Math.max(0, (top / max) * 100)).toFixed(2) + '%';
     });
   }
   addEventListener('scroll', onScroll, { passive: true });
+  document.body.addEventListener('scroll', onScroll, { passive: true });
   addEventListener('resize', onScroll);
   onScroll();
   // ---- 离场转场：主页/去选关按钮 ----

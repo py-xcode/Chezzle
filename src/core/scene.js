@@ -38,6 +38,7 @@ export class Scene {
     this.lamps = [];
     this.gasTubes = []; // 导气管（输入端产气 → 多个输出端；见 objects/gastube.js）
     this.gasChambers = []; // 气室（内部独立大气区域；见 objects/gaschamber.js）
+    this.checkpoints = []; // 存档点（玩家进入区域/进入场景时自动存档；见 objects/checkpoint.js）
     this.doors = [];
     this.portals = [];
     this.particles = [];
@@ -373,6 +374,7 @@ export class Scene {
     if (obj.isLamp) this.lamps.push(obj);
     if (obj.isGasTube) this.gasTubes.push(obj);
     if (obj.isGasChamber) this.gasChambers.push(obj); // 气室：独立大气区域
+    if (obj.isCheckpoint) this.checkpoints.push(obj); // 存档点
     if (obj.isDoor) this.doors.push(obj);
     if (obj instanceof Portal) this.portals.push(obj);
     if (obj instanceof Particle) this.particles.push(obj);
@@ -403,7 +405,7 @@ export class Scene {
    *  延迟出现/开关隐藏的物体必须**物理也不计算**：半空摆的玩家隐身时不能坠地。 */
   _deindex(obj) {
     const arrays = [this.objects, this.dynamics, this.statics, this.particles,
-      this.containers, this.lamps, this.gasTubes, this.gasChambers, this.doors, this.portals, this.hidden];
+      this.containers, this.lamps, this.gasTubes, this.gasChambers, this.doors, this.portals, this.checkpoints, this.hidden];
     for (const arr of arrays) {
       const i = arr.indexOf(obj);
       if (i >= 0) arr.splice(i, 1);
@@ -416,7 +418,10 @@ export class Scene {
    *  与「初始隐藏(靠开关)」互不干扰：已 hidden 的物体不抢（开关负责它）。
    *  ★ 隐藏 = 物理/逻辑完全冻结（半空玩家隐身期间不下落，到时在原地开始下落）。 */
   applyAppearDelays() {
-    for (const o of this.objects.filter((x) => Number(x.appearDelay) > 0)) {
+    // ★ 存档点不参与"延迟出现"：它是无碰撞触发区，隐藏后 update 完全不执行，
+    //   玩家在它显形前走过去会漏存档（教程关卡最末端存档点复现）。标记的延迟
+    //   可以不做；触发判定必须在整段关卡期间有效。
+    for (const o of this.objects.filter((x) => Number(x.appearDelay) > 0 && !x.isCheckpoint)) {
       const d = Number(o.appearDelay);
       o.hidden = true;
       this._deindex(o);
@@ -761,6 +766,14 @@ export class Scene {
     return c ? (c._reactGas ??= {}) : this._reactGas;
   }
 
+  /** 只记录"反应产气"到指定区域（不触发气泡柱/截留/吸收）。
+   *  用于直接写大气的反应产物；chamber=null → 外部大气。 */
+  recordReactionGas(id, mass, chamber = null) {
+    if (!id || !(mass > 1e-12)) return;
+    const rg = chamber ? (chamber._reactGas ??= {}) : this._reactGas;
+    rg[id] = (rg[id] ?? 0) + mass;
+  }
+
   /** 某区域的点燃源：气室只认与它重叠的灯；外部不认气室内的灯（大气互不影响） */
   _litLampsIn(chamber) {
     return this.lamps.filter((l) => {
@@ -800,10 +813,20 @@ export class Scene {
       globalIgnited: this._litLampsIn(chamber).length > 0,
       emit: (product, origin) => this.routeProduct(product, origin),
       onGas: (id, mass, ctx) => this.onGas(id, mass, ctx),
+      // 只记录反应产气（气体探测器数据源），不冒气泡柱/不截留——供反应直接写大气的
+      // 场景（如 NH3+Cl2 气相归中）使用；否则生成的气体探测器看不见。
+      recordGas: (id, mass) => this.recordReactionGas(id, mass, chamber),
       onReaction: (text) => this.onReaction(text),
       onSpark: () => this.onSpark(), // 金属燃烧的火星（火星四射）
       customReactions: this.customReactions, // 关卡自定义反应（L0 最高优先级）
       debugMode: this.debugMode,
+      // 电解池阳极产生的 Cl2 是电极处直接逸出的，不参与同池碱液的"尾气吸收"；
+      // 否则 NaOH/Ba(OH)2 会把刚生成的黄绿色氯气立刻吃掉，只剩 H2/O2 的观感。
+      absorbBlocked: (gas) => {
+        const c = obj && (obj instanceof Container ? obj : obj._container);
+        return !!(gas === 'Cl2' && c && c.isVariantPool && c.mode === 'electric'
+          && typeof c.active === 'function' && c.active(this));
+      },
       explode: (point, strength, cause) => this.explode(point ?? null, strength, cause),
       // 爆炸中心：当前反应点；大气爆炸（无反应点）取该区域第一个点燃灯的火苗位置
       explodePoint: this._emitCtx
@@ -1162,6 +1185,9 @@ export class Scene {
           deferAtmosphere: true, // 多余部分交回本方法（先在管口冒柱、再入大气）
         });
         if (leftover > 1e-9) {
+          // 输出池端的"反应产气"记录：输出端气体探测器/气敏开关要能看到经管道送来的气
+          target._reactGas = target._reactGas ?? {};
+          target._reactGas[id] = (target._reactGas[id] ?? 0) + leftover;
           const region = this.gasChamberFor(target);
           const captured = this._gasPlume(id, leftover, {
             bubbleDir: -1, // 管口多余气体：冒柱（液下气泡上浮）
@@ -1381,6 +1407,16 @@ export class Scene {
       else if (vp.mode === 'heat') heat = true;
       else if (vp.mode === 'electric') electric = true;
     }
+    // 容器受热会传给容器内的物体（烧杯放在灯上 → 杯内固体也受热）。
+    // 只看一层容器，避免容器自引用递归。
+    const owner = obj && obj.containerMaterial && obj.containerMaterial.owner;
+    if (owner && owner !== obj && !owner.isLamp) {
+      const c = this.conditionsFor(owner);
+      heat = heat || c.heat;
+      highTemp = highTemp || c.highTemp;
+      electric = electric || c.electric;
+      light = light || c.light;
+    }
     const ignited = heat || highTemp || (obj && obj.isBurning);
     const hasCatalyst = (id) => this.catalystNear(obj, id);
     return { heat, highTemp, electric, ignited, light, hasCatalyst };
@@ -1404,6 +1440,9 @@ export class Scene {
   }
 
   catalystNear(obj, id) {
+    // 同容器内的催化剂（池里/灯上的 MnO2 粉末）也要算——旧实现跳过 o===obj，
+    // 而容器材料的 avail 已包含自身沉淀，导致"MnO2 撒在 H2O2 池里不催化"。
+    if (obj && obj.material && obj.material.avail(id) > 0) return true;
     for (const o of this.objects) {
       if (o === obj || !o.material) continue;
       if (o.material.avail(id) > 0 && overlaps(o, obj, 1)) return true;
@@ -1455,25 +1494,35 @@ export class Scene {
         // 产物落点成为容器"最近落点"——后续反应/气泡/沉淀围绕它（不再回池中央）
         if (ctx.point) cont.depositAt = { x: ctx.point.x, y: ctx.point.y };
         cont.addPrecipitate(product.id, product.mass, ctx.point, origin);
-        this._precipFx(product.id, ctx.point); // 沉淀生成：物色尘雾（限频，视觉反馈）
+        this._precipFx(product.id, ctx.point, ctx.spread ?? 8); // 沉淀生成：物色尘雾（限频，视觉反馈）
         return;
       }
     }
     // 游离固体产物：落到干燥地面/灯面/玩家身上的是**可拾取粉末**，与它是否溶于水无关
     // （Na2CO3 等可溶盐也会先以固体掉出来；溶解只影响遇水后的行为，不影响 Q 拾取）。
     // 旧逻辑用 !isSoluble 当 collectible，导致 NaHCO3 受热生成的 Na2CO3 掉在地上捡不起来。
-    this.spawnParticles(product.id, product.mass, ctx.point, true, false, origin);
-    this._precipFx(product.id, ctx.point); // 游离沉淀：同款尘雾反馈
+    // 沉淀生成范围跟随反应上下文：气室大气反应 spread≈半个舱体，白烟/盐粉不会全从
+    // 气室中心一个点冒出来；普通接触/容器反应仍用紧凑的 8px。
+    this.spawnParticles(product.id, product.mass, ctx.point, true, false, origin, ctx.spread ?? 8);
+    this._precipFx(product.id, ctx.point, ctx.spread ?? 8); // 游离沉淀：同款尘雾反馈
   }
 
-  /** 沉淀生成时的物色尘雾（纯视觉；0.22s 限频，避免每 tick 刷对象） */
-  _precipFx(id, point) {
+  /** 沉淀生成时的物色尘雾（纯视觉；0.22s 限频，避免每 tick 刷对象）。
+   *  spread 跟随反应上下文：气室白烟/尘雾用大范围，普通反应保持紧凑。 */
+  _precipFx(id, point, spread = 9) {
     if (!point) return;
     if (this.time - (this._fxPrecipT ?? -10) < 0.22) return;
     this._fxPrecipT = this.time;
     const solid = getSubstance(id).solid?.[0] ?? '#c9c0b0';
     const c = hexToRgb(solid);
-    puffFx(this, point.x, point.y, { color: `${c.r},${c.g},${c.b}`, r: 3.2, spread: 9, life: 0.32, n: 3 });
+    const cloudSpread = Math.max(9, Math.min(90, spread * 0.7));
+    puffFx(this, point.x, point.y, {
+      color: `${c.r},${c.g},${c.b}`,
+      r: 3.2,
+      spread: cloudSpread,
+      life: 0.32,
+      n: cloudSpread > 20 ? 6 : 3,
+    });
   }
 
   /** placed=true 的粒子有碰撞箱（放置的沉淀可垫脚）；origin 记录产物来源（调试悬停显示）。
@@ -1489,7 +1538,8 @@ export class Scene {
       this.addObject(
         new Particle({
           x: point.x + (Math.random() - 0.5) * spread,
-          y: point.y - (i % 3) * 2,
+          // 大范围（气室白烟/大滩沉淀）额外给 y 抖动，避免所有颗粒排成一条中心竖线
+          y: point.y - (i % 3) * 2 + (spread > 16 ? (Math.random() - 0.5) * spread * 0.35 : 0),
           substance: id,
           amount,
           collectible,

@@ -9,6 +9,27 @@ import { Portal } from '../src/objects/portal.js';
 const TICK = 1 / 30;
 function run(scene, n) { for (let i = 0; i < n; i++) scene.step(TICK); }
 
+test('绑定开关关闭后：同组传送门立即失去激活（不得被“开过就记住”带穿）', () => {
+  const scene = new Scene({ worldW: 2000, worldH: 800 });
+  scene.status = 'running';
+  const sw = { id: 'sw', open: false, effectiveOpen: () => sw.open };
+  scene.byId.sw = sw;
+  const g1 = new Portal({ x: 400, y: 600, w: 44, h: 64, color: '#00ff88', group: 'swfix', switchId: 'sw', id: 'g1' });
+  const g2 = new Portal({ x: 1500, y: 600, w: 44, h: 64, color: '#00ff88', group: 'swfix', id: 'g2' });
+  scene.addObject(g1); scene.addObject(g2);
+  const p = new Player({ x: 410, y: 620, id: 'p' });
+  scene.addObject(p);
+  g1.update(1 / 30, scene);
+  assert.ok(p.x < 1000, `开关关闭时不得传送（x=${p.x.toFixed(0)}）`);
+  sw.open = true;
+  g1.update(1 / 30, scene);
+  assert.ok(p.x > 1000, `开关打开后应传送（x=${p.x.toFixed(0)}）`);
+  sw.open = false;
+  p.x = 410; p.y = 620; p._portalLast = null;
+  g1.update(1 / 30, scene);
+  assert.ok(p.x < 1000, `开关再次关闭后不得继续传送（x=${p.x.toFixed(0)}）`);
+});
+
 test('组号配对：同组（不同颜色）传送；异组（同颜色）不传', () => {
   const scene = new Scene({ worldW: 2000, worldH: 800 });
   scene.addObject(new Floor({ x: 0, y: 760, w: 2000, h: 40 }));

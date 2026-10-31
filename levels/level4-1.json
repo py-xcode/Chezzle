@@ -1,0 +1,316 @@
+{
+  "version": 2,
+  "levelId": "",
+  "worldW": 3000,
+  "worldH": 1100,
+  "plugins": [
+    {
+      "file": "destroyer.js",
+      "reg": "destroyer",
+      "name": "破坏者",
+      "enabled": true
+    }
+  ],
+  "rx": [],
+  "atmosphere": {},
+  "tips": [],
+  "editorState": {},
+  "objects": [
+    {
+      "type": "floor",
+      "opts": {
+        "x": 199,
+        "y": 928,
+        "w": 534,
+        "h": 118,
+        "ice": false,
+        "id": "floor1"
+      }
+    },
+    {
+      "type": "player",
+      "opts": {
+        "x": 215,
+        "y": 832,
+        "substance": "NaHCO3",
+        "mass": 30,
+        "noLift": false,
+        "id": "player1"
+      }
+    },
+    {
+      "type": "lamp",
+      "opts": {
+        "x": 429,
+        "y": 891,
+        "autoOn": true,
+        "id": "lamp1",
+        "precipitates": {}
+      }
+    },
+    {
+      "type": "gasdetector",
+      "opts": {
+        "x": 556,
+        "y": 913,
+        "gas": "CO2",
+        "threshold": 0.5,
+        "and": null,
+        "deleteId": "floor11",
+        "showId": null,
+        "igniteId": null,
+        "extinguishId": null,
+        "openId": null,
+        "id": "gasdetector1"
+      }
+    },
+    {
+      "type": "portal",
+      "opts": {
+        "x": 640,
+        "y": 868,
+        "w": 44,
+        "h": 64,
+        "color": "#c78bff",
+        "uses": 0,
+        "switchId": "gasdetector1",
+        "group": "1",
+        "inventory": null,
+        "clearInventory": false,
+        "id": "portal1"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 885,
+        "y": 929,
+        "w": 135,
+        "h": 118,
+        "ice": false,
+        "id": "floor2",
+        "hidden": true
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 1166,
+        "y": 930,
+        "w": 202,
+        "h": 121,
+        "ice": false,
+        "id": "floor3"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 1093,
+        "y": 582,
+        "w": 437,
+        "h": 63,
+        "ice": false,
+        "id": "floor4"
+      }
+    },
+    {
+      "type": "portal",
+      "opts": {
+        "x": 1476,
+        "y": 511,
+        "w": 44,
+        "h": 64,
+        "color": "#c78bff",
+        "uses": 0,
+        "switchId": "gasdetector1",
+        "group": "1",
+        "inventory": null,
+        "clearInventory": false,
+        "id": "portal2"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 1039,
+        "y": 356,
+        "w": 77,
+        "h": 93,
+        "ice": false,
+        "id": "floor7"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 788,
+        "y": 354,
+        "w": 104,
+        "h": 103,
+        "ice": false,
+        "id": "floor8"
+      }
+    },
+    {
+      "type": "block",
+      "opts": {
+        "x": 808,
+        "y": 268,
+        "substance": "Fe",
+        "mass": 19.6,
+        "w": 70,
+        "h": 70,
+        "pushable": true,
+        "noLift": false,
+        "id": "block1"
+      }
+    },
+    {
+      "type": "pool",
+      "opts": {
+        "x": 584,
+        "y": 352,
+        "w": 213,
+        "h": 84,
+        "volume": 850,
+        "solutes": {
+          "CuSO4": 50
+        },
+        "gasHeight": 80,
+        "id": "pool2"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 172,
+        "y": 342,
+        "w": 414,
+        "h": 98,
+        "ice": false,
+        "id": "floor10"
+      }
+    },
+    {
+      "type": "extractor",
+      "opts": {
+        "x": 467,
+        "y": 326,
+        "w": 50,
+        "h": 10,
+        "poolId": "pool2",
+        "switchId": null,
+        "rate": 0.25,
+        "id": "extractor1"
+      }
+    },
+    {
+      "type": "lamp",
+      "opts": {
+        "x": 310,
+        "y": 304,
+        "autoOn": true,
+        "id": "lamp2",
+        "precipitates": {}
+      }
+    },
+    {
+      "type": "gaschamber",
+      "opts": {
+        "x": 264,
+        "y": 222,
+        "w": 130,
+        "h": 133,
+        "gases": "Cl2:2000",
+        "id": "gaschamber1"
+      }
+    },
+    {
+      "type": "switch",
+      "opts": {
+        "x": 199,
+        "y": 318,
+        "mode": "chemical",
+        "opening": "FeSO4",
+        "and": null,
+        "deleteId": null,
+        "showId": "floor2",
+        "igniteId": null,
+        "extinguishId": null,
+        "openId": null,
+        "id": "switch1",
+        "precipitates": {}
+      }
+    },
+    {
+      "type": "sign",
+      "opts": {
+        "x": 1013,
+        "y": 155,
+        "text": "这是“破坏器”。\n按下Q或拾取来捡起，\n在物品栏中选中它来查看使用说明。",
+        "id": "sign1"
+      }
+    },
+    {
+      "type": "destroyer",
+      "opts": {
+        "x": 1058,
+        "y": 302,
+        "w": 40,
+        "h": 44,
+        "id": "destroyer1",
+        "key": "KeyF",
+        "radius": 180
+      }
+    },
+    {
+      "type": "key",
+      "opts": {
+        "x": 1187,
+        "y": 902,
+        "opening": "CuCl2",
+        "deleteId": null,
+        "showId": null,
+        "igniteId": null,
+        "extinguishId": null,
+        "openId": "door1",
+        "id": "key1",
+        "precipitates": {}
+      }
+    },
+    {
+      "type": "door",
+      "opts": {
+        "x": 1293,
+        "y": 857,
+        "w": 54,
+        "h": 71,
+        "id": "door1"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 1206,
+        "y": 422,
+        "w": 230,
+        "h": 20,
+        "ice": false,
+        "id": "floor11"
+      }
+    },
+    {
+      "type": "deposit",
+      "opts": {
+        "x": 1242,
+        "y": 376,
+        "substance": "BaCO3",
+        "mass": 13.8,
+        "w": 140,
+        "h": 30,
+        "id": "deposit1"
+      }
+    }
+  ]
+}

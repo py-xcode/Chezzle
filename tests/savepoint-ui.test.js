@@ -188,22 +188,41 @@ test('handleSceneClick（桌面）：死亡时点击屏幕 = 重开（无存档�
 });
 
 // ---- 4. 重开按钮双击 + 菜单命中 -----------------------------------------------
-test('重开按钮：单击不开菜单（只记时刻），400ms 内双击打开重开选择菜单', () => {
+test('重开按钮：无存档时双击直接整局重开，不弹只有一个选项的菜单', () => {
   Savepoint.clear();
   const canvas = fakeCanvas();
   const scene = new Scene({});
   scene.status = 'running';
+  let restarts = 0;
+  scene.restart = () => { restarts++; };
   const top = hudTopOffset(scene, uiScaleOf(canvas));
   const r = restartButtonRect(W, top, 0, false); // 桌面：不带全屏按钮
   const px = r.x + r.w / 2;
   const py = r.y + r.h / 2;
   assert.equal(handleSceneClick(scene, null, canvas, px, py), true, '单击被消费');
-  assert.equal(scene.restartMenuOpen, false, '单击不打开菜单');
+  assert.equal(scene.restartMenuOpen, false, '单击不重开');
   assert.ok(scene._restartTapAt > 0, '单击记录双击时刻');
   assert.equal(handleSceneClick(scene, null, canvas, px, py), true, '第二击');
-  assert.equal(scene.restartMenuOpen, true, '400ms 内双击 → 打开菜单');
+  assert.equal(scene.restartMenuOpen, false, '无存档时不再打开空菜单');
+  assert.equal(restarts, 1, '无存档双击 = 直接整局重开');
+});
+
+test('重开按钮：有存档时双击打开重开选择菜单', () => {
+  Savepoint.clear();
+  const canvas = fakeCanvas();
+  const scene = new Scene({});
+  scene.status = 'running';
+  assert.equal(Savepoint.save(scene, { id: 'cp-restart', force: true }), true);
+  const top = hudTopOffset(scene, uiScaleOf(canvas));
+  const r = restartButtonRect(W, top, 0, false);
+  const px = r.x + r.w / 2;
+  const py = r.y + r.h / 2;
+  handleSceneClick(scene, null, canvas, px, py);
+  handleSceneClick(scene, null, canvas, px, py);
+  assert.equal(scene.restartMenuOpen, true, '有存档双击 → 打开菜单');
   assert.equal(scene._restartTapAt, 0, '打开后清空双击时刻（三击不会反复切换）');
   scene.closeRestartMenu();
+  Savepoint.clear();
 });
 
 test('重开菜单：按钮命中（无存档禁用 / 整局重开 / 点面板外关闭）', () => {
@@ -310,6 +329,37 @@ function fakeCtx() {
     font: '', textAlign: '', textBaseline: '', globalAlpha: 1, shadowColor: '', shadowBlur: 0,
   };
 }
+
+test('HUD 物品栏：插件自定义物品（未知 item 类型）不会中断整栏绘制', () => {
+  const scene = new Scene({});
+  scene.status = 'running';
+  const p = new Player({ x: 200, y: 500, substance: 'NaOH', mass: 30 });
+  scene.addObject(p);
+  scene.player = p;
+  // 前格是普通物质，后格是插件自定义物品（没有 totalGas()/gases）
+  p.inventory.slots[0] = { substance: 'BaCO3', mass: 0.8 };
+  p.inventory.slots[1] = {
+    item: 'destroyer',
+    obj: {
+      id: 'd1', isCarryItem: 'destroyer',
+      drawHudIcon: () => {},
+      carryInfo: () => ({ title: '破坏者', comp: 'F', mass: '范围 180', color: '#ffd76a' }),
+    },
+  };
+  p.inventory.selected = 1;
+  const hud = new Hud(scene);
+  const noop = () => {};
+  const ctx = new Proxy({ canvas: { width: 1000, height: 800 } }, {
+    get(t, k) {
+      if (k in t) return t[k];
+      if (k === 'createLinearGradient' || k === 'createRadialGradient') return () => ({ addColorStop: noop });
+      if (k === 'measureText') return (s) => ({ width: String(s).length * 7 });
+      return noop;
+    },
+    set(t, k, v) { t[k] = v; return true; },
+  });
+  assert.doesNotThrow(() => hud.inventory(ctx, p, 1000, 800, 1));
+});
 
 test('HUD 冒烟：restartMenu 绘制（开关两态）与 saveToast 淡入淡出/过期清理不抛错', () => {
   const scene = new Scene({});

@@ -1,15 +1,27 @@
 // ============================================================================
 // 溶液模型
 // ----------------------------------------------------------------------------
-// 固定体积（液面不下降），溶质按质量存储。水作为溶剂单独跟踪（中和反应会累积水）。
-// concentration(id) = 溶质质量 / 体积  → 供显色与饱和度参照。
-// pH()：由酸/碱溶质的浓度与强弱（电离度）计算——强酸/强碱完全电离，
-// 弱酸/弱碱（CH3COOH、H2CO3、NH3·H2O 等）按 2% 电离。
+// volume = 容器容量（mL），不是当前液体体积；实际液体体积见 liquidVolume()。
+// 溶质按质量存储；水作为溶剂单独跟踪（中和反应会累积水）。
+// concentration(id) = 溶质质量 / **实际液体体积**  → 供显色/饱和度/反应速率参照。
+// pH()：由酸/碱溶质的浓度与强弱（电离度）计算；盐类水解按弱酸根/弱碱阳离子近似。
 // ============================================================================
 
 import { getSubstance, normId } from './substances.js';
 
 const WEAK_IONIZATION = 0.02; // 弱酸/弱碱电离度（简化）
+
+/** 盐类水解近似：弱酸根（碱式）/ 弱碱阳离子（酸式）对应的水解常数。
+ *  只用于 pH 方向与量级（不追求精确的多元电离），够指示剂/pH 标签使用。 */
+const ANION_KB = {
+  'CO3^2-': 2e-4, 'HCO3-': 2e-8, 'SO3^2-': 1e-7, 'S2-': 1e-2,
+  'ClO-': 3e-7, 'CH3COO-': 5.6e-10, 'PO4^3-': 1e-2, 'SiO3^2-': 1e-2,
+  'AlO2-': 1e-2, 'C2O4^2-': 1e-10, 'CrO2-': 1e-8,
+};
+const CATION_KA = {
+  'NH4+': 5.6e-10, 'Fe3+': 6e-3, 'Al3+': 1e-5, 'Cr3+': 1e-4,
+  'Cu2+': 1e-8, 'Fe2+': 1e-6, 'Zn2+': 1e-9, 'Mg2+': 1e-11,
+};
 
 /** 溶液条目的最小记账质量（g）：
  *  低于此质量的溶质不建立条目（add 总量不足不入账、remove 后剩余不足则删除并
@@ -30,11 +42,26 @@ export class Solution {
     }
   }
 
-  /** 溶液 pH：由强/弱酸碱的摩尔浓度计算（弱电解质按 2% 电离） */
+  /** 实际液体体积（mL）。
+   *  - 有水：按质量近似（水 + 溶质 ≈ 1 g/mL），并夹在容器容量内；
+   *  - 没有水（测试夹具/干容器预设）：沿用容量，兼容"只给 solute 不写 water"的旧语义；
+   *  - 容量为 0（干式台子）：0（不能当液体）。 */
+  liquidVolume() {
+    let soluteMass = 0;
+    for (const m of this.solutes.values()) soluteMass += m;
+    const total = this.water + soluteMass;
+    if (this.water > 1e-9) {
+      const cap = this.volume > 0 ? this.volume : total;
+      return Math.max(0, Math.min(cap, total));
+    }
+    return this.volume > 0 ? this.volume : 0;
+  }
+
+  /** 溶液 pH：由强/弱酸碱的摩尔浓度计算（弱电解质按 2% 电离），再叠加盐类水解。 */
   pH() {
     let h = 0;
     let oh = 0;
-    const volL = this.volume / 1000;
+    const volL = this.liquidVolume() / 1000;
     if (volL <= 0) return 7;
     for (const [id, mass] of this.solutes) {
       const sub = getSubstance(id);
@@ -46,9 +73,15 @@ export class Solution {
       } else if (sub.kind === 'base' && sub.ions?.an === 'OH-') {
         const ion = sub.acidStrength === 'strong' ? 1 : WEAK_IONIZATION;
         oh += molPerL * sub.ions.anCount * ion;
+      } else if (sub.kind === 'salt' && sub.ions) {
+        // 盐类水解：弱酸根显碱、弱碱阳离子显酸（强酸盐如 NaCl 两项都不命中 → pH 7）
+        const kb = ANION_KB[sub.ions.an];
+        if (kb) oh += Math.sqrt(kb * molPerL);
+        const ka = CATION_KA[sub.ions.cat];
+        if (ka) h += Math.sqrt(ka * molPerL);
       }
     }
-    // 强酸强碱同存时相互中和（简化：取优势方）
+    // 强酸强碱同存时相互中和（简化：取优势方；水解量级小，不会压过强酸碱）
     if (h > 1e-12 && h >= oh) return Math.max(0, -Math.log10(h));
     if (oh > 1e-12 && oh > h) return Math.min(14, 14 + Math.log10(oh));
     return 7;
@@ -59,7 +92,8 @@ export class Solution {
   }
 
   concentration(id) {
-    return this.mass(id) / this.volume;
+    const vol = this.liquidVolume();
+    return vol > 0 ? this.mass(id) / vol : 0;
   }
 
   /** 增加溶质（负值按移除处理）；id 归一化（NH4OH → NH3·H2O）。
@@ -79,14 +113,21 @@ export class Solution {
     // 微溶饱和：溶液先持续**变浑浊**（渲染按浓度/饱和线），拉到饱和浓度后才开始析出；
     // 再留一段"过饱和带"（1.25×）才真正出沉淀——"过了过饱和线才开始出沉淀颗粒"
     const sub = getSubstance(id);
-    if (sub && sub.solubilityLimit > 0 && this.volume > 0 && typeof this.onOversaturate === 'function') {
-      const satMass = sub.solubilityLimit * (this.volume / 1000); // 饱和浓度对应的质量
-      const overMass = satMass * 1.25; // 过饱和带（1.25× 后才析出）
-      if (next > overMass) {
-        const excess = next - overMass;
-        this.solutes.set(id, overMass);
-        this.onOversaturate(id, excess);
-        return;
+    if (sub && sub.solubilityLimit > 0 && typeof this.onOversaturate === 'function') {
+      // 饱和量按**实际液体体积**算（加水稀释后饱和线随之抬高）
+      const totalAfter = this.totalMass() + m;
+      const vol = this.water > 1e-9
+        ? (this.volume > 0 ? Math.min(this.volume, totalAfter) : totalAfter)
+        : (this.volume > 0 ? this.volume : 0);
+      if (vol > 0) {
+        const satMass = sub.solubilityLimit * (vol / 1000); // 饱和浓度对应的质量
+        const overMass = satMass * 1.25; // 过饱和带（1.25× 后才析出）
+        if (next > overMass) {
+          const excess = next - overMass;
+          this.solutes.set(id, overMass);
+          this.onOversaturate(id, excess);
+          return;
+        }
       }
     }
     this.solutes.set(id, next);

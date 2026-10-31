@@ -39,6 +39,7 @@ export * from './objects/beaker.js';
 export * from './objects/rope.js';
 export * from './objects/gascolumn.js';
 export * from './objects/sign.js';
+export * from './objects/checkpoint.js';
 export * from './objects/bubble.js';
 export * from './objects/spark.js';
 export * from './objects/portal.js';

@@ -2,7 +2,7 @@
 // 氯气默认不溶入水（用户规则）回归测试：
 //  - 大气 Cl2 不主动进任何水（纯水池/玩家入水都不触发"氯水"——旧实现里
 //    Cl2+H2O→HCl+HClO 是"成对反应"，玩家跳进纯水池就变成氯气泵，实测复现）；
-//  - 例外：集气瓶主动通入（forceDissolve / scene.bubbleGas）才溶成氯水。
+//  - 例外：集气瓶主动通入（forceDissolve / scene.bubbleGas）才溶成氯水（HCl + HClO）。
 // ============================================================================
 
 import { test } from 'node:test';
@@ -45,6 +45,7 @@ test('例外：集气瓶主动通入（bubbleGas 强制溶解）才产生氯水'
   scene.addObject(pool);
   const before = pool.solution.water;
   scene.bubbleGas(pool, 'Cl2', 0.2, TICK);
-  assert.ok(pool.solution.mass('Cl2') > 0.1, `集气瓶通气应产生氯水：${pool.solution.mass('Cl2').toFixed(3)}`);
+  assert.ok(pool.solution.mass('HCl') > 0.05, `集气瓶通气应产生氯水（HCl）：${pool.solution.mass('HCl').toFixed(3)}`);
+  assert.ok(pool.solution.mass('HClO') > 0.07, `集气瓶通气应产生氯水（HClO）：${pool.solution.mass('HClO').toFixed(3)}`);
   assert.ok(pool.solution.water < before, '溶解消耗水');
 });

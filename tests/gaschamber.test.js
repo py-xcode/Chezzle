@@ -10,6 +10,8 @@ import assert from 'node:assert/strict';
 import { Scene } from '../src/core/scene.js';
 import { Obj } from '../src/objects/obj.js';
 import { GasChamber } from '../src/objects/gaschamber.js';
+import { Block } from '../src/objects/block.js';
+import { Lamp } from '../src/objects/lamp.js';
 
 const TICK = 1 / 30;
 
@@ -101,6 +103,22 @@ test('seed 之后：改外部大气不影响气室；气室内变化也不回灌
 });
 
 // ---- 3. 配置 gases：preset 独占语义 ------------------------------------------
+test('气室纯 Cl2 中 Cu 可被点燃燃烧：Cu + Cl2 → CuCl2（不需要 O2）', () => {
+  const scene = new Scene({ worldW: 1000, worldH: 800 });
+  const chamber = new GasChamber({ x: 100, y: 100, w: 360, h: 320, gases: { Cl2: 200 }, id: 'gccl2' });
+  scene.addObject(chamber);
+  const cu = new Block({ x: 200, y: 240, w: 60, h: 60, substance: 'Cu', mass: 20, id: 'cu' });
+  scene.addObject(cu);
+  const lamp = new Lamp({ x: 200, y: 300, w: 80, h: 20, autoOn: true, id: 'lamp' });
+  scene.addObject(lamp);
+  scene.status = 'running';
+  const before = cu.grid.avail('Cu');
+  for (let i = 0; i < 180; i++) scene.step(TICK);
+  assert.ok(cu.grid.avail('Cu') < before - 0.05, `Cu 应被 Cl2 消耗：${before} → ${cu.grid.avail('Cu')}`);
+  assert.ok(chamber.atmosphere.mass('Cl2') < 200, '气室内 Cl2 应被消耗');
+  assert.ok(cu.grid.avail('CuCl2') > 0.01 || scene.particles.some((p) => p.substance === 'CuCl2'), '应生成 CuCl2');
+});
+
 test('配置 gases：独占语义（没配置 = 没有，配置 0 = 0g，不清空成外部大气）', () => {
   const scene = new Scene();
   scene.atmosphere.preset({ N2: 1500, O2: 500 });

@@ -48,8 +48,11 @@ const CARRY_ACTIONS = {
   ],
 };
 
-/** 选中某个可拾取物品时提供的操作（无物品/未知物品 = []） */
+/** 选中某个可拾取物品时提供的操作（无物品/未知物品 = []）。
+ *  插件物品可直接在自己的对象上挂 `carryActions`（与内置条目同结构），
+ *  这样自定义物品也能复用 HUD 键位提示/触屏按钮，而不必改引擎表。 */
 export function carryActionsOf(item) {
+  if (item && Array.isArray(item.carryActions)) return item.carryActions;
   const kind = item && item.isCarryItem;
   return (kind && CARRY_ACTIONS[kind]) || [];
 }

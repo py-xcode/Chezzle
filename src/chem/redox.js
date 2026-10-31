@@ -12,7 +12,7 @@
 //   - CO2 与碱少量/过量 → 正盐 / 酸式盐（engine 侧计量比分支）
 // ============================================================================
 
-import { buildSalt, getSubstance, IONS } from './substances.js';
+import { buildSalt, ensureSalt, getSubstance, IONS } from './substances.js';
 
 const gcd = (a, b) => (b === 0 ? a : gcd(b, a % b));
 
@@ -48,6 +48,12 @@ export const OXIDIZERS = {
       dilute: { gain: 3, product: { id: 'NO', charge: 0, o: 1 } },                    // 稀硝酸→NO 无色
     },
     strength: 8,
+  },
+  // 氯酸钾：强氧化剂，酸性条件下 ClO3- → Cl-（得 6e-）
+  KClO3: {
+    ion: { charge: -1, o: 3 }, cation: 'K+', cationN: 1,
+    branches: { any: { gain: 6, product: { id: 'Cl-', charge: -1, o: 0 } } },
+    strength: 10,
   },
   H2SO4: {
     // 浓硫酸（S+6→+4，每分子得 2e）。离子为 SO4^2-（电荷 -2，O4）；H+ 由 medH 统一补
@@ -117,13 +123,13 @@ export const REDUCERS = {
   SO2:   { ion: { charge: 0, o: 2 }, loss: 2, product: { id: 'SO4^2-', charge: -2, o: 4 } },   // +4S→+6S
   H2SO3: { ion: { charge: 0, o: 3, h: 2 }, loss: 2, product: { id: 'SO4^2-', charge: -2, o: 4 } },
   Na2SO3:{ ion: { charge: -2, o: 3 }, cation: 'Na+', cationN: 2, loss: 2, product: { id: 'SO4^2-', charge: -2, o: 4 } }, // 旁观阳离子（碱金属盐）
-  H2S:   { ion: { charge: 0, o: 0, h: 2 }, loss: 2, product: { id: 'S', charge: 0, o: 0 } },   // -2S→0
+  H2S:   { ion: { charge: 0, o: 0, h: 2 }, loss: 2, product: { id: 'S', charge: 0, o: 0 }, minOx: 5 },   // -2S→0
   FeS:   { ion: { charge: 0, o: 0 }, loss: 2, product: { id: 'S', charge: 0, o: 0 } },        // FeS→Fe2+ + S
-  H2O2:  { ion: { charge: 0, o: 2, h: 2 }, loss: 2, product: { id: 'O2', charge: 0, o: 2 } },  // 还原性（被强氧化剂）
-  KI:    { ion: { charge: -1, o: 0 }, cation: 'K+', loss: 1, product: { id: 'I2', charge: 0, o: 0, count: 0.5 } },
-  NaI:   { ion: { charge: -1, o: 0 }, cation: 'Na+', loss: 1, product: { id: 'I2', charge: 0, o: 0, count: 0.5 } },
-  KBr:   { ion: { charge: -1, o: 0 }, cation: 'K+', loss: 1, product: { id: 'Br2', charge: 0, o: 0, count: 0.5 } },
-  NaBr:  { ion: { charge: -1, o: 0 }, cation: 'Na+', loss: 1, product: { id: 'Br2', charge: 0, o: 0, count: 0.5 } },
+  H2O2:  { ion: { charge: 0, o: 2, h: 2 }, loss: 2, product: { id: 'O2', charge: 0, o: 2 }, minOx: 8 },  // 还原性（只被强氧化剂氧化，I2 不够）
+  KI:    { ion: { charge: -1, o: 0 }, cation: 'K+', loss: 1, product: { id: 'I2', charge: 0, o: 0, count: 0.5 }, minOx: 5 },
+  NaI:   { ion: { charge: -1, o: 0 }, cation: 'Na+', loss: 1, product: { id: 'I2', charge: 0, o: 0, count: 0.5 }, minOx: 5 },
+  KBr:   { ion: { charge: -1, o: 0 }, cation: 'K+', loss: 1, product: { id: 'Br2', charge: 0, o: 0, count: 0.5 }, minOx: 8 },
+  NaBr:  { ion: { charge: -1, o: 0 }, cation: 'Na+', loss: 1, product: { id: 'Br2', charge: 0, o: 0, count: 0.5 }, minOx: 8 },
   CO:    { ion: { charge: 0, o: 1 }, loss: 2, product: { id: 'CO2', charge: 0, o: 2 } },
   H2:    { ion: { charge: 0, o: 0, h: 2 }, loss: 2, product: { id: 'H2O', charge: 0, o: 1, h: 2 } },
   // 注：C 不进 REDOX 表——碳常温不参与离子氧化还原（不跟酸/盐溶液反应），
@@ -192,6 +198,9 @@ export function balanceRedox(oxId, redId, opts = {}) {
   const ox = OXIDIZERS[oxId];
   const red = REDUCERS[redId];
   if (!ox || !red) return null;
+  // 氧化剂强度不足时不配平（I2 不能把 Br- 氧化成 Br2；I2 不能氧化 H2O2 放 O2）
+  if (red.minOx && (ox.strength ?? 0) < red.minOx) return null;
+  if (!ox || !red) return null;
   const { medium = 'acid', conc = 0, redKey = 'weak', oxKey } = opts;
   const ob = oxKey ? ox.branches[oxKey] ?? ox.branches.any : oxBranch(ox, medium, conc);
   const rb = redBranch(red, redKey);
@@ -215,7 +224,8 @@ export function balanceRedox(oxId, redId, opts = {}) {
   if (Math.abs(dq) > 1e-9) {
     if (medium === 'acid') medH = dq;        // dq>0 左补 H+；dq<0 右补 H+
     else if (medium === 'base') medOH = dq;  // dq>0 左补 OH-；dq<0 右补 OH-
-    else medH = dq < 0 ? dq : 0;             // 中性：仅 dq<0（产物酸）成立
+    else if (dq > 0) medOH = dq;             // 中性 dq>0：产物补 OH-（KMnO4→MnO2 等）
+    else medH = dq;                          // 中性 dq<0：产物酸（H2S+Cl2→HCl 等）
   }
   // 校验电荷：qRx + 左介质电荷 = qPd + 右介质电荷
   const qL = qRx + (medH > 0 ? medH : 0) + (medOH < 0 ? medOH : 0);
@@ -323,12 +333,18 @@ export function balanceRedox(oxId, redId, opts = {}) {
     let rest = catN;
     for (const [anId, anN] of aMap) {
       if (anN <= 1e-9 || rest <= 1e-9) continue;
-      const salt = buildSalt(catId, anId);
-      const take = Math.min(rest / salt.catCount, anN / salt.anCount);
+      // ★ 用 ensureSalt（而不是只有 buildSalt）：未知盐（Zn(NO3)2/Mg(NO3)2/Fe(NO3)2…）
+      //   会被注册进物质表，摩尔质量/离子/溶解性正确；否则 getSubstance 走兜底 mm=100，
+      //   生成永不电离的"幽灵盐"，质量还会凭空消失。
+      const salt = ensureSalt(catId, anId);
+      // H+ + OH- 的"盐"是 H2O（已有物质、无 ions 字段）：按 1:1 处理，不崩
+      const catCount = salt.ions?.catCount ?? 1;
+      const anCount = salt.ions?.anCount ?? 1;
+      const take = Math.min(rest / catCount, anN / anCount);
       if (take <= 1e-9) continue;
-      pd.push({ id: salt.formula, coeff: take });
-      rest -= take * salt.catCount;
-      aMap.set(anId, anN - take * salt.anCount);
+      pd.push({ id: salt.id, coeff: take });
+      rest -= take * catCount;
+      aMap.set(anId, anN - take * anCount);
     }
   }
   // 合并同 id 产物（H2O 可能出现两次）

@@ -57,6 +57,10 @@ export class GasTube extends Obj {
 
   constructor({ x = 0, y = 0, w = 90, h = 70, inId = '', outId = '', outIds = null, valves = null, ...rest } = {}) {
     super({ x, y, w, h, solid: false, physicsKind: 'none', ...rest });
+    // 导气管是装在地板/墙面上的装置：画在地板之后（renderer 按 layer 升序绘制），
+    // 否则先放管子再放地板时，管口和竖直段会被地板整段盖住。气室玻璃在 1.5，
+    // 管子（2）压在最上面，法兰/管口不会被气室框架吃掉。
+    if (!Number.isFinite(rest.layer)) this.layer = 2;
     this.inId = inId ?? ''; // 输入端药品池 id（必须是药品池）
     this.outId = outId ?? ''; // 旧字段：单输出（outIds 缺省时生效，编辑器/旧关卡兼容）
     // 输出端 id 列表：新配置 outIds 优先；否则旧 outId 视为单输出
@@ -807,13 +811,6 @@ export class GasTube extends Obj {
     dome();
     ctx.stroke();
     ctx.shadowBlur = 0;
-    // 玻璃高光（左侧一道弧）
-    ctx.beginPath();
-    ctx.moveTo(h.x + h.w * 0.16, h.y + h.h - 10);
-    ctx.quadraticCurveTo(h.x + h.w * 0.08, h.y + h.h * 0.42, h.x + h.w * 0.26, h.y + h.h * 0.1);
-    ctx.strokeStyle = 'rgba(255,255,255,0.13)';
-    ctx.lineWidth = 2.5;
-    ctx.stroke();
     // 底部法兰：压在池口地面线上（"罩住整个池"的底座）+ 金上沿 + 铆钉
     rr(ctx, h.x - 6, h.y + h.h - 7, h.w + 12, 11, 4);
     const fg = ctx.createLinearGradient(0, h.y + h.h - 7, 0, h.y + h.h + 4);

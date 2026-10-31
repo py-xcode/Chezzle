@@ -23,6 +23,7 @@ import { Beaker } from '../objects/beaker.js';
 import { Rope } from '../objects/rope.js';
 import { GasColumn } from '../objects/gascolumn.js';
 import { Sign } from '../objects/sign.js';
+import { Checkpoint } from '../objects/checkpoint.js';
 import { Portal } from '../objects/portal.js';
 import { GasDetector } from '../objects/gasdetector.js';
 import { Extractor } from '../objects/extractor.js';
@@ -100,6 +101,11 @@ export class LevelBuilder {
 
   sign(x, y, text, opts = {}) {
     return this.add(new Sign({ x, y, text, ...opts }));
+  }
+
+  /** 存档点：玩家进入矩形区域自动存档；opts.on='enter' = 进入场景即存档 */
+  checkpoint(x, y, w = 220, h = 160, opts = {}) {
+    return this.add(new Checkpoint({ x, y, w, h, ...opts }));
   }
 
   portal(x, y, opts = {}) {

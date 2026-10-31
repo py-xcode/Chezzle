@@ -23,7 +23,9 @@
      重置缩放，同时状态栏随鼠标不断变化 → 布局来回抖（用户反馈"移出编辑区缩放会变、
      悬停世界坐标导致界面抖动"）。nowrap + min-width:0 → 只会被裁短，永不改变高度。 */
   #status { margin-left: auto; color: #9fb2c8; font-size: 12px;
-    flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* flex-basis 必须为 0（不能 auto）：长字符串的 auto 基准会把工具栏挤到第二行，
+       状态栏一换文案就改变 #main 高度 → 画布 ResizeObserver 触发 → 重置缩放。 */
+    flex: 1 1 0%; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   /* 主体：左面板 + 画布 + 右面板 */
   #main { display: flex; flex: 1; min-height: 0; }
   #palette { width: 108px; background: var(--panel); border-right: 1px solid var(--edge); overflow-y: auto; padding: 6px; }
@@ -128,6 +130,21 @@
   .fld label { display: block; color: #9fb2c8; font-size: 11px; margin-bottom: 2px; }
   .fld input, .fld select, .fld textarea { width: 100%; background: #0e1432; color: #fff; border: 1px solid var(--edge); padding: 3px 5px; font-size: 12px; }
   .fld input[type=checkbox] { width: auto; }
+  /* 属性面板：溶液酸浓度（编辑器里直接看到 HCl 等按实际液体体积的 g/L 与浓/稀） */
+  .conc-box { margin: 10px 0 4px; padding: 7px 8px; border: 1px solid rgba(232,184,75,.3);
+    background: rgba(232,184,75,.055); border-radius: 6px; font-size: 11px; color: #c9d6ee; }
+  .conc-head { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 4px;
+    font-weight: bold; letter-spacing: 1px; color: #ffd76a; }
+  .conc-head small { font-weight: normal; font-size: 9px; letter-spacing: .5px; color: #7f8ca8; }
+  .conc-row { display: flex; align-items: center; gap: 7px; padding: 2px 0; }
+  .conc-row b { min-width: 48px; color: #9fd8ff; font-family: ui-monospace, Consolas, monospace; }
+  .conc-val { flex: 1; font-family: ui-monospace, Consolas, monospace; color: #e8f5ff; }
+  .conc-tag { padding: 1px 7px; border-radius: 3px; font-size: 10px; font-weight: bold; letter-spacing: 1px; }
+  .conc-tag.high { color: #2a1500; background: linear-gradient(180deg, #ffcf70, #e8a020); }
+  .conc-tag.low { color: #a8e6ff; background: rgba(127,216,255,.14); border: 1px solid rgba(127,216,255,.35); }
+  .conc-tag.dry { color: #8a94b5; background: rgba(138,148,181,.12); border: 1px solid rgba(138,148,181,.25); }
+  .conc-note { margin-top: 5px; padding-top: 4px; border-top: 1px dashed rgba(232,184,75,.16);
+    font-size: 9.5px; color: #7f8ca8; line-height: 1.5; }
   #props .empty { color: #6a7a96; font-size: 12px; }
   /* 项目制：工具栏项目按钮 + 项目管理弹窗 */
   #btnProjects { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -236,13 +253,13 @@
   </div>
 </div>
 <datalist id="substances"></datalist>
-<script src="../prefs.js?vmvmdw3n4"></script>
-<script src="../audio.js?vmvmdw3n4"></script>
-<script src="../dist/chezzle.js?vmvmdw3n4"></script>
+<script src="../prefs.js?vmvwagucl"></script>
+<script src="../audio.js?vmvwagucl"></script>
+<script src="../dist/chezzle.js?vmvwagucl"></script>
 <script>
 // ============================================================================
 // Chezzle 可视化关卡编辑器
-// 复用 dist/chezzle.js?vmvmdw3n4 的全局 Chezzle：对象类、Scene、渲染、物理循环。
+// 复用 dist/chezzle.js?vmvwagucl 的全局 Chezzle：对象类、Scene、渲染、物理循环。
 // 编辑模式：自建 transform 渲染已摆放物体；试玩模式：重建 Scene 跑物理+化学。
 // ============================================================================
 const C = Chezzle;
@@ -406,6 +423,11 @@ const CATALOG = [
     construct: (o) => new C.Sign({ x: o.x, y: o.y, text: o.text ?? '说明文字', id: o.id }),
     collect: (o) => ({ x: o.x, y: o.y, text: o.text, id: o.id }),
     fields: [F.num('x'), F.num('y'), F.txtM('text', '文字'), F.txt('id', 'id')] },
+  { type: 'checkpoint', label: '存档点', dsl: 'checkpoint', color: '#ffd76a', rect: true,
+    construct: (o) => new C.Checkpoint({ x: o.x, y: o.y, w: o.w ?? 220, h: o.h ?? 160, on: o.on === 'enter' ? 'enter' : 'pos', label: o.label ?? '', id: o.id }),
+    collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, on: o.saveOn === 'enter' ? 'enter' : 'pos', label: o.label || '', id: o.id }),
+    fields: [F.num('x'), F.num('y'), F.num('w', '宽'), F.num('h', '高'),
+      F.sel('on', '触发方式', ['pos', 'enter'], 'pos'), F.txt('label', '名称(可选)'), F.txt('id', 'id')] },
   { type: 'portal', label: '传送门', dsl: 'portal', color: '#c78bff',
     construct: (o) => new C.Portal({ x: o.x, y: o.y, w: o.w ?? 44, h: o.h ?? 64, color: o.color ?? '#c78bff', uses: o.uses > 0 ? o.uses : (o.once ? 1 : Infinity), switchId: o.switchId, group: o.group ?? null, inventory: o.inventory, clearInventory: o.clearInventory, id: o.id }),
     collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, color: o.color, uses: Number.isFinite(o.uses) ? o.uses : 0, switchId: o.switchId, group: o.group ?? null, inventory: o.inventory, clearInventory: o.clearInventory, id: o.id }),
@@ -417,13 +439,9 @@ const CATALOG = [
       F.txtM('inventory', '传送后物品栏(每行一样: 物质:质量 | beaker | beaker:HCl:20 | dropper:H2O:40 | gasbottle | #注释)', ''),
       F.txt('id', 'id')] },
   { type: 'gasdetector', label: '气体探测器', dsl: 'gasdetector', color: '#3fa8e0',
-    construct: (o) => {
-      const gd = new C.GasDetector({ x: o.x, y: o.y, gas: o.gas ?? 'H2', threshold: o.threshold ?? 0.5, opening: o.opening, and: o.and, deleteId: o.deleteId, showId: o.showId, igniteId: o.igniteId, extinguishId: o.extinguishId, openId: o.openId, id: o.id });
-      for (const [id, m] of Object.entries(o.precipitates ?? {})) if (m > 0) gd.addPrecipitate(id, m);
-      return gd;
-    },
-    collect: (o) => ({ x: o.x, y: o.y, gas: o.gas, threshold: o.threshold, opening: o.opening, precipitates: mapToObj(o.precipitates), and: o.and ?? null, deleteId: o.deleteId, showId: o.showId, igniteId: o.igniteId, extinguishId: o.extinguishId, openId: o.openId, id: o.id }),
-    fields: [F.num('x'), F.num('y'), F.txt('gas', '气体'), F.num('threshold', '阈值g', 0.5), F.sub('opening', '开启物质'), F.sol('precipitates', '预设开启物'), F.txt('and', '&联锁(id)'), F.txt('deleteId', '开启时删除(id)'), F.txt('showId', '开启时生成(id)'), F.txt('igniteId', '开启时点燃灯(id)'), F.txt('extinguishId', '关闭时熄灭灯(id)'), F.txt('openId', '开启时开门(id)'), F.txt('id', 'id')] },
+    construct: (o) => new C.GasDetector({ x: o.x, y: o.y, gas: o.gas ?? 'H2', threshold: o.threshold ?? 0.5, and: o.and, deleteId: o.deleteId, showId: o.showId, igniteId: o.igniteId, extinguishId: o.extinguishId, openId: o.openId, id: o.id }),
+    collect: (o) => ({ x: o.x, y: o.y, gas: o.gas, threshold: o.threshold, and: o.and ?? null, deleteId: o.deleteId, showId: o.showId, igniteId: o.igniteId, extinguishId: o.extinguishId, openId: o.openId, id: o.id }),
+    fields: [F.num('x'), F.num('y'), F.txt('gas', '检测气体'), F.num('threshold', '阈值g', 0.5), F.txt('and', '&联锁(id)'), F.txt('deleteId', '开启时删除(id)'), F.txt('showId', '开启时生成(id)'), F.txt('igniteId', '开启时点燃灯(id)'), F.txt('extinguishId', '关闭时熄灭灯(id)'), F.txt('openId', '开启时开门(id)'), F.txt('id', 'id')] },
   { type: 'extractor', label: '提取器', dsl: 'extractor', color: '#4a8a5a',
     construct: (o) => new C.Extractor({ x: o.x, y: o.y, w: o.w ?? 50, h: o.h ?? 14, poolId: o.poolId, switchId: o.switchId, rate: o.rate ?? 0.25, id: o.id }),
     collect: (o) => ({ x: o.x, y: o.y, w: o.w, h: o.h, poolId: o.poolId, switchId: o.switchId, rate: o.rate, id: o.id }),
@@ -837,7 +855,10 @@ function pluginUnload(file, opts = {}) {
   editorStateLoadedHooks.delete(e.reg);
   editorPlayStateHooks.delete(e.reg);
   editorPlaySceneHooks.delete(e.reg);
+  editorSceneSyncHooks.delete(e.reg);
+  editorPluginCfgs.delete(e.reg);
   for (const [m, h] of editorPlayHooks) if (h.reg === e.reg) editorPlayHooks.delete(m);
+  if (!editorPlayHooks.size) editorPlayMode = 'all'; // 章节插件的「当前场景」方向不带给下一个项目
   editorStates.delete(e.reg); // 用户要求：卸载插件 → 其保存的数据不再保留（重载=全新）
   editorStateDefaults.delete(e.reg);
   for (const el of editorDom.get(e.reg) ?? []) el.remove?.();
@@ -853,6 +874,20 @@ function pluginUnload(file, opts = {}) {
 /** 清空关卡用：卸载全部插件（源码留缓存——撤销 Ctrl+Z 能恢复；面板/组件/数据全清） */
 function pluginUnloadAll() {
   for (const file of [...pluginLib.keys()]) pluginUnload(file, { confirm: false });
+}
+
+/** 切项目/载入 JSON 时：卸载“当前项目不再引用”的旧插件。
+ *  refs 是目标项目的插件清单；组件仍被目标画布对象使用的插件也要保留
+ *  （旧 JSON 可能只引用组件所属插件、没有显式 plugins 条目）。 */
+function pluginUnloadStale(keepFiles) {
+  const keep = new Set(keepFiles);
+  for (const p of state.placed ?? []) {
+    const comp = pluginComponents.get(p.type);
+    if (comp && comp.plugin) keep.add(comp.plugin);
+  }
+  for (const file of [...pluginLib.keys()]) {
+    if (!keep.has(file)) pluginUnload(file, { confirm: false });
+  }
 }
 
 function renderPluginPanel() {
@@ -1051,7 +1086,10 @@ function pluginReloadKeep(file, src) {
   editorStateLoadedHooks.delete(old.reg);
   editorPlayStateHooks.delete(old.reg);
   editorPlaySceneHooks.delete(old.reg);
+  editorSceneSyncHooks.delete(old.reg);
+  editorPluginCfgs.delete(old.reg);
   for (const [m, h] of editorPlayHooks) if (h.reg === old.reg) editorPlayHooks.delete(m);
+  if (!editorPlayHooks.size) editorPlayMode = 'all';
   for (const el of editorDom.get(old.reg) ?? []) el.remove?.();
   editorDom.delete(old.reg);
   for (const comp of old.meta.components ?? []) pluginComponents.delete(comp.type);
@@ -1547,7 +1585,7 @@ let statusMsg = ''; // 状态栏常驻文案：试玩退出/编辑后恢复（�
 // 可拖手柄缩放的类型（构造支持 w/h 的物体）；网格物体（block/deposit）缩放时重建
 // 网格（质量=格数×0.1g，质量↔体积挂钩），非网格物体直接改 w/h。
 // 玩家不可改形状：形状始终由质量决定。
-const RESIZE_TYPES = new Set(['floor', 'pool', 'elepool', 'heatpool', 'hotpool', 'block', 'deposit', 'door', 'beaker', 'gas', 'portal', 'extractor', 'gaschamber']);
+const RESIZE_TYPES = new Set(['floor', 'pool', 'elepool', 'heatpool', 'hotpool', 'block', 'deposit', 'door', 'beaker', 'gas', 'portal', 'extractor', 'gaschamber', 'checkpoint']);
 const RESIZE_MIN = { block: 5, deposit: 15 }; // 最小宽（px）；默认 10
 const RESIZE_MIN_H = { deposit: 10 }; // 最小高（px）；默认=宽
 
@@ -1895,7 +1933,7 @@ function renderEdit() {
   ctx.strokeRect(0, 0, state.worldW, state.worldH);
   // 物体（隐藏的物体用虚线框 + 半透明标示，仍可选中/编辑）
   const time = performance.now() / 1000;
-  for (const p of state.placed) {
+  for (const p of [...state.placed].sort((a, b) => ((a.obj.layer ?? 0) - (b.obj.layer ?? 0)))) {
     if (p.obj.hidden) {
       const o = p.obj;
       ctx.save();
@@ -2351,6 +2389,33 @@ function undo() {
 // ---- 属性面板 ---------------------------------------------------------------
 function mapToObj(map) { const o = {}; for (const [id, m] of map) if (m > 1e-6) o[id] = m; return o; }
 function objToMap(o) { const m = new Map(); for (const [id, v] of Object.entries(o)) if (v > 0) m.set(id, v); return m; }
+/** 把溶液里的酸按"实际液体体积"折算成 g/L，并给出和反应判定同源的浓/稀标签。
+ *  浓酸阈值 = C.CONC_HIGH（=300 g/L，MnO2+浓盐酸制氯气等分支用它）。 */
+function solutionAcidInfo(obj) {
+  const sol = obj && obj.solution;
+  if (!sol || typeof sol.mass !== 'function') return '';
+  const acids = [];
+  for (const [id, m] of sol.solutes) {
+    const st = C.SUBSTANCES && C.SUBSTANCES[id];
+    if (st && st.kind === 'acid' && m > 1e-6) acids.push({ id, m });
+  }
+  if (!acids.length) return '';
+  const water = Number(sol.water) || 0;
+  const liq = water > 0 && typeof sol.liquidVolume === 'function' ? sol.liquidVolume() : 0;
+  const threshold = Number(C.CONC_HIGH) || 300;
+  const rows = acids.map(({ id, m }) => {
+    if (!(liq > 0)) {
+      return `<div class="conc-row"><b>${escHtml(id)}</b><span class="conc-val">无溶剂</span>` +
+        `<span class="conc-tag dry">干</span></div>`;
+    }
+    const gPerL = (m / liq) * 1000;
+    const label = typeof C.acidLabelOf === 'function' ? C.acidLabelOf(id, m, liq / 1000) : (gPerL >= threshold ? '浓' : '稀');
+    return `<div class="conc-row"><b>${escHtml(id)}</b><span class="conc-val">${gPerL.toFixed(1)} g/L</span>` +
+      `<span class="conc-tag ${label === '浓' ? 'high' : 'low'}">${label}</span></div>`;
+  }).join('');
+  return `<div class="conc-box"><div class="conc-head">酸浓度 <small>按实际液体体积</small></div>${rows}` +
+    `<div class="conc-note">浓酸阈值 ≥ ${threshold} g/L（与反应判定同源）</div></div>`;
+}
 function refreshProps() {
   const box = $('propsBody');
   // 多选批量模式：selected=-1（Ctrl+A 全选）时主选=选集中的第一个，仍渲染批量修改区
@@ -2425,6 +2490,7 @@ function refreshProps() {
     else html += `<input type="text" data-k="${f.k}" data-kind="text" value="${String(v ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"${freezeAttr}>`;
     html += '</div>';
   }
+  html += solutionAcidInfo(item.obj);
   box.innerHTML = html;
   // 绑定事件
   // textarea = 多行字段（路标文字/显示牌文字等）：同样绑定 change（blur/失焦提交）
@@ -2649,6 +2715,15 @@ function dslLine(item) {
       const extra = fmtOpts({ hidden: HID, id: o.id });
       return `.sign(${pos}, '${t}'${extra ? `, ${extra}` : ''})`;
     }
+    case 'checkpoint': {
+      const extra = fmtOpts({
+        on: o.saveOn === 'enter' ? 'enter' : undefined,
+        label: o.label || undefined,
+        hidden: HID,
+        id: o.id,
+      });
+      return `.checkpoint(${pos}, ${R(o.w)}, ${R(o.h)}${extra ? ', ' + extra : ''})`;
+    }
     case 'portal': return `.portal(${pos}, ${fmtOpts({ w: o.w, h: o.h, color: o.color, uses: Number.isFinite(o.uses) ? o.uses : undefined, switchId: o.switchId || undefined, group: o.group || undefined, inventory: o.inventory || undefined, clearInventory: o.clearInventory ? true : undefined, hidden: HID, id: o.id })})`;
     case 'gasdetector': return `.gasdetector(${pos}, ${fmtOpts({ gas: o.gas, threshold: o.threshold, opening: o.opening, and: o.and, deleteId: o.deleteId || undefined, showId: o.showId || undefined, igniteId: o.igniteId || undefined, extinguishId: o.extinguishId || undefined, openId: o.openId || undefined, hidden: HID, id: o.id })})`;
     case 'extractor': return `.extractor(${pos}, ${fmtOpts({ w: o.w, h: o.h, poolId: o.poolId, switchId: o.switchId, rate: o.rate, hidden: HID, id: o.id })})`;
@@ -2849,9 +2924,9 @@ function exportHTML() {
 <!-- 启动/加载动画：与选关页"进入关卡"过场同款（见 levels/boot.js；导出到 levels/ 下时直接可用） -->
 <script src="boot.js"><\/script>
 <canvas id="game"></canvas>
-<script src="../prefs.js?vmvmdw3n4"><\/script>
-<script src="../audio.js?vmvmdw3n4"><\/script>
-<script src="../dist/chezzle.js?vmvmdw3n4"><\/script>
+<script src="../prefs.js?vmvwagucl"><\/script>
+<script src="../audio.js?vmvwagucl"><\/script>
+<script src="../dist/chezzle.js?vmvwagucl"><\/script>
 ${pluginTags()}
 <script src="report.js"><\/script>
 <script>
@@ -3020,7 +3095,11 @@ function dropLegacyKey(key) {
 async function loadEditorData(data, errors) {
   try {
     // 插件自动加载（JSON 同源）：磁盘 plugin/ → 浏览器缓存；拉不到记入 errors（软提示，不阻断）
-    const refs = Array.isArray(data.plugins) ? data.plugins : [];
+    // 旧项目里的 checkpoint 插件：单场景时载入后迁移成原生对象（见下），不再作为插件加载；
+    // 多场景（chapters）暂保留旧插件兼容，避免丢失按场景配置的存档点。
+    const rawRefs = Array.isArray(data.plugins) ? data.plugins : [];
+    const keepLegacyCheckpoint = Array.isArray(data.scenes);
+    const refs = rawRefs.filter((p) => keepLegacyCheckpoint || !(p && ((p.reg ?? p.name) === 'checkpoint' || /checkpoint\.js$/i.test(p.file || ''))));
     const res = await ensurePluginsFrom(refs);
     for (const e of res.errors) errors?.push(e);
     if (location.protocol === 'file:' && res.fromCache.length) errors?.push(`${res.fromCache.join('、')}（来自浏览器缓存——file:// 读不到磁盘 plugin/；用 http 服务打开编辑器）`);
@@ -3058,6 +3137,30 @@ async function loadEditorData(data, errors) {
     state.placed = (src.objects || [])
       .filter((o) => byType[o.type])
       .map((o) => ({ type: o.type, obj: byType[o.type].construct(gridOpts(o.type, o.opts)) }));
+    // 兼容旧项目：存档点以前是插件（editorState.checkpoint.points）。载入时把单场景的
+    // pos 点转成原生存档点对象，并从插件引用里移除，之后编辑器/JSON/导出都用原生对象。
+    if (!Array.isArray(data.scenes) && byType.checkpoint) {
+      const legacy = data.editorState && data.editorState.checkpoint;
+      const pts = legacy && Array.isArray(legacy.points) ? legacy.points : [];
+      for (const p of pts) {
+        if (!p || p.on === 'enter') continue;
+        if (!(p.w > 0) || !(p.h > 0)) continue;
+        if (!state.placed.some((x) => x.type === 'checkpoint' && x.obj.checkpointId === p.id)) {
+          state.placed.push({
+            type: 'checkpoint',
+            obj: new C.Checkpoint({ x: p.x, y: p.y, w: p.w, h: p.h, id: p.id ?? '', on: 'pos' }),
+          });
+        }
+      }
+    }
+    if (!keepLegacyCheckpoint) {
+      state.plugins = state.plugins.filter((p) => {
+        const reg = p.reg ?? p.name;
+        return reg !== 'checkpoint' && !/checkpoint\.js$/i.test(p.file || '');
+      });
+    }
+    // ★ 项目切换：卸载目标项目不再引用的旧插件（否则 A 项目的插件 UI/增强/组件残留到 B 项目）
+    pluginUnloadStale(state.plugins.map((p) => p.file));
     state.selected = null;
     state.sel = new Set();
     undoStack.length = 0;
@@ -3518,6 +3621,8 @@ function togglePlay() {
   ensureStableIds(); // 试玩对象 id 稳定（延迟出现/接线按 id 引用）
   enterPlayView(); // 试玩视口 = 导出实机（1100×700 等比）+ 编辑器提示隐藏
   const scene = new C.Scene({ worldW: state.worldW, worldH: state.worldH });
+  // 编辑器试玩：禁用游戏 HUD 的重开按钮/R（会整页刷新编辑器，丢失编辑内容）
+  scene.hideRestartButton = true;
   for (const p of state.placed) {
     if (p.type === 'rope') continue; // 绳子走后置接线（需要引用重建后的物体）
     const obj = buildPlayObject(p);  // 插件组件经 C.Plugin.create 生成真实对象
@@ -3691,10 +3796,10 @@ function ensureCanvasSize() {
   const dpr = window.devicePixelRatio || 1;
   const w = wrap.clientWidth, h = wrap.clientHeight;
   if (w > 0 && h > 0 && (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr))) {
-    resizeCanvas();
+    resizeCanvas(false); // 只同步缓冲/保持当前缩放，不重置视图
   }
 }
-function resizeCanvas() {
+function resizeCanvas(fit = true) {
   if (state.playing) return; // 试玩中：画布缓冲已被切到 1100×700（与导出实机一致），重叠改尺寸会打断试玩
   const wrap = $('canvasWrap');
   // 用 devicePixelRatio 保证高分屏清晰（否则 canvas 缓冲=CSS像素 → 被放大显示 → 模糊）
@@ -3707,12 +3812,23 @@ function resizeCanvas() {
   if (!h || h < 50) h = wrap.getBoundingClientRect().height || window.innerHeight || 600;
   const bw = Math.max(1, Math.round(w * dpr));
   const bh = Math.max(1, Math.round(h * dpr));
+  // 记录旧画布中心的世界坐标：窗口/侧栏尺寸变化时保持用户当前缩放与取景，
+  // 不再每次都 fitView() 把缩放重置回最开始的"整关适配"。
+  const oldW = canvas.width;
+  const oldH = canvas.height;
+  const keepView = !fit && oldW > 1 && oldH > 1 && view.scale > 0;
+  const center = keepView ? screenToWorld(oldW / 2, oldH / 2) : null;
   // 尺寸没变就不重设缓冲（重设会清空画布），避免无谓闪烁
   if (canvas.width !== bw) canvas.width = bw;
   if (canvas.height !== bh) canvas.height = bh;
   canvas.style.width = w + 'px';
   canvas.style.height = h + 'px';
-  fitView();
+  if (keepView && center) {
+    view.ox = bw / 2 - center.x * view.scale;
+    view.oy = bh / 2 - center.y * view.scale;
+  } else {
+    fitView();
+  }
   renderEdit();
 }
 // 导出当前项目为 JSON（导入端会把它作为新项目打开）
@@ -3732,7 +3848,10 @@ async function applyLevel(data) {
   // 0. 自动加载 JSON 里引用的插件：已加载 → 磁盘 plugin/ 目录 → 浏览器缓存。
   //    JSON 是插件清单的唯一真相（不再附带"已加载的插件自动用于本关"）；
   //    找不到/加载失败 = 直接报错，不半加载（物体/面板都得等插件先就绪）。
-  const refs = Array.isArray(data.plugins) ? data.plugins : [];
+  // 旧项目的 checkpoint 插件：单场景导入时迁移成原生对象，不再加载插件
+  const rawRefs = Array.isArray(data.plugins) ? data.plugins : [];
+  const keepLegacyCheckpoint = Array.isArray(data.scenes);
+  const refs = rawRefs.filter((p) => keepLegacyCheckpoint || !(p && ((p.reg ?? p.name) === 'checkpoint' || /checkpoint\.js$/i.test(p.file || ''))));
   const res = await ensurePluginsFrom(refs);
   if (!res.ok) {
     throw new Error('JSON 引用的插件未就绪：' + res.errors.join('；') + '（把插件放到 plugin/ 目录后重新加载）');
@@ -3770,6 +3889,22 @@ async function applyLevel(data) {
   state.placed = (src.objects || [])
     .filter((o) => byType[o.type])
     .map((o) => ({ type: o.type, obj: byType[o.type].construct(gridOpts(o.type, o.opts)) }));
+  if (!Array.isArray(data.scenes) && byType.checkpoint) {
+    const legacy = data.editorState && data.editorState.checkpoint;
+    const pts = legacy && Array.isArray(legacy.points) ? legacy.points : [];
+    for (const p of pts) {
+      if (!p || p.on === 'enter' || !(p.w > 0) || !(p.h > 0)) continue;
+      state.placed.push({
+        type: 'checkpoint',
+        obj: new C.Checkpoint({ x: p.x, y: p.y, w: p.w, h: p.h, id: p.id ?? '', on: 'pos' }),
+      });
+    }
+  }
+  state.plugins = state.plugins.filter((p) => keepLegacyCheckpoint
+    || ((p.reg ?? p.name) !== 'checkpoint' && !/checkpoint\.js$/i.test(p.file || '')));
+  // ★ 项目切换：旧项目加载的插件（面板/增强/组件/编辑器 UI）必须按目标项目清单卸载，
+  //   否则 A 项目的插件会残留到 B 项目（试玩/导出/插件面板串数据）。
+  pluginUnloadStale(state.plugins.map((p) => p.file));
   state.selected = null;
   state.sel = new Set();
   undoStack.length = 0;
@@ -3890,8 +4025,11 @@ $('btnClear').onclick = () => {
 };
 $('btnPlay').onclick = togglePlay;
 $('btnExportHTML').onclick = () => {
-  downloadFile('level.html', exportHTML(), 'text/html');
-  $('status').textContent = '已导出 level.html（用浏览器打开即可玩）';
+  // 导出文件名跟随项目名称（去掉 Windows/浏览器不允许的字符；空名回退 level）
+  const base = String(projectName() || 'level').trim().replace(/[\\/:*?"<>|]+/g, '_').replace(/^\.+$/, '') || 'level';
+  const fname = (base.toLowerCase().endsWith('.html') ? base : base + '.html');
+  downloadFile(fname, exportHTML(), 'text/html');
+  $('status').textContent = `已导出 ${fname}（用浏览器打开即可玩）`;
 };
 $('inW').onchange = () => { const v = +$('inW').value || 3000; if (v === state.worldW) return; pushUndo(); state.worldW = v; buildRenderScene(); resizeCanvas(); saveState(); };
 $('inH').onchange = () => { const v = +$('inH').value || 800; if (v === state.worldH) return; pushUndo(); state.worldH = v; buildRenderScene(); resizeCanvas(); saveState(); };
@@ -4166,7 +4304,7 @@ buildSubstanceList();
   // 容器尺寸一变化就重设画布：ResizeObserver 在 observe 时立即回调一次，之后每次布局
   // 变化都拿到**真实尺寸**，根治"刷新后模糊、要手动缩放才正常"；老浏览器退化用多次兜底。
   if (typeof ResizeObserver !== 'undefined') {
-    new ResizeObserver(() => resizeCanvas()).observe($('canvasWrap'));
+    new ResizeObserver(() => resizeCanvas(false)).observe($('canvasWrap'));
   } else {
     requestAnimationFrame(resizeCanvas);
     setTimeout(resizeCanvas, 300);

@@ -18,8 +18,8 @@
 <!-- 偏好 + 音效：prefs.js 供 audio.js 读 sfxVolume/sfxMuted；点击音由 audio.js 统一接线，
      需要不同语义的元素用 data-sfx 覆盖（本页：返回 ui.back、筛选/重置 ui.tick、进入 ui.open；
      走廊卡片在 select-model 之后按"可进/锁定"动态挂 level.enter / ui.deny，拖动时跳过）。 -->
-<script src="prefs.js?vmvmdw3n4"></script>
-<script src="audio.js?vmvmdw3n4"></script>
+<script src="prefs.js?vmvwagucl"></script>
+<script src="audio.js?vmvwagucl"></script>
 <style>
   /* ★ 主题色用三个数值自定义属性承载并注册成 <number>：这样它们**可以被 transition 插值**，
      换元素时背景洗色/符文环/光晕才会平滑过渡而不是硬切（"用 var() 拼的颜色"默认不可动画）。 */
@@ -100,14 +100,18 @@
   .dbg-unlock[hidden] { display: none; }
   .hspace { margin-left: auto; }
   #progress { display: flex; align-items: center; gap: 10px; padding: 7px 14px; font-size: 12.5px; color: var(--cyan);
+    cursor: pointer; transition: border-color .16s, background .16s, filter .16s;
     border: 1px solid rgba(127,216,255,.35); background: rgba(16,26,56,.75); letter-spacing: 1px;
     filter: drop-shadow(0 0 8px rgba(127,216,255,.22));
     clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px); }
+  #progress:hover, #progress:focus-visible { border-color: rgba(127,216,255,.85); background: rgba(24,40,82,.92);
+    filter: drop-shadow(0 0 14px rgba(127,216,255,.42)); outline: none; }
   #pbar { width: 92px; height: 5px; background: rgba(127,216,255,.16); overflow: hidden; }
   #pbar { display: block; }
   #pfill { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, var(--cyan), #cfefff); transition: width .5s ease; }
   .ghost { padding: 7px 12px; font-size: 11.5px; color: #7b8aa8; background: none; border: 1px solid transparent; cursor: pointer; }
   .ghost:hover { color: #ffb0b0; border-color: rgba(255,120,120,.35); }
+  #helpGuide:hover { color: #ffe9b0; border-color: rgba(232,184,75,.45); }
 
   /* ---------- 回廊（横向卡片走廊） ---------- */
   /* max-height 卡住走廊高度：高屏上不至于把卡片和下方同位素条拉得太远 */
@@ -442,6 +446,187 @@
     clip-path: polygon(9px 0, calc(100% - 9px) 0, 100% 9px, 100% calc(100% - 9px), calc(100% - 9px) 100%, 9px 100%, 0 calc(100% - 9px), 0 9px); }
   #toast.on { opacity: 1; transform: translateX(-50%); }
 
+  /* ==========================================================================
+     元素周期表总览（点击顶部「已通关 x / y」打开）
+     ========================================================================== */
+  .arc { position: fixed; inset: 0; z-index: 940; display: flex; align-items: stretch; justify-content: stretch;
+    opacity: 0; transition: opacity .3s ease; }
+  .arc[hidden] { display: none; }
+  .arc.in { opacity: 1; }
+  .arc-scrim { position: absolute; inset: 0; background:
+    radial-gradient(ellipse 80% 60% at 50% -10%, rgba(78,59,160,.45), transparent 62%),
+    radial-gradient(ellipse 60% 70% at 100% 100%, rgba(127,216,255,.08), transparent 60%),
+    linear-gradient(180deg, #08071c, #05040f 70%, #03030a); }
+  .arc-scrim::after { content: ''; position: absolute; inset: 0; opacity: .35; pointer-events: none;
+    background: repeating-linear-gradient(0deg, transparent 0 3px, rgba(150,180,255,.035) 3px 4px); }
+  .arc-panel { position: relative; display: flex; flex-direction: column; width: 100%; height: 100%;
+    max-width: none; max-height: none; padding: 16px clamp(16px, 3vw, 48px) 12px; color: #dfe8f2; overflow: hidden;
+    background: transparent; border: 0; border-radius: 0; box-shadow: none; clip-path: none;
+    transform: translateY(10px); transition: transform .45s cubic-bezier(.16,.9,.25,1.05); }
+  .arc.in .arc-panel { transform: none; }
+  .arc-panel::before { content: ''; position: absolute; left: 50%; top: 50%; width: min(150vw, 1500px); aspect-ratio: 1;
+    transform: translate(-50%, -50%) rotate(0deg); pointer-events: none; opacity: .22;
+    background: conic-gradient(from 0deg, transparent 0 18%, rgba(232,184,75,.22) 22%, transparent 27% 46%,
+      rgba(127,216,255,.16) 51%, transparent 56% 78%, rgba(199,139,255,.2) 83%, transparent 88%);
+    animation: arcAura 24s linear infinite; }
+  @keyframes arcAura { to { transform: translate(-50%, -50%) rotate(360deg); } }
+  .arc-panel::after { content: ''; position: absolute; left: 6%; right: 6%; top: 0; height: 2px; pointer-events: none;
+    background: linear-gradient(90deg, transparent, rgba(255,215,106,.85), rgba(127,216,255,.85), transparent);
+    opacity: 0; }
+  .arc.in .arc-panel::after { animation: arcSweep 1.25s cubic-bezier(.2,.8,.3,1) .08s; }
+  @keyframes arcSweep { 0% { opacity: 0; transform: translateY(0); } 12% { opacity: 1; }
+    100% { opacity: 0; transform: translateY(78vh); } }
+  .arc-head { position: relative; z-index: 2; display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+  .arc.in .arc-head { animation: arcHeadIn .6s cubic-bezier(.2,.9,.3,1.05) both; }
+  @keyframes arcHeadIn { from { opacity: 0; transform: translateY(-18px); } to { opacity: 1; transform: none; } }
+  .arc-kicker { font: bold 9px/1 ui-monospace, Consolas, monospace; letter-spacing: 4px; color: rgba(232,184,75,.72); }
+  .arc-head h2 { margin-top: 6px; font-size: clamp(23px, 3.2vw, 40px); line-height: 1.08; letter-spacing: clamp(5px, 1vw, 12px);
+    color: #ffe9b0; text-shadow: 0 0 24px rgba(232,184,75,.4), 0 0 60px rgba(232,184,75,.12); }
+  .arc-sub { margin-top: 4px; font-size: 11px; letter-spacing: 1.6px; color: #8ea0bd; }
+  .arc-sub b { color: #7fd8ff; font-weight: bold; }
+  .arc-x { width: 32px; height: 32px; flex: none; cursor: pointer; border-radius: 8px;
+    background: rgba(20,26,64,.9); border: 1px solid rgba(127,216,255,.32); color: #9fb2c8;
+    font: 13px/1 "Segoe UI", sans-serif; transition: border-color .16s, color .16s, transform .16s; }
+  .arc-x:hover { border-color: #7fd8ff; color: #dff2ff; transform: rotate(90deg); }
+  .arc-legend { position: relative; z-index: 2; display: flex; flex-wrap: wrap; gap: 5px 16px; margin: 8px 0 6px;
+    padding-bottom: 7px; border-bottom: 1px solid rgba(232,184,75,.14); font-size: 10px; color: #9fb2c8; letter-spacing: .6px; }
+  .arc-legend .lg::before { content: ''; display: inline-block; width: 7px; height: 7px; margin-right: 5px;
+    border-radius: 2px; transform: translateY(-1px); }
+  .arc-legend .done::before { background: #e8b84b; box-shadow: 0 0 5px rgba(232,184,75,.7); }
+  .arc-legend .partial::before { background: #96e8b0; }
+  .arc-legend .open::before { background: #7fd8ff; box-shadow: 0 0 5px rgba(127,216,255,.55); }
+  .arc-legend .locked::before { background: #59627e; }
+  .arc-legend .none::before { background: #24283c; border: 1px solid rgba(255,255,255,.12); }
+  .arc-legend .rare::before { background: #c78bff; box-shadow: 0 0 6px rgba(199,139,255,.6); }
+  .arc-body { position: relative; z-index: 2; flex: 1; min-height: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 5px; overflow: hidden; }
+  .arc-guide { display: inline-flex; align-items: center; gap: 9px; padding: 5px 12px; cursor: pointer;
+    border: 1px solid rgba(232,184,75,.45); background: rgba(232,184,75,.07); color: #ffe9b0;
+    clip-path: polygon(9px 0, 100% 0, calc(100% - 9px) 100%, 0 100%); font: 11px/1 "Segoe UI", "Microsoft YaHei", sans-serif;
+    letter-spacing: 1px; transition: background .16s, border-color .16s; flex: none; }
+  .arc-guide:hover { background: rgba(232,184,75,.16); border-color: rgba(232,184,75,.8); }
+  .arc-guide .ag-mark { font: bold 8.5px/1 ui-monospace, Consolas, monospace; letter-spacing: 2px; color: rgba(232,184,75,.75); }
+  .arc-guide .ag-state { font-size: 10px; color: #ffd76a; }
+  .arc-table-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; width: 100%;
+    overflow: visible; flex: none; perspective: 1200px; }
+  .arc.in .arc-table-wrap { animation: arcTableIn .8s cubic-bezier(.16,.9,.25,1.05) both; animation-delay: .06s; }
+  @keyframes arcTableIn {
+    from { opacity: 0; transform: perspective(1200px) rotateX(16deg) translateY(34px) scale(.93); filter: blur(3px); }
+    to { opacity: 1; transform: none; filter: none; } }
+  .arc-grid { display: grid; gap: 2px; justify-content: center; }
+  .arc-main { grid-template-columns: repeat(18, var(--cellW, 34px)); grid-auto-rows: var(--cellH, 34px); }
+  .arc-foot { grid-template-columns: repeat(14, var(--fcellW, 26px)); grid-template-rows: repeat(2, var(--fcellH, 26px)); }
+  .arc-cell { position: relative; appearance: none; border: 1px solid rgba(255,255,255,.09); border-radius: 3px;
+    background: rgba(15,16,34,.6); color: #71809b; font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0;
+    cursor: pointer; overflow: hidden; padding: 0; min-width: 0; min-height: 0;
+    opacity: 0; transform: scale(.72) translateY(8px); animation: arcCellIn .4s cubic-bezier(.2,.9,.3,1.15) forwards;
+    animation-delay: calc(120ms + var(--d, 0) * 1ms);
+    transition: border-color .14s, background .14s, transform .14s; }
+  @keyframes arcCellIn { to { opacity: 1; transform: none; } }
+  .arc-cell:hover, .arc-cell:focus-visible { transform: scale(1.1); z-index: 2; outline: none;
+    border-color: #fff; box-shadow: 0 0 16px rgba(255,255,255,.28); }
+  .arc-cell .ac-num { position: absolute; left: 2px; top: 2px; font: 7px/1 ui-monospace, Consolas, monospace; opacity: .6; }
+  .arc-cell .ac-sym { font-weight: bold; font-size: min(calc(var(--cellW, 34px) * .34), calc(var(--cellH, 34px) * .8), 20px); line-height: 1; }
+  .arc-cell .ac-name { margin-top: 1px; font-size: min(calc(var(--cellW, 34px) * .18), calc(var(--cellH, 34px) * .32), 10px); line-height: 1; opacity: .72; }
+  .arc-cell .ac-count { position: absolute; right: 2px; bottom: 1px; font-size: 7px; opacity: .72; }
+  .arc-cell.rare::after { content: ''; position: absolute; inset: 0; border-radius: inherit;
+    box-shadow: inset 0 0 0 1px rgba(199,139,255,.55), inset 0 0 9px rgba(199,139,255,.18); pointer-events: none; }
+  .arc-cell.none { background: rgba(13,14,28,.45); border-color: rgba(255,255,255,.055); cursor: default; }
+  .arc-cell.locked { background: rgba(22,25,48,.72); border-color: rgba(89,98,126,.45); color: #5e6884; }
+  .arc-cell.open { background: rgba(17,42,62,.85); border-color: rgba(127,216,255,.5); color: #a8e6ff; }
+  .arc-cell.open .ac-sym { color: #7fd8ff; text-shadow: 0 0 8px rgba(127,216,255,.4); }
+  .arc-cell.partial { background: rgba(21,55,44,.82); border-color: rgba(150,232,176,.5); color: #c6f2d5; }
+  .arc-cell.partial .ac-sym { color: #96e8b0; }
+  .arc-cell.done { background: rgba(63,48,16,.86); border-color: rgba(232,184,75,.72); color: #ffe9b0; }
+  .arc-cell.done .ac-sym { color: #ffd76a; text-shadow: 0 0 8px rgba(232,184,75,.5); }
+  .arc-cell.none .ac-sym { color: #4b5268; }
+  .arc.small .arc-cell .ac-name, .arc.small .arc-cell .ac-count { display: none; }
+  .arc-footbar { position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    margin-top: 7px; padding-top: 7px; border-top: 1px solid rgba(232,184,75,.14); font-size: 10.5px;
+    color: #7f8ca8; letter-spacing: .8px; }
+  .arc-btn { padding: 7px 18px; cursor: pointer; border: 0; border-radius: 0;
+    clip-path: polygon(9px 0, 100% 0, calc(100% - 9px) 100%, 0 100%);
+    font: bold 11.5px/1 "Segoe UI", "Microsoft YaHei", sans-serif; letter-spacing: 2px; color: #2a2000;
+    background: linear-gradient(180deg, #ffe6a0, #e8b84b);
+    filter: drop-shadow(0 0 9px rgba(232,184,75,.4)); transition: filter .16s, transform .16s; }
+  .arc-btn:hover { filter: drop-shadow(0 0 16px rgba(232,184,75,.7)); transform: translateY(-1px); }
+  @media (prefers-reduced-motion: reduce) {
+    .arc, .arc-panel { transition: none; }
+    .arc-panel::before, .arc-panel::after, .arc-head, .arc-table-wrap { animation: none !important; }
+    .arc-cell { animation: none; opacity: 1; transform: none; }
+  }
+  @media (max-width: 700px) {
+    .arc-panel { padding: 10px 12px 8px; }
+    .arc-head h2 { letter-spacing: 6px; }
+    .arc-legend { gap: 3px 10px; font-size: 9px; }
+    .arc-footbar { font-size: 9px; }
+  }
+  @media (max-height: 520px) {
+    .arc-panel { padding: 8px 12px 6px; }
+    .arc-kicker { font-size: 8px; }
+    .arc-head h2 { margin-top: 3px; font-size: 25px; letter-spacing: 7px; }
+    .arc-sub { margin-top: 2px; font-size: 9.5px; }
+    .arc-legend { margin: 4px 0 4px; padding-bottom: 4px; font-size: 9px; }
+    .arc-guide { padding: 3px 9px; font-size: 9.5px; }
+    .arc-footbar { margin-top: 3px; padding-top: 4px; font-size: 9px; }
+    .arc-btn { padding: 5px 14px; font-size: 10px; }
+  }
+
+  /* ==========================================================================
+     新手引导（首次进入选关页）
+     --------------------------------------------------------------------------
+     · .guide-block 铺满整屏吃掉所有点击（引导期间不能操作后面的卡片）；
+     · .guide-spot 是一块透明矩形，用 9999px 的外阴影把整页压暗、只留下目标"挖空"；
+       位置/尺寸由 JS 按**局部坐标**写（竖屏强制横屏时也正确）；
+     · .guide-card 是步骤说明卡，四角切角，与站内其它面板同一套视觉。
+     ========================================================================== */
+  .guide { position: fixed; inset: 0; z-index: 950; opacity: 0; transition: opacity .24s ease; }
+  .guide.on { opacity: 1; }
+  .guide[hidden] { display: none; }
+  .guide-block { position: absolute; inset: 0; pointer-events: auto; }
+  .guide-spot { position: absolute; border-radius: 10px; border: 1.5px solid rgba(255,215,106,.9);
+    box-shadow: 0 0 0 9999px rgba(4,4,15,.84), 0 0 22px rgba(232,184,75,.35);
+    pointer-events: none;
+    transition: left .3s cubic-bezier(.2,.8,.3,1), top .3s cubic-bezier(.2,.8,.3,1),
+      width .3s cubic-bezier(.2,.8,.3,1), height .3s cubic-bezier(.2,.8,.3,1); }
+  .guide.no-target .guide-block { background: rgba(4,4,15,.84); }
+  .guide.no-target .guide-spot { display: none; }
+  .guide-card { position: absolute; box-sizing: border-box; width: 360px; padding: 16px 18px 14px;
+    color: #e8ecff; background: linear-gradient(160deg, rgba(36,29,78,.98), rgba(10,9,28,.98));
+    border: 1px solid rgba(232,184,75,.72);
+    filter: drop-shadow(0 14px 30px rgba(0,0,0,.6)) drop-shadow(0 0 16px rgba(232,184,75,.14));
+    clip-path: polygon(14px 0, calc(100% - 14px) 0, 100% 14px, 100% calc(100% - 14px),
+      calc(100% - 14px) 100%, 14px 100%, 0 calc(100% - 14px), 0 14px);
+    transition: left .32s cubic-bezier(.2,.8,.3,1), top .32s cubic-bezier(.2,.8,.3,1); }
+  .guide-kicker { font: bold 10px/1 ui-monospace, Consolas, monospace; letter-spacing: 3px;
+    color: rgba(232,184,75,.75); }
+  .guide-kicker span { color: #ffd76a; letter-spacing: 1px; }
+  .guide-card h3 { margin-top: 9px; font-size: 18px; letter-spacing: 3px; color: #ffe9b0;
+    text-shadow: 0 0 12px rgba(232,184,75,.35); }
+  .guide-card p#guideText { margin-top: 8px; font-size: 12.5px; line-height: 1.75;
+    letter-spacing: .4px; color: #b9c6dd; }
+  .guide-row { display: flex; align-items: center; gap: 10px; margin-top: 15px; }
+  .guide-dots { display: flex; gap: 6px; margin: 0 auto; }
+  .guide-dots i { width: 6px; height: 6px; background: rgba(255,255,255,.22); transform: rotate(45deg); }
+  .guide-dots i.on { background: #ffd76a; box-shadow: 0 0 7px rgba(232,184,75,.8); }
+  .guide-nav { display: flex; gap: 8px; }
+  .guide-btn { padding: 8px 14px; cursor: pointer; border: 0; border-radius: 0;
+    font: bold 12px/1 "Segoe UI", "Microsoft YaHei", sans-serif; letter-spacing: 2px;
+    color: #2a2000; background: linear-gradient(180deg, #ffe6a0, #e8b84b);
+    clip-path: polygon(9px 0, 100% 0, calc(100% - 9px) 100%, 0 100%);
+    filter: drop-shadow(0 0 8px rgba(232,184,75,.35));
+    transition: filter .16s, transform .16s; }
+  .guide-btn:hover { filter: drop-shadow(0 0 14px rgba(232,184,75,.65)); transform: translateY(-1px); }
+  .guide-btn.ghost { color: #cfe4ff; background: rgba(20,26,64,.92);
+    border: 1px solid rgba(127,216,255,.4); filter: none; }
+  .guide-btn.ghost:hover { border-color: #7fd8ff; color: #fff; }
+  .guide-btn[disabled] { opacity: .32; cursor: default; transform: none; filter: none; }
+  .guide-btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) {
+    .guide, .guide-spot, .guide-card { transition: none; }
+  }
+
   /* ---------- 页面切换：进场淡入 + 离场淡出（点"主页"/"进入关卡"时先淡出再跳） ---------- */
   #wipe { position: fixed; inset: 0; z-index: 900; background: var(--bg-deep); opacity: 1;
     pointer-events: none; transition: opacity .34s ease; }
@@ -630,7 +815,7 @@
       <span id="ptext">已通关 0 / 0</span>
       <span id="pbar"><span id="pfill"></span></span>
     </div>
-    <button id="reset" class="ghost" type="button" data-sfx="ui.tick">清除进度</button>
+    <button id="helpGuide" class="ghost" type="button" data-sfx="ui.tick" title="新手引导" aria-label="查看新手引导">引导</button>
   </header>
 
   <div id="periods" role="group" aria-label="周期"></div>
@@ -666,6 +851,65 @@
 </div>
 
 <div id="toast" role="status"></div>
+
+<!-- 新手引导：首次进入选关页时自动弹出；遮罩挖空要讲的那块，分步说明，可跳过。
+     引导层用 DOM（不是 canvas），旋转/缩放都跟随页面局部坐标；位置由 JS 按局部视口算。 -->
+<div id="guide" class="guide" hidden aria-hidden="true">
+  <div class="guide-block"></div>
+  <div class="guide-spot" aria-hidden="true"></div>
+  <div class="guide-card" role="dialog" aria-modal="true" aria-labelledby="guideTitle">
+    <p class="guide-kicker">CHEZZLE · GUIDE <span id="guideStep">1 / 5</span></p>
+    <h3 id="guideTitle"></h3>
+    <p id="guideText"></p>
+    <div class="guide-row">
+      <button id="guideSkip" class="guide-btn ghost" type="button" data-sfx="ui.tick">跳过</button>
+      <span id="guideDots" class="guide-dots" aria-hidden="true"></span>
+      <span class="guide-nav">
+        <button id="guidePrev" class="guide-btn ghost" type="button" data-sfx="ui.tick">上一步</button>
+        <button id="guideNext" class="guide-btn" type="button" data-sfx="ui.open">下一步</button>
+      </span>
+    </div>
+  </div>
+</div>
+
+<!-- 元素周期表总览：点击顶部「已通关 x/y」打开。全 118 位元素 + 关卡状态着色，
+     点击元素直接跳到回廊对应卡片。 -->
+<div id="archive" class="arc" hidden aria-hidden="true">
+  <div class="arc-scrim"></div>
+  <div class="arc-panel" role="dialog" aria-modal="true" aria-labelledby="arcTitle">
+    <header class="arc-head">
+      <div>
+        <p class="arc-kicker">CHEZZLE · ARCHIVE</p>
+        <h2 id="arcTitle">元素周期表</h2>
+        <p class="arc-sub" id="arcSub">关卡总览</p>
+      </div>
+      <button id="arcClose" class="arc-x" type="button" aria-label="关闭总览" data-sfx="ui.close">✕</button>
+    </header>
+    <div class="arc-legend" aria-hidden="true">
+      <span class="lg done">已通关</span>
+      <span class="lg partial">部分通关</span>
+      <span class="lg open">可挑战</span>
+      <span class="lg locked">未解锁</span>
+      <span class="lg none">暂无关卡</span>
+      <span class="lg rare">稀有元素</span>
+    </div>
+    <div class="arc-body">
+      <button id="arcTutorial" class="arc-guide" type="button" data-sfx="ui.open">
+        <span class="ag-mark">GUIDE</span>
+        <span class="ag-name">新手引导</span>
+        <span class="ag-state"></span>
+      </button>
+      <div class="arc-table-wrap">
+        <div id="arcMain" class="arc-grid arc-main" role="group" aria-label="元素周期表主表"></div>
+        <div id="arcFoot" class="arc-grid arc-foot" role="group" aria-label="镧系与锕系"></div>
+      </div>
+    </div>
+    <footer class="arc-footbar">
+      <span>点击任意元素跳到对应关卡</span>
+      <button id="arcBack" class="arc-btn" type="button" data-sfx="ui.back">返回选关</button>
+    </footer>
+  </div>
+</div>
 
 <script src="levels/levels.js"></script>
 <script>
@@ -1170,7 +1414,10 @@ function moveSegInd(instant) {
   if (!on) return;
   let ind = seg.querySelector('.ind');
   if (!ind) { ind = document.createElement('span'); ind.className = 'ind'; seg.insertBefore(ind, seg.firstChild); }
-  const r = seg.getBoundingClientRect(), b = on.getBoundingClientRect();
+  // ★ 必须换算到**局部坐标**：竖屏强制横屏时 getBoundingClientRect() 返回的是屏幕坐标，
+  //   直接拿 r.left/b.width 会把旋转后的宽高算反（实际宽度变成按钮高度）→ 指示块错位、
+  //   压在"全部元素"文字上。localRectOf 对旋转/正常两种模式都给出局部矩形。
+  const r = localRectOf(seg), b = localRectOf(on);
   if (instant) ind.style.transition = 'none';
   ind.style.width = b.width + 'px';
   ind.style.transform = `translateX(${(b.left - r.left).toFixed(1)}px)`;
@@ -1337,6 +1584,31 @@ function setActive(i, focusIso) {
   const p = periodOf(e);
   if (p !== prevP) flashPeriod(p); else lastPeriod = p;
   document.title = `Chezzle · 选关 · ${e.kind === 'tutorial' ? e.name : e.name + ' ' + e.sym}`;
+}
+
+/** 立即把走廊定位到第 i 张卡（进入关卡过场/总览跳转用；不走慢速缓动） */
+function jumpTo(i) {
+  if (launching) return;
+  setActive(i, true);
+  stopCards();
+  curX = active;
+  moveCards(true);
+}
+
+let guideScrollRaf = 0;
+/** 引导专用：平滑滚动到第 i 张卡，期间每帧重排挖空区/说明卡，让高亮框跟着卡片走。 */
+function guideScrollTo(i) {
+  if (launching) return;
+  if (guideScrollRaf) { cancelAnimationFrame(guideScrollRaf); guideScrollRaf = 0; }
+  setActive(i, true);
+  const t0 = performance.now();
+  const tick = () => {
+    guideScrollRaf = 0;
+    if (!guideOpen) return;
+    layoutGuide();
+    if (performance.now() - t0 < 720) guideScrollRaf = requestAnimationFrame(tick);
+  };
+  guideScrollRaf = requestAnimationFrame(tick);
 }
 
 function denyCard(b, e) {
@@ -1695,7 +1967,7 @@ function jumpPeriod(dir) {
   if (nxt) setActive(nxt.first, true);
 }
 addEventListener('keydown', (e) => {
-  if (launching) return;
+  if (launching || guideOpen) return;   // 新手引导打开时：方向键只翻引导步骤，不翻卡片
   const k = e.key;
   const isoN = ENTRIES[active].isotopes.length;
   if (k === 'ArrowLeft') { setActive(active - 1, true); e.preventDefault(); }
@@ -1800,21 +2072,13 @@ let wheelAcc = 0, wheelTimer = 0;
   box.addEventListener('click', (e) => { if (dragged) { e.stopPropagation(); e.preventDefault(); } }, true);
 })();
 
-// ---- 进度栏 / 清除进度 ----
+// ---- 进度栏（点击进入元素周期表总览） ----
 function refreshProgress() {
   const total = ENTRIES.reduce((s, e) => s + e.isotopes.filter((i) => i.file).length, 0);
   const done = ENTRIES.reduce((s, e) => s + e.isotopes.filter((i) => i.file && cleared.has(i.id)).length, 0);
   $('ptext').textContent = `已通关 ${done} / ${total}`;
   $('pfill').style.width = total ? `${Math.round(done / total * 100)}%` : '0%';
 }
-$('reset').addEventListener('click', () => {
-  if (!confirm('确定清除全部通关进度？（不会删除关卡文件）')) return;
-  cleared = new Set();
-  try { localStorage.setItem(PROG_KEY, JSON.stringify({ cleared: [] })); } catch (e) {}
-  unlocked = unlockedSet(CFG || {}, cleared);
-  refreshCardStates(); renderIsotopes(); refreshProgress(); buildPeriods();
-  toast('进度已清除');
-});
 
 // ---- toast ----
 let toastTimer = null;
@@ -1825,6 +2089,356 @@ function toast(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove('on'), 2200);
 }
+
+// ---- 元素周期表总览（点击「已通关 x / y」打开） ----
+const arcEl = $('archive');
+const arcMain = $('arcMain');
+const arcFoot = $('arcFoot');
+let arcLastFocus = null;
+const ARC_STATE_CLASS = { st0: 'none', st1: 'locked', st2: 'open', st3: 'partial', gold: 'done' };
+
+function arcStateWord(st) {
+  return st === 'gold' ? '已通关' : st === 'st3' ? '部分通关' : st === 'st2' ? '可挑战'
+    : st === 'st1' ? '未解锁' : '暂无关卡';
+}
+
+/** 按元素事实表生成 118 个格子；无 slide 页面的元素也显示（暂无关卡） */
+function renderArchive() {
+  if (!arcEl || !ENTRIES.length) return;
+  const idxOf = new Map();
+  ENTRIES.forEach((e, i) => { if (e.kind === 'element') idxOf.set(e.sym, i); });
+  const makeCell = (entry, sym, num, name, delay) => {
+    const st = entry ? elementState(entry, unlocked, cleared) : 'st0';
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = `arc-cell ${ARC_STATE_CLASS[st]}${entry && entry.rare ? ' rare' : ''}`;
+    b.style.setProperty('--d', String(delay));
+    b.title = entry ? `${name}（${sym}）· ${arcStateWord(st)}` : `${name}（${sym}）· 暂无关卡`;
+    b.setAttribute('aria-label', b.title);
+    const count = entry ? entry.isotopes.filter((it) => it.file).length : 0;
+    b.innerHTML = `<span class="ac-num">${num}</span><span class="ac-sym">${sym}</span>` +
+      `<span class="ac-name">${name}</span>` +
+      (count > 1 ? `<span class="ac-count">${count}</span>` : '');
+    if (entry) b.addEventListener('click', () => {
+      closeArchive();
+      setTimeout(() => jumpTo(idxOf.get(sym)), 120);
+    });
+    return b;
+  };
+  arcMain.innerHTML = '';
+  let delay = 0;
+  for (const [sym, f] of Object.entries(bySym)) {
+    if (f.series) continue; // 镧系/锕系放下面两行
+    const entry = ENTRIES[idxOf.get(sym)];
+    const cell = makeCell(entry, sym, f.n, f.name, delay);
+    cell.style.gridColumn = String(f.g);
+    cell.style.gridRow = String(f.p);
+    delay += 2;
+    arcMain.appendChild(cell);
+  }
+  arcFoot.innerHTML = '';
+  let fd = 0;
+  for (const sym of Object.keys(bySym)) {
+    const f = bySym[sym];
+    if (f.series !== '镧系' && f.series !== '锕系') continue;
+    const cell = makeCell(ENTRIES[idxOf.get(sym)], sym, f.n, f.name, 220 + fd * 2);
+    arcFoot.appendChild(cell);
+    fd++;
+  }
+  // 新手引导入口
+  const tg = $('arcTutorial');
+  if (tg) {
+    const t = ENTRIES[0];
+    const st = t ? elementState(t, unlocked, cleared) : 'st0';
+    tg.className = `arc-guide ${ARC_STATE_CLASS[st]}${st === 'gold' ? ' done' : ''}`;
+    const word = tg.querySelector('.ag-state');
+    if (word) word.textContent = arcStateWord(st);
+  }
+  // 一句话进度
+  const total = ENTRIES.reduce((s, e) => s + e.isotopes.filter((i) => i.file).length, 0);
+  const done = ENTRIES.reduce((s, e) => s + e.isotopes.filter((i) => i.file && cleared.has(i.id)).length, 0);
+  const rare = ENTRIES.filter((e) => e.rare && e.hasLevel).length;
+  const sub = $('arcSub');
+  if (sub) sub.innerHTML = `已通关 <b>${done}</b> / ${total} 关 · 稀有元素 <b>${rare}</b> 位`;
+}
+
+/** 按局部视口算格子尺寸：18 列主表 + 2 行 f 区，横竖屏都装得下 */
+function layoutArchive() {
+  if (!arcEl || arcEl.hidden) return;
+  const body = arcEl.querySelector('.arc-body');
+  const bw = (body && body.clientWidth) || Math.max(200, vw() - 40);
+  const bh = (body && body.clientHeight) || Math.max(160, vh() - 180);
+  // 18 列主表 + 14 列 f 区（两行）+ 新手引导条：按**真实可用空间**缩放，
+  // 不再出现内部滚动条/移动条。
+  const byWidth = Math.floor((bw - 48) / 18);
+  const byHeight = Math.floor((bh - 34) / 8.55);
+  const cellW = Math.max(16, Math.min(58, byWidth));
+  const cellH = Math.max(12, Math.min(cellW, 58, byHeight));
+  arcEl.style.setProperty('--cellW', cellW + 'px');
+  arcEl.style.setProperty('--cellH', cellH + 'px');
+  arcEl.style.setProperty('--fcellW', Math.round(cellW * 0.78) + 'px');
+  arcEl.style.setProperty('--fcellH', Math.round(cellH * 0.78) + 'px');
+  arcEl.style.setProperty('--cell', Math.min(cellW, cellH) + 'px'); // 兼容旧引用
+  arcEl.classList.toggle('small', cellH < 29 || cellW < 32);
+}
+
+function openArchive() {
+  if (!arcEl || !arcEl.hidden) return;
+  const endAnim = () => { if (!arcEl.hidden) arcEl.classList.add('in'); };
+  arcLastFocus = document.activeElement;
+  renderArchive();
+  arcEl.hidden = false;
+  arcEl.setAttribute('aria-hidden', 'false');
+  layoutArchive();
+  requestAnimationFrame(endAnim);
+  const x = $('arcClose');
+  if (x && x.focus) { try { x.focus({ preventScroll: true }); } catch (e) { /* 忽略 */ } }
+}
+
+function closeArchive() {
+  if (!arcEl || arcEl.hidden) return;
+  arcEl.classList.remove('in');
+  arcEl.setAttribute('aria-hidden', 'true');
+  setTimeout(() => { if (!arcEl.classList.contains('in')) arcEl.hidden = true; }, 230);
+  if (arcLastFocus && typeof arcLastFocus.focus === 'function') {
+    try { arcLastFocus.focus({ preventScroll: true }); } catch (e) { /* 忽略 */ }
+  }
+  arcLastFocus = null;
+}
+
+const progressBox = $('progress');
+if (progressBox) {
+  progressBox.setAttribute('role', 'button');
+  progressBox.setAttribute('tabindex', '0');
+  progressBox.setAttribute('title', '查看元素周期表总览');
+  progressBox.addEventListener('click', openArchive);
+  progressBox.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openArchive(); }
+  });
+}
+if ($('arcClose')) $('arcClose').addEventListener('click', closeArchive);
+if ($('arcBack')) $('arcBack').addEventListener('click', closeArchive);
+if ($('arcTutorial')) $('arcTutorial').addEventListener('click', () => {
+  closeArchive();
+  setTimeout(() => jumpTo(0), 120);
+});
+if (arcEl) {
+  const scrim = arcEl.querySelector('.arc-scrim');
+  if (scrim) scrim.addEventListener('click', closeArchive);
+}
+document.addEventListener('keydown', (e) => {
+  if (!arcEl || arcEl.hidden) return;
+  if (e.key === 'Escape') { e.preventDefault(); closeArchive(); }
+});
+
+// ---- 新手引导（首次进入自动弹出；右上"引导"可重看） ----
+const GUIDE_KEY = 'chezzle-select-guide-v1';
+const GUIDE_STEPS = [
+  {
+    target: null,
+    title: '欢迎来到 Chezzle',
+    text: '这是一款把化学实验做成横版解谜的游戏：操控元素小人，用烧杯、滴管、集气瓶和真实的化学反应闯关。',
+  },
+  {
+    target: '#track',
+    title: '元素回廊',
+    text: '中央是当前元素卡。左右拖动、点两侧箭头或卡片，都能翻到别的元素。每个元素代表一系列关卡；元素只是关卡的名字/编号方式，和关卡实际内容无关。',
+  },
+  {
+    target: '.seg',
+    title: '筛选与周期',
+    text: '「全部元素 / 只看有关卡」切换显示范围；下面一排周期条可以按周期直接跳转。',
+  },
+  {
+    target: '.card.active',
+    title: '稀有关卡',
+    text: '标着紫色稀有标记的元素，关卡难度通常更高。可以先跳过，等有把握再回来挑战。',
+    anchor: 'rare',
+  },
+  {
+    target: '#isotopes',
+    title: '同位素关卡',
+    text: '同一元素可能绑着多个关卡（同位素），质量数越大通常越难。',
+  },
+  {
+    target: '#enter',
+    title: '进入关卡',
+    text: '选好后点这里进入。卡片暗色 = 暂无，微亮 = 未解锁，绿色 = 可挑战，金色 = 已通关。',
+  },
+];
+const guideEl = $('guide');
+const guideSpot = guideEl ? guideEl.querySelector('.guide-spot') : null;
+const guideCard = guideEl ? guideEl.querySelector('.guide-card') : null;
+const guideStepEl = $('guideStep');
+const guideTitleEl = $('guideTitle');
+const guideTextEl = $('guideText');
+const guideDotsEl = $('guideDots');
+const guidePrev = $('guidePrev');
+const guideNext = $('guideNext');
+const guideSkip = $('guideSkip');
+let guideOpen = false;
+let guideIdx = 0;
+let guideLastFocus = null;
+let guideReturnActive = 0;
+let guideReturnIso = 0;
+
+/** 引导里的关键位置：第一个有已编写关卡的普通元素 / 第一个"有已编写关卡"的稀有元素 */
+function guideFirstLevelIndex() {
+  const i = ENTRIES.findIndex((e) => e.kind === 'element' && e.hasLevel);
+  return i >= 0 ? i : 0;
+}
+function guideRareIndex() {
+  return ENTRIES.findIndex((e) => e.rare && e.hasLevel);
+}
+/** 执行步骤里的滚动定位（打开引导/进入稀有关卡步骤时） */
+function applyGuideAnchor(step) {
+  if (!ENTRIES.length) return;
+  const i = step && step.anchor === 'rare' ? guideRareIndex() : guideFirstLevelIndex();
+  if (i >= 0) guideScrollTo(i);
+}
+
+function guideSeen() {
+  try { return localStorage.getItem(GUIDE_KEY) === '1'; } catch (e) { return false; }
+}
+function markGuideSeen() {
+  try { localStorage.setItem(GUIDE_KEY, '1'); } catch (e) { /* 隐私模式：每次打开都提示 */ }
+}
+/** 目标元素 → 局部矩形（旋转模式下 getBoundingClientRect 是屏幕坐标，必须换算） */
+function guideRect(target) {
+  const el = target ? document.querySelector(target) : null;
+  if (!el) return null;
+  try { return localRectOf(el); } catch (e) { return null; }
+}
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+/** 按当前步骤摆好挖空区与说明卡：优先放在目标上方/下方，放不下再贴底/居中。 */
+function layoutGuide() {
+  if (!guideOpen || !guideCard) return;
+  const step = GUIDE_STEPS[guideIdx];
+  const r = guideRect(step.target);
+  const W = vw();
+  const H = vh();
+  const M = 14;
+  const cw = Math.min(360, W - 2 * M);
+  guideCard.style.width = cw + 'px';
+  // 先定内容（setGuideStep 已写入），量出真实高度再定位
+  const ch = guideCard.offsetHeight || 150;
+  let x;
+  let y;
+  if (!r) {
+    guideEl.classList.add('no-target');
+    x = (W - cw) / 2;
+    y = (H - ch) / 2;
+  } else {
+    guideEl.classList.remove('no-target');
+    const pad = 8;
+    const sx = clamp(r.left - pad, 6, W - 6);
+    const sy = clamp(r.top - pad, 6, H - 6);
+    const sw = clamp(r.width + pad * 2, 24, W - sx - 6);
+    const sh = clamp(r.height + pad * 2, 24, H - sy - 6);
+    guideSpot.style.left = sx + 'px';
+    guideSpot.style.top = sy + 'px';
+    guideSpot.style.width = sw + 'px';
+    guideSpot.style.height = sh + 'px';
+    const above = r.top - pad - ch - M;
+    const below = r.bottom + pad + M;
+    if (above >= M) y = above;
+    else if (below + ch <= H - M) y = below;
+    else y = H - ch - M;
+    x = clamp(r.left + r.width / 2 - cw / 2, M, W - cw - M);
+    // 目标本身贴着屏幕底部/顶部时，避免说明卡完全盖住挖空区
+    if (y + ch > H - M) y = H - ch - M;
+    if (y < M) y = M;
+  }
+  guideCard.style.left = Math.round(x) + 'px';
+  guideCard.style.top = Math.round(y) + 'px';
+  void guideCard.offsetWidth;
+  // 说明卡若与挖空区重叠（目标很大时），把卡片放到挖空区外：这里只做上/下贴边，
+  // 保持卡片始终在视口内（竖屏强制横屏的 390px 高度下尤其重要）。
+}
+
+function setGuideStep(i, instant) {
+  guideIdx = clamp(i, 0, GUIDE_STEPS.length - 1);
+  const step = GUIDE_STEPS[guideIdx];
+  if (guideStepEl) guideStepEl.textContent = `${guideIdx + 1} / ${GUIDE_STEPS.length}`;
+  if (guideTitleEl) guideTitleEl.textContent = step.title;
+  if (guideTextEl) guideTextEl.textContent = step.text;
+  if (guideDotsEl) {
+    guideDotsEl.innerHTML = GUIDE_STEPS
+      .map((_, n) => `<i class="${n === guideIdx ? 'on' : ''}"></i>`).join('');
+  }
+  if (guidePrev) guidePrev.disabled = guideIdx === 0;
+  if (guideNext) guideNext.textContent = guideIdx === GUIDE_STEPS.length - 1 ? '开始探索' : '下一步';
+  if (step.anchor) applyGuideAnchor(step);
+  if (instant) guideCard && (guideCard.style.transition = 'none');
+  layoutGuide();
+  if (instant) {
+    if (guideCard) { void guideCard.offsetWidth; guideCard.style.transition = ''; }
+  }
+  if (guideNext) { try { guideNext.focus({ preventScroll: true }); } catch (e) { /* 老内核 */ } }
+}
+
+function openGuide() {
+  if (!guideEl || guideOpen) { if (guideOpen) setGuideStep(0); return; }
+  guideOpen = true;
+  guideReturnActive = active;
+  guideReturnIso = activeIso;
+  guideLastFocus = document.activeElement;
+  guideEl.hidden = false;
+  guideEl.setAttribute('aria-hidden', 'false');
+  // 引导从"第一个关卡"开始（手动重看也回到开头），后面的稀有步骤再滚到第一个稀有元素关卡
+  guideScrollTo(guideFirstLevelIndex());
+  setGuideStep(0);
+  requestAnimationFrame(() => guideEl.classList.add('on'));
+  document.body.classList.add('guiding');
+}
+
+function closeGuide(seen) {
+  if (!guideEl || !guideOpen) return;
+  guideOpen = false;
+  if (guideScrollRaf) { cancelAnimationFrame(guideScrollRaf); guideScrollRaf = 0; }
+  guideEl.classList.remove('on');
+  document.body.classList.remove('guiding');
+  if (seen) markGuideSeen();
+  setTimeout(() => {
+    if (!guideOpen) {
+      guideEl.hidden = true;
+      guideEl.setAttribute('aria-hidden', 'true');
+    }
+  }, 240);
+  // 引导结束回到玩家开始引导前停留的卡片（首次自动弹出时就是 autoTarget 那张）
+  jumpTo(guideReturnActive);
+  activeIso = guideReturnIso;
+  renderIsotopes();
+  if (guideLastFocus && typeof guideLastFocus.focus === 'function') {
+    try { guideLastFocus.focus({ preventScroll: true }); } catch (e) { /* 忽略 */ }
+  }
+}
+
+if (guideNext) guideNext.addEventListener('click', () => {
+  if (guideIdx >= GUIDE_STEPS.length - 1) closeGuide(true);
+  else setGuideStep(guideIdx + 1);
+});
+if (guidePrev) guidePrev.addEventListener('click', () => setGuideStep(guideIdx - 1));
+if (guideSkip) guideSkip.addEventListener('click', () => closeGuide(true));
+if ($('helpGuide')) $('helpGuide').addEventListener('click', openGuide);
+// 键盘：Esc = 跳过；←/→ = 上一步/下一步
+document.addEventListener('keydown', (e) => {
+  if (!guideOpen) return;
+  if (e.key === 'Escape') { e.preventDefault(); closeGuide(true); }
+  else if (e.key === 'ArrowLeft') { e.preventDefault(); setGuideStep(guideIdx - 1); }
+  else if (e.key === 'ArrowRight') {
+    e.preventDefault();
+    if (guideIdx >= GUIDE_STEPS.length - 1) closeGuide(true);
+    else setGuideStep(guideIdx + 1);
+  }
+});
+// 遮罩拦截所有指针/触摸事件（卡片本身可点）
+if (guideEl) {
+  guideEl.addEventListener('pointerdown', (e) => e.stopPropagation());
+  guideEl.addEventListener('touchstart', (e) => e.stopPropagation(), { passive: true });
+}
+
 
 // ---- 背景：星野 / 流星（坐标按局部视口算，竖屏强制横屏时也铺满） ----
 (function stars() {
@@ -1892,6 +2506,8 @@ function onViewport() {
     markViewport();
     layoutCards();
     moveSegInd(true);   // 尺寸变了：指示块立即对齐（不做滑动动画）
+    if (guideOpen) layoutGuide();   // 引导中：挖空区/说明卡跟随新视口
+    layoutArchive();                 // 周期表总览打开时：格子尺寸跟随视口
   });
 }
 addEventListener('resize', onViewport);
@@ -1939,6 +2555,12 @@ function revealPage() {
     if (SPASHELL && window.parent !== window) {
       try { parent.postMessage({ type: 'cz:page-ready' }, '*'); } catch (e) { /* 忽略 */ }
     }
+  }
+  // 第一次进入选关：等入场/自动定位的翻卡动画稍停一下，再弹新手引导
+  if (guideEl && !guideSeen() && !guideOpen) {
+    setTimeout(() => {
+      if (!guideOpen && !launching) openGuide();
+    }, matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 780);
   }
 }
 

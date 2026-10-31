@@ -1,0 +1,442 @@
+{
+  "version": 2,
+  "levelId": "",
+  "worldW": 3000,
+  "worldH": 1200,
+  "plugins": [],
+  "rx": [],
+  "atmosphere": {},
+  "tips": [],
+  "editorState": {},
+  "objects": [
+    {
+      "type": "floor",
+      "opts": {
+        "x": 254,
+        "y": 842,
+        "w": 283,
+        "h": 146,
+        "ice": false,
+        "id": "floor1"
+      }
+    },
+    {
+      "type": "player",
+      "opts": {
+        "x": 332,
+        "y": 734,
+        "substance": "Fe",
+        "mass": 30,
+        "noLift": false,
+        "id": "player1"
+      }
+    },
+    {
+      "type": "pool",
+      "opts": {
+        "x": 528,
+        "y": 843,
+        "w": 149,
+        "h": 61,
+        "volume": 1000,
+        "solutes": {
+          "HCl": 1000
+        },
+        "gasHeight": 80,
+        "id": "pool1"
+      }
+    },
+    {
+      "type": "gastube",
+      "opts": {
+        "x": 509,
+        "y": 760,
+        "w": 719,
+        "h": 138,
+        "inId": "pool1",
+        "outIds": "pool2",
+        "valves": "",
+        "id": "gastube1"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 671,
+        "y": 845,
+        "w": 529,
+        "h": 128,
+        "ice": false,
+        "id": "floor3"
+      }
+    },
+    {
+      "type": "pool",
+      "opts": {
+        "x": 1193,
+        "y": 847,
+        "w": 129,
+        "h": 69,
+        "volume": 515,
+        "solutes": {
+          "H2S": 50,
+          "HCl": 10
+        },
+        "gasHeight": 80,
+        "id": "pool2"
+      }
+    },
+    {
+      "type": "block",
+      "opts": {
+        "x": 1047,
+        "y": 751,
+        "substance": "KClO3",
+        "mass": 36.1,
+        "w": 95,
+        "h": 95,
+        "pushable": true,
+        "noLift": false,
+        "id": "block1"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 1316,
+        "y": 848,
+        "w": 180,
+        "h": 117,
+        "ice": false,
+        "id": "floor4"
+      }
+    },
+    {
+      "type": "block",
+      "opts": {
+        "x": 784,
+        "y": 750,
+        "substance": "BaCl2",
+        "mass": 32.4,
+        "w": 90,
+        "h": 90,
+        "pushable": true,
+        "noLift": false,
+        "id": "block2"
+      }
+    },
+    {
+      "type": "extractor",
+      "opts": {
+        "x": 1322,
+        "y": 831,
+        "w": 37,
+        "h": 14,
+        "poolId": "pool2",
+        "switchId": null,
+        "rate": 0.25,
+        "id": "extractor1"
+      }
+    },
+    {
+      "type": "switch",
+      "opts": {
+        "x": 1379,
+        "y": 827,
+        "mode": "chemical",
+        "opening": "FeCl3",
+        "and": null,
+        "deleteId": null,
+        "showId": null,
+        "igniteId": null,
+        "extinguishId": null,
+        "openId": "portal4",
+        "id": "switch1",
+        "precipitates": {}
+      }
+    },
+    {
+      "type": "portal",
+      "opts": {
+        "x": 938,
+        "y": 786,
+        "w": 44,
+        "h": 64,
+        "color": "#c78bff",
+        "uses": 1,
+        "switchId": null,
+        "group": "1",
+        "inventory": null,
+        "clearInventory": false,
+        "id": "portal1"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 257,
+        "y": 462,
+        "w": 618,
+        "h": 77,
+        "ice": false,
+        "id": "floor5"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 1099,
+        "y": 460,
+        "w": 433,
+        "h": 75,
+        "ice": false,
+        "id": "floor6"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 1106,
+        "y": 175,
+        "w": 423,
+        "h": 44,
+        "ice": false,
+        "id": "floor7"
+      }
+    },
+    {
+      "type": "portal",
+      "opts": {
+        "x": 1292,
+        "y": 106,
+        "w": 44,
+        "h": 64,
+        "color": "#c78bff",
+        "uses": 1,
+        "switchId": null,
+        "group": "1",
+        "inventory": null,
+        "clearInventory": false,
+        "id": "portal2"
+      }
+    },
+    {
+      "type": "portal",
+      "opts": {
+        "x": 1429,
+        "y": 110,
+        "w": 44,
+        "h": 64,
+        "color": "#ffb340",
+        "uses": 0,
+        "switchId": "switch1",
+        "group": "2",
+        "inventory": null,
+        "clearInventory": false,
+        "id": "portal3"
+      }
+    },
+    {
+      "type": "portal",
+      "opts": {
+        "x": 1439,
+        "y": 779,
+        "w": 44,
+        "h": 64,
+        "color": "#ffb340",
+        "uses": 0,
+        "switchId": "switch1",
+        "group": "2",
+        "inventory": null,
+        "clearInventory": false,
+        "id": "portal4"
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 805,
+        "y": 181,
+        "w": 140,
+        "h": 36,
+        "ice": false,
+        "id": "floor9"
+      }
+    },
+    {
+      "type": "elepool",
+      "opts": {
+        "x": 941,
+        "y": 177,
+        "w": 170,
+        "h": 60,
+        "volume": 410,
+        "solutes": {
+          "NaOH": 20
+        },
+        "gasHeight": 80,
+        "switchId": "switch2",
+        "id": "elepool1"
+      }
+    },
+    {
+      "type": "switch",
+      "opts": {
+        "x": 1118,
+        "y": 151,
+        "mode": "pressure",
+        "opening": null,
+        "and": null,
+        "deleteId": null,
+        "showId": null,
+        "igniteId": null,
+        "extinguishId": null,
+        "openId": null,
+        "id": "switch2",
+        "precipitates": {}
+      }
+    },
+    {
+      "type": "floor",
+      "opts": {
+        "x": 805,
+        "y": 209,
+        "w": 32,
+        "h": 257,
+        "ice": false,
+        "id": "floor10"
+      }
+    },
+    {
+      "type": "gastube",
+      "opts": {
+        "x": 651,
+        "y": 94,
+        "w": 479,
+        "h": 284,
+        "inId": "elepool1",
+        "outIds": "gaschamber1",
+        "valves": "",
+        "id": "gastube2"
+      }
+    },
+    {
+      "type": "gaschamber",
+      "opts": {
+        "x": 409,
+        "y": 211,
+        "w": 255,
+        "h": 273,
+        "gases": "NH3:2000",
+        "id": "gaschamber1"
+      }
+    },
+    {
+      "type": "gasdetector",
+      "opts": {
+        "x": 596,
+        "y": 436,
+        "gas": "N2",
+        "threshold": 0.5,
+        "and": null,
+        "deleteId": "floor10",
+        "showId": null,
+        "igniteId": null,
+        "extinguishId": null,
+        "openId": null,
+        "id": "gasdetector1"
+      }
+    },
+    {
+      "type": "pool",
+      "opts": {
+        "x": 865,
+        "y": 458,
+        "w": 246,
+        "h": 48,
+        "volume": 380,
+        "solutes": {
+          "AgNO3": 20
+        },
+        "gasHeight": 80,
+        "id": "pool3"
+      }
+    },
+    {
+      "type": "extractor",
+      "opts": {
+        "x": 1116,
+        "y": 449,
+        "w": 36,
+        "h": 14,
+        "poolId": "pool3",
+        "switchId": null,
+        "rate": 0.25,
+        "id": "extractor2"
+      }
+    },
+    {
+      "type": "lamp",
+      "opts": {
+        "x": 1181,
+        "y": 424,
+        "autoOn": false,
+        "id": "lamp1",
+        "precipitates": {}
+      }
+    },
+    {
+      "type": "switch",
+      "opts": {
+        "x": 1238,
+        "y": 436,
+        "mode": "chemical",
+        "opening": "NH4NO3",
+        "and": null,
+        "deleteId": null,
+        "showId": null,
+        "igniteId": "lamp1",
+        "extinguishId": null,
+        "openId": null,
+        "id": "switch3",
+        "precipitates": {}
+      }
+    },
+    {
+      "type": "key",
+      "opts": {
+        "x": 1336,
+        "y": 426,
+        "opening": "FeS",
+        "deleteId": null,
+        "showId": null,
+        "igniteId": null,
+        "extinguishId": null,
+        "openId": "door1",
+        "id": "key1",
+        "precipitates": {}
+      }
+    },
+    {
+      "type": "door",
+      "opts": {
+        "x": 1404,
+        "y": 379,
+        "w": 64,
+        "h": 83,
+        "id": "door1"
+      }
+    },
+    {
+      "type": "gaschamber",
+      "opts": {
+        "x": 1182,
+        "y": 786,
+        "w": 149,
+        "h": 125,
+        "gases": "",
+        "id": "gaschamber2"
+      }
+    }
+  ]
+}

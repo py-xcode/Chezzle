@@ -19,6 +19,8 @@ export class Floor extends Obj {
   }
   constructor({ x, y, w, h, color = null, ice = false, trim = null, ...rest } = {}) {
     super({ x, y, w, h, solid: true, static: true, physicsKind: 'static', ...rest });
+    // 地板/墙是背景层：永远先画，导气管等装置才能压在地板上面（见 renderer 的 layer 排序）
+    if (!Number.isFinite(rest.layer)) this.layer = -10;
     this.color = color;
     this.ice = !!ice;
     this.trim = trim; // 视觉：'left'|'right'|'bottom'（池壁用）；null = 普通地板

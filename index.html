@@ -7,9 +7,9 @@
 <link rel="icon" href="data:,">
 <title>Chezzle · 化学 × 解谜</title>
 <!-- 偏好设置（引擎与首页设置面板共用；必须在本页任何引擎脚本之前加载） -->
-<script src="prefs.js?vmvmdw3n4"></script>
+<script src="prefs.js?vmvwagucl"></script>
 <!-- 音效（UI 点击自动接线 + 设置面板音量；读 ChezzlePrefs 的 sfxVolume/sfxMuted 实时生效） -->
-<script src="audio.js?vmvmdw3n4"></script>
+<script src="audio.js?vmvwagucl"></script>
 <script>
 /* 深链首帧：路由不是首页时，先把首页的标题/角落舞台藏起来（脚本还没跑到也不闪首页） */
 (function () {
@@ -153,7 +153,7 @@
   body.low .meteor { filter: none; }
   body.low .bar { transition: none; }
   /* —— 入场：深色幕布自动淡出（纯 CSS，不等引擎；国内网络下引擎包很大）——
-     开场动画一律不依赖 dist/chezzle.js?vmvmdw3n4：标题/按钮的 CSS 动画在解析时就跑起来，
+     开场动画一律不依赖 dist/chezzle.js?vmvwagucl：标题/按钮的 CSS 动画在解析时就跑起来，
      引擎只影响两个角落的小舞台（下面用"启动占位"承接等待）。 */
   #veil { position: fixed; inset: 0; z-index: 899; background: #07051a; pointer-events: none;
     animation: veilOut .55s ease-out .02s both; }
@@ -237,6 +237,28 @@
     -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
   .czset.in { opacity: 1; }
   .czset[hidden] { display: none; }
+  /* 拖动视角/摇杆/按钮滑杆时：设置窗外的实际关卡页作为背景（iframe 真页面 + 真比例），
+     设置面板只保留当前滑杆区域清晰，其余半透明模糊；松手淡出恢复。 */
+  .czset-level { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none;
+    opacity: 0; transform: scale(1.045); background: #07051a;
+    transition: opacity .34s ease, transform .5s cubic-bezier(.2,.8,.3,1); }
+  .czset-level.on { opacity: 1; transform: none; }
+  .czset-level iframe { display: block; width: 100%; height: 100%; border: 0; pointer-events: none; }
+  .czset.previewing { background: rgba(5,4,16,.12); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .czset.previewing .czset-panel { z-index: 2; background: rgba(16,13,42,.52);
+    -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+    border-color: rgba(232,184,75,.46); box-shadow: 0 0 30px rgba(232,184,75,.16), 0 20px 60px rgba(0,0,0,.5); }
+  .czset-head, .czset-foot, .czset-sec { transition: filter .26s ease, opacity .26s ease, background .26s ease; }
+  .czset.previewing .czset-head, .czset.previewing .czset-foot,
+  .czset.previewing .czset-sec:not(.is-active) { filter: blur(5px); opacity: .30; pointer-events: none; }
+  .czset.previewing .czset-sec.is-active { filter: none; opacity: 1; position: relative; z-index: 3;
+    background: rgba(10,8,30,.30); border-radius: 8px; padding: 2px 7px 4px; margin-left: -7px; margin-right: -7px;
+    box-shadow: 0 0 22px rgba(232,184,75,.10); }
+  .czset.previewing .czset-sec.is-active h3 { color: #ffe9b0; }
+  .czset.previewing .czset-sec.is-active h3 span { color: #fff3bd; text-shadow: 0 0 10px rgba(255,215,106,.55); }
+  @media (prefers-reduced-motion: reduce) {
+    .czset-level, .czset-head, .czset-foot, .czset-sec { transition: none; }
+  }
   .czset-panel { position: relative; display: flex; flex-direction: column; width: min(560px, 94vw);
     max-height: min(88vh, 660px); color: #dfe8f2; overflow: hidden;
     background: linear-gradient(180deg, #282050 0%, #120d30 55%, #0e0a24 100%);
@@ -265,6 +287,17 @@
     border-radius: 50%; background: #ffd76a; border: 2px solid #6b4a10; box-shadow: 0 0 8px rgba(232, 184, 75, .65); }
   .czset-sec input[type="range"]::-moz-range-thumb { width: 13px; height: 13px; border-radius: 50%;
     background: #ffd76a; border: 2px solid #6b4a10; box-shadow: 0 0 8px rgba(232, 184, 75, .65); }
+  /* 两个触控滑杆之间留出呼吸：第二个 h3 不能贴着上一个滑杆 */
+  #czSetTouch h3 + input[type="range"] { margin-bottom: 2px; }
+  #czSetTouch input[type="range"] + h3 { margin-top: 15px; }
+  /* 设置预览：一个小关卡 + 相机缩放 + 触控尺寸，随滑杆实时变化 */
+  .czset-preview { position: relative; margin: 0 0 14px; height: 128px; overflow: hidden;
+    border: 1px solid rgba(127,216,255,.28); border-radius: 8px;
+    background: #08071a; box-shadow: inset 0 0 30px rgba(0,0,0,.55); }
+  .czset-preview canvas { display: block; width: 100%; height: 100%; }
+  .czset-preview-tag { position: absolute; left: 8px; top: 6px; pointer-events: none;
+    font: bold 8.5px/1 ui-monospace, Consolas, monospace; letter-spacing: 2px;
+    color: rgba(232,184,75,.6); }
   .czset-keys { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 18px; margin-top: 8px; }
   .czset-key { display: flex; align-items: center; justify-content: space-between; gap: 10px;
     padding: 6px 0; font-size: 12.5px; color: #c9d6ee;
@@ -287,11 +320,16 @@
     filter: none; }
   .czset-btn.ghost:hover { border-color: #7fd8ff; color: #fff; }
   .czset-btn:focus-visible, .czset-kbtn:focus-visible, .czset-x:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  @media (max-height: 520px) {
+    .czset-preview { height: 92px; }
+    .czset-body { padding-top: 10px; }
+  }
   @media (max-width: 520px) {
     .czset-head { padding: 15px 16px 10px; }
     .czset-body { padding: 13px 16px 2px; }
     .czset-foot { padding: 11px 16px 15px; }
     .czset-keys { grid-template-columns: 1fr; }
+    .czset-preview { height: 108px; }
   }
   @media (prefers-reduced-motion: reduce) {
     .czset, .czset-panel { transition: none; }
@@ -354,6 +392,53 @@
     #czLoad .cz-load-shards i { animation: none; }
     .czlLoad .spark { animation: none; stroke: rgba(255,255,255,.5); }
     #czFrames iframe, #czFrames iframe.game { transition: none; transform: none; }
+  }
+
+  /* —— 主页更新弹窗 —— */
+  .czupd { position: fixed; inset: 0; z-index: 900; display: flex; align-items: center; justify-content: center;
+    padding: 18px; background: rgba(4,3,14,.72); opacity: 0;
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    transition: opacity .24s ease; }
+  .czupd[hidden] { display: none; }
+  .czupd.in { opacity: 1; }
+  .czupd-panel { position: relative; display: flex; flex-direction: column; width: min(650px, 94vw);
+    max-height: min(86vh, 720px); overflow: hidden; color: #dfe8f2;
+    background: linear-gradient(180deg, #27204d 0%, #120d30 56%, #0d0922 100%);
+    border: 1.5px solid rgba(232,184,75,.82); border-radius: 12px;
+    box-shadow: 0 0 32px rgba(232,184,75,.16), 0 24px 70px rgba(0,0,0,.65);
+    transform: translateY(18px) scale(.975);
+    transition: transform .34s cubic-bezier(.2,.9,.3,1.05); }
+  .czupd.in .czupd-panel { transform: none; }
+  .czupd-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px;
+    padding: 19px 22px 13px; border-bottom: 1px solid rgba(232,184,75,.18); flex: none; }
+  .czupd-kicker { font: bold 10px/1 ui-monospace, Consolas, monospace; letter-spacing: 3px; color: rgba(232,184,75,.75); }
+  .czupd-head h2 { margin-top: 8px; font: bold 22px/1.2 "Segoe UI","Microsoft YaHei",sans-serif;
+    letter-spacing: 4px; color: #ffe9b0; text-shadow: 0 0 14px rgba(255,215,106,.35); }
+  .czupd-x { width: 30px; height: 30px; flex: none; cursor: pointer; border-radius: 8px;
+    background: rgba(20,26,64,.9); border: 1px solid rgba(127,216,255,.35); color: #9fb2c8;
+    font: 13px/1 "Segoe UI",sans-serif; transition: border-color .16s,color .16s; }
+  .czupd-x:hover { border-color: #7fd8ff; color: #dff2ff; }
+  .czupd-body { padding: 16px 24px 6px; overflow: auto; overscroll-behavior: contain; min-height: 0; }
+  .czupd-sec { margin-bottom: 17px; }
+  .czupd-sec h3 { margin-bottom: 7px; color: #ffd76a; font: bold 13px/1.3 "Segoe UI","Microsoft YaHei",sans-serif;
+    letter-spacing: 2px; }
+  .czupd-sec ul { margin: 0; padding-left: 18px; }
+  .czupd-sec li { margin: 5px 0; color: #cbd6ec; font: 12.5px/1.65 "Segoe UI","Microsoft YaHei",sans-serif; }
+  .czupd-sec li::marker { color: rgba(232,184,75,.8); }
+  .czupd-foot { display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+    padding: 12px 22px 18px; border-top: 1px solid rgba(232,184,75,.14); flex: none; }
+  .czupd-btn { cursor: pointer; padding: 10px 24px; border: 1px solid rgba(232,184,75,.65); border-radius: 7px;
+    background: linear-gradient(180deg, rgba(232,184,75,.95), rgba(145,100,24,.95)); color: #1a1305;
+    font: bold 13px/1 "Segoe UI","Microsoft YaHei",sans-serif; letter-spacing: 2px;
+    clip-path: polygon(9px 0,100% 0,calc(100% - 9px) 100%,0 100%); }
+  .czupd-btn:hover { filter: brightness(1.12); }
+  @media (max-width: 560px) {
+    .czupd { padding: 10px; }
+    .czupd-head { padding: 15px 16px 10px; }
+    .czupd-head h2 { font-size: 18px; letter-spacing: 2px; }
+    .czupd-body { padding: 12px 16px 4px; }
+    .czupd-sec li { font-size: 12px; line-height: 1.55; }
+    .czupd-foot { padding: 10px 16px 14px; }
   }
 </style>
 </head>
@@ -424,7 +509,7 @@
     </g>
   </svg>
   <!-- 版本号 = 更新当天的日期（alpha-MMDD），不要自己顺序递增 -->
-  <div class="ver">alpha-1024</div>
+  <div class="ver">alpha-1031</div>
 
   <a id="btnPlay" class="bar" href="select.html" data-sfx="ui.open">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -432,7 +517,7 @@
         stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
       <path d="M7.6 15h8.8" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>
     </svg>
-    开始选关
+    开始游戏
   </a>
   <button id="btnSet" class="bar" type="button" aria-haspopup="dialog" aria-controls="czSet" data-sfx="ui.open">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -454,6 +539,7 @@
 <!-- 设置面板（首页）：视角大小 / 移动端摇杆与按钮大小 / 电脑端键位。
      偏好写入 localStorage（prefs.js），关卡页读取后应用到相机、触控几何与键盘。 -->
 <div id="czSet" class="czset" hidden aria-hidden="true">
+  <div class="czset-level" id="czSetLevel" aria-hidden="true"></div>
   <div class="czset-panel" role="dialog" aria-modal="true" aria-labelledby="czSetTitle">
     <div class="czset-head">
       <div>
@@ -467,15 +553,11 @@
         <h3>视角大小 <span id="czSetViewVal">100%</span></h3>
         <input id="czSetView" type="range" min="85" max="130" step="5" value="100" aria-label="视角大小">
       </section>
-      <!-- 音效：写入 prefs.js 的 sfxVolume/sfxMuted；audio.js 读同一份偏好并监听 chezzle:prefs 实时生效。
-           滑杆自身跳过 audio.js 的默认点击音（data-sfx="off"），由下面的 input 预览统一发声。 -->
+      <!-- 音效：写入 prefs.js 的 sfxVolume；audio.js 读同一份偏好并监听 chezzle:prefs 实时生效。
+           滑杆自身跳过 audio.js 的默认点击音（data-sfx="off"），调整停止后统一播放预览音。 -->
       <section class="czset-sec" id="czSetSfx">
         <h3>音效 <span id="czSetSfxVal">70%</span></h3>
         <input id="czSetSfxVol" type="range" min="0" max="100" step="1" value="70" aria-label="音效音量" data-sfx="off">
-        <div class="czset-key">
-          <span>静音</span>
-          <button id="czSetSfxMute" class="czset-kbtn" type="button" aria-pressed="false" data-sfx="off">未静音</button>
-        </div>
       </section>
       <section class="czset-sec" id="czSetTouch">
         <h3>摇杆大小 <span id="czSetJoyVal">100%</span></h3>
@@ -495,6 +577,23 @@
   </div>
 </div>
 
+<!-- 主页更新弹窗：数据在 updates.js；maxViews / latestTime 由数据控制 -->
+<div id="czUpdate" class="czupd" hidden aria-hidden="true">
+  <div class="czupd-panel" role="dialog" aria-modal="true" aria-labelledby="czUpdateTitle">
+    <div class="czupd-head">
+      <div>
+        <p class="czupd-kicker">CHEZZLE · UPDATE NOTES</p>
+        <h2 id="czUpdateTitle">更新内容</h2>
+      </div>
+      <button id="czUpdateClose" class="czupd-x" type="button" aria-label="关闭" data-sfx="ui.close">✕</button>
+    </div>
+    <div class="czupd-body" id="czUpdateBody"></div>
+    <div class="czupd-foot">
+      <button id="czUpdateDone" class="czupd-btn" type="button" data-sfx="ui.close">知道了</button>
+    </div>
+  </div>
+</div>
+
 <!-- 左下：传送门（A 高台门 / B 地面门，无限循环） -->
 <div class="stage" id="stageL">
   <canvas id="cvL" width="380" height="330"></canvas>
@@ -504,7 +603,7 @@
   </span>
 </div>
 
-<!-- 右下：焰色反应（A/B/C 三灯，玩家跳灯 → 平推撞"关于"按钮右缘 → 反弹回 A） -->
+<!-- 右下：焰色反应（A/B/C 三灯，玩家跳灯 → 平推撞"开始游戏"按钮右缘 → 反弹回 A） -->
 <!-- 注：窗口不够宽时（见 computeStage）自动退化为"只在右下角自娱自乐"，绝不压到按钮 -->
 <div class="stage" id="stageR">
   <canvas id="cvR" width="430" height="330"></canvas>
@@ -898,12 +997,12 @@
 
 <script>
 // ============================================================================
-// 引擎懒加载：只有首页的两个角落小舞台需要 dist/chezzle.js?vmvmdw3n4（~800KB）。
+// 引擎懒加载：只有首页的两个角落小舞台需要 dist/chezzle.js?vmvwagucl（~800KB）。
 // 选关 / 关于 / 关卡视图各自在 iframe 里加载自己的引擎；外壳不再为一个装饰动画
 // 在首屏下载大包 —— 国内访问 CF Pages 时这是首屏体感最大的一个优化。
 // ============================================================================
 (function () {
-  var SRC = 'dist/chezzle.js?vmvmdw3n4';
+  var SRC = 'dist/chezzle.js?vmvwagucl';
   window.__czEngineWaiters = [];
   window.__czHomeShow = window.__czHomeShow || function () {};
   window.__czLoadEngine = function (cb) {
@@ -1015,7 +1114,7 @@ if (window.visualViewport) visualViewport.addEventListener('resize', onViewport)
 // 1) 高清：缓冲 = 逻辑(CSS px) × dpr，CSS 尺寸 = 逻辑 px（dpr>1 的设备不再被拉伸糊掉）
 // 2) 坐标：内容坐标系固定 380/430 × 330；地面线两侧都在 y=276（同一条水平线）；
 //    画布比内容大时，内容贴画布**底部**对齐 → 多出来的部分全是"空气"，
-//    右侧舞台靠它把玩家送到页面真实"关于"按钮右缘（画布透明且不拦截鼠标）
+//    右侧舞台靠它把玩家送到页面真实"开始游戏"按钮右缘（画布透明且不拦截鼠标）
 // ============================================================================
 const BASE_H = 330;   // 两侧内容高度一致 → 钉在同一个 bottom 上，地面天然对齐
 const GROUND = 276;   // 内容坐标里的地面上沿
@@ -1037,15 +1136,16 @@ function fitStage(canvas, baseW, baseH, w, h, s, align) {
 
 // #region stage-geometry —— 纯函数（tests/homestage.test.js 会原样提取复算，勿改签名）
 /**
- * 算出一个舞台的尺寸与缩放，保证**舞台里的任何东西都不会压到"关于"按钮上**。
+ * 算出一个舞台的尺寸与缩放，保证**舞台里的任何东西都不会压到页面按钮上**。
  * 两条互斥的安全约束，取能给出更大舞台的那条：
  *   ① 内容横向完全落在按钮外侧（右舞台在右、左舞台在左）
  *   ② 内容纵向完全落在按钮下缘之下
- * 只有约束①成立时，右侧舞台才开启"撞击按钮"彩蛋（方块从右侧平推撞按钮右缘，
+ * 只有约束①成立时，右侧舞台才开启"撞击按钮"彩蛋（方块从右侧平推撞**开始游戏**按钮右缘，
  * 全程在按钮右侧 → x 方向永不重叠，数学上不可能穿模）。
  * 两条都放不下（窗口又矮又窄）→ 返回 null，调用方直接隐藏舞台。
  * @param {number} vw 视口宽 @param {number} vh 视口高
- * @param {{left:number,right:number,top:number,bottom:number}} b "关于"按钮矩形
+ * @param {{left:number,right:number,top:number,bottom:number}} b 安全矩形（取最靠下的按钮，
+ *   这样约束②不会让舞台压到上面的按钮）
  * @param {'left'|'right'} kind 舞台方位
  */
 function computeStage(vw, vh, b, kind) {
@@ -1081,6 +1181,8 @@ function computeStage(vw, vh, b, kind) {
  *  结果按"视口 + 按钮矩形"做键缓存：同一帧里两个舞台各问一次不会重复计算。 */
 const stageCache = { key: '', v: null };
 function stageLayout() {
+  // 安全矩形取**最靠下的按钮**（关于）：两个舞台在底部角落，只要不压到它，上面两个按钮
+  // 在竖直方向也压不到；横向则所有 .bar 同宽，右缘一致。
   const b = localRect(document.getElementById('btnAbout'));
   const key = [vw(), vh(), b.left, b.top, b.right, b.bottom].map((n) => Math.round(n)).join(',');
   if (stageCache.key === key) return stageCache.v;
@@ -1214,7 +1316,7 @@ const portalDemo = (function () {
 // ============================================================================
 // 右下：焰色舞台 —— 地板 / 玩家 / 三盏酒精灯（A B C，各配一种盐的焰色）
 // 玩家流程：A 左侧 → 跳到 A 上（停）→ 跳到 B 上（停）→ 跳到 C 上（停）→
-// 向左斜升后拉平，平推撞上页面真实"关于"按钮的**右缘** → 按钮被顶得向左弹一下
+// 向左斜升后拉平，平推撞上页面真实"开始游戏"按钮的**右缘** → 按钮被顶得向左弹一下
 // → 反弹落回 A。方块全程在按钮右侧（x 方向永不重叠）→ 不可能穿模
 // ----------------------------------------------------------------------------
 // 位置全部由解析式给出，渲染直接用（不取整）→ 亚像素平滑；
@@ -1225,7 +1327,7 @@ const flameDemo = (function () {
   const canvas = document.getElementById('cvR');
   const ctx = canvas.getContext('2d');
   const CW = 430, PW = 45;
-  const btn = document.getElementById('btnAbout');
+  const btn = document.getElementById('btnPlay'); // 撞击目标：主页金色"开始游戏"按钮
 
   const scene = new C.Scene({ worldW: CW, worldH: BASE_H });
   scene.addObject(new C.Floor({ x: -20, y: GROUND, w: 480, h: 40 }));
@@ -1249,7 +1351,7 @@ const flameDemo = (function () {
   const AX = [137.5, 197.5, 257.5];
   const AY = (GROUND - 40) - PW - 6;
 
-  // —— 画布尺寸/缩放：由 computeStage 统一决定（保证舞台压不到"关于"按钮上）——
+  // —— 画布尺寸/缩放：由 computeStage 统一决定（保证舞台压不到任何按钮上）——
   // 彩蛋模式：画布左侧多留一条透明"空气带"，方块平推撞按钮右缘（圆环特效也不会被切）；
   // 装饰模式：按钮就贴在内容左前方，此时不做撞击彩蛋，方块只在内容内起跳。
   let L = { dpr: 1, w: CW, h: BASE_H, s: 1, ox: 0, oy: 0 };
@@ -1268,9 +1370,10 @@ const flameDemo = (function () {
     if (st.gag) {
       // 彩蛋模式：方块左缘停在按钮右缘（+2px 视觉缝隙）、与按钮垂直居中。
       // 全程方块都在按钮右侧 → x 方向永不重叠 → 数学上不可能穿模
+      const play = localRect(btn);
       HIT = {
-        x: (b.right + 2 - st.contentLeft) / st.s,
-        y: ((b.top + b.bottom) / 2 - st.contentTop) / st.s - PW / 2,
+        x: (play.right + 2 - st.contentLeft) / st.s,
+        y: ((play.top + play.bottom) / 2 - st.contentTop) / st.s - PW / 2,
       };
       onBtn = true;
     } else {
@@ -1291,7 +1394,7 @@ const flameDemo = (function () {
     const u = 1 - k;
     return { x: u * u * x0 + 2 * u * k * cx + k * k * x1, y: u * u * y0 + 2 * u * k * cy + k * k * y1 };
   }
-  // 相位：停A → 跳B → 停B → 跳C → 停C → 大跳撞"关于"按钮右缘 → 反弹落回 A
+  // 相位：停A → 跳B → 停B → 跳C → 停C → 大跳撞"开始游戏"按钮右缘 → 反弹落回 A
   // 大跳控制点：末端切线取水平（cy = HIT.y）→ 方块"斜升后拉平、平推撞上去"，
   // 撞击瞬间不带有向下分量，也就不会先压到按钮上沿
   function pose(t) {
@@ -1679,11 +1782,81 @@ if (!document.body.classList.contains('czl-page')) window.__czStartHome();
   var keysSec = document.getElementById('czSetKeys');
   var sfxVol = document.getElementById('czSetSfxVol');
   var sfxVal = document.getElementById('czSetSfxVal');
-  var sfxMute = document.getElementById('czSetSfxMute');
+  var previewWrap = document.getElementById('czSetPreviewWrap');
+  var previewCv = document.getElementById('czSetPreview');
+  var levelStage = document.getElementById('czSetLevel');
+  var previewFrame = null;
+  var previewOn = false;
+  var previewSec = null;
+  var previewEndTimer = 0;
   var lastFocus = null;
   var listening = null; // { action, oldCode }
+  var sfxPreviewTimer = 0;
+  // 静音开关已移除：历史偏好里如果还是静音，这里恢复一次（否则用户会以为音效坏了）
+  try { if (P.get().sfxMuted) P.save({ sfxMuted: false }); } catch (e) { /* 忽略 */ }
 
   function pct(v) { return Math.round(v * 100) + '%'; }
+
+  // ---- 实际关卡预览：拖动视觉类滑杆时，设置窗外的背景换成真实关卡 iframe ----
+  // 不用小画布模拟比例：直接加载同一套关卡页，视角/触控尺寸由关卡自己的引擎按
+  // ChezzlePrefs 实时读取；松手后淡出并卸掉 iframe，恢复首页。
+  function startLevelPreview(sec) {
+    if (!levelStage) return;
+    clearTimeout(previewEndTimer);
+    previewSec = sec || previewSec;
+    if (!previewFrame) {
+      previewFrame = document.createElement('iframe');
+      previewFrame.src = 'levels/level1-1.html?spa=1';
+      previewFrame.title = '关卡预览';
+      previewFrame.setAttribute('aria-hidden', 'true');
+      previewFrame.setAttribute('tabindex', '-1');
+      levelStage.appendChild(previewFrame);
+    }
+    previewOn = true;
+    panel.classList.add('previewing');
+    levelStage.classList.add('on');
+    var all = panel.querySelectorAll('.czset-sec');
+    for (var i = 0; i < all.length; i++) all[i].classList.toggle('is-active', all[i] === previewSec);
+  }
+  function stopLevelPreview() {
+    if (!previewOn) return;
+    previewOn = false;
+    panel.classList.remove('previewing');
+    levelStage.classList.remove('on');
+    var active = panel.querySelectorAll('.czset-sec.is-active');
+    for (var i = 0; i < active.length; i++) active[i].classList.remove('is-active');
+    clearTimeout(previewEndTimer);
+    previewEndTimer = setTimeout(function () {
+      if (previewOn || !levelStage) return;
+      if (previewFrame) previewFrame.remove();
+      previewFrame = null;
+    }, 420);
+  }
+  function previewRange(input) {
+    var sec = input && input.closest ? input.closest('.czset-sec') : null;
+    input.addEventListener('pointerdown', function () { startLevelPreview(sec); });
+    input.addEventListener('input', function () {
+      if (!previewOn) startLevelPreview(sec);
+      previewSec = sec;
+      var all = panel.querySelectorAll('.czset-sec');
+      for (var i = 0; i < all.length; i++) all[i].classList.toggle('is-active', all[i] === sec);
+    });
+    // 松手/键盘松开/失焦都恢复；change 对 range 在释放时触发
+    input.addEventListener('change', stopLevelPreview);
+    input.addEventListener('blur', stopLevelPreview);
+    input.addEventListener('keyup', function (e) {
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        clearTimeout(previewEndTimer);
+        previewEndTimer = setTimeout(stopLevelPreview, 180);
+      }
+    });
+  }
+  document.addEventListener('pointerup', function () {
+    if (previewOn) stopLevelPreview();
+  }, true);
+  document.addEventListener('pointercancel', function () {
+    if (previewOn) stopLevelPreview();
+  }, true);
 
   /** 播放一次 UI 音效（audio.js 未加载 / 被单独打开时也不会抛错） */
   function uiSfx(name, opts) {
@@ -1693,6 +1866,132 @@ if (!document.body.classList.contains('czl-page')) window.__czStartHome();
       }
     } catch (e) { /* 音频异常不影响设置面板 */ }
     return false;
+  }
+
+  /** 预览画布：一个小关卡 + 当前视角缩放 + 当前摇杆/按钮尺寸。
+   *  用纯 2D 画（不加载引擎），设置滑杆拖动时实时重绘。 */
+  function drawPreview() {
+    if (!previewWrap || !previewCv) return;
+    var rect = previewWrap.getBoundingClientRect();
+    var w = Math.max(40, Math.round(rect.width));
+    var h = Math.max(30, Math.round(rect.height));
+    var dpr = Math.min(2, window.devicePixelRatio || 1);
+    if (previewCv.width !== Math.round(w * dpr) || previewCv.height !== Math.round(h * dpr)) {
+      previewCv.width = Math.round(w * dpr);
+      previewCv.height = Math.round(h * dpr);
+    }
+    var ctx = previewCv.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    // 背景
+    var bg = ctx.createLinearGradient(0, 0, 0, h);
+    bg.addColorStop(0, '#0b0a22');
+    bg.addColorStop(1, '#07061a');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, w, h);
+    // 星点（确定性）
+    ctx.fillStyle = 'rgba(207,230,255,.4)';
+    for (var i = 0; i < 26; i++) {
+      var sx = ((i * 73) % 97) / 97 * w;
+      var sy = ((i * 41) % 61) / 61 * h * 0.72;
+      ctx.globalAlpha = 0.15 + ((i * 17) % 10) / 18;
+      ctx.fillRect(sx, sy, i % 5 === 0 ? 1.7 : 1, i % 5 === 0 ? 1.7 : 1);
+    }
+    ctx.globalAlpha = 1;
+    // 世界（420×230）按 viewScale 缩放：视角越大 → 画面里的东西越大
+    var p = P.get();
+    var zoom = Number.isFinite(p.viewScale) ? p.viewScale : 1;
+    var base = Math.min(w / 360, h / 160) * 0.9;
+    var s = base * zoom;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, 0, w, h); ctx.clip();
+    ctx.translate(w / 2, h / 2);
+    ctx.scale(s, s);
+    ctx.translate(-180, -50);
+    // 地板
+    ctx.fillStyle = '#201b3f';
+    ctx.fillRect(-30, 74, 420, 18);
+    ctx.fillStyle = '#15122c';
+    ctx.fillRect(-30, 92, 420, 90);
+    ctx.fillStyle = 'rgba(107,90,160,.22)';
+    for (var gy = 98; gy < 180; gy += 9) ctx.fillRect(-30, gy, 420, 1);
+    ctx.fillStyle = '#3b3366';
+    ctx.fillRect(-30, 74, 420, 2);
+    // 冰面/池/烧杯/玩家/物块/灯
+    ctx.fillStyle = 'rgba(127,216,255,.22)';
+    ctx.fillRect(146, 62, 62, 12);
+    ctx.strokeStyle = 'rgba(127,216,255,.7)'; ctx.lineWidth = 1;
+    ctx.strokeRect(146, 57, 62, 17);
+    ctx.fillStyle = 'rgba(127,216,255,.5)';
+    ctx.fillRect(148, 64, 58, 9);
+    // 烧杯
+    ctx.strokeStyle = 'rgba(205,225,255,.8)'; ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(276, 50); ctx.lineTo(276, 68); ctx.quadraticCurveTo(276, 74, 283, 74);
+    ctx.lineTo(293, 74); ctx.quadraticCurveTo(300, 74, 300, 68); ctx.lineTo(300, 50);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(0,231,255,.45)'; ctx.fillRect(278, 62, 20, 10);
+    // 物块
+    ctx.fillStyle = '#eee9dd'; ctx.fillRect(36, 58, 22, 16);
+    ctx.strokeStyle = 'rgba(255,255,255,.45)'; ctx.strokeRect(36.5, 58.5, 21, 15);
+    // 玩家
+    ctx.fillStyle = '#e9ecf5'; ctx.fillRect(104, 52, 15, 22);
+    ctx.fillStyle = '#0b0e28'; ctx.fillRect(107, 58, 2.2, 2.4); ctx.fillRect(113, 58, 2.2, 2.4);
+    ctx.strokeStyle = 'rgba(232,184,75,.65)'; ctx.strokeRect(104.5, 52.5, 14, 21);
+    // 灯
+    ctx.fillStyle = '#3a3158'; ctx.fillRect(8, 66, 19, 8);
+    ctx.fillStyle = '#ffb347';
+    ctx.beginPath(); ctx.moveTo(17, 66); ctx.quadraticCurveTo(12, 55, 17, 48);
+    ctx.quadraticCurveTo(22, 55, 17, 66); ctx.fill();
+    // 视角框（示意当前取景）
+    ctx.strokeStyle = 'rgba(255,215,106,.35)';
+    ctx.lineWidth = 1 / Math.max(0.001, s);
+    ctx.strokeRect(-30, 40, 420, 55);
+    ctx.restore();
+    // 触控控件预览（只有触屏设置可见时画）
+    if (touchSec && !touchSec.hidden) {
+      var joy = Number.isFinite(p.joyScale) ? p.joyScale : 1;
+      var btn = Number.isFinite(p.btnScale) ? p.btnScale : 1;
+      var R = Math.max(14, Math.min(w, h) * 0.19 * joy);
+      var cx = Math.max(R + 8, w * 0.15);
+      var cy = h - 8;
+      ctx.save();
+      ctx.beginPath(); ctx.arc(cx, cy, R, Math.PI, 0); ctx.closePath();
+      ctx.fillStyle = 'rgba(255,255,255,.06)'; ctx.fill();
+      ctx.strokeStyle = 'rgba(232,184,75,.5)'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx, cy, Math.max(6, R * 0.3), 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,.16)'; ctx.fill();
+      var bs = Math.max(11, Math.min(30, Math.min(w, h) * 0.13 * btn));
+      var gap = 3;
+      var bx = w - 8 - bs * 2 - gap;
+      var by = h - 8 - bs * 2 - gap;
+      for (var r = 0; r < 2; r++) for (var c = 0; c < 2; c++) {
+        ctx.fillStyle = 'rgba(38,32,74,.9)';
+        ctx.strokeStyle = 'rgba(232,184,75,.5)';
+        ctx.beginPath();
+        var x = bx + c * (bs + gap), y = by + r * (bs + gap);
+        ctx.roundRect ? ctx.roundRect(x, y, bs, bs, 4) : ctx.rect(x, y, bs, bs);
+        ctx.fill(); ctx.stroke();
+      }
+      ctx.restore();
+    }
+    // 外框角标
+    ctx.strokeStyle = 'rgba(232,184,75,.35)'; ctx.lineWidth = 1;
+    ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
+    var tag = document.getElementById('czSetPreviewTag');
+    if (tag) {
+      var txt = '关卡预览 · 视角 ' + Math.round(zoom * 100) + '%';
+      if (touchSec && !touchSec.hidden) {
+        txt += ' · 摇杆 ' + Math.round(joy * 100) + '% · 按钮 ' + Math.round(btn * 100) + '%';
+      }
+      tag.textContent = txt;
+    }
+  }
+  var previewRaf = 0;
+  function schedulePreview() {
+    if (previewRaf) return;
+    previewRaf = requestAnimationFrame(function () { previewRaf = 0; drawPreview(); });
   }
 
   // 触屏设备显示摇杆/按钮尺寸；桌面（精细指针）显示键位。触屏笔电两者都显示。
@@ -1732,15 +2031,10 @@ if (!document.body.classList.contains('czl-page')) window.__czStartHome();
     btnVal.textContent = pct(p.btnScale);
     sfxVol.value = Math.round(p.sfxVolume * 100);
     sfxVal.textContent = pct(p.sfxVolume);
-    renderSfxMute(p.sfxMuted);
     renderKeys();
+    schedulePreview();
   }
 
-  /** 静音开关的显示态（文案 + aria-pressed；配色沿用 .czset-kbtn[aria-pressed="true"]） */
-  function renderSfxMute(m) {
-    sfxMute.setAttribute('aria-pressed', m ? 'true' : 'false');
-    sfxMute.textContent = m ? '已静音' : '未静音';
-  }
 
   function endListen() {
     if (!listening) return;
@@ -1782,17 +2076,23 @@ if (!document.body.classList.contains('czl-page')) window.__czStartHome();
   viewInput.addEventListener('input', function () {
     P.save({ viewScale: Number(viewInput.value) / 100 });
     viewVal.textContent = pct(Number(viewInput.value) / 100);
+    schedulePreview();
   });
   joyInput.addEventListener('input', function () {
     P.save({ joyScale: Number(joyInput.value) / 100 });
     joyVal.textContent = pct(Number(joyInput.value) / 100);
+    schedulePreview();
   });
   btnInput.addEventListener('input', function () {
     P.save({ btnScale: Number(btnInput.value) / 100 });
     btnVal.textContent = pct(Number(btnInput.value) / 100);
+    schedulePreview();
   });
+  previewRange(viewInput);
+  previewRange(joyInput);
+  previewRange(btnInput);
 
-  // —— 音效音量：拖动即时保存 + 即时生效 + 试听（audio.js 自带同名音限频，不会连成爆音）——
+  // —— 音效音量：拖动即时保存 + 即时生效；**停止拖动后**再播放一次预览音（不连成爆音）——
   sfxVol.addEventListener('input', function () {
     var v = Number(sfxVol.value) / 100;
     P.save({ sfxVolume: v });
@@ -1800,18 +2100,8 @@ if (!document.body.classList.contains('czl-page')) window.__czStartHome();
     if (window.ChezzleAudio && typeof window.ChezzleAudio.setVolume === 'function') {
       try { window.ChezzleAudio.setVolume(v); } catch (e) { /* 忽略 */ }
     }
-    uiSfx('ui.tick', { gain: 0.6 });   // 预览音压低一点，别盖过实际效果
-  });
-
-  // —— 静音开关：开启立刻静音（不再发声）；取消静音时先恢复再播一声 ui.toggle 确认 ——
-  sfxMute.addEventListener('click', function () {
-    var m = !P.get().sfxMuted;
-    P.save({ sfxMuted: m });
-    if (window.ChezzleAudio && typeof window.ChezzleAudio.setMuted === 'function') {
-      try { window.ChezzleAudio.setMuted(m); } catch (e) { /* 忽略 */ }
-    }
-    renderSfxMute(m);
-    if (!m) uiSfx('ui.toggle');
+    clearTimeout(sfxPreviewTimer);
+    sfxPreviewTimer = setTimeout(function () { uiSfx('ui.toggle'); }, 220);
   });
 
   function openPanel() {
@@ -1820,13 +2110,14 @@ if (!document.body.classList.contains('czl-page')) window.__czStartHome();
     syncInputs();
     panel.hidden = false;
     panel.setAttribute('aria-hidden', 'false');
-    // 强制一帧后再加 .in，确保淡入/上浮过渡生效
-    requestAnimationFrame(function () { panel.classList.add('in'); });
+    // 强制一帧后再加 .in，确保淡入/上浮过渡生效；预览画布此时才有实际尺寸
+    requestAnimationFrame(function () { panel.classList.add('in'); schedulePreview(); });
     if (closeBtn && closeBtn.focus) closeBtn.focus();
   }
   function closePanel() {
     if (panel.hidden) return;
     endListen();
+    stopLevelPreview();
     panel.classList.remove('in');
     panel.setAttribute('aria-hidden', 'true');
     setTimeout(function () { panel.hidden = true; }, 220);
@@ -1838,9 +2129,135 @@ if (!document.body.classList.contains('czl-page')) window.__czStartHome();
   if (closeBtn) closeBtn.addEventListener('click', closePanel);
   if (doneBtn) doneBtn.addEventListener('click', closePanel);
   if (resetBtn) resetBtn.addEventListener('click', function () { P.reset(); syncInputs(); });
+  window.addEventListener('resize', function () { if (!panel.hidden) schedulePreview(); });
   panel.addEventListener('click', function (e) { if (e.target === panel) closePanel(); });
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && !panel.hidden && !listening) closePanel();
+  });
+})();
+</script>
+<script src="updates.js?v=alpha-1031"></script>
+<script>
+/* ============================================================================
+   主页更新弹窗
+   ----------------------------------------------------------------------------
+   数据来自 updates.js：每个条目可设置 maxViews（最大显示次数）与
+   latestTime（最晚显示时间，ISO 字符串；null/空 = 不限）。记录存 localStorage，
+   只在首页显示；关闭后按 maxViews 决定以后是否再出现。
+   ========================================================================== */
+(function () {
+  var KEY = 'chezzle.update-popup.v1';
+  var list = Array.isArray(window.CHEZZLE_UPDATES) ? window.CHEZZLE_UPDATES : [];
+  var root = document.getElementById('czUpdate');
+  var titleEl = document.getElementById('czUpdateTitle');
+  var bodyEl = document.getElementById('czUpdateBody');
+  var closeEl = document.getElementById('czUpdateClose');
+  var doneEl = document.getElementById('czUpdateDone');
+  var shownThisPage = false;
+  var current = null;
+  var lastFocus = null;
+
+  function homeRoute() {
+    var h = String(location.hash || '');
+    return !h || h === '#' || h === '#/' || h === '#/home';
+  }
+  function readState() {
+    try {
+      var raw = localStorage.getItem(KEY);
+      var v = raw ? JSON.parse(raw) : {};
+      return v && typeof v === 'object' ? v : {};
+    } catch (e) { return {}; }
+  }
+  function writeState(st) {
+    try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { /* 隐私模式 */ }
+  }
+  function eligible(entry, st) {
+    if (!entry || !entry.id || !Array.isArray(entry.sections) || !entry.sections.length) return false;
+    var rec = st[entry.id] || { views: 0 };
+    var max = Number(entry.maxViews);
+    if (Number.isFinite(max) && max > 0 && (Number(rec.views) || 0) >= max) return false;
+    if (entry.latestTime) {
+      var deadline = Date.parse(entry.latestTime);
+      if (Number.isFinite(deadline) && Date.now() > deadline) return false;
+    }
+    return true;
+  }
+  function render(entry) {
+    titleEl.textContent = entry.title || (entry.version ? entry.version + ' 更新内容' : '更新内容');
+    bodyEl.textContent = '';
+    for (var i = 0; i < entry.sections.length; i++) {
+      var sec = entry.sections[i] || {};
+      var h = document.createElement('h3');
+      h.textContent = sec.title || '';
+      bodyEl.appendChild(h);
+      var ul = document.createElement('ul');
+      var items = Array.isArray(sec.items) ? sec.items : [];
+      for (var j = 0; j < items.length; j++) {
+        var li = document.createElement('li');
+        li.textContent = String(items[j]);
+        ul.appendChild(li);
+      }
+      bodyEl.appendChild(ul);
+    }
+  }
+  function close() {
+    if (!current || root.hidden) return;
+    root.classList.remove('in');
+    root.setAttribute('aria-hidden', 'true');
+    setTimeout(function () { if (!root.classList.contains('in')) root.hidden = true; }, 240);
+    current = null;
+    if (lastFocus && typeof lastFocus.focus === 'function') lastFocus.focus();
+    lastFocus = null;
+  }
+  function show(entry) {
+    if (!entry || current || !root) return false;
+    var st = readState();
+    if (!eligible(entry, st)) return false;
+    current = entry;
+    shownThisPage = true;
+    var rec = st[entry.id] || { views: 0 };
+    rec.views = (Number(rec.views) || 0) + 1;
+    rec.lastAt = new Date().toISOString();
+    st[entry.id] = rec;
+    writeState(st);
+    lastFocus = document.activeElement;
+    render(entry);
+    root.hidden = false;
+    root.setAttribute('aria-hidden', 'false');
+    requestAnimationFrame(function () { root.classList.add('in'); });
+    if (closeEl && closeEl.focus) closeEl.focus();
+    return true;
+  }
+  function maybeShow() {
+    if (shownThisPage || !homeRoute()) return;
+    var st = readState();
+    for (var i = 0; i < list.length; i++) {
+      if (eligible(list[i], st)) { show(list[i]); return; }
+    }
+  }
+
+  if (root) {
+    closeEl && closeEl.addEventListener('click', close);
+    doneEl && doneEl.addEventListener('click', close);
+    root.addEventListener('click', function (e) { if (e.target === root) close(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && current) close();
+    });
+  }
+  window.ChezzleUpdates = {
+    list: list,
+    maybeShow: maybeShow,
+    show: function (id) {
+      for (var i = 0; i < list.length; i++) if (list[i].id === id) return show(list[i]);
+      return false;
+    },
+    close: close,
+  };
+  // 首次进入主页：等页面的加载/进场动画稍微稳定后再出现；从其他路由回到首页也检查
+  window.addEventListener('load', function () { setTimeout(maybeShow, 520); });
+  window.addEventListener('hashchange', function () {
+    if (!homeRoute()) shownThisPage = false; // 下次再进主页，maxViews>1 时还能显示
+    setTimeout(maybeShow, 320);
   });
 })();
 </script>

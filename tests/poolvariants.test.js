@@ -150,6 +150,36 @@ test('电解食盐水：NaOH 增加、H2/Cl2 按 2:71、无 O2（电解液优先
   assert.equal(env.atmosphere.mass('Cl2'), 0);
 });
 
+test('电解 BaCl2 + NaOH 混合液：阴极 H2、阳极 Cl2、留 Ba(OH)2，不应只剩水电解 H2/O2', () => {
+  const engine = new ChemistryEngine();
+  const mat = new SolutionMaterial(new Solution({ volume: 250, solutes: { BaCl2: 60, NaOH: 40 }, water: 220 }));
+  const env = makeEnv({ electric: true });
+  const o2Before = env.atmosphere.mass('O2');
+  runSelf(engine, mat, env, 180);
+  const h2 = env.atmosphere.mass('H2');
+  const cl2 = env.atmosphere.mass('Cl2');
+  assert.ok(h2 > 0.2, `应产 H2，实际 ${h2.toFixed(3)}g`);
+  assert.ok(cl2 > 0.2, `应产 Cl2（不是只有水电解的 O2），实际 ${cl2.toFixed(3)}g`);
+  assert.ok(Math.abs(cl2 - h2 * 35.5) < 1e-6, `H2:Cl2 质量比应为 2:71（H2=${h2.toFixed(3)} Cl2=${cl2.toFixed(3)}）`);
+  assert.ok(near(env.atmosphere.mass('O2'), o2Before, 1e-9), '电解质优先时不应同时电解水放 O2');
+  assert.ok(mat.solution.mass('BaCl2') < 59, 'BaCl2 应被消耗');
+  assert.ok(mat.solution.mass('Ba(OH)2') > 0.1, '应生成 Ba(OH)2');
+});
+
+test('Scene 电解池：BaCl2 + NaOH 混合液产 H2/Cl2，不产 O2', () => {
+  const scene = poolScene();
+  const ep = new ElectrolysisPool({
+    x: 300, y: 700, w: 260, h: 60, volume: 250, water: 220,
+    solutes: { BaCl2: 60, NaOH: 40 }, id: 'ep',
+  });
+  scene.addObject(ep);
+  const o2Before = scene.atmosphere.mass('O2');
+  run(scene, 180);
+  assert.ok(scene.atmosphere.mass('Cl2') > 0.2, '应放出 Cl2');
+  assert.ok(scene.atmosphere.mass('H2') > 0.2, '应放出 H2');
+  assert.ok(near(scene.atmosphere.mass('O2'), o2Before, 1e-9), '不应同时生成 O2');
+});
+
 // ---- 3. skipAbsorb：阳极 Cl2 直接逸出，不被同池新生成的 NaOH 吃掉 ------------
 test('电解食盐水 skipAbsorb：Cl2 进大气、不被 NaOH 尾气吸收（无 NaClO），比例不变', () => {
   const engine = new ChemistryEngine();
@@ -348,7 +378,7 @@ test('池变种契约：继承 Pool（isPool 保持 true）、isVariantPool/mode
     assert.equal(p.active(null), true, '常开池无 scene 也生效');
   }
   // 元素顺序：电解液规则在前、水规则在最后（reactSelf 互斥循环依赖此顺序）
-  assert.equal(ELECTROLYSIS_RULES.length, 4);
+  assert.equal(ELECTROLYSIS_RULES.length, 7);
   assert.equal(ELECTROLYSIS_RULES[ELECTROLYSIS_RULES.length - 1].reactants[0].id, 'H2O', '水规则应在最后');
   for (const rule of ELECTROLYSIS_RULES.slice(0, -1)) {
     assert.equal(rule.skipAbsorb, true, '电解液规则的阳极气体应跳过本池碱吸收');

@@ -55,7 +55,8 @@ export const IONS = {
   'PO4^3-':  { symbol: 'PO4', poly: true, charge: -3, mass: 95   },
   'SiO3^2-': { symbol: 'SiO3', poly: true, charge: -2, mass: 76  },
   'C2O4^2-': { symbol: 'C2O4', poly: true, charge: -2, mass: 88  },
-  'CrO2-':   { symbol: 'CrO2', poly: true, charge: -1, mass: 68  },
+  'ZnO2^2-': { symbol: 'ZnO2', poly: true, charge: -2, mass: 97  },
+  'CrO2-':   { symbol: 'CrO2', poly: true, charge: -1, mass: 84  },
 };
 
 // 有色离子在溶液中的显色（饱和浓度参照，单位 g 离子 / L 溶液，可调）
@@ -110,12 +111,16 @@ export function solubilityOf(catId, anId) {
   if (anId === 'NO3-') return 'soluble';                       // 硝酸盐全溶
   if (catId === 'Na+' || catId === 'K+' || catId === 'NH4+') return 'soluble'; // 碱金属/铵盐全溶
   if (anId === 'Cl-' || anId === 'Br-' || anId === 'I-') {
-    // 卤化银难溶（AgCl 白 / AgBr 淡黄 / AgI 黄——检验卤离子）；其余卤化物可溶（Hg2Cl2/PbCl2 微溶省略）
-    return catId === 'Ag+' ? 'insoluble' : 'soluble';
+    // 卤化银难溶（AgCl 白 / AgBr 淡黄 / AgI 黄——检验卤离子）；PbI2 黄↓；其余卤化物可溶
+    if (catId === 'Ag+') return 'insoluble';
+    if (catId === 'Pb2+' && anId === 'I-') return 'insoluble';
+    return 'soluble';
   }
-  if (anId === 'SO4^2-') return catId === 'Ba2+' ? 'insoluble' : 'soluble';    // 硫酸盐除 BaSO4（CaSO4/PbSO4 微溶省略）
+  if (anId === 'SO4^2-') return ['Ba2+', 'Pb2+', 'Sr2+'].includes(catId) ? 'insoluble' : 'soluble'; // 硫酸盐除 BaSO4（CaSO4/PbSO4 微溶省略）
   if (anId === 'CO3^2-' || anId === 'SO3^2-') return 'insoluble';              // 碳酸盐/亚硫酸盐不溶（碱金属铵盐已在上面返回）
   if (anId === 'S2-') return 'insoluble';                      // 硫化物：碱金属/铵盐溶（上面返回），其余 FeS/CuS/ZnS 不溶
+  if (anId === 'PO4^3-') return 'insoluble';                   // 磷酸盐：钠/钾/铵盐已在上面返回，其余难溶
+  if (anId === 'C2O4^2-') return ['Ca2+', 'Ba2+', 'Pb2+', 'Ag+'].includes(catId) ? 'insoluble' : 'soluble'; // 草酸盐
   if (anId === 'CrO4^2-') {
     // 铬酸盐：Ba/Pb/Sr/Ag 难溶（BaCrO4 黄、PbCrO4 铬黄、SrCrO4 黄、Ag2CrO4 砖红），其余溶
     return ['Ba2+', 'Pb2+', 'Sr2+', 'Ag+'].includes(catId) ? 'insoluble' : 'soluble';
@@ -182,11 +187,13 @@ SUBSTANCES['H2CO3'] = { id: 'H2CO3', mm: 62, state: 'liquid', kind: 'acid', solu
 
 // --- 酸（acidStrength: 强酸全电离 / 弱酸部分电离，影响 pH）---
 SUBSTANCES['HCl'] = { id: 'HCl', mm: 36.5, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'H+', an: 'Cl-', catCount: 1, anCount: 1 }, solid: ['#e9e9e9'] };
+// 氯化氢气体（NH4Cl 受热分解/浓盐酸挥发）：与盐酸溶液区分，否则热分解产物会被当成"固体沉淀"
+SUBSTANCES['HCl(g)'] = { id: 'HCl(g)', mm: 36.5, state: 'gas', kind: 'acidicGas', soluble: 'na', gasColor: '#f0f0ff', solid: [] };
 SUBSTANCES['H2SO4'] = { id: 'H2SO4', mm: 98, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'H+', an: 'SO4^2-', catCount: 2, anCount: 1 }, solid: ['#e9e9e9'] };
 SUBSTANCES['HNO3'] = { id: 'HNO3', mm: 63, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'H+', an: 'NO3-', catCount: 1, anCount: 1 }, solid: ['#e9e9e9'] };
 SUBSTANCES['H2SO3'] = { id: 'H2SO3', mm: 82, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'weak', ions: { cat: 'H+', an: 'SO3^2-', catCount: 2, anCount: 1 }, solid: ['#e9e9e9'] };
 SUBSTANCES['H3PO4'] = { id: 'H3PO4', mm: 98, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'weak', ions: { cat: 'H+', an: 'PO4^3-', catCount: 3, anCount: 1 }, solid: ['#e9e9e9'] };
-SUBSTANCES['HClO'] = { id: 'HClO', mm: 52.5, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'weak', ions: { cat: 'H+', an: 'ClO-', catCount: 1, anCount: 1 }, solid: ['#e9e9e9'] };
+SUBSTANCES['HClO'] = { id: 'HClO', mm: 52.5, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'weak', ions: { cat: 'H+', an: 'ClO-', catCount: 1, anCount: 1 }, ionColor: { color: '#d8f0a0', sat: 50 }, solid: ['#e9e9e9'] };
 SUBSTANCES['CH3COOH'] = { id: 'CH3COOH', mm: 60, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'weak', ions: { cat: 'H+', an: 'CH3COO-', catCount: 1, anCount: 1 }, solid: ['#e9e9e9'] };
 
 // --- 碱（acidStrength 同用于碱的电离强弱）---
@@ -194,7 +201,7 @@ SUBSTANCES['NaOH'] = { id: 'NaOH', mm: 40, state: 'solid', kind: 'base', soluble
 SUBSTANCES['KOH'] = { id: 'KOH', mm: 56, state: 'solid', kind: 'base', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'K+', an: 'OH-', catCount: 1, anCount: 1 }, solid: ['#ffffff'] };
 SUBSTANCES['Ca(OH)2'] = { id: 'Ca(OH)2', mm: 74, state: 'solid', kind: 'base', soluble: 'soluble', acidStrength: 'strong', ions: { cat: 'Ca2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#f4f4f4'], solubilityLimit: 12 }; // 微溶（游戏值 12g/L：200ml 池滴约 3~4 次才达饱和——先浑浊后沉淀）
 SUBSTANCES['Cu(OH)2'] = { id: 'Cu(OH)2', mm: 98, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Cu2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#00afff'] };
-SUBSTANCES['Fe(OH)3'] = { id: 'Fe(OH)3', mm: 107, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Fe3+', an: 'OH-', catCount: 1, anCount: 3 }, solid: ['#002929'] };
+SUBSTANCES['Fe(OH)3'] = { id: 'Fe(OH)3', mm: 107, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Fe3+', an: 'OH-', catCount: 1, anCount: 3 }, solid: ['#a64b2a'] };
 SUBSTANCES['Mg(OH)2'] = { id: 'Mg(OH)2', mm: 58, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Mg2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#f2f2f2'] };
 SUBSTANCES['Fe(OH)2'] = { id: 'Fe(OH)2', mm: 90, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Fe2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#c9ffd4'] };
 
@@ -235,6 +242,7 @@ defineSalt('K+', 'CO3^2-', { solid: ['#ffffff'] });
 defineSalt('Na+', 'SO3^2-', { solid: ['#ffffff'] });
 defineSalt('Ca2+', 'SO3^2-', { solid: ['#f2f2f2'] });
 defineSalt('NH4+', 'Cl-', { solid: ['#ffffff'] });
+defineSalt('NH4+', 'NO3-', { solid: ['#ffffff'] }); // 硝酸铵（铵盐/硝酸盐全溶）
 defineSalt('Na+', 'NO3-', { solid: ['#ffffff'] });
 defineSalt('K+', 'MnO4-', { solid: ['#d8b3e8'] });
 defineSalt('K+', 'MnO4^2-', { solid: ['#a8d8b8'] });
@@ -280,6 +288,46 @@ defineSalt('Cu2+', 'S2-', { solid: ['#2a2a2a'] });     // CuS 黑↓
 defineSalt('NH4+', 'SO4^2-', { solid: ['#ffffff'] });  // (NH4)2SO4
 defineSalt('NH4+', 'HCO3-', { solid: ['#ffffff'] });   // NH4HCO3 碳酸氢铵
 
+// --- 常见难溶盐/铬酸盐/硝酸盐补全（旧表缺失时会走兜底 mm=100 的"幽灵盐"）---
+defineSalt('Pb2+', 'SO4^2-', { solid: ['#ffffff'], dense: true });   // PbSO4 白↓
+defineSalt('Pb2+', 'I-', { solid: ['#ffe14d'] });                    // PbI2 黄↓（金雨实验）
+defineSalt('Sr2+', 'SO4^2-', { solid: ['#ffffff'] });                 // SrSO4 白↓
+defineSalt('Ag+', 'PO4^3-', { solid: ['#ffe066'] });                  // Ag3PO4 黄↓
+defineSalt('Ca2+', 'PO4^3-', { solid: ['#ffffff'] });                 // Ca3(PO4)2 白↓
+defineSalt('Ca2+', 'C2O4^2-', { solid: ['#ffffff'] });                // CaC2O4 白↓（草酸钙）
+defineSalt('Ca2+', 'S2-', { solid: ['#f2f2f2'] });                   // CaS
+defineSalt('Ca2+', 'SiO3^2-', { solid: ['#f0f0f0'] });                // CaSiO3 白↓
+defineSalt('Cu2+', 'S2-', { solid: ['#1f1f1f'], dense: true });       // CuS 黑↓
+defineSalt('Ag+', 'S2-', { solid: ['#111111'], dense: true });        // Ag2S 黑↓
+defineSalt('Pb2+', 'S2-', { solid: ['#141414'], dense: true });       // PbS 黑↓
+defineSalt('Zn2+', 'S2-', { solid: ['#f2f2f2'] });                    // ZnS 白↓
+defineSalt('Na+', 'CrO4^2-', { solid: ['#ffd23f'] });                 // Na2CrO4 黄
+defineSalt('Na+', 'PO4^3-', { solid: ['#ffffff'] });                  // Na3PO4
+defineSalt('Na+', 'CH3COO-', { solid: ['#ffffff'] });                 // CH3COONa
+defineSalt('Na+', 'C2O4^2-', { solid: ['#ffffff'] });                 // Na2C2O4
+defineSalt('K+', 'AlO2-', { solid: ['#ffffff'] });                    // KAlO2
+defineSalt('K+', 'SiO3^2-', { solid: ['#ffffff'] });                  // K2SiO3
+defineSalt('Na+', 'ZnO2^2-', { solid: ['#ffffff'] });                 // Na2ZnO2
+SUBSTANCES['Zn(OH)2'] = { id: 'Zn(OH)2', mm: 99, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Zn2+', an: 'OH-', catCount: 1, anCount: 2 }, solid: ['#f2f2f2'] };
+// 银氨/铜氨配合物（沉淀转化/配位）
+SUBSTANCES['[Ag(NH3)2]Cl'] = { id: '[Ag(NH3)2]Cl', mm: 177.5, state: 'solid', kind: 'other', soluble: 'soluble', solid: ['#f0f0f0'] };
+SUBSTANCES['[Cu(NH3)4](OH)2'] = { id: '[Cu(NH3)4](OH)2', mm: 166, state: 'solid', kind: 'base', soluble: 'soluble', solid: ['#1f6fbf'] };
+SUBSTANCES['Ag2O'] = { id: 'Ag2O', mm: 232, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: { cat: 'Ag+', an: 'O2-', catCount: 2, anCount: 1 }, solid: ['#3a2a1a'] };
+SUBSTANCES['AgOH'] = { id: 'AgOH', mm: 125, state: 'solid', kind: 'base', soluble: 'insoluble', ions: { cat: 'Ag+', an: 'OH-', catCount: 1, anCount: 1 }, solid: ['#d8d0b0'] };
+defineSalt('Zn2+', 'NO3-', { solid: ['#ffffff'] });
+defineSalt('Mg2+', 'NO3-', { solid: ['#ffffff'] });
+defineSalt('Al3+', 'NO3-', { solid: ['#ffffff'] });
+defineSalt('Fe2+', 'NO3-', { solid: ['#c9ffd4'] });
+defineSalt('Mn2+', 'NO3-', { solid: ['#f2e3d8'] });
+defineSalt('Cr3+', 'NO3-', { solid: ['#2fbf7f'] });
+defineSalt('K+', 'SO4^2-', { solid: ['#ffffff'] });                   // K2SO4
+defineSalt('Na+', 'S2-', { solid: ['#ffffff'] });                     // Na2S
+defineSalt('K+', 'S2-', { solid: ['#ffffff'] });                      // K2S
+defineSalt('Ca2+', 'NO3-', { solid: ['#ffffff'] });
+defineSalt('Ba2+', 'NO3-', { solid: ['#ffffff'] });
+defineSalt('Sr2+', 'Cl-', { solid: ['#ffffff'] });
+defineSalt('Mg2+', 'NO3-', { solid: ['#ffffff'] });
+
 // --- 金属氧化物（视为"电解质"，离子中阴离子为 O2-，可参与离子双置换）---
 SUBSTANCES['CuO'] = { id: 'CuO', mm: 80, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: { cat: 'Cu2+', an: 'O2-', catCount: 1, anCount: 1 }, solid: ['#222222'] };
 SUBSTANCES['FeO'] = { id: 'FeO', mm: 72, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: { cat: 'Fe2+', an: 'O2-', catCount: 1, anCount: 1 }, solid: ['#3a3a3a'] };
@@ -291,6 +339,7 @@ SUBSTANCES['Al2O3'] = { id: 'Al2O3', mm: 102, state: 'solid', kind: 'oxide', sol
 SUBSTANCES['P2O5'] = { id: 'P2O5', mm: 142, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: null, solid: ['#e8e8e8'] };
 // --- 高中扩展氧化物（钠/过氧化钠、铬绿、硅、碱式碳酸铜）---
 SUBSTANCES['K2O'] = { id: 'K2O', mm: 94, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: { cat: 'K+', an: 'O2-', catCount: 2, anCount: 1 }, solid: ['#e8e8e8'] };
+SUBSTANCES['Li2O'] = { id: 'Li2O', mm: 30, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: { cat: 'Li+', an: 'O2-', catCount: 2, anCount: 1 }, solid: ['#f2f2f2'] };
 SUBSTANCES['Na2O'] = { id: 'Na2O', mm: 62, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: { cat: 'Na+', an: 'O2-', catCount: 2, anCount: 1 }, solid: ['#e8e8e8'] };
 SUBSTANCES['Na2O2'] = { id: 'Na2O2', mm: 78, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: null, peroxide: true, solid: ['#f2f2f2'] }; // 过氧化钠：遇水/CO2 歧化放 O2
 SUBSTANCES['Cr2O3'] = { id: 'Cr2O3', mm: 152, state: 'solid', kind: 'oxide', soluble: 'insoluble', ions: { cat: 'Cr3+', an: 'O2-', catCount: 2, anCount: 3 }, amphoteric: true, solid: ['#2fbf7f'] };
@@ -300,7 +349,7 @@ SUBSTANCES['Cu2(OH)2CO3'] = { id: 'Cu2(OH)2CO3', mm: 222, state: 'solid', kind: 
 // --- 金属（含活动性序与置换化合价）---
 // 活动性：数值越小越活泼（按金属活动性顺序 K Ca Na Mg Al Zn Fe Sn Pb (H) Cu Hg Ag Pt Au 编号 1..15，H=10）。
 SUBSTANCES['Cu'] = { id: 'Cu', mm: 64, state: 'solid', kind: 'metal', soluble: 'na', valence: 2, activity: 11, flammable: true, dense: true, solid: ['#ff8f46'] }; // 还原产物金属致密（低浓度时不阻断——见 _isDense 占比阈值）
-SUBSTANCES['Fe'] = { id: 'Fe', mm: 56, state: 'solid', kind: 'metal', soluble: 'na', valence: 2, activity: 7, flammable: true, solid: ['#fdfdfd'] };
+SUBSTANCES['Fe'] = { id: 'Fe', mm: 56, state: 'solid', kind: 'metal', soluble: 'na', valence: 2, activity: 7, flammable: true, solid: ['#9aa3ad', '#6f7683'] }; // 铁：银灰金属色（旧 #fdfdfd 会被误认为白色沉淀）
 SUBSTANCES['Zn'] = { id: 'Zn', mm: 65, state: 'solid', kind: 'metal', soluble: 'na', valence: 2, activity: 6, flammable: true, solid: ['#c8c8c8'] };
 SUBSTANCES['Mg'] = { id: 'Mg', mm: 24, state: 'solid', kind: 'metal', soluble: 'na', valence: 2, activity: 4, flammable: true, solid: ['#cfcfcf'] };
 SUBSTANCES['Al'] = { id: 'Al', mm: 27, state: 'solid', kind: 'metal', soluble: 'na', valence: 3, activity: 5, flammable: true, solid: ['#d9d9d9'] };
@@ -308,8 +357,8 @@ SUBSTANCES['Ag'] = { id: 'Ag', mm: 108, state: 'solid', kind: 'metal', soluble: 
 
 // --- 碱金属（极活泼：遇水剧烈反应产 H2，火焰变色）---
 SUBSTANCES['Na'] = { id: 'Na', mm: 23, state: 'solid', kind: 'metal', soluble: 'na', valence: 1, activity: 3, flammable: true, flameColor: '#ffd23f', solid: ['#e0e0e0'] };
-SUBSTANCES['K'] = { id: 'K', mm: 39, state: 'solid', kind: 'metal', soluble: 'na', valence: 1, activity: 1, flammable: true, flameColor: '#c78bff', solid: ['#cfcfe8'] };
-SUBSTANCES['Li'] = { id: 'Li', mm: 7, state: 'solid', kind: 'metal', soluble: 'na', valence: 1, activity: 2, flammable: true, flameColor: '#ff5fd0', solid: ['#d8d8f0'] }; // 锂：焰色紫红
+SUBSTANCES['K'] = { id: 'K', mm: 39, state: 'solid', kind: 'metal', soluble: 'na', valence: 1, activity: 2, flammable: true, flameColor: '#c78bff', solid: ['#cfcfe8'] };
+SUBSTANCES['Li'] = { id: 'Li', mm: 7, state: 'solid', kind: 'metal', soluble: 'na', valence: 1, activity: 1, flammable: true, flameColor: '#ff5fd0', solid: ['#d8d8f0'] }; // 锂：活动性最强（Li>K>Na），焰色紫红
 
 // --- 非金属单质（可燃）---
 SUBSTANCES['C'] = { id: 'C', mm: 12, state: 'solid', kind: 'nonmetal', soluble: 'na', flammable: true, solid: ['#2a2a2a'] };
@@ -336,6 +385,8 @@ SUBSTANCES['CO'] = { id: 'CO', mm: 28, state: 'gas', kind: 'gas', soluble: 'na',
 SUBSTANCES['NH3'] = { id: 'NH3', mm: 17, state: 'gas', kind: 'gas', soluble: 'na', solid: [] };
 SUBSTANCES['Cl2'] = { id: 'Cl2', mm: 71, state: 'gas', kind: 'gas', soluble: 'na', gasColor: '#b8e01f', solid: [] };   // 黄绿（有毒，需碱液吸收）
 SUBSTANCES['H2S'] = { id: 'H2S', mm: 34, state: 'gas', kind: 'acidicGas', soluble: 'na', flammable: true, gasColor: '#ffe9a8', gasFlameColor: '#7fd4ff', solid: [] }; // 臭鸡蛋气
+// 硫化氢水溶液（弱酸；H2S 气体溶水后的溶质形态，Fe 等活泼金属可按 H+ 路径反应）
+SUBSTANCES['H2S(aq)'] = { id: 'H2S(aq)', mm: 34, state: 'liquid', kind: 'acid', soluble: 'soluble', acidStrength: 'weak', ions: { cat: 'H+', an: 'S2-', catCount: 2, anCount: 1 }, ionColor: { color: '#e8e0b0', sat: 28 }, solid: ['#f2efd8'] };
 SUBSTANCES['NO'] = { id: 'NO', mm: 30, state: 'gas', kind: 'gas', soluble: 'na', solid: [] };                          // 无色
 SUBSTANCES['NO2'] = { id: 'NO2', mm: 46, state: 'gas', kind: 'gas', soluble: 'na', gasColor: '#ff6a3d', solid: [] };   // 红棕
 SUBSTANCES['CH4'] = { id: 'CH4', mm: 16, state: 'gas', kind: 'gas', soluble: 'na', flammable: true, gasFlameColor: '#7fd4ff', solid: [] };

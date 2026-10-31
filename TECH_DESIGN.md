@@ -524,7 +524,7 @@ init ── start() ──► running ──► win | died ── restart() ─�
 | `collectRadius` | 70 px | 收集半径 |
 | `lampRange` | 70 px | 灯提供条件的半径 |
 | `inventory.slots` / `slotCap` | 5 / 100 g | 物品栏 |
-| `inventory.slotPx` / `itemSlotPx` | 46 / 58 px | HUD 槽宽（装物品的格子放大） |
+| `inventory.slotPx` / `itemSlotPx` | 56 / 70 px | HUD 槽宽（5 格统一；小屏按 itemSlotPx 比例缩放） |
 | `item.collectRange` | 90 px | Q 拾取物品半径（边缘间隙） |
 | `item.liquidRange` | 80 px | 吸液/倒出/滴加/通气的目标容器距离（边缘间隙） |
 | `item.dragRange` | 130 px | 可拖动滴管的玩家距离 |

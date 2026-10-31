@@ -24,7 +24,10 @@ export function startLoop(scene, renderer, opts = {}) {
       if (active && active.scene) {
         const S = active.scene;
         let guard = 0;
-        if (S.overview) {
+        if (typeof window !== 'undefined' && window.__CZ_LANDSCAPE_BLOCKED) {
+          // 竖屏遮罩（levels/boot.js 注入）：暂停推进、保持画面，转横屏后自动继续
+          acc = 0;
+        } else if (S.overview) {
           // 鸟瞰（灵魂出窍）：暂停推进（保持画面），自由缩放/平移由输入管线驱动
           acc = 0;
         } else if (S.debugMode && S.debugPaused) {

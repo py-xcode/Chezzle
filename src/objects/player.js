@@ -110,15 +110,15 @@ export class Inventory {
     return put;
   }
 
-  /** 从选中格放置 amount g（不足也按 amount 扣到 0），返回 {substance, mass} 或 null。
-   *  物品格不通过 place 放置（Shift 走物品放置流程），返回 null。 */
+  /** 从选中格放置 amount g（不足时只扣剩余量），返回 {substance, mass} 或 null。 */
   place(amount) {
     const slot = this.selectedSlot();
     if (!slot || slot.item) return null;
     if (slot.mass <= 0) return null;
-    slot.mass = Math.max(0, slot.mass - amount);
+    const take = Math.min(slot.mass, amount);
+    slot.mass = Math.max(0, slot.mass - take);
     if (slot.mass <= 0) this.slots[this.selected] = null;
-    return { substance: slot.substance, mass: amount };
+    return { substance: slot.substance, mass: take };
   }
 
   clearSelected() {
@@ -485,9 +485,10 @@ export class Player extends Obj {
       && !container.canAcceptSubstance(sel.substance)) {
       return;
     }
-    const amount = CFG.placeAmount;
-    const res = this.inventory.place(amount);
+    const res = this.inventory.place(CFG.placeAmount);
     if (!res) return;
+    const amount = res.mass; // ★ 实际扣除量（不足 0.5g 时不能凭空多出质量）
+    const st = getSubstance(res.substance).state;
     const placeOrigin = { kind: 'place' };
     if (container) {
       // 落点=玩家脚下/台边吸附点（反应/气泡围绕玩家放下的位置，不再默认容器中心）
@@ -499,8 +500,10 @@ export class Player extends Obj {
         container.depositAt = { x: px, y: Math.max(ir.y + 4, this.bottom - 6) };
       }
       // 可溶物质放进液体容器（池）→ 溶解进溶液（CuSO4 不会变成永不溶解的沉淀颗粒）；
-      // 不溶物（Cu(OH)2 等）才作为沉淀放置
-      if (container.solution && container.solution.water > 0 && isSoluble(res.substance)) {
+      // 液体物质（Br2/H2O2/HCl…）也进溶液，不再变成"固体球"；其余不溶物才作为沉淀放置
+      if (container.solution && container.solution.volume > 0
+        && (container.solution.water > 0 || st === 'liquid')
+        && (isSoluble(res.substance) || st === 'liquid')) {
         container.solution.add(res.substance, amount);
         if (container.noteSolOrigin) container.noteSolOrigin(res.substance, { kind: 'place' });
       } else {
@@ -516,7 +519,7 @@ export class Player extends Obj {
       sfx('item.place');
       return;
     }
-    if (lamp) {
+    if (lamp && st !== 'liquid') {
       lamp.addPrecipitate(res.substance, amount, null, placeOrigin);
       this._placeFeedback(
         scene,

@@ -130,9 +130,16 @@ export class Portal extends Obj {
     Portal._groupOn ||= new Set();
     const key = this.group ? 'g:' + this.group : 'c:' + this.color;
     const sw = scene.byId[this.switchId];
-    const on = sw ? (typeof sw.effectiveOpen === 'function' ? !!sw.effectiveOpen(scene) : !!sw.open) : false;
-    if (on) Portal._groupOn.add(key);
-    return on || Portal._groupOn.has(key);
+    // 同场景存在绑定开关：必须看它**当前**是否有效开启。不能再用组级"开过就永久算开"
+    // 的记忆——否则开关关掉后同组传送门仍会直接传送（用户复现：绑定开关的关卡门一直开）。
+    if (sw) {
+      const on = typeof sw.effectiveOpen === 'function' ? !!sw.effectiveOpen(scene) : !!sw.open;
+      if (!on) Portal._groupOn.delete(key);
+      else Portal._groupOn.add(key);
+      return on;
+    }
+    // 跨场景配对时对侧场景可能没有同名开关：保留组级激活记忆作为兜底。
+    return Portal._groupOn.has(key);
   }
 
   /**

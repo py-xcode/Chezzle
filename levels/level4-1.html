@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Chezzle 关卡</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0e28; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { background: #0b0e28; box-shadow: 0 0 60px rgba(120,90,220,0.25); }
+</style>
+</head>
+<body>
+<!-- 启动/加载动画：与选关页"进入关卡"过场同款（见 levels/boot.js；导出到 levels/ 下时直接可用） -->
+<script src="boot.js"></script>
+<canvas id="game"></canvas>
+<script src="../prefs.js?vmvwagucl"></script>
+<script src="../audio.js?vmvwagucl"></script>
+<script src="../dist/chezzle.js?vmvwagucl"></script>
+<!-- 插件: 破坏者 v1.0（destroyer.js） -->
+<script>
+// ============================================================================
+// 插件：破坏者（Destroyer）—— 可拾取工具
+// 拾取后按自定义按键（默认 F），把一定范围内距离玩家最近的物块打碎成沉淀。
+// 组件可在编辑器里放置；按键/范围/冷却在物体属性面板调整。
+// ============================================================================
+
+// @@chezzle-plugin
+// {
+//   "name": "破坏者",
+//   "version": "1.0",
+//   "api": 1,
+//   "description": "可拾取工具：按自定义键把范围内最近的物块打碎成沉淀",
+//   "components": [
+//     {
+//       "type": "destroyer",
+//       "label": "破坏者",
+//       "color": "#e8b84b",
+//       "defW": 54,
+//       "defH": 54,
+//       "fields": [
+//         { "key": "key", "label": "破坏按键", "kind": "text", "def": "KeyF" },
+//         { "key": "radius", "label": "破坏范围", "kind": "number", "def": 180 },
+//         { "key": "cooldown", "label": "冷却(秒)", "kind": "number", "def": 0.35 }
+//       ]
+//     }
+//   ]
+// }
+// @@end
+
+(function () {
+  'use strict';
+
+  const TAU = Math.PI * 2;
+
+  class Destroyer extends Chezzle.Obj {
+    constructor(o = {}) {
+      super({
+        x: o.x ?? 0,
+        y: o.y ?? 0,
+        w: o.w ?? 54,
+        h: o.h ?? 54,
+        mass: 0,
+        solid: false,
+        physicsKind: 'none',
+        gravity: 0,
+        id: o.id ?? '',
+        hidden: !!o.hidden,
+      });
+      this.typeName = 'Destroyer';
+      this.key = String(o.key || 'KeyF');
+      this.radius = Math.max(20, Number(o.radius) || 180);
+      this._used = false; // 消耗品：成功击碎一次后消失
+    }
+
+    get isCarryItem() { return 'destroyer'; }
+    get hoverLabel() { return '破坏者'; }
+
+    /** HUD 选中物品说明（core/render/hud.js 会优先调用它） */
+    carryInfo() {
+      return {
+        title: '破坏者',
+        comp: `${this.keyLabel()} · 击碎最近的物块`,
+        mass: `范围 ${Math.round(this.radius)}`,
+        color: '#ffd76a',
+      };
+    }
+
+    keyLabel() {
+      const m = /^Key([A-Z])$/.exec(this.key);
+      if (m) return m[1];
+      return this.key.replace(/^Digit/, '');
+    }
+
+    /** 破坏者是消耗品：成功击碎一次后从物品栏消失 */
+    consumeItself(scene) {
+      const inv = scene.player && scene.player.inventory;
+      if (!inv || !Array.isArray(inv.slots)) return false;
+      for (let i = 0; i < inv.slots.length; i++) {
+        const s = inv.slots[i];
+        if (s && s.obj === this) {
+          inv.slots[i] = null;
+          return true;
+        }
+      }
+      return false;
+    }
+
+    /**
+     * 把最近的物块打成沉淀：
+     * - 先按网格真实成分收集质量（不凭空造物/丢质量）；
+     * - 移除物块，再按每种成分 spawnParticles（可拾取的自由沉淀）；
+     * - 尘雾/火花只做反馈。
+     */
+    shatterNearest(scene) {
+      const p = scene.player;
+      if (!p) return null;
+      const px = p.x + p.w / 2;
+      const py = p.y + p.h / 2;
+      let best = null;
+      let bestD = Infinity;
+      for (const o of scene.objects) {
+        if (!o || o === p || o.hidden || !o.solid) continue;
+        if (o.constructor?.name !== 'Block' && o.typeName !== 'Block') continue;
+        if (!o.grid || !(o.grid.totalMass() > 0)) continue;
+        const d = Math.hypot((o.x + o.w / 2) - px, (o.y + o.h / 2) - py);
+        if (d <= this.radius && d < bestD) { best = o; bestD = d; }
+      }
+      if (!best) return null;
+
+      const masses = best.grid.masses ? best.grid.masses() : null;
+      const point = { x: best.x + best.w / 2, y: best.y + best.h / 2 };
+      const spread = Math.max(24, best.w * 0.7);
+      const color = (() => {
+        try {
+          const ids = Object.keys(masses || {});
+          const s = ids.length ? Chezzle.getSubstance(ids[0]) : null;
+          return s?.solid?.[0] ?? '#c9b46a';
+        } catch (e) { return '#c9b46a'; }
+      })();
+      scene.removeObject(best);
+      const list = masses && Object.keys(masses).length
+        ? masses
+        : { [best.substance]: best.mass };
+      for (const [id, mass] of Object.entries(list)) {
+        if (!(mass > 1e-6)) continue;
+        scene.spawnParticles(id, mass, point, true, false,
+          { kind: 'destroy', text: `${id} 碎裂` }, spread);
+      }
+      // 纯视觉：物块中心的金属碎屑 + 金色冲击环
+      try {
+        Chezzle.puffFx(scene, point.x, point.y, {
+          color: (() => {
+            const h = String(color).replace('#', '');
+            const n = h.length === 3
+              ? [parseInt(h[0] + h[0], 16), parseInt(h[1] + h[1], 16), parseInt(h[2] + h[2], 16)]
+              : [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+            return `${n[0]},${n[1]},${n[2]}`;
+          })(),
+          r: 4.5, spread: Math.max(20, best.w * 0.55), life: 0.4, n: 8,
+        });
+        Chezzle.sparkleFx(scene, point.x, point.y, {
+          color: '#ffd76a', n: 10, spread: Math.max(24, best.w * 0.55), rise: 18, life: 0.45, size: 2.2,
+        });
+        Chezzle.shockFx(scene, point.x, point.y, {
+          color: 'rgba(232,184,75,0.75)', r0: 5, r1: Math.max(30, best.w * 0.7), life: 0.3, width: 2, flat: 0.5,
+        });
+      } catch (e) { /* 特效可选 */ }
+      return best;
+    }
+
+    drawPickaxe(ctx, s = 1) {
+      ctx.save();
+      ctx.scale(s, s);
+      ctx.rotate(-0.62);
+      // 木柄
+      const handle = ctx.createLinearGradient(-3, 24, 4, -22);
+      handle.addColorStop(0, '#5a381c');
+      handle.addColorStop(0.45, '#a86b32');
+      handle.addColorStop(1, '#e0a45e');
+      ctx.strokeStyle = handle;
+      ctx.lineWidth = 5;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-2, 24);
+      ctx.lineTo(2, -18);
+      ctx.stroke();
+      // 黄铜箍
+      ctx.strokeStyle = '#e8b84b';
+      ctx.lineWidth = 2.2;
+      for (const y of [14, -8]) {
+        ctx.beginPath();
+        ctx.moveTo(-4, y);
+        ctx.lineTo(4, y - 1);
+        ctx.stroke();
+      }
+      // 镐头（钢色弧，尖端）
+      const steel = ctx.createLinearGradient(-24, -26, 24, -8);
+      steel.addColorStop(0, '#6f7d8f');
+      steel.addColorStop(0.45, '#eef4ff');
+      steel.addColorStop(1, '#8d9aac');
+      ctx.fillStyle = steel;
+      ctx.strokeStyle = 'rgba(20,24,38,0.85)';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(-27, -20);
+      ctx.quadraticCurveTo(-10, -31, 0, -22);
+      ctx.quadraticCurveTo(10, -31, 27, -20);
+      ctx.quadraticCurveTo(10, -16, 0, -19);
+      ctx.quadraticCurveTo(-10, -16, -27, -20);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      // 刃口高光
+      ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(-22, -20.5);
+      ctx.quadraticCurveTo(-8, -27.5, 0, -21.5);
+      ctx.quadraticCurveTo(8, -27.5, 22, -20.5);
+      ctx.stroke();
+      // 柄底发光小块
+      ctx.fillStyle = 'rgba(232,184,75,0.9)';
+      ctx.beginPath();
+      ctx.arc(-2, 24, 2.6, 0, TAU);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    render(ctx) {
+      const cx = this.x + this.w / 2;
+      const cy = this.y + this.h / 2;
+      ctx.save();
+      ctx.translate(cx, cy);
+      // 背光
+      const glow = ctx.createRadialGradient(0, 0, 2, 0, 0, this.w * 0.62);
+      glow.addColorStop(0, 'rgba(232,184,75,0.18)');
+      glow.addColorStop(1, 'rgba(232,184,75,0)');
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(0, 0, this.w * 0.62, 0, TAU);
+      ctx.fill();
+      this.drawPickaxe(ctx, Math.min(this.w, this.h) / 58);
+      ctx.restore();
+    }
+
+    drawHudIcon(ctx, cx, cy, size, k) {
+      ctx.save();
+      ctx.translate(cx, cy);
+      this.drawPickaxe(ctx, Math.min(1.35, Math.max(0.65, k * 1.25)));
+      ctx.restore();
+    }
+  }
+
+  Chezzle.Plugin.register('destroyer', {
+    components: [{
+      type: 'destroyer',
+      label: '破坏者',
+      color: '#e8b84b',
+      defW: 54,
+      defH: 54,
+      fields: [
+        { key: 'key', label: '破坏按键', kind: 'text', def: 'KeyF' },
+        { key: 'radius', label: '破坏范围', kind: 'number', def: 180 },
+      ],
+      construct: (o) => new Destroyer(o),
+    }],
+    run(scene, api) {
+      const onKey = (e) => {
+        if (!e || e.repeat) return false;
+        const held = scene.player?.inventory?.selectedItem?.();
+        if (!held || held.isCarryItem !== 'destroyer') return false;
+        if (held._used) return true;
+        if (e.code !== held.key) return false;
+        const hit = held.shatterNearest(scene);
+        // 消耗品：只有真正击碎物块才消失；范围内没有目标时不浪费。
+        if (hit) {
+          held._used = true;
+          held.consumeItself(scene);
+        }
+        return true;
+      };
+      const off = api.onKeyDown(onKey);
+      return () => { try { off(); } catch (e) { /* ignore */ } };
+    },
+  });
+})();
+
+</script>
+<script src="report.js"></script>
+<script>
+const canvas = document.getElementById('game');
+Chezzle.fitCanvasToWindow(canvas);
+window.addEventListener('resize', () => Chezzle.fitCanvasToWindow(canvas));
+const L = new Chezzle.LevelBuilder(canvas, { worldW: 3000, worldH: 1100 });
+L
+  // 调试模式：打开本关时 URL 加 ?debug=1（.debugmode() 已废弃，导出仅留提示）
+  .floor(199, 928, 534, 118, { id: 'floor1' })
+  .player(215, 832, { substance: 'NaHCO3', mass: 30, id: 'player1' })
+  .lamp(429, 891, { autoOn: true, id: 'lamp1' })
+  .gasdetector(556, 913, { gas: 'CO2', threshold: 0.5, deleteId: 'floor11', id: 'gasdetector1' })
+  .portal(640, 868, { w: 44, h: 64, color: '#c78bff', switchId: 'gasdetector1', group: '1', id: 'portal1' })
+  .floor(885, 929, 135, 118, { id: 'floor2', hidden: true })
+  .floor(1166, 930, 202, 121, { id: 'floor3' })
+  .floor(1093, 582, 437, 63, { id: 'floor4' })
+  .portal(1476, 511, { w: 44, h: 64, color: '#c78bff', switchId: 'gasdetector1', group: '1', id: 'portal2' })
+  .floor(1039, 356, 77, 93, { id: 'floor7' })
+  .floor(788, 354, 104, 103, { id: 'floor8' })
+  .block(808, 268, { substance: 'Fe', w: 70, h: 70, id: 'block1' })
+  .pool(584, 352, 213, 84, { volume: 850, solutes: {"CuSO4":50}, id: 'pool2' })
+  .floor(172, 342, 414, 98, { id: 'floor10' })
+  .extractor(467, 326, { w: 50, h: 10, poolId: 'pool2', rate: 0.25, id: 'extractor1' })
+  .lamp(310, 304, { autoOn: true, id: 'lamp2' })
+  .gaschamber(264, 222, 130, 133, { gases: {"Cl2":2000}, id: 'gaschamber1' })
+  .switch(199, 318, { mode: 'chemical', opening: 'FeSO4', showId: 'floor2', id: 'switch1' })
+  .sign(1013, 155, '这是“破坏器”。\n按下Q或拾取来捡起，\n在物品栏中选中它来查看使用说明。', { id: 'sign1' })
+  .pluginObj('destroyer', { x: 1058, y: 302, w: 40, h: 44, id: 'destroyer1', key: 'KeyF', radius: 180 })
+  .key(1187, 902, { opening: 'CuCl2', openId: 'door1', id: 'key1' })
+  .door(1293, 857, 54, 71, { id: 'door1' })
+  .floor(1206, 422, 230, 20, { id: 'floor11' })
+  .deposit(1242, 376, { substance: 'BaCO3', w: 140, h: 30, id: 'deposit1' })
+;
+
+const scene = L.build();
+scene.atmosphere.preset({}); // 关卡大气
+scene.applyAppearDelays(); // 延迟出现
+
+// ⚡ 接线（示例，按需取消注释）：
+// scene.byId['sw'].onOpen(() => scene.byId['lamp'].ignite());
+// scene.byId['sw'].onClose(() => scene.byId['lamp'].extinguish());
+// scene.byId['key'].onOpen(() => scene.byId['door'].open());
+// scene.atmosphere.add('CO2', 8); // 可选：初始大气 CO2（碳化玩法）
+
+// ▶ 插件逻辑（配置文件见编辑器插件面板）
+Chezzle.Plugin.inject(scene, [{"name":"destroyer"}]);
+
+L.start();
+// ChezzleReport.bind(scene, 'H-1'); // 选关系统：填上关卡 id 后取消注释（见 levels/levels.js）
+</script>
+</body>
+</html>

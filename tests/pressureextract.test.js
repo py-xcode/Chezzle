@@ -36,6 +36,18 @@ test('压力提取器（无开关）：玩家站上 → 提取 NaCl；离开 →
   assert.ok(scene.particles.length > 0, '提取出沉淀粒子');
 });
 
+test('压力提取器：只提取溶质，不提取沉淀', () => {
+  const scene = setup(null);
+  const pool = scene.byId['pool'];
+  pool.addPrecipitate('BaSO4', 20, null, { kind: 'test' });
+  scene.addObject(new Player({ x: 320, y: 600, substance: 'NaCl', mass: 30, id: 'p' }));
+  run(scene, 60);
+  run(scene, 300);
+  assert.ok((pool.solution.solutes.get('NaCl') ?? 0) < 49, 'NaCl 溶质应被提取');
+  assert.equal(pool.precipitates.get('BaSO4'), 20, 'BaSO4 沉淀不应被提取');
+  assert.ok(!scene.particles.some((p) => p.substance === 'BaSO4'), '不应生成 BaSO4 提取粒子');
+});
+
 test('压力提取器：无物站上 → 不提取', () => {
   const scene = setup(null);
   run(scene, 300);

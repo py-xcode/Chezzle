@@ -13,9 +13,9 @@
 <!-- 启动/加载动画：与选关页"进入关卡"过场同款（见 levels/boot.js；导出到 levels/ 下时直接可用） -->
 <script src="boot.js"></script>
 <canvas id="game"></canvas>
-<script src="../prefs.js?vmvmdw3n4"></script>
-<script src="../audio.js?vmvmdw3n4"></script>
-<script src="../dist/chezzle.js?vmvmdw3n4"></script>
+<script src="../prefs.js?vmvwagucl"></script>
+<script src="../audio.js?vmvwagucl"></script>
+<script src="../dist/chezzle.js?vmvwagucl"></script>
 <!-- 插件: 演出编排 v1.1（showtime.js） -->
 <script>
 // ============================================================================
@@ -607,6 +607,15 @@ Chezzle.Plugin.register('showtime', {
     const fired = new Set();
     const fireOnce = (p) => { if (fired.has(p)) return; fired.add(p); doActions(p.act); };
 
+    // 存档点回档：玩家会回到存档时刻的位置，但“走到区域→切场景”的出口触发器
+    // 在回档前已经 fired 过；如果不重新武装，读档后就再也无法从同一出口继续前进。
+    // 只重置带 goto 的 pos 触发器（横幅等一次性演出不重复刷）。
+    const gotoTriggers = plays.filter((p) => p.on === 'pos'
+      && Array.isArray(p.act) && p.act.some((a) => a && a.kind === 'goto'));
+    scene.on('checkpointRestored', () => {
+      for (const p of gotoTriggers) fired.delete(p);
+    });
+
     // ① enter：Multiscene switchTo 会 fire('enter')
     for (const p of plays) {
       if (p.on === 'enter') scene.on('enter', () => fireOnce(p));
@@ -629,28 +638,33 @@ Chezzle.Plugin.register('showtime', {
       cancels.push(scene.wait(0.2, openWatch));
     };
     if (openRefs.length) openWatch();
-    // ④ pos：玩家中心进入矩形（一次；触发后停轮询）。require=开关 id：开关有效开启才触发
-    //   （传送门"被开关承认才亮"——没过门的门不能传）。
+    // ④ pos：玩家中心进入矩形（一次性动作；区域轮询保留，供存档回档后重新武装 goto）
+    //   require=开关 id：开关有效开启才触发（传送门"被开关承认才亮"——没过门的门不能传）。
     for (const p of plays) {
       if (p.on !== 'pos' || !(Number.isFinite(p.x) && Number.isFinite(p.w))) continue;
       const check = () => {
-        if (fired.has(p)) return;
-        let ok = true;
-        if (p.require) {
-          const sw = scene.byId[p.require];
-          const open = sw ? (typeof sw.effectiveOpen === 'function' ? sw.effectiveOpen(scene) : !!sw.open) : true;
-          ok = !!open;
-        }
-        if (ok) {
-          const pl = scene.player;
-          if (pl && !pl.hidden) {
-            const cx = pl.x + pl.w / 2;
-            const cy = pl.y + pl.h / 2;
-            if (cx >= p.x && cx <= p.x + p.w && cy >= p.y && cy <= p.y + p.h) fireOnce(p);
+        if (!fired.has(p)) {
+          let ok = true;
+          if (p.require) {
+            const sw = scene.byId[p.require];
+            const open = sw ? (typeof sw.effectiveOpen === 'function' ? sw.effectiveOpen(scene) : !!sw.open) : true;
+            ok = !!open;
+          }
+          if (ok) {
+            const pl = scene.player;
+            if (pl && !pl.hidden) {
+              const cx = pl.x + pl.w / 2;
+              const cy = pl.y + pl.h / 2;
+              if (cx >= p.x && cx <= p.x + p.w && cy >= p.y && cy <= p.y + p.h) fireOnce(p);
+            }
           }
         }
-        cancels.push(scene.wait(0.2, check));
+        // ★ 触发过也不能停止轮询：存档回档会重新武装 goto 触发器，需要下一次轮询
+        //   才能再次检测到玩家进入区域（旧逻辑 fire 后直接 return = 读档后永久失效）。
       };
+      // 用 interval 而不是递归 wait：轮询会持续整个场景；递归 wait 每次 fired 后仍
+      // 继续把已结束定时器的 cancel 塞进 cancels，长时间游玩会积累。
+      cancels.push(scene.interval(0.2, check));
       check();
     }
     // ⑤ at：世界时间到点（一次）
@@ -987,7 +1001,7 @@ Chezzle.Plugin.register('chapters', {
 <script>
 const canvas = document.getElementById('game');
 Chezzle.fitCanvasToWindow(canvas);
-const PLUGINS = [{"name":"showtime","cfg":{"plays":[{"scene":"crater","on":"pos","at":0.5,"act":[{"kind":"banner","text":"小测验——自己解决小关卡！\n先鸟瞰看全貌，遇到问题看提示！","dur":2.2}],"x":50,"y":896,"w":292,"h":174},{"scene":"plain","on":"at","at":3,"act":[{"kind":"banner","text":"欢迎来到 Chezzle！","dur":2.2}]},{"scene":"plain","on":"at","at":5.6,"act":[{"kind":"banner","text":"在Chezzle，你就是一团化学物质\n比如现在是一块 50 克的氢氧化钠","dur":3}]},{"scene":"plain","on":"at","at":9,"act":[{"kind":"banner","text":"每个关都要：跋山涉水，保全自己（别让自己被反应完了）\n收集通关要用的物质，放入“钥匙”，走进传送门就能通关啦","dur":3.2}]},{"scene":"plain","on":"at","at":12.6,"act":[{"kind":"banner","text":"如果你不小心把自己反应完了——嘿嘿，一切重来吧","dur":2.6}]},{"scene":"plain","on":"at","at":15.6,"act":[{"kind":"banner","text":"电脑端 A / D 移动 · 空格跳跃\n移动端通过左下角半圆盘移动","dur":2.8}]},{"scene":"plain","on":"pos","x":1850,"y":480,"w":350,"h":320,"act":[{"kind":"banner","text":"这是「开关」，分两种：\n①踩上就开（站上去试试！）\n②要化学物质才开\n踩上去试试！","dur":3.6}]},{"scene":"plain","on":"open","ref":"p_gate_sw","act":[{"kind":"shake","n":5},{"kind":"banner","text":"闸门开了——向右走进入下一关！","dur":2.4}]},{"scene":"canyon","on":"pos","x":80,"y":520,"w":400,"h":380,"act":[{"kind":"banner","text":"认识一下——这个是药品池！\n跳进去看看会发生什么！","dur":3.4}]},{"scene":"canyon","on":"pos","x":241,"y":561,"w":182,"h":138,"act":[{"kind":"banner","text":"有沉淀——试试收集！","dur":3.2}]},{"scene":"canyon","on":"pos","x":1842,"y":430,"w":334,"h":356,"act":[{"kind":"banner","text":"「冰面」：滑！沉淀放上去会自己溜走——\n在这别想搭高，不信你试试！","dur":3.6}]},{"scene":"plateau","on":"pos","x":40,"y":480,"w":360,"h":320,"act":[{"kind":"banner","text":"新道具——酒精灯！","dur":3.6}]},{"scene":"plateau","on":"pos","x":866,"y":589,"w":155,"h":131,"act":[{"kind":"banner","text":"试试实际运用！","dur":3.4}]},{"scene":"plateau","on":"pos","x":677,"y":586,"w":255,"h":122,"act":[{"kind":"banner","text":"「焰色反应」：粉末放灯上 → 火焰变色！","dur":3.4}]},{"scene":"plateau","on":"open","ref":"d_swCuO","act":[{"kind":"shake","n":5},{"kind":"banner","text":"“烤”出来的 CuO 打开了开关——前进！","dur":2.4}]},{"scene":"well","on":"pos","x":260,"y":660,"w":460,"h":240,"act":[{"kind":"banner","text":"把 Zn 推进盐酸池：Zn + 2HCl → ZnCl₂ + H₂↑\n（产氢！看气泡柱）","dur":3.6}]},{"scene":"well","on":"open","ref":"w_det","act":[{"kind":"shake","n":6},{"kind":"banner","text":"🧪 测验①通过！氢气达标，出口解锁","dur":2.8},{"kind":"fireworks","n":4}]},{"scene":"basin","on":"pos","x":80,"y":480,"w":340,"h":320,"act":[{"kind":"banner","text":"加钠！！","dur":3.6}]},{"scene":"basin","on":"open","ref":"b_det","act":[{"kind":"shake","n":14},{"kind":"banner","text":"轰！\n（看！爆炸还会切断绳子——右边，吊着的块砸下来了）","dur":4.6},{"kind":"fireworks","n":6}]},{"scene":"basin","on":"pos","x":1640,"y":440,"w":380,"h":360,"act":[{"kind":"banner","text":"这个是传送门","dur":3.4}]},{"scene":"plain","on":"pos","x":2130,"y":400,"w":110,"h":340,"act":[{"kind":"goto","scene":"canyon","spawn":{"x":120,"y":808}}]},{"scene":"canyon","on":"pos","x":2220,"y":370,"w":169,"h":333,"act":[{"kind":"goto","scene":"plateau"},{"kind":"fireworks","n":4}]},{"scene":"plateau","on":"pos","x":1806,"y":468,"w":169,"h":290,"act":[{"kind":"goto","scene":"well","spawn":{"x":120,"y":628}}]},{"scene":"well","on":"pos","x":1140,"y":540,"w":120,"h":200,"require":"w_det","act":[{"kind":"goto","scene":"basin","spawn":{"x":120,"y":608}}]},{"on":"pos","act":[{"kind":"banner","text":"搭高时间到！\n你可以向脚下放置沉淀来搭高！","dur":3}],"x":1416,"y":497,"w":117,"h":154,"scene":"canyon"},{"on":"pos","act":[{"kind":"banner","text":"真棒！","dur":3}],"x":1545,"y":543,"w":150,"h":200,"scene":"plain"},{"scene":"canyon","on":"open","ref":"c_swCu","act":[{"kind":"shake","n":5},{"kind":"banner","text":"真棒！继续前进！","dur":2.4},{"kind":"fireworks","n":4}]},{"on":"pos","act":[{"kind":"banner","text":"来段跑酷！","dur":3},{"kind":"fireworks","n":4}],"x":609,"y":515,"w":185,"h":195,"scene":"plain"},{"on":"pos","act":[{"kind":"banner","text":"沉淀能收集，还能放置！","dur":3}],"x":657,"y":495,"w":463,"h":172,"scene":"canyon"},{"on":"pos","act":[{"kind":"banner","text":"沉淀还能放到药品池里！","dur":3}],"x":1062,"y":552,"w":184,"h":138,"scene":"canyon"},{"on":"pos","act":[{"kind":"banner","text":"百米深坑，如何能过？","dur":3}],"x":-84,"y":582,"w":170,"h":157,"scene":"well"},{"on":"pos","scene":"basin","act":[{"kind":"banner","text":"这个是传送门，它可以把你带到别的地方！","dur":3.4}]},{"on":"enter","scene":"temple","act":[{"kind":"banner","text":"欢迎来到传送门的世界！\n传送门是游戏中的重要道具，\n因此我们要用整个章节学它！","dur":2.2},{"kind":"fireworks","n":2}]},{"on":"pos","act":[{"kind":"banner","text":"知识点1——开关传送门！","dur":3}],"x":410,"y":155,"w":386,"h":174,"scene":"temple"},{"on":"pos","act":[{"kind":"banner","text":"知识点2——有限传送门！","dur":3}],"x":1247,"y":480,"w":360,"h":243,"scene":"temple"},{"on":"pos","act":[{"kind":"banner","text":"还有——认识一下——提取器！","dur":3}],"x":1723,"y":84,"w":322,"h":239,"scene":"temple"},{"on":"pos","act":[{"kind":"banner","text":"要通关了！！","dur":3},{"kind":"fireworks","n":12}],"x":708,"y":202,"w":281,"h":181,"scene":"crater"},{"on":"at","act":[{"kind":"banner","text":"嘿！你好！","dur":3}],"scene":"plain","at":0}]}},{"name":"chapters"}];
+const PLUGINS = [{"name":"showtime","cfg":{"plays":[{"scene":"crater","on":"pos","at":0.5,"act":[{"kind":"banner","text":"小测验——自己解决小关卡！\n先鸟瞰看全貌，遇到问题看提示！","dur":2.2}],"x":50,"y":896,"w":292,"h":174},{"scene":"plain","on":"at","at":3,"act":[{"kind":"banner","text":"欢迎来到 Chezzle！","dur":2.2}]},{"scene":"plain","on":"at","at":5.6,"act":[{"kind":"banner","text":"Chezzle是一款化学解谜游戏，\n在每个关卡中，你将作为一块化学物质，\n在关卡中进行各种反应，\n最终得到通关所需物质。","dur":4}]},{"scene":"plain","on":"at","at":9.7,"act":[{"kind":"banner","text":"你可以查看左上角的HUD来查看基本信息，\n如你所见，现在你是一块50g的NaOH。","dur":3.3}]},{"scene":"plain","on":"at","at":13,"act":[{"kind":"banner","text":"在Chezzle，你的质量就是你的“血量”。\n因此——在关卡中探险时要小心，\n除了推进通关，也要保全自己！","dur":3.3}]},{"scene":"plain","on":"at","at":16.6,"act":[{"kind":"banner","text":"现在，让我们通过新手教学来了解一些关卡中的物品\n每个知识点都很重要哦，敲黑板！","dur":3.3}]},{"scene":"plain","on":"pos","x":1850,"y":480,"w":350,"h":320,"act":[{"kind":"banner","text":"这是「开关」，分两种：\n①踩上就开（站上去试试！）\n②要化学物质才开\n踩上去试试！","dur":3.6}]},{"scene":"plain","on":"open","ref":"p_gate_sw","act":[{"kind":"shake","n":5},{"kind":"banner","text":"闸门开了——向右走进入下一部分！","dur":2.4}]},{"scene":"canyon","on":"pos","x":80,"y":520,"w":400,"h":380,"act":[{"kind":"banner","text":"认识一下——这个是药品池！\n跳进去看看会发生什么！","dur":3.4}]},{"scene":"canyon","on":"pos","x":241,"y":561,"w":182,"h":138,"act":[{"kind":"banner","text":"有沉淀——试试收集！","dur":3.2}]},{"scene":"canyon","on":"pos","x":1842,"y":430,"w":334,"h":356,"act":[{"kind":"banner","text":"「冰面」：滑！沉淀放上去会自己溜走——\n在这别想搭高，不信你试试！","dur":3.6}]},{"scene":"plateau","on":"pos","x":40,"y":480,"w":360,"h":320,"act":[{"kind":"banner","text":"新道具——酒精灯！","dur":3.6}]},{"scene":"plateau","on":"pos","x":866,"y":589,"w":155,"h":131,"act":[{"kind":"banner","text":"试试实际运用！","dur":3.4}]},{"scene":"plateau","on":"pos","x":677,"y":586,"w":255,"h":122,"act":[{"kind":"banner","text":"「焰色反应」：粉末放灯上 → 火焰变色！","dur":3.4}]},{"scene":"plateau","on":"open","ref":"d_swCuO","act":[{"kind":"shake","n":5},{"kind":"banner","text":"“烤”出来的 CuO 打开了开关——前进！","dur":2.4}]},{"scene":"well","on":"pos","x":260,"y":660,"w":460,"h":240,"act":[{"kind":"banner","text":"把 Zn 推进盐酸池：Zn + 2HCl → ZnCl₂ + H₂↑\n（产氢！看气泡柱）","dur":3.6}]},{"scene":"well","on":"open","ref":"w_det","act":[{"kind":"shake","n":6},{"kind":"banner","text":"🧪 测验①通过！氢气达标，出口解锁","dur":2.8},{"kind":"fireworks","n":4}]},{"scene":"basin","on":"pos","x":80,"y":480,"w":340,"h":320,"act":[{"kind":"banner","text":"加钠！！","dur":3.6}]},{"scene":"basin","on":"open","ref":"b_det","act":[{"kind":"shake","n":14},{"kind":"banner","text":"轰！\n（看！爆炸还会切断绳子——右边，吊着的块砸下来了）","dur":4.6},{"kind":"fireworks","n":6}]},{"scene":"basin","on":"pos","x":1640,"y":440,"w":380,"h":360,"act":[{"kind":"banner","text":"这个是传送门","dur":3.4}]},{"scene":"plain","on":"pos","x":2130,"y":400,"w":110,"h":340,"act":[{"kind":"goto","scene":"canyon","spawn":{"x":120,"y":808}}]},{"scene":"canyon","on":"pos","x":2220,"y":370,"w":169,"h":333,"act":[{"kind":"goto","scene":"plateau"},{"kind":"fireworks","n":4}]},{"scene":"plateau","on":"pos","x":1806,"y":468,"w":169,"h":290,"act":[{"kind":"goto","scene":"well","spawn":{"x":120,"y":628}}]},{"scene":"well","on":"pos","x":1140,"y":540,"w":120,"h":200,"require":"w_det","act":[{"kind":"goto","scene":"basin","spawn":{"x":120,"y":608}}]},{"on":"pos","act":[{"kind":"banner","text":"搭高时间到！\n你可以向脚下放置沉淀来搭高！","dur":3}],"x":1416,"y":497,"w":117,"h":154,"scene":"canyon"},{"on":"pos","act":[{"kind":"banner","text":"真棒！","dur":3}],"x":1545,"y":543,"w":150,"h":200,"scene":"plain"},{"scene":"canyon","on":"open","ref":"c_swCu","act":[{"kind":"shake","n":5},{"kind":"banner","text":"真棒！继续前进！","dur":2.4},{"kind":"fireworks","n":4}]},{"on":"pos","act":[{"kind":"banner","text":"来段跑酷！","dur":3},{"kind":"fireworks","n":4}],"x":609,"y":515,"w":185,"h":195,"scene":"plain"},{"on":"pos","act":[{"kind":"banner","text":"沉淀能收集，还能放置！","dur":3}],"x":657,"y":495,"w":463,"h":172,"scene":"canyon"},{"on":"pos","act":[{"kind":"banner","text":"沉淀还能放到药品池里！","dur":3}],"x":1062,"y":552,"w":184,"h":138,"scene":"canyon"},{"on":"pos","act":[{"kind":"banner","text":"百米深坑，如何能过？","dur":3}],"x":-84,"y":582,"w":170,"h":157,"scene":"well"},{"on":"pos","scene":"basin","act":[{"kind":"banner","text":"这个是传送门，它可以把你带到别的地方！","dur":3.4}]},{"on":"enter","scene":"temple","act":[{"kind":"banner","text":"欢迎来到传送门的世界！\n传送门是游戏中的重要道具，\n因此我们要用整个章节学它！","dur":2.2},{"kind":"fireworks","n":2}]},{"on":"pos","act":[{"kind":"banner","text":"知识点1——开关传送门！","dur":3}],"x":410,"y":155,"w":386,"h":174,"scene":"temple"},{"on":"pos","act":[{"kind":"banner","text":"知识点2——有限传送门！","dur":3}],"x":1247,"y":480,"w":360,"h":243,"scene":"temple"},{"on":"pos","act":[{"kind":"banner","text":"还有——认识一下——提取器！","dur":3}],"x":1723,"y":84,"w":322,"h":239,"scene":"temple"},{"on":"pos","act":[{"kind":"banner","text":"要通关了！！","dur":3},{"kind":"fireworks","n":12}],"x":708,"y":202,"w":281,"h":181,"scene":"crater"},{"on":"at","act":[{"kind":"banner","text":"嘿！你好！","dur":3}],"scene":"plain","at":0},{"on":"at","act":[{"kind":"banner","text":"先来学如何移动！\n电脑端通过A/D左右移动，\n移动端通过左下角的摇杆移动。\n试一试！","dur":3}],"at":20,"scene":"plain"}]}},{"name":"chapters"}];
 const M = new Chezzle.Multiscene(canvas, { plugins: PLUGINS });
 for (const p of PLUGINS) if (p.cfg && typeof p.cfg === "object") p.cfg.M = () => M;
 M.scene("plain", { worldW: 3000, worldH: 800 })
@@ -1000,11 +1014,13 @@ M.scene("plain", { worldW: 3000, worldH: 800 })
   .sign(1883, 620, '每个开关通常会对应一些变化\n——比如这里是墙壁消失！', { id: 'p_gate_s' })
   .sign(634, 536, '会动了？来段简单的小跑酷！', { id: 'sign1' })
   .floor(792, 622, 195, 50, { id: 'floor1' })
-  .floor(1039, 540, 174, 56, { id: 'floor2' })
-  .floor(1380, 617, 121, 61, { id: 'floor3' })
-  .floor(1509, 720, 814, 122, { id: 'floor4' })
-  .sign(2179, 576, '走到这里传送至下一章节~', { id: 'sign2' })
-  .floor(414, 701, 356, 126, { id: 'floor5' })
+  .floor(1055, 538, 174, 56, { id: 'floor2' })
+  .floor(1362, 615, 121, 61, { id: 'floor3' })
+  .floor(1509, 719, 814, 122, { id: 'floor4' })
+  .sign(2178, 492, '走到这里传送至下一部分~', { id: 'sign2' })
+  .floor(414, 700, 356, 126, { id: 'floor5' })
+  .checkpoint(2144, 579, 232, 192, { id: 'checkpoint1' })
+  .sign(2266, 534, '这个黄色的小箭头是“存档点“！\n走到它下面就能自动存档，\n之后死了可以从这里重来！', { id: 'sign3' })
 ;
 M.scene("canyon", { worldW: 3000, worldH: 800 })
   .floor(25, 638, 228, 150, { id: 'c_l0' })
@@ -1027,7 +1043,8 @@ M.scene("canyon", { worldW: 3000, worldH: 800 })
   .sign(785, 474, '沉淀能捡起来，还能放回地上！\n放沉淀分两步：\n首先，点击下方的物品栏对应格子，来选中要放置的物品。\n然后，试着按下shift或移动端的“放置”键~', { id: 'sign3' })
   .pool(1123, 643, 167, 63, { volume: 550, solutes: {"HCl":50}, id: 'pool1' })
   .sign(1174, 548, '沉淀还可以放到药品池里——在池子附近放置沉淀试试看！\n自己别掉进去啦——这可是盐酸！', { id: 'sign4' })
-  .sign(2250, 449, '走到这里进入下一章！', { id: 'sign5' })
+  .sign(2250, 449, '走到这里进入下一部分！', { id: 'sign5' })
+  .checkpoint(2173, 507, 240, 135, { id: 'checkpoint1' })
 ;
 M.scene("plateau", { worldW: 2200, worldH: 800 })
   .floor(-16, 693, 1996, 130, { id: 'd_floor' })
@@ -1048,28 +1065,30 @@ M.scene("plateau", { worldW: 2200, worldH: 800 })
   .player(18, 597, { substance: 'NaOH', mass: 30, id: 'player1' })
   .sign(773, 520, '想一想，为什么这些火焰颜色不一样？', { id: 'sign1' })
   .sign(1024, 478, '灯上可以放物质，和前面的放置方法是一样的\n——还记得怎么放置吗？', { id: 'sign2' })
-  .sign(1813, 522, '下一关！', { id: 'sign3' })
+  .sign(1813, 522, '下一部分！', { id: 'sign3' })
   .blastlamp(1393, 648, { autoOn: false, highTemp: true, id: 'blastlamp1' })
   .sign(1362, 441, '还有——这个是“酒精喷灯”，\n它和酒精灯大致相同，\n但是它提供的是“高温”的条件。\n试着用它和碳把氧化铜还原成铜！', { id: 'sign4' })
   .switch(1307, 667, { mode: 'pressure', igniteId: 'blastlamp1', extinguishId: 'blastlamp1', id: 'switch1' })
+  .checkpoint(1724, 574, 287, 140, { id: 'checkpoint1' })
 ;
-M.scene("well", { worldW: 1200, worldH: 900 })
-  .floor(-60, 720, 480, 130, { id: 'w_l0' })
-  .floor(720, 720, 540, 130, { id: 'w_l1' })
-  .floor(702, 140, 18, 580, { id: 'w_wall_r' })
-  .block(209, 642, { substance: 'Zn', w: 265, h: 70, noLift: true, id: 'w_zn' })
-  .pool(407, 820, 319, 46, { volume: 1700, solutes: {"HCl":80}, gasHeight: 1400, id: 'w_hcl' })
-  .sign(-119, 532, '前方是「百米深坑」——怎么过去？', { id: 'w_s0' })
-  .sign(435, 669, 'Zn + 2HCl → ZnCl₂ + H₂↑（产氢！看气泡柱）', { id: 'w_s2' })
-  .sign(447, 498, '站上「气泡柱」：氢气比你轻，它背着你飞！\n（托你回地面）', { id: 'w_s3' })
-  .gasdetector(809, 698, { gas: 'H2', threshold: 0.15, deleteId: 'w_gwall', id: 'w_det' })
-  .floor(1128, 540, 16, 180, { id: 'w_gwall' })
-  .sign(763, 469, '这个是【气体传感器】！\n气体传感器也是一种开关，\n但是不需要手动开启。\n当附近的反应产生了与之对应的气体，\n它就会自动开启。\n它写着 H₂ > 0.25g——氢气超 0.25 克它就亮。\n你刚刚产生了氢气，因此它开了！', { id: 'w_s4' })
-  .sign(1179, 562, '走到这里前往下一章！', { id: 'w_s6' })
-  .player(-30, 630, { substance: 'NaOH', mass: 30, id: 'player1' })
-  .sign(113, 476, '介绍新玩法——气泡柱！\n当反应生成气体时，气泡柱就会出现！', { id: 'sign1' })
-  .sign(108, 545, '气泡柱是有方向的，向上的气泡柱能够把你向上托举！\n气泡柱的方向，取决于气体的密度——\n密度小于空气则向上，反之则向下！', { id: 'sign2' })
-  .sign(99, 638, '这里有Zn块——试试把它【推】到下面的盐酸池中！', { id: 'sign3' })
+M.scene("well", { worldW: 1500, worldH: 900 })
+  .floor(108, 721, 480, 130, { id: 'w_l0' })
+  .floor(888, 721, 540, 130, { id: 'w_l1' })
+  .floor(870, 141, 18, 580, { id: 'w_wall_r' })
+  .block(377, 643, { substance: 'Zn', w: 265, h: 70, noLift: true, id: 'w_zn' })
+  .pool(575, 821, 319, 46, { volume: 1700, solutes: {"HCl":80}, gasHeight: 1400, id: 'w_hcl' })
+  .sign(49, 533, '前方是「百米深坑」——怎么过去？', { id: 'w_s0' })
+  .sign(603, 670, 'Zn + 2HCl → ZnCl₂ + H₂↑（产氢！看气泡柱）', { id: 'w_s2' })
+  .sign(615, 499, '站上「气泡柱」：氢气比你轻，它背着你飞！\n（托你回地面）', { id: 'w_s3' })
+  .gasdetector(977, 699, { gas: 'H2', threshold: 0.15, deleteId: 'w_gwall', id: 'w_det' })
+  .floor(1296, 541, 16, 180, { id: 'w_gwall' })
+  .sign(931, 470, '这个是【气体传感器】！\n气体传感器也是一种开关，\n但是不需要手动开启。\n当附近的反应产生了与之对应的气体，\n它就会自动开启。\n它写着 H₂ > 0.25g——氢气超 0.25 克它就亮。\n你刚刚产生了氢气，因此它开了！', { id: 'w_s4' })
+  .sign(1347, 563, '走到这里前往下一部分！', { id: 'w_s6' })
+  .player(138, 631, { substance: 'NaOH', mass: 30, id: 'player1' })
+  .sign(281, 477, '介绍新玩法——气泡柱！\n当反应生成气体时，气泡柱就会出现！', { id: 'sign1' })
+  .sign(276, 546, '气泡柱是有方向的，向上的气泡柱能够把你向上托举！\n气泡柱的方向，取决于气体的密度——\n密度小于空气则向上，反之则向下！', { id: 'sign2' })
+  .sign(267, 639, '这里有Zn块——试试把它【推】到下面的盐酸池中！', { id: 'sign3' })
+  .checkpoint(1267, 608, 229, 147, { id: 'checkpoint2' })
 ;
 M.scene("basin", { worldW: 3000, worldH: 800 })
   .floor(246, 700, 392, 130, { id: 'b_floor' })
@@ -1086,6 +1105,7 @@ M.scene("basin", { worldW: 3000, worldH: 800 })
   .block(954, 481, { substance: 'Cu', w: 45, h: 45, id: 'block1' })
   .block(958, 582, { substance: 'Fe', w: 40, h: 40, id: 'block2' })
   .sign(1217, 522, '还记得这个是什么吗？\n在这里，它用来开启后面的传送门！', { id: 'sign1' })
+  .checkpoint(1346, 608, 244, 174, { id: 'checkpoint1' })
 ;
 M.scene("temple", { worldW: 3600, worldH: 800 })
   .floor(5, 652, 417, 161, { id: 'floor1' })
@@ -1126,6 +1146,7 @@ M.scene("temple", { worldW: 3600, worldH: 800 })
   .switch(2941, 431, { mode: 'chemical', opening: 'Na2SO4', and: 'switch5', id: 'switch4' })
   .switch(3042, 430, { mode: 'chemical', opening: 'Cu(OH)2', openId: 'portal10', id: 'switch5' })
   .portal(3358, 386, { w: 44, h: 64, color: '#bff42f', switchId: 'switch5', group: 'g5314', clearInventory: true, id: 'portal10' })
+  .checkpoint(3201, 345, 169, 135, { id: 'checkpoint1' })
 ;
 M.scene("crater", { worldW: 1500, worldH: 1150 })
   .floor(-2, 1052, 510, 113, { id: 'floor1' })
@@ -1150,6 +1171,7 @@ M.scene("crater", { worldW: 1500, worldH: 1150 })
   .sign(467, 221, '最后的最后——还有一个点没教哦！\nChezzle的通关方式很简单，\n需要你到达通关点，\n然后向右边的钥匙中，放入所需\n的通关物质\n然后旁边的大门就会打开，\n走进去就好啦！', { id: 'sign3' })
   .sign(977, 271, '恭喜通关！！\n之后，你就需要自己通关后续的关卡了，\n祝你的化学之路一路顺畅！', { id: 'sign4' })
   .sign(245, 964, '这里有一个好习惯：\n行动之前，先点击鸟瞰按钮，\n看清关卡全貌，构思通关路径！', { id: 'sign5' })
+  .checkpoint(590, 422, 116, 125, { id: 'checkpoint1' })
   .player(253, 1012, { substance: 'NaOH', mass: 30, id: 'auto_player' })
   .tips([
     { text: "观察到有一个压力提取器，肯定要从溶液中提取物质。\n注意到关卡最终通关的钥匙需要填充NaCl，\n而整个关卡只有NaOH和HCl反应能够得到NaCl，\n因此思路就明确了：玩家自身和HCl反应\n得到氯化钠，之后通过\n提取器提取出来备用！\n（注意反应的量哦，不要把自己反应完了）", when: {"mode":"and","items":[{"type":"pos","x":-55,"y":861,"w":1126,"h":308},{"type":"inv","x":0,"y":0,"w":200,"h":120,"item":"NaCl","has":false}]}},
@@ -1166,18 +1188,26 @@ M.byId("plain", "p_floor").appearDelay = 5.5; // 延迟出现
 M.byId("plain", "p_floor").appearFade = 0.5;
 M.byId("plain", "player1").appearDelay = 5.5; // 延迟出现
 M.byId("plain", "player1").appearFade = 0.5;
-M.byId("plain", "p_s0").appearDelay = 15.3; // 延迟出现
+M.byId("plain", "p_s0").appearDelay = 20; // 延迟出现
 M.byId("plain", "p_s0").appearFade = 0.5;
-M.byId("plain", "sign1").appearDelay = 15.9; // 延迟出现
+M.byId("plain", "p_sw").appearDelay = 21.2; // 延迟出现
+M.byId("plain", "p_gate_sw").appearDelay = 21.2; // 延迟出现
+M.byId("plain", "p_wall").appearDelay = 21.2; // 延迟出现
+M.byId("plain", "p_gate_s").appearDelay = 21.2; // 延迟出现
+M.byId("plain", "sign1").appearDelay = 20.4; // 延迟出现
 M.byId("plain", "sign1").appearFade = 0.5;
-M.byId("plain", "floor1").appearDelay = 16.2; // 延迟出现
+M.byId("plain", "floor1").appearDelay = 20.6; // 延迟出现
 M.byId("plain", "floor1").appearFade = 0.5;
-M.byId("plain", "floor2").appearDelay = 16.5; // 延迟出现
+M.byId("plain", "floor2").appearDelay = 20.8; // 延迟出现
 M.byId("plain", "floor2").appearFade = 0.5;
-M.byId("plain", "floor3").appearDelay = 16.5; // 延迟出现
+M.byId("plain", "floor3").appearDelay = 21; // 延迟出现
 M.byId("plain", "floor3").appearFade = 0.5;
-M.byId("plain", "floor5").appearDelay = 15.6; // 延迟出现
+M.byId("plain", "floor4").appearDelay = 21.2; // 延迟出现
+M.byId("plain", "sign2").appearDelay = 21.2; // 延迟出现
+M.byId("plain", "floor5").appearDelay = 20.2; // 延迟出现
 M.byId("plain", "floor5").appearFade = 0.5;
+M.byId("plain", "checkpoint1").appearDelay = 21.2; // 延迟出现
+M.byId("plain", "sign3").appearDelay = 21.2; // 延迟出现
 M.byName("plain").atmosphere.preset({});
 M.byName("canyon").atmosphere.preset({"O2":18});
 M.byId("plateau", "d_l2").addPrecipitate('KCl', 5);

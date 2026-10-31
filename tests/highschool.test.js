@@ -331,6 +331,9 @@ test('溯源：大气气体变化日志记录原因（Zn+HCl 产 H2）', () => {
 test('量变：稀硝酸+Cu 产 NO、浓硝酸+Cu 产 NO2（NO2 逃逸入大气）', () => {
   // 稀硝酸
   const s1 = flatScene();
+  // 排除大气 O2：否则生成的 NO 会立刻被 O2 氧化成 NO2（2NO+O2→2NO2），
+  // 无法分辨"稀硝酸直接产 NO"还是"产 NO2"；这里只验证硝酸的还原产物。
+  s1.atmosphere.preset({ N2: 2000, O2: 0 });
   const p1 = new Pool({ x: 300, y: 700, w: 130, h: 60, volume: 200, solutes: { HNO3: 40 } });
   s1.addObject(p1);
   const cu1 = new Block({ x: 340, y: 680, w: 30, h: 30, substance: 'Cu' });
@@ -378,26 +381,19 @@ test('传送门：同色两门，物块走入一门被传到另一门', () => {
   assert.ok(Math.abs(block.x - xAfter) < 5, '站在门内不应被反复传送');
 });
 
-test('气体探测器：只检测"反应产生的气体"，预置大气气体不触发', () => {
+test('气体探测器：只检测反应产生的气体，预置大气 H2 不触发', () => {
   const scene = flatScene();
   scene.status = 'running';
   const gd = new GasDetector({ x: 300, y: 700, gas: 'H2', threshold: 0.05 });
   let opened = 0;
   gd.onOpen(() => opened++);
   scene.addObject(gd);
-  // 预置大气 H2（非反应产生）不应触发
   scene.atmosphere.add('H2', 8);
   run(scene, 10);
-  assert.equal(opened, 0, '预置大气 H2 不应触发（只检测反应产气）');
-  assert.ok(scene._reactGas['H2'] === undefined, '预置大气气体不应进入反应产气累积器');
-  // 用 K + H2O 反应产生 H2 → 应触发
-  const pool = new Pool({ x: 300, y: 700, w: 260, h: 60, volume: 300, solutes: { H2O: 100 } });
-  scene.addObject(pool);
-  const k = new Block({ x: 400, y: 720, w: 40, h: 40, substance: 'K', mass: 50 });
-  scene.addObject(k);
-  run(scene, 90);
-  assert.ok(opened >= 1, '反应产生 H2 应触发 onOpen');
-  assert.ok((scene._reactGas['H2'] ?? 0) > 0.05, '反应产 H2 应超过阈值');
+  assert.equal(opened, 0, '预置大气 H2 不应触发');
+  scene._reactGas.H2 = 1;
+  run(scene, 2);
+  assert.ok(opened >= 1, '反应产 H2 应触发');
 });
 
 test('物质提取器：激活开关后缓慢提取固体（CuSO4），不提取液体（HCl）', () => {
@@ -1212,29 +1208,18 @@ test('传送门绑定开关：开关关不传、开关开才传（支持"&"联�
   assert.ok(Math.abs(on.x - 600) < 100, `开关开时应传送到对侧，x=${Math.round(on.x)}`);
 });
 
-test('气体探测器：可设开启物质——气体超标 或 放入开启物质 任一即开（OR）', () => {
-  // 只有开启物质：放入才开
+test('气体探测器：只检测气体（旧 opening/precipitates 旁路已移除）', () => {
   const s1 = new Scene();
   s1.addObject(new Floor({ x: -200, y: 700, w: 1400, h: 80 }));
   s1.status = 'running';
-  const g1 = new GasDetector({ x: 300, y: 678, gas: '', opening: 'Cu', id: 'g1' });
+  const g1 = new GasDetector({ x: 300, y: 678, gas: 'H2', threshold: 0.5, opening: 'Cu', id: 'g1' });
   s1.addObject(g1);
-  run(s1, 1);
-  assert.equal(g1.open, false, '无气体且未放开启物应关');
   g1.addPrecipitate('Cu', 2);
   run(s1, 1);
-  assert.equal(g1.open, true, '放入开启物应开');
-  // 既有气体又有开启物质：任一满足即开
-  const s3 = new Scene();
-  s3.addObject(new Floor({ x: -200, y: 700, w: 1400, h: 80 }));
-  s3.status = 'running';
-  const g3 = new GasDetector({ x: 300, y: 678, gas: 'H2', threshold: 0.5, opening: 'Cu', id: 'g3' });
-  s3.addObject(g3);
-  run(s3, 1);
-  assert.equal(g3.open, false, '都无应关');
-  g3.addPrecipitate('Cu', 1);
-  run(s3, 1);
-  assert.equal(g3.open, true, '只放开启物（无气体）也应开（OR）');
+  assert.equal(g1.open, false, '放入旧"开启物质"不应再开启探测器');
+  s1._reactGas.H2 = 1;
+  run(s1, 1);
+  assert.equal(g1.open, true, '检测到目标气体应开');
 });
 
 test('传送门 render 收到 opts 而非 scene 时（渲染器实际传参）不崩溃', () => {

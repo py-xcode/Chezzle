@@ -54,7 +54,7 @@ export class Container extends Obj {
     for (const [id, mass] of this.solution.solutes) {
       if (mass >= MIN_ENTRY) {
         // 酸类标注浓/稀（阈值：≥300 g/L = 浓，与引擎"浓酸"判定一致——MnO2+浓盐酸制氯气等）
-        const c = acidLabelOf(id, mass, this.solution.volume / 1000);
+        const c = acidLabelOf(id, mass, this.solution.liquidVolume() / 1000);
         // 显示名：指示剂（酚酞/石蕊）显示中文名，其余显示化学式
         parts.push(c ? `${displayName(id)}(${c})` : displayName(id)); // 微量溶质不显示化学式（防"出现/消失"闪烁）
       }
@@ -195,10 +195,16 @@ export class Container extends Obj {
     return { x: this.x, y: this.y, w: this.w, h: this.h };
   }
 
-  /** 物体是否在容器内 */
+  /** 物体是否在容器内。
+   *  玩家额外要求**真正踏入**内区：只擦到池边/池沿 1~5px 不算浸入，避免跳过药品池
+   *  时被判定成与池液反应（玩家宽 85px，贴边擦过的接触面积和真正落进池里不同）。
+   *  其他物体（物块/沉淀）保持原语义，避免影响原本的溶解/反应。 */
   containsObj(obj) {
     const r = this.innerRect();
-    return obj.right > r.x && obj.left < r.x + r.w && obj.bottom > r.y && obj.top < r.y + r.h;
+    const hOverlap = Math.min(obj.right - r.x, r.x + r.w - obj.left);
+    const vOverlap = Math.min(obj.bottom - r.y, r.y + r.h - obj.top);
+    const minPen = obj && obj.isPlayerObj ? 6 : 0;
+    return hOverlap > minPen && vOverlap > minPen;
   }
 
   /**

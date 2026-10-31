@@ -25,6 +25,66 @@
       if (e && e.persisted) location.reload();
     });
   } catch (e) { /* 老内核 */ }
+  // 桌面端禁用右键菜单（游戏内右键无用途；菜单弹出会吞 keyup / 打断拖拽）
+  try {
+    document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  } catch (e) { /* 老内核 */ }
+  // ---------------------------------------------------------------------------
+  // 竖屏强制横屏（触屏设备）
+  // ---------------------------------------------------------------------------
+  // 关卡本体是 canvas 铺满窗口 + DOM 悬浮按钮（返回选关/报告等），HUD 里那层"请旋转设备"
+  // 只是画在 canvas 上的，盖不住 DOM 按钮 → 竖屏时"部分内容显示不正确"。
+  // 这里用真正的 DOM 全屏遮罩盖住整页，并在模拟主循环里暂停推进；转成横屏后自动消失。
+  // 放在 SPA 提前 return 之前：外壳 iframe 里的关卡页同样生效。
+  (function () {
+    var touch = false;
+    try {
+      touch = matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints || 0) > 0;
+    } catch (e) { touch = false; }
+    if (!touch) return;
+    var style = document.createElement('style');
+    style.id = 'czl-rot-gate-style';
+    style.textContent = [
+      '#czlRotGate{position:fixed;inset:0;z-index:4000;display:none;align-items:center;justify-content:center;',
+      '  flex-direction:column;gap:0;background:radial-gradient(720px 560px at 50% 42%,rgba(232,184,75,.12),transparent 64%),',
+      '  radial-gradient(1400px 900px at 50% 112%,rgba(20,14,64,.92),#07051a 64%),#07051a;',
+      '  color:#dfe8f2;font-family:"Segoe UI","Microsoft YaHei",sans-serif;text-align:center;',
+      '  touch-action:none;-webkit-user-select:none;user-select:none;opacity:0;transition:opacity .28s ease}',
+      '#czlRotGate.show{display:flex;opacity:1}',
+      '#czlRotGate .phone{width:132px;height:132px;margin-bottom:20px;filter:drop-shadow(0 0 22px rgba(232,184,75,.28))}',
+      '#czlRotGate b{font-size:26px;letter-spacing:8px;color:#ffd76a;text-shadow:0 0 20px rgba(232,184,75,.5);padding-left:8px}',
+      '#czlRotGate span{margin-top:12px;font-size:13.5px;letter-spacing:1.5px;color:#9fb2c8}',
+      '#czlRotGate .kicker{margin-bottom:10px;font:bold 10px/1 ui-monospace,Consolas,monospace;letter-spacing:5px;color:rgba(232,184,75,.6)}',
+      '@media (prefers-reduced-motion:reduce){#czlRotGate{transition:none}}',
+    ].join('\n');
+    (document.head || document.documentElement).appendChild(style);
+    var gate = document.createElement('div');
+    gate.id = 'czlRotGate';
+    gate.setAttribute('role', 'dialog');
+    gate.setAttribute('aria-modal', 'true');
+    gate.setAttribute('aria-label', '请横屏游玩');
+    gate.innerHTML =
+      '<div class="kicker">CHEZZLE</div>' +
+      '<svg class="phone" viewBox="0 0 132 132" fill="none" aria-hidden="true">' +
+      '  <rect x="48" y="24" width="36" height="72" rx="8" stroke="#e8b84b" stroke-width="3.2"/>' +
+      '  <path d="M60 34h12" stroke="#e8b84b" stroke-width="2.6" stroke-linecap="round"/>' +
+      '  <path d="M26 66a40 40 0 0 1 20-34.6" stroke="#ffd76a" stroke-width="5" stroke-linecap="round"/>' +
+      '  <path d="M20 58l6.5 8.5 9-3" stroke="#ffd76a" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '  <path d="M106 66a40 40 0 0 1-20 34.6" stroke="#ffd76a" stroke-width="5" stroke-linecap="round"/>' +
+      '  <path d="M112 74l-6.5-8.5-9 3" stroke="#ffd76a" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>' +
+      '</svg>' +
+      '<b>请横屏游玩</b>' +
+      '<span>把设备横过来，画面会自动继续</span>';
+    (document.body || document.documentElement).appendChild(gate);
+    var sync = function () {
+      var portrait = window.innerHeight > window.innerWidth;
+      gate.classList.toggle('show', portrait);
+      window.__CZ_LANDSCAPE_BLOCKED = portrait;
+    };
+    sync();
+    window.addEventListener('resize', sync);
+    window.addEventListener('orientationchange', function () { setTimeout(sync, 160); });
+  })();
   // SPA 外壳内嵌模式（?spa=1）：外壳负责加载层/转场；这里不再铺第二层启动画面，
   // 也不隐藏画布（iframe 本来就要等 load 之后才被外壳揭开），避免"双层加载动画"。
   try {

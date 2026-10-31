@@ -8,6 +8,7 @@ import { Obj } from '../src/objects/obj.js';
 import { CFG } from '../src/core/config.js';
 import { Player } from '../src/objects/player.js';
 import { Floor } from '../src/objects/floor.js';
+import { Block } from '../src/objects/block.js';
 
 const TICK = 1 / 30;
 
@@ -326,4 +327,57 @@ test('官方插件 liveSign（组件）：create 出真实对象 + origin', () =
   assert.equal(o.origin.kind, 'plugin');
   // 不挡人（solid=false）
   assert.equal(o.solid, false);
+});
+
+test('官方插件 showtime：存档回档后“走到区域→切场景”的出口可再次传送', () => {
+  loadFilePlugin('showtime.js');
+  const s = makeScene();
+  const p = { x: 50, y: 50, w: 20, h: 20, hidden: false };
+  s.player = p;
+  let switches = 0;
+  const M = { scenes: new Map([['plain', { scene: s }]]), switchTo: () => { switches++; } };
+  const plays = [{ scene: 'plain', on: 'pos', x: 0, y: 0, w: 200, h: 200, act: [{ kind: 'goto', scene: 'next' }] }];
+  const cleanup = Plugins.call('showtime', s, { M, plays });
+  assert.equal(typeof cleanup, 'function');
+  stepN(s, 8); // 初次进入区域 → 传送一次
+  assert.equal(switches, 1, '初次进入区域应触发 goto');
+  // 模拟存档回档：s.fire('checkpointRestored') 后玩家重新进入同一区域
+  s.fire('checkpointRestored');
+  stepN(s, 8);
+  assert.equal(switches, 2, '回档后同一出口触发器应重新武装，可再次传送');
+  cleanup();
+});
+
+test('官方插件 destroyer（组件）：拾取后按自定义键把最近物块打碎成沉淀', () => {
+  loadFilePlugin('destroyer.js');
+  const comps = Plugins.components().filter((c) => c.type === 'destroyer');
+  assert.equal(comps.length, 1);
+  assert.equal(comps[0].label, '破坏者');
+  const s = makeScene();
+  const p = new Player({ x: 0, y: 0, substance: 'NaOH', mass: 30, id: 'p' });
+  s.addObject(p);
+  s.player = p;
+  const item = Plugins.create('destroyer', { x: 10, y: 10, key: 'KeyF', radius: 200, id: 'd1' });
+  assert.equal(item.isCarryItem, 'destroyer');
+  assert.equal(item.origin.kind, 'plugin');
+  s.addObject(item);
+  p.inventory.slots[0] = { item: 'destroyer', obj: item };
+  const block = new Block({ x: 120, y: 0, w: 40, h: 40, substance: 'Fe', mass: 10, id: 'b1' });
+  s.addObject(block);
+  const block2 = new Block({ x: 320, y: 0, w: 40, h: 40, substance: 'Fe', mass: 10, id: 'b2' });
+  s.addObject(block2);
+  const cleanup = Plugins.call('destroyer', s, {});
+  assert.equal(typeof cleanup, 'function');
+  const before = block.grid.totalMass();
+  let pd = false;
+  s._fireKey('down', { code: 'KeyF', repeat: false, preventDefault: () => { pd = true; }, cancelable: true });
+  assert.ok(pd, '自定义键应被插件处理');
+  assert.ok(!s.byId.b1 && !s.objects.includes(block), '最近物块应被移除');
+  assert.equal(p.inventory.slots[0], null, '破坏者使用一次后应从物品栏消失');
+  const after = s.particles.reduce((a, q) => a + (q.amount || 0), 0);
+  assert.ok(Math.abs(after - before) < 0.11, `质量应转成沉淀：${before} → ${after}`);
+  // 已消失：再按一次不会破坏第二个物块
+  s._fireKey('down', { code: 'KeyF', repeat: false, preventDefault: () => {}, cancelable: true });
+  assert.ok(s.byId.b2 && s.objects.includes(block2), '一次性物品用完后不能再破坏物块');
+  cleanup();
 });

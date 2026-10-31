@@ -177,44 +177,44 @@
           "act": [
             {
               "kind": "banner",
-              "text": "在Chezzle，你就是一团化学物质\n比如现在是一块 50 克的氢氧化钠",
-              "dur": 3
+              "text": "Chezzle是一款化学解谜游戏，\n在每个关卡中，你将作为一块化学物质，\n在关卡中进行各种反应，\n最终得到通关所需物质。",
+              "dur": 4
             }
           ]
         },
         {
           "scene": "plain",
           "on": "at",
-          "at": 9,
+          "at": 9.7,
           "act": [
             {
               "kind": "banner",
-              "text": "每个关都要：跋山涉水，保全自己（别让自己被反应完了）\n收集通关要用的物质，放入“钥匙”，走进传送门就能通关啦",
-              "dur": 3.2
+              "text": "你可以查看左上角的HUD来查看基本信息，\n如你所见，现在你是一块50g的NaOH。",
+              "dur": 3.3
             }
           ]
         },
         {
           "scene": "plain",
           "on": "at",
-          "at": 12.6,
+          "at": 13,
           "act": [
             {
               "kind": "banner",
-              "text": "如果你不小心把自己反应完了——嘿嘿，一切重来吧",
-              "dur": 2.6
+              "text": "在Chezzle，你的质量就是你的“血量”。\n因此——在关卡中探险时要小心，\n除了推进通关，也要保全自己！",
+              "dur": 3.3
             }
           ]
         },
         {
           "scene": "plain",
           "on": "at",
-          "at": 15.6,
+          "at": 16.6,
           "act": [
             {
               "kind": "banner",
-              "text": "电脑端 A / D 移动 · 空格跳跃\n移动端通过左下角半圆盘移动",
-              "dur": 2.8
+              "text": "现在，让我们通过新手教学来了解一些关卡中的物品\n每个知识点都很重要哦，敲黑板！",
+              "dur": 3.3
             }
           ]
         },
@@ -244,7 +244,7 @@
             },
             {
               "kind": "banner",
-              "text": "闸门开了——向右走进入下一关！",
+              "text": "闸门开了——向右走进入下一部分！",
               "dur": 2.4
             }
           ]
@@ -728,6 +728,18 @@
           ],
           "scene": "plain",
           "at": 0
+        },
+        {
+          "on": "at",
+          "act": [
+            {
+              "kind": "banner",
+              "text": "先来学如何移动！\n电脑端通过A/D左右移动，\n移动端通过左下角的摇杆移动。\n试一试！",
+              "dur": 3
+            }
+          ],
+          "at": 20,
+          "scene": "plain"
         }
       ]
     },
@@ -775,7 +787,7 @@
                   "y": 497,
                   "text": "A / D 移动 · 空格跳跃\n移动端使用左下角圆盘移动\n先往右走走，感受一下脚步",
                   "id": "p_s0",
-                  "appearDelay": 15.3,
+                  "appearDelay": 20,
                   "appearFade": 0.5
                 }
               },
@@ -785,7 +797,8 @@
                   "x": 1800,
                   "y": 492,
                   "text": "这是「开关」，分成两类：\n①踩上就开——现在这种写了“压力”的（站上去试试）\n②需要化学物质才能开\n（这种会在开关上标注用于开启的物质）\n跳上去踩一下试试！",
-                  "id": "p_sw"
+                  "id": "p_sw",
+                  "appearDelay": 21.2
                 }
               },
               {
@@ -802,7 +815,8 @@
                   "extinguishId": null,
                   "openId": null,
                   "id": "p_gate_sw",
-                  "precipitates": {}
+                  "precipitates": {},
+                  "appearDelay": 21.2
                 }
               },
               {
@@ -813,7 +827,8 @@
                   "w": 16,
                   "h": 260,
                   "ice": false,
-                  "id": "p_wall"
+                  "id": "p_wall",
+                  "appearDelay": 21.2
                 }
               },
               {
@@ -822,7 +837,8 @@
                   "x": 1883,
                   "y": 620,
                   "text": "每个开关通常会对应一些变化\n——比如这里是墙壁消失！",
-                  "id": "p_gate_s"
+                  "id": "p_gate_s",
+                  "appearDelay": 21.2
                 }
               },
               {
@@ -832,7 +848,7 @@
                   "y": 536,
                   "text": "会动了？来段简单的小跑酷！",
                   "id": "sign1",
-                  "appearDelay": 15.9,
+                  "appearDelay": 20.4,
                   "appearFade": 0.5
                 }
               },
@@ -845,33 +861,33 @@
                   "h": 50,
                   "ice": false,
                   "id": "floor1",
-                  "appearDelay": 16.2,
+                  "appearDelay": 20.6,
                   "appearFade": 0.5
                 }
               },
               {
                 "type": "floor",
                 "opts": {
-                  "x": 1039,
-                  "y": 540,
+                  "x": 1055,
+                  "y": 538,
                   "w": 174,
                   "h": 56,
                   "ice": false,
                   "id": "floor2",
-                  "appearDelay": 16.5,
+                  "appearDelay": 20.8,
                   "appearFade": 0.5
                 }
               },
               {
                 "type": "floor",
                 "opts": {
-                  "x": 1380,
-                  "y": 617,
+                  "x": 1362,
+                  "y": 615,
                   "w": 121,
                   "h": 61,
                   "ice": false,
                   "id": "floor3",
-                  "appearDelay": 16.5,
+                  "appearDelay": 21,
                   "appearFade": 0.5
                 }
               },
@@ -879,33 +895,58 @@
                 "type": "floor",
                 "opts": {
                   "x": 1509,
-                  "y": 720,
+                  "y": 719,
                   "w": 814,
                   "h": 122,
                   "ice": false,
-                  "id": "floor4"
+                  "id": "floor4",
+                  "appearDelay": 21.2
                 }
               },
               {
                 "type": "sign",
                 "opts": {
-                  "x": 2179,
-                  "y": 576,
-                  "text": "走到这里传送至下一章节~",
-                  "id": "sign2"
+                  "x": 2178,
+                  "y": 492,
+                  "text": "走到这里传送至下一部分~",
+                  "id": "sign2",
+                  "appearDelay": 21.2
                 }
               },
               {
                 "type": "floor",
                 "opts": {
                   "x": 414,
-                  "y": 701,
+                  "y": 700,
                   "w": 356,
                   "h": 126,
                   "ice": false,
                   "id": "floor5",
-                  "appearDelay": 15.6,
+                  "appearDelay": 20.2,
                   "appearFade": 0.5
+                }
+              },
+              {
+                "type": "checkpoint",
+                "opts": {
+                  "x": 2144,
+                  "y": 579,
+                  "w": 232,
+                  "h": 192,
+                  "on": "pos",
+                  "label": "",
+                  "id": "checkpoint1",
+                  "appearDelay": 21.2
+                }
+              },
+              {
+                "type": "sign",
+                "opts": {
+                  "x": 2266,
+                  "y": 534,
+                  "text": "这个黄色的小箭头是“存档点“！\n走到它下面就能自动存档，\n之后死了可以从这里重来！",
+                  "id": "sign3",
+                  "appearDelay": 21.2
                 }
               }
             ]
@@ -1143,8 +1184,20 @@
                 "opts": {
                   "x": 2250,
                   "y": 449,
-                  "text": "走到这里进入下一章！",
+                  "text": "走到这里进入下一部分！",
                   "id": "sign5"
+                }
+              },
+              {
+                "type": "checkpoint",
+                "opts": {
+                  "x": 2173,
+                  "y": 507,
+                  "w": 240,
+                  "h": 135,
+                  "on": "pos",
+                  "label": "",
+                  "id": "checkpoint1"
                 }
               }
             ]
@@ -1382,7 +1435,7 @@
                 "opts": {
                   "x": 1813,
                   "y": 522,
-                  "text": "下一关！",
+                  "text": "下一部分！",
                   "id": "sign3"
                 }
               },
@@ -1424,6 +1477,18 @@
                   "id": "switch1",
                   "precipitates": {}
                 }
+              },
+              {
+                "type": "checkpoint",
+                "opts": {
+                  "x": 1724,
+                  "y": 574,
+                  "w": 287,
+                  "h": 140,
+                  "on": "pos",
+                  "label": "",
+                  "id": "checkpoint1"
+                }
               }
             ]
           }
@@ -1431,7 +1496,7 @@
         {
           "id": "well",
           "snap": {
-            "worldW": 1200,
+            "worldW": 1500,
             "worldH": 900,
             "rx": [],
             "atm": {},
@@ -1440,8 +1505,8 @@
               {
                 "type": "floor",
                 "opts": {
-                  "x": -60,
-                  "y": 720,
+                  "x": 108,
+                  "y": 721,
                   "w": 480,
                   "h": 130,
                   "ice": false,
@@ -1451,8 +1516,8 @@
               {
                 "type": "floor",
                 "opts": {
-                  "x": 720,
-                  "y": 720,
+                  "x": 888,
+                  "y": 721,
                   "w": 540,
                   "h": 130,
                   "ice": false,
@@ -1462,8 +1527,8 @@
               {
                 "type": "floor",
                 "opts": {
-                  "x": 702,
-                  "y": 140,
+                  "x": 870,
+                  "y": 141,
                   "w": 18,
                   "h": 580,
                   "ice": false,
@@ -1473,8 +1538,8 @@
               {
                 "type": "block",
                 "opts": {
-                  "x": 209,
-                  "y": 642,
+                  "x": 377,
+                  "y": 643,
                   "substance": "Zn",
                   "mass": 74.2,
                   "w": 265,
@@ -1487,8 +1552,8 @@
               {
                 "type": "pool",
                 "opts": {
-                  "x": 407,
-                  "y": 820,
+                  "x": 575,
+                  "y": 821,
                   "w": 319,
                   "h": 46,
                   "volume": 1700,
@@ -1502,8 +1567,8 @@
               {
                 "type": "sign",
                 "opts": {
-                  "x": -119,
-                  "y": 532,
+                  "x": 49,
+                  "y": 533,
                   "text": "前方是「百米深坑」——怎么过去？",
                   "id": "w_s0"
                 }
@@ -1511,8 +1576,8 @@
               {
                 "type": "sign",
                 "opts": {
-                  "x": 435,
-                  "y": 669,
+                  "x": 603,
+                  "y": 670,
                   "text": "Zn + 2HCl → ZnCl₂ + H₂↑（产氢！看气泡柱）",
                   "id": "w_s2"
                 }
@@ -1520,8 +1585,8 @@
               {
                 "type": "sign",
                 "opts": {
-                  "x": 447,
-                  "y": 498,
+                  "x": 615,
+                  "y": 499,
                   "text": "站上「气泡柱」：氢气比你轻，它背着你飞！\n（托你回地面）",
                   "id": "w_s3"
                 }
@@ -1529,12 +1594,10 @@
               {
                 "type": "gasdetector",
                 "opts": {
-                  "x": 809,
-                  "y": 698,
+                  "x": 977,
+                  "y": 699,
                   "gas": "H2",
                   "threshold": 0.15,
-                  "opening": null,
-                  "precipitates": {},
                   "and": null,
                   "deleteId": "w_gwall",
                   "showId": null,
@@ -1547,8 +1610,8 @@
               {
                 "type": "floor",
                 "opts": {
-                  "x": 1128,
-                  "y": 540,
+                  "x": 1296,
+                  "y": 541,
                   "w": 16,
                   "h": 180,
                   "ice": false,
@@ -1558,8 +1621,8 @@
               {
                 "type": "sign",
                 "opts": {
-                  "x": 763,
-                  "y": 469,
+                  "x": 931,
+                  "y": 470,
                   "text": "这个是【气体传感器】！\n气体传感器也是一种开关，\n但是不需要手动开启。\n当附近的反应产生了与之对应的气体，\n它就会自动开启。\n它写着 H₂ > 0.25g——氢气超 0.25 克它就亮。\n你刚刚产生了氢气，因此它开了！",
                   "id": "w_s4"
                 }
@@ -1567,17 +1630,17 @@
               {
                 "type": "sign",
                 "opts": {
-                  "x": 1179,
-                  "y": 562,
-                  "text": "走到这里前往下一章！",
+                  "x": 1347,
+                  "y": 563,
+                  "text": "走到这里前往下一部分！",
                   "id": "w_s6"
                 }
               },
               {
                 "type": "player",
                 "opts": {
-                  "x": -30,
-                  "y": 630,
+                  "x": 138,
+                  "y": 631,
                   "substance": "NaOH",
                   "mass": 30,
                   "noLift": false,
@@ -1587,8 +1650,8 @@
               {
                 "type": "sign",
                 "opts": {
-                  "x": 113,
-                  "y": 476,
+                  "x": 281,
+                  "y": 477,
                   "text": "介绍新玩法——气泡柱！\n当反应生成气体时，气泡柱就会出现！",
                   "id": "sign1"
                 }
@@ -1596,8 +1659,8 @@
               {
                 "type": "sign",
                 "opts": {
-                  "x": 108,
-                  "y": 545,
+                  "x": 276,
+                  "y": 546,
                   "text": "气泡柱是有方向的，向上的气泡柱能够把你向上托举！\n气泡柱的方向，取决于气体的密度——\n密度小于空气则向上，反之则向下！",
                   "id": "sign2"
                 }
@@ -1605,10 +1668,22 @@
               {
                 "type": "sign",
                 "opts": {
-                  "x": 99,
-                  "y": 638,
+                  "x": 267,
+                  "y": 639,
                   "text": "这里有Zn块——试试把它【推】到下面的盐酸池中！",
                   "id": "sign3"
+                }
+              },
+              {
+                "type": "checkpoint",
+                "opts": {
+                  "x": 1267,
+                  "y": 608,
+                  "w": 229,
+                  "h": 147,
+                  "on": "pos",
+                  "label": "",
+                  "id": "checkpoint2"
                 }
               }
             ]
@@ -1693,8 +1768,6 @@
                   "y": 680,
                   "gas": "H2",
                   "threshold": 0.05,
-                  "opening": null,
-                  "precipitates": {},
                   "and": null,
                   "deleteId": null,
                   "showId": null,
@@ -1807,6 +1880,18 @@
                   "y": 522,
                   "text": "还记得这个是什么吗？\n在这里，它用来开启后面的传送门！",
                   "id": "sign1"
+                }
+              },
+              {
+                "type": "checkpoint",
+                "opts": {
+                  "x": 1346,
+                  "y": 608,
+                  "w": 244,
+                  "h": 174,
+                  "on": "pos",
+                  "label": "",
+                  "id": "checkpoint1"
                 }
               }
             ]
@@ -2293,6 +2378,18 @@
                   "clearInventory": true,
                   "id": "portal10"
                 }
+              },
+              {
+                "type": "checkpoint",
+                "opts": {
+                  "x": 3201,
+                  "y": 345,
+                  "w": 169,
+                  "h": 135,
+                  "on": "pos",
+                  "label": "",
+                  "id": "checkpoint1"
+                }
               }
             ]
           }
@@ -2695,6 +2792,18 @@
                   "text": "这里有一个好习惯：\n行动之前，先点击鸟瞰按钮，\n看清关卡全貌，构思通关路径！",
                   "id": "sign5"
                 }
+              },
+              {
+                "type": "checkpoint",
+                "opts": {
+                  "x": 590,
+                  "y": 422,
+                  "w": 116,
+                  "h": 125,
+                  "on": "pos",
+                  "label": "",
+                  "id": "checkpoint1"
+                }
               }
             ]
           }
@@ -2974,6 +3083,18 @@
         "y": 964,
         "text": "这里有一个好习惯：\n行动之前，先点击鸟瞰按钮，\n看清关卡全貌，构思通关路径！",
         "id": "sign5"
+      }
+    },
+    {
+      "type": "checkpoint",
+      "opts": {
+        "x": 590,
+        "y": 422,
+        "w": 116,
+        "h": 125,
+        "on": "pos",
+        "label": "",
+        "id": "checkpoint1"
       }
     }
   ]

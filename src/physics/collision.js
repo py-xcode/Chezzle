@@ -142,7 +142,33 @@ function resolveEmbed(b, o) {
   if (p.bottom < pen) { side = 'bottom'; pen = p.bottom; }
   if (p.left < pen) { side = 'left'; pen = p.left; }
   if (p.right < pen) { side = 'right'; pen = p.right; }
+  // 反向残余解算（b=物块，o=玩家）：移动物块会把"站在物块上/贴着物块"的玩家
+  // 脚下的物块抽走；横向推挤由玩家侧（b=玩家）的 X 轴处理。这里直接跳过。
+  if (!b.isPlayerObj && o.isPlayerObj) return false;
   if (side === null || pen === Infinity) return false;
+  // 侧面嵌入误判成"站在顶上"：玩家网格被反应腐蚀后只剩左边一列很短的格子，
+  // 这一列的 bottom 可能只比物块顶低 1~2px → MTV 选 top，但整个身体 AABB 的
+  // 底其实还在物块顶下方几十 px（身体贴在物块侧面）。此时把 top 当成落地会
+  // 让玩家挂在一格窄边上"卡在半空"，并且 blockedX 卡死。身体明显跨过物块顶
+  // 且顶在物块顶之上 → 按左右最小穿透解算，绝不给 onGround。
+  if (side === 'top' && p.top <= 4 && !o.static && b.top < o.top && b.bottom > o.top + 8) {
+    // 短列侧贴物块：不能当 top 落地（否则 onGround 让玩家卡半空）。
+    // 玩家正朝物块方向顶时，把物块让开，保持玩家正常速度；否则只跳过
+    // 这次残余解算，绝不给 onGround。
+    const hSide = p.left <= p.right ? 'left' : 'right';
+    if (o.pushable && ((hSide === 'left' && b.vel.x < -1) || (hSide === 'right' && b.vel.x > 1))) {
+      o.x += (hSide === 'left' ? -1 : 1) * Math.min(hSide === 'left' ? p.left : p.right, MAX_RESOLVE_X);
+      return true;
+    }
+    return false;
+  }
+  // 常规侧推：玩家正朝可推物块方向移动时，把物块沿同方向让开，而不是把玩家
+  // 反向推回（后者每帧吃掉一部分输入，推动速度只剩 ~70px/s）。
+  if (side !== 'top' && !o.static && o.pushable && b.isPlayerObj && b.bottom > o.top + 8
+      && ((side === 'left' && b.vel.x < -1) || (side === 'right' && b.vel.x > 1))) {
+    o.x += (side === 'left' ? -1 : 1) * Math.min(pen, MAX_RESOLVE_X);
+    return true;
+  }
   // 方向修正：MTV 选了"向下推出"（穿透最小的面在下方），但 b 的顶已在 o 的顶之上
   // ——b 不可能在 o 下方（否则顶不会高过 o 的顶），它只可能是从上方嵌入的，改判落地。
   // 典型：大物块放进池里时底边嵌进池底壁（旧代码的"宽面抬升"就为此存在），

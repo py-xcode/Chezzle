@@ -57,18 +57,21 @@ export class Extractor extends Obj {
     if (!pool || !pool.material) return;
     if (!active) return;
     let pumped = false; // 本 tick 是否真的抽出物质（决定抽气声）
-    // 池内所有物质：只提取能以固体形式出现的（state==='solid'）
-    for (const id of pool.material.ids()) {
+    // 只提取**溶液里的溶质**；沉淀（BaSO4/CuS 等）属于另一套 material.ids()，
+    // 提取器不能把沉淀当溶质抽出来。仍保留"以固体形式输出"的视觉约束，
+    // 因此酸/水等液态溶质不会被这台提取器抽成颗粒。
+    for (const [id, soluteMass] of [...pool.solution.solutes]) {
       const sub = getSubstance(id);
       if (!sub || sub.state !== 'solid') continue;
-      const avail = pool.material.avail(id);
+      const avail = Math.min(Number(soluteMass) || 0, pool.solution.mass(id));
       const take = Math.min(avail, this.rate * dt);
       if (take <= 1e-9) continue;
-      pool.material.consume(id, take);
+      const removed = pool.solution.remove(id, take);
+      if (!(removed > 1e-9)) continue;
       pumped = true;
       // 质量累积：每攒满一个粒子（0.1g）才吐出一个，避免小量提取被 spawnParticles
       // 的取整放大（round(0.01/0.1)=1 → 凭空多出 10 倍质量）。
-      this._acc[id] = (this._acc[id] ?? 0) + take;
+      this._acc[id] = (this._acc[id] ?? 0) + removed;
       while (this._acc[id] >= CFG.cellMass) {
         this._acc[id] -= CFG.cellMass;
         // 从地表矩形顶部冒出可收集沉淀（可溶的也能收；实心 false）

@@ -17,6 +17,7 @@ import { hexToRgb, rgbToHex, mix } from './color.js';
  * 不传（测试/单次取色）→ 直出目标色。
  */
 export function solutionColor(solution, frame = undefined) {
+  const vol = solution.liquidVolume ? solution.liquidVolume() : solution.volume;
   let idx = 0;
   let r = 0;
   let g = 0;
@@ -25,7 +26,7 @@ export function solutionColor(solution, frame = undefined) {
   for (const [id, mass] of solution.solutes) {
     const sub = getSubstance(id);
     if (!sub.ionColor) continue;
-    const gPerL = (mass / solution.volume) * 1000; // volume 单位 mL → g/L
+    const gPerL = vol > 0 ? (mass / vol) * 1000 : 0; // volume 单位 mL → g/L（按实际液体体积）
     const f = gPerL / sub.ionColor.sat; // 相对饱和浓度
     if (f <= 0) continue;
     const c = hexToRgb(sub.ionColor.color);
@@ -47,7 +48,7 @@ export function solutionColor(solution, frame = undefined) {
   for (const [id, mass] of solution.solutes) {
     const sub = getSubstance(id);
     if (!(sub.solubilityLimit > 0)) continue;
-    const concFrac = (mass * 1000) / (solution.volume * sub.solubilityLimit); // 浓度 / 饱和线
+    const concFrac = vol > 0 ? (mass * 1000) / (vol * sub.solubilityLimit) : 0; // 浓度 / 饱和线
     turb = Math.max(turb, Math.min(1, concFrac / 1.25));
   }
   if (turb > 0.02) {
@@ -71,7 +72,7 @@ export function solutionColor(solution, frame = undefined) {
       if (pH >= cut) color = c;
     }
     if (sub.indicator.transparent && color === sub.indicator.stops[0][1]) continue; // 无色段
-    const gPerL = (mass / solution.volume) * 1000;
+    const gPerL = vol > 0 ? (mass / vol) * 1000 : 0;
     const f = Math.min(1, gPerL / 10); // ≥10g/L 视为指示剂饱和显色
     const c = hexToRgb(color);
     ir += c.r * f;

@@ -1,10 +1,11 @@
 // 主页两个装饰舞台的布局约束测试（无需浏览器）
 // ----------------------------------------------------------------------------
 // index.html 里 `.stage` 的两台小动画钉在左下 / 右下角，右侧那台还有个"方块撞
-// '关于'按钮"的彩蛋。历史上出过两类问题：
+// '开始游戏'按钮"的彩蛋。历史上出过两类问题：
 //   ① 从右上斜插按钮右下角 → 落点前有几帧横向已重叠、纵向还压着按钮（穿模）
 //   ② 窗口变窄/变矮后按钮压到舞台活动区上 → 方块穿过按钮
-// 现在这些由 index.html 里 `computeStage()`（纯函数）保证：
+// 现在这些由 index.html 里 `computeStage()`（纯函数）保证（安全矩形取最靠下的"关于"
+// 按钮，撞击目标是"开始游戏"按钮）：
 //   · 内容整体落在按钮外侧（横向不相交）或整体落在按钮下缘之下（纵向不相交），
 //     两条约束取能给出更大舞台的那条；
 //   · 只有"内容在按钮外侧"时才开启撞击彩蛋，方块全程在按钮右侧 → x 永不重叠。
@@ -37,27 +38,39 @@ const GROUND = 276;
 const AY = (GROUND - 40) - PW - 6;
 const AX = [137.5, 197.5, 257.5];
 
-/** 按 index.html 的样式复算"关于"按钮矩形（hero 垂直居中，按钮宽 min(560px,82vw)） */
-function aboutRect(vw, vh) {
+/** 按 index.html 的样式复算首页三个按钮矩形（hero 垂直居中，.bar 同宽）：
+ *  play → set → about 依次排下去；安全矩形取最靠下的 about，撞击目标是 play。 */
+function barRects(vw, vh) {
   const titleW = Math.min(680, vw * 0.86);
   const titleH = titleW * 132 / 492;      // 标题 SVG viewBox 492×132
-  const playH = 51.3, aboutH = 54;        // 实测高度（padding+font 固定，不随视口变）
-  const heroH = titleH + 36 + playH + 15 + aboutH;
-  const top = (vh - heroH) / 2 + titleH + 36 + playH + 15;
+  const playH = 50, setH = 50, aboutH = 50;
+  const heroH = titleH + 36 + playH + 15 + setH + 12 + aboutH;
+  const top = (vh - heroH) / 2;
   const w = Math.min(560, vw * 0.82);
-  return { left: (vw - w) / 2, right: (vw + w) / 2, top, bottom: top + aboutH };
+  const left = (vw - w) / 2, right = (vw + w) / 2;
+  const playTop = top + titleH + 36;
+  const setTop = playTop + playH + 15;
+  const aboutTop = setTop + setH + 12;
+  return {
+    play: { left, right, top: playTop, bottom: playTop + playH },
+    set: { left, right, top: setTop, bottom: setTop + setH },
+    about: { left, right, top: aboutTop, bottom: aboutTop + aboutH },
+  };
 }
+function aboutRect(vw, vh) { return barRects(vw, vh).about; }
+function playRect(vw, vh) { return barRects(vw, vh).play; }
 
 /** 按 index.html 的 layout() 复算舞台画布矩形 + 撞击点 */
 function stageBox(vw, vh, kind) {
   const b = aboutRect(vw, vh);
+  const play = playRect(vw, vh);
   const st = computeStage(vw, vh, b, kind);
-  if (!st) return { st: null, b };
+  if (!st) return { st: null, b, play };
   const contentW = kind === 'right' ? CW * st.s : 380 * st.s;
   let hit = null, w, h;
   if (kind === 'right') {
     hit = st.gag
-      ? { x: (b.right + 2 - st.contentLeft) / st.s, y: ((b.top + b.bottom) / 2 - st.contentTop) / st.s - PW / 2 }
+      ? { x: (play.right + 2 - st.contentLeft) / st.s, y: ((play.top + play.bottom) / 2 - st.contentTop) / st.s - PW / 2 }
       : { x: 40, y: Math.max(AY - 150, (b.bottom + 8 - st.contentTop) / st.s) };
     const airW = st.gag ? Math.round(st.contentLeft - b.right + PW * st.s + 8) : 0;
     w = Math.round(airW + st.contentW);
@@ -68,7 +81,7 @@ function stageBox(vw, vh, kind) {
   }
   const right = vw - GAP, bottom = vh - GAP;
   return {
-    st, b, hit,
+    st, b, play, hit,
     rect: kind === 'right'
       ? { left: right - w, right, top: bottom - h, bottom, w, h }
       : { left: GAP, right: GAP + w, top: bottom - h, bottom, w, h },
@@ -135,24 +148,26 @@ test('computeStage：任何视口下舞台要么隐藏、要么与"关于"按钮
   }
 });
 
-test('右舞台：彩蛋模式下撞击点精确贴按钮右缘、全程与按钮零重叠、且不出画布', () => {
+test('右舞台：彩蛋模式下撞击点精确贴"开始游戏"按钮右缘、全程与按钮零重叠、且不出画布', () => {
   let gagged = 0;
   for (const [vw, vh] of VIEWPORTS) {
     const box = stageBox(vw, vh, 'right');
     if (!box.st || !box.st.gag) continue;
     gagged++;
-    const { st, b, hit, rect } = box;
-    // 撞击瞬间：方块左缘 = 按钮右缘 + 2px，且与按钮垂直居中
+    const { st, b, play, hit, rect } = box;
+    // 撞击瞬间：方块左缘 = "开始游戏"按钮右缘 + 2px，且与按钮垂直居中
     const atHit = rectOf(toPage(st, 'right', hit.x, hit.y, box), st.s);
-    assert.ok(Math.abs(atHit.left - (b.right + 2)) < 0.51,
-      `${vw}×${vh} 撞击点没有贴住按钮右缘：${atHit.left} vs ${b.right + 2}`);
-    assert.ok(Math.abs((atHit.top + atHit.bottom) / 2 - (b.top + b.bottom) / 2) < 0.51,
-      `${vw}×${vh} 撞击点没有与按钮垂直居中`);
-    // 全轨迹：与按钮零重叠，且始终在画布内（不会被裁掉）
+    assert.ok(Math.abs(atHit.left - (play.right + 2)) < 0.51,
+      `${vw}×${vh} 撞击点没有贴住开始游戏按钮右缘：${atHit.left} vs ${play.right + 2}`);
+    assert.ok(Math.abs((atHit.top + atHit.bottom) / 2 - (play.top + play.bottom) / 2) < 0.51,
+      `${vw}×${vh} 撞击点没有与开始游戏按钮垂直居中`);
+    // 全轨迹：与三个按钮都零重叠，且始终在画布内（不会被裁掉）
     for (const p of pathSamples(hit, st)) {
       const r = rectOf(toPage(st, 'right', p.x, p.y, box), st.s);
       assert.equal(overlapArea(r, b), 0,
         `${vw}×${vh} 方块与"关于"按钮重叠（方块 ${JSON.stringify(r)} 按钮 ${JSON.stringify(b)}）`);
+      assert.equal(overlapArea(r, play), 0,
+        `${vw}×${vh} 方块与"开始游戏"按钮重叠（方块 ${JSON.stringify(r)} 按钮 ${JSON.stringify(play)}）`);
       assert.ok(r.left >= -0.01 && r.right <= vw + 0.01, `${vw}×${vh} 方块横向出画布`);
       assert.ok(r.top >= -0.01 && r.bottom <= vh + 0.01, `${vw}×${vh} 方块纵向出画布`);
     }

@@ -157,21 +157,21 @@ export function pushNotice(scene, text) {
 }
 
 /** 物品栏槽位几何（HUD 渲染与点击命中**共用这一套数字**，保证点哪是哪）：
- *  普通格 CFG.inventory.slotPx，装物品的格子放大为 itemSlotPx；底边对齐、右缘贴边。
- *  margins：触屏设备传 {bottom, right}（含安全区），桌面默认 10。
- *  小屏（compactView）槽位缩 0.72×——否则 5 格 70px 占 350px，寸屏全被物品栏吃掉。 */
+ *  5 个槽**始终统一大小**：普通格/物品格混排时一大一小最显眼（用户反馈"有物品时比例
+ *  很不合理"）。统一后物品图标有更大的绘制空间，反而比"单独放大物品格"更清楚。
+ *  桌面/大屏：CFG.inventory.slotPx；小屏（compactView）按 itemSlotPx 的缩放比例、
+ *  下限 38px——56px 的普通格缩到 0.58× 只有 32px，图标会小到看不清。
+ *  margins：触屏设备传 {bottom, right}（含安全区），桌面默认 10。 */
 export function inventorySlotRects(W, H, slots, margins = { bottom: 10, right: 10 }) {
   const k = compactK(W, H);
   const gap = Math.max(3, Math.round(4 * k));
-  const margin = 10;
+  const compact = compactView(W, H);
+  const size = Math.max(compact ? 38 : 34,
+    Math.round((compact ? CFG.inventory.itemSlotPx : CFG.inventory.slotPx) * k));
   const n = slots.length;
   const rects = new Array(n);
   let right = W - (margins.right ?? 10);
   for (let i = n - 1; i >= 0; i--) {
-    const size = Math.max(
-      34,
-      Math.round((slots[i] && slots[i].item ? CFG.inventory.itemSlotPx : CFG.inventory.slotPx) * k),
-    );
     right -= size;
     rects[i] = { x: right, y: H - (margins.bottom ?? 10) - size, size };
     right -= gap;
@@ -300,14 +300,24 @@ export function handleSceneClick(scene, hud, canvas, sx, sy, onInfo = null) {
   // ③ 重开按钮（右上按钮排最左）：单击只记录时刻（播点击音），400ms 内双击才
   //    打开重开菜单（单次点击不重开）。★ 必须在全屏按钮之前判定：iOS 不支持
   //    元素全屏时 HUD 不画全屏按钮、重开按钮左移到它的位置，两者命中区重叠。
-  if (inRect(restartButtonRect(W, top, right, withFs), x, y)) {
+  //    编辑器试玩 scene.hideRestartButton：按钮没画 → 命中区也不处理。
+  if (!scene.hideRestartButton && inRect(restartButtonRect(W, top, right, withFs), x, y)) {
     const now = wallNow();
     const last = Number(scene._restartTapAt) || 0;
-    if (last > 0 && now - last <= RESTART_DOUBLE_MS
-        && typeof scene.openRestartMenu === 'function' && scene.openRestartMenu()) {
-      scene._restartTapAt = 0;
-      sfx('ui.open');
-      onInfo?.({ type: 'restart-menu-open' });
+    if (last > 0 && now - last <= RESTART_DOUBLE_MS) {
+      // 没有任何存档（未设置存档点 / 还没走到存档点）→ 只有"整局重开"一种选择，
+      // 不再弹只有一个可用按钮的菜单，直接重开。
+      if (!Savepoint.has(scene)) {
+        scene._restartTapAt = 0;
+        Savepoint.fullRestart(scene);
+        onInfo?.({ type: 'restart-full' });
+      } else if (typeof scene.openRestartMenu === 'function' && scene.openRestartMenu()) {
+        scene._restartTapAt = 0;
+        sfx('ui.open');
+        onInfo?.({ type: 'restart-menu-open' });
+      } else {
+        scene._restartTapAt = now;
+      }
     } else {
       scene._restartTapAt = now;
       sfx('ui.click');

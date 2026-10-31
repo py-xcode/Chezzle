@@ -185,7 +185,8 @@ export class Hud {
     // 点下去还弹一句"此浏览器不支持全屏"——极窄屏上寸土寸金，直接不画。
     if (this._isTouch() && fullscreenSupported()) this.fsButton(ctx, W, top, right);
     // 重开按钮：右上按钮排最左（单击记时刻，400ms 内双击 = 打开重开菜单）
-    this.restartButton(ctx, W, top, right);
+    // 编辑器试玩等场景可设 hideRestartButton：不画/不响应，避免"重开=刷新编辑器"丢失编辑。
+    if (!scene.hideRestartButton) this.restartButton(ctx, W, top, right);
     this.tipButton(ctx, W, top, right, time);
     this.notice(ctx, scene, W, H, time);
     this.bigBanner(ctx, scene, W, H, time);
@@ -558,9 +559,15 @@ export class Hud {
         if (!meta) continue;
         const cap = meta.label ?? '';
         const down = ui.isPressed(r.key);
+        // 按钮在极小屏会缩到 39px：图标/圆角/文字全部按按钮边长等比缩放，
+        // 否则固定 20px 图标 + 11px 文字在小按钮里会挤成一团（用户：比例不合理）。
+        const bs = r.size;
+        const kBtn = Math.max(0.7, Math.min(1, bs / CFG.touch.btnSize));
+        const rad = Math.min(14, bs * 0.24);
+        const fs = Math.max(9, Math.min(11, Math.round(bs * 0.17)));
         ctx.save();
-        rr(ctx, r.x, r.y, r.size, r.size, 14);
-        const gr = ctx.createLinearGradient(r.x, r.y, r.x, r.y + r.size);
+        rr(ctx, r.x, r.y, bs, bs, rad);
+        const gr = ctx.createLinearGradient(r.x, r.y, r.x, r.y + bs);
         gr.addColorStop(0, down ? 'rgba(90,64,20,0.95)' : 'rgba(38,32,74,0.88)');
         gr.addColorStop(1, down ? 'rgba(48,32,10,0.95)' : 'rgba(14,11,36,0.88)');
         ctx.fillStyle = gr;
@@ -574,10 +581,10 @@ export class Hud {
         ctx.stroke();
         ctx.shadowBlur = 0;
         ctx.textAlign = 'center';
-        this._touchIcon(ctx, meta.icon, r.x + r.size / 2, r.y + r.size / 2 - 7, down ? '#fff6d8' : '#ffe9b0');
+        this._touchIcon(ctx, meta.icon, r.x + bs / 2, r.y + bs * 0.4, down ? '#fff6d8' : '#ffe9b0', kBtn);
         ctx.fillStyle = down ? '#ffd76a' : 'rgba(255,233,176,0.62)';
-        ctx.font = '11px "Segoe UI", "Microsoft YaHei", sans-serif';
-        ctx.fillText(cap, r.x + r.size / 2, r.y + r.size - 10);
+        ctx.font = `${fs}px "Segoe UI", "Microsoft YaHei", sans-serif`;
+        ctx.fillText(cap, r.x + bs / 2, r.y + bs - Math.max(4, bs * 0.095));
         ctx.restore();
       }
     }
@@ -590,7 +597,8 @@ export class Hud {
    *  dropperSuck=滴管+上吸箭头 / dropperDrip=滴管+下落液滴 /
    *  bottleCollect=集气瓶+上升气泡 / bottleInject=集气瓶+注入箭头。
    *  图标名来自物品的操作定义（items.carryActionsOf），新增物品只加一条即可。 */
-  _touchIcon(ctx, icon, cx, cy, color) {
+  _touchIcon(ctx, icon, cx, cy, color, scale = 1) {
+    const S = 1.15 * Math.max(0.55, Math.min(1.2, scale));
     // 小烧杯（白描边 + 青色液体）；(ox,oy) 为杯心偏移，sc 缩放
     const beaker = (ox, oy, sc = 1) => {
       ctx.save();
@@ -665,7 +673,7 @@ export class Hud {
     };
     ctx.save();
     ctx.translate(cx, cy);
-    ctx.scale(1.15, 1.15);
+    ctx.scale(S, S);
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
     ctx.lineWidth = 2.2;
@@ -1104,7 +1112,7 @@ export class Hud {
     for (const [id, mass] of c.solution.solutes) {
       if (mass < MIN_ENTRY) continue; // 微量溶质不显示：防"0.0g ↔ 无"的条目抖动
       // 酸类标注浓/稀（≥300 g/L = 浓，与引擎判定一致）
-      const note = acidLabelOf(id, mass, c.solution.volume / 1000);
+      const note = acidLabelOf(id, mass, c.solution.liquidVolume() / 1000);
       out.push({ id, mass, origin: c.solOrigins?.get(id) ?? null, note });
     }
     for (const [id, mass] of c.precipitates) {
@@ -1477,7 +1485,10 @@ export class Hud {
         const o = s.obj;
         const sig = s.item === 'beaker' ? `${o.solution ? o.solution.totalMass() : 0}`
           : s.item === 'dropper' ? `${o.liquid}${o.substance}`
-            : `${o.totalGas()}${o.gases.size}`;
+            : s.item === 'bottle' ? `${o.totalGas()}${o.gases.size}`
+              // 插件自定义物品：不能走集气瓶的 totalGas()/gases（会抛错中断整个物品栏绘制）。
+              // 有 carrySig() 用它，否则用物品类型做稳定签名。
+              : `${s.item}:${typeof o.carrySig === 'function' ? o.carrySig() : ''}`;
         const rec = this._pop[i];
         if (!rec || rec.sig !== sig) this._pop[i] = { sig, t: time };
         const pt = time - this._pop[i].t;
@@ -1559,6 +1570,11 @@ export class Hud {
 
   /** 选中物品说明面板的数据（名称 / 组成 / 质量 / 颜色） */
   _itemInfoData(o) {
+    // 插件物品可自带 carryInfo()，返回与内置物品相同的 {title, comp, mass, color}
+    if (o && typeof o.carryInfo === 'function') {
+      const info = o.carryInfo();
+      if (info && info.title) return info;
+    }
     let title = '';
     let comp = '';
     let mass = '';
@@ -1725,9 +1741,21 @@ export class Hud {
     const o = s.obj;
     const size = r.size;
     const cx = r.x + size / 2;
-    const cy = r.y + size / 2 + 1;
-    // 紧凑/极小视口下物品格会缩到 50/41px：图标同比例缩，避免压到质量小字
-    const k = Math.max(0.58, Math.min(1, size / 70));
+    // ★ 图标略偏上：下方留给质量小字。统一用槽高的 42% 做图标中心，70/50/41px
+    //   三档槽宽下图标与质量字都不会叠在一起。
+    const cy = r.y + size * 0.42;
+    // 紧凑/极小视口下物品格会缩到 50/41px：图标同比例缩
+    const k = Math.max(0.55, Math.min(1.1, size / 70));
+    ctx.save();
+    ctx.textAlign = 'center';
+    // 插件物品自带矢量图标：drawHudIcon(ctx,cx,cy,size,k)
+    if (o && typeof o.drawHudIcon === 'function') {
+      ctx.save();
+      ctx.textAlign = 'center';
+      try { o.drawHudIcon(ctx, cx, cy, size, k); } catch (e) { /* 插件图标失败不拖垮 HUD */ }
+      ctx.restore();
+      return;
+    }
     // 小图标共用黄铜渐变（亮铜 → 铜 → 暗铜；竖渐变足够）
     const brass = (x, y, w, h) => {
       const g = ctx.createLinearGradient(x, y, x, y + h);
@@ -1745,7 +1773,7 @@ export class Hud {
       const botR = 3.5;
       ctx.save();
       ctx.translate(cx, cy);
-      ctx.scale(k, k);
+      ctx.scale(k * 1.5, k * 1.5); // 1.5×：56px 槽里约占 26×31，41px 槽里也不再是小点
       const bx = -bw / 2;
       const by = -bh / 2 + 1;
       const glassPath = () => {
@@ -1823,12 +1851,12 @@ export class Hud {
         ctx.stroke();
       }
       ctx.restore(); // 图标缩放结束（质量小字用未缩放坐标）
-      this._slotGrams(ctx, `${(o.solution ? o.solution.totalMass() : 0).toFixed(0)}g`, cx, r.y + size - 5);
+      this._slotGrams(ctx, `${(o.solution ? o.solution.totalMass() : 0).toFixed(0)}g`, r, size);
     } else if (s.item === 'dropper') {
       // ---- 迷你滴管：黄铜卡箍 + 暗紫玻璃细管 + 红胶头 + 管内液面 ----
       ctx.save();
       ctx.translate(cx, cy);
-      ctx.scale(k, k);
+      ctx.scale(k * 1.16, k * 1.16); // 1.16×：滴管本来就细长，放大后仍能塞进槽内
       const { color: lcolor, alpha: lalpha } = o.liquid > 1e-9 ? o.liquidColor() : { color: '#9fdcff', alpha: 0.5 };
       const frac = Math.max(0, Math.min(1, o.liquid / o.capacity));
       const tubeTop = -7;
@@ -1939,7 +1967,7 @@ export class Hud {
         ctx.stroke();
       }
       ctx.restore();
-      this._slotGrams(ctx, o.liquid > 1e-9 ? `${o.liquid.toFixed(1)}g` : '', cx, r.y + size - 5);
+      this._slotGrams(ctx, o.liquid > 1e-9 ? `${o.liquid.toFixed(1)}g` : '', r, size);
     } else if (s.item === 'bottle') {
       // ---- 迷你集气瓶：瓶口敞开 + 暗紫玻璃瓶身 + 充满瓶内的淡气体雾 ----
       const bw = 19;
@@ -1947,7 +1975,7 @@ export class Hud {
       const botR = 3;
       ctx.save();
       ctx.translate(cx, cy);
-      ctx.scale(k, k);
+      ctx.scale(k * 1.5, k * 1.5); // 1.5×：与烧杯同一视觉重量
       const bx = -bw / 2;
       const bodyY = -6;
       const color = o.gasFillColor();
@@ -2029,17 +2057,21 @@ export class Hud {
       ctx.fillStyle = 'rgba(58,63,92,0.95)';
       ctx.fill();
       ctx.restore(); // 图标缩放结束（质量小字用未缩放坐标）
-      this._slotGrams(ctx, o.totalGas() > 1e-9 ? `${o.totalGas().toFixed(1)}g` : '', cx, r.y + size - 5);
+      this._slotGrams(ctx, o.totalGas() > 1e-9 ? `${o.totalGas().toFixed(1)}g` : '', r, size);
     }
     ctx.restore();
   }
 
-  /** 槽内唯一的小字：质量（空则不画） */
-  _slotGrams(ctx, str, cx, y) {
+  /** 槽内唯一的小字：质量（空则不画）。右下角对齐、字号随槽宽缩放（41px 槽不再用 10.5px
+   *  大字），既不完全压住图标，也不会在窄槽里挤成一团。 */
+  _slotGrams(ctx, str, r, size) {
     if (!str) return;
-    ctx.font = '10.5px monospace';
+    const fs = Math.max(7.5, Math.min(10.5, size * 0.15));
+    ctx.font = `${fs.toFixed(1)}px monospace`;
     ctx.fillStyle = 'rgba(255,255,255,0.92)';
-    ctx.fillText(str, cx, y);
+    ctx.textAlign = 'right';
+    ctx.fillText(str, r.x + size - Math.max(3.5, size * 0.075), r.y + size - Math.max(3, size * 0.07));
+    ctx.textAlign = 'center';
   }
 
   // ---- 提示按钮（有可点提示闪光；面板在按钮正下方、右对齐，动画开合） ----

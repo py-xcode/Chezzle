@@ -55,7 +55,10 @@ export class Renderer {
     ctx.save();
     this.camera.apply(ctx, canvasLW(this.canvas), canvasLH(this.canvas), opts.focus);
     const particles = [];
-    for (const obj of objects) {
+    // 按 layer 升序绘制（稳定排序：同层保持场景对象原顺序）：
+    //   地板/墙 = -10（背景层）→ 普通物体 0 → 导气管 = 1（装置压在地板上）。
+    const drawList = objects.slice().sort((a, b) => (a.layer ?? 0) - (b.layer ?? 0));
+    for (const obj of drawList) {
       if (obj instanceof Particle) { particles.push(obj); continue; }
       if (obj && typeof obj.render === 'function') {
         // 淡入（延迟出现/开关显现后）：appearTime=显现时刻，按 appearFade 秒渐入。

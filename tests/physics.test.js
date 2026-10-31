@@ -326,6 +326,21 @@ test('物块上跳跃：跳起后仍能落回物块顶（支撑关系不被破�
 });
 
 // ---- 11b. 不规则底面（腐蚀缺口）回归：仍不得把脚下物块横向推走 -------------------
+test('网格腐蚀后短列挂在物块侧面：不得把侧贴误判成落地（卡半空回归）', () => {
+  const sys = new CollisionSystem({ gravity: G });
+  // 主体 100×200；左侧只有一列/一小段短形状，底边恰好比物块顶低 1.33px。
+  // 身体 AABB 明显跨过物块顶，属于侧贴，不是站在顶上。
+  const b = new Body({ x: 480, y: 500, w: 100, h: 200, solid: true, gravity: 1 });
+  b.getShapes = () => [
+    { x: 480, y: 500, w: 70, h: 101.33 }, // 短左列：bottom=601.33，压在物块顶 600 上
+    { x: 480, y: 500, w: 100, h: 200 },   // 身体主体：bottom=700，明显在物块侧面
+  ];
+  const block = new Body({ x: 540, y: 600, w: 100, h: 100, solid: true, gravity: 1, pushable: true });
+  sys.relax([b, block]);
+  assert.equal(b.onGround, false, '侧贴短列不得给 onGround');
+  assert.equal(b.y, 500, '不得被误抬到物块顶');
+});
+
 test('腐蚀出不规则底面的玩家站在窄物块上向右走：物块不得被一起推走（用户反馈回归）', () => {
   const sys = new CollisionSystem({ gravity: G });
   const floor = new Body({ x: -200, y: 720, w: 3000, h: 80, static: true });

@@ -242,7 +242,7 @@ function applyObjectState(obj, state) {
 // ---------------------------------------------------------------------------
 // 场景快照
 // ---------------------------------------------------------------------------
-const ARRAY_KEYS = ['objects', 'dynamics', 'statics', 'containers', 'lamps', 'gasTubes', 'gasChambers', 'doors', 'portals', 'particles', 'hidden'];
+const ARRAY_KEYS = ['objects', 'dynamics', 'statics', 'containers', 'lamps', 'gasTubes', 'gasChambers', 'checkpoints', 'doors', 'portals', 'particles', 'hidden'];
 
 function captureScene(scene) {
   const owners = new Set([...scene.objects, ...scene.hidden]);

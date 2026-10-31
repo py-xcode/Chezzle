@@ -1,6 +1,9 @@
 // ============================================================================
 // 气体探测器：和开关同理，但"开启条件"是大气中某气体含量超过阈值。
 // 复用 Switch 的 onOpen/onClose 接线与 effectiveOpen（"&"联锁）逻辑。
+// 注意：它只按气体判定；Switch 的"开启物质/预设开启物"在气体探测器上不是设计用法
+// （气体本身也无法被"放入"），构造时清掉，避免被误当成化学旁路开关。
+// 如果以后需要旁路，应另做显式开关，而不是复用探测器的字段。
 // ============================================================================
 
 import { Switch } from './switch.js';
@@ -18,6 +21,8 @@ export class GasDetector extends Switch {
     color = '#3fa8e0', onOpen, onClose, ...rest
   } = {}) {
     super({ x, y, w, h, mode: 'chemical', color, onOpen, onClose, ...rest });
+    this.opening = null; // 只认气体；不再沿用 Switch 的化学旁路
+    if (this.precipitates && typeof this.precipitates.clear === 'function') this.precipitates.clear();
     this.gas = gas; // 检测的气体 id
     this.threshold = threshold; // 触发阈值（g）
     // 纯视觉：指针摆动/气量条缓动（0..1，确定性，不参与判定）
@@ -25,7 +30,9 @@ export class GasDetector extends Switch {
     this._needle = 0;
   }
 
-  /** 当前检测到的目标气体质量（含气室分区语义；render/update 共用） */
+  /** 当前检测到的目标气体质量（含气室分区语义；render/update 共用）。
+   *  这里读的是 `_reactGas`（反应产气累积），不是大气背景成分——否则外部空气里的
+   *  N2/O2 会让随便一个 N2/O2 探测器永久开启。气室反应产物也按气室隔离记录。 */
   _gasMass(scene) {
     const reactGas = scene && typeof scene.reactGasFor === 'function'
       ? scene.reactGasFor(this)
@@ -44,9 +51,10 @@ export class GasDetector extends Switch {
     this._needle += (nTarget - this._needle) * (1 - Math.exp(-8 * dt));
   }
 
-  /** 检测开态：只有"反应产生的气体"超标 或 放入开启物质（任一满足即开；其余复用 Switch.update + "&"联锁）。
-   *  不检测大气里预置的气体（如初始 atmosphere.add('H2', 8)），只检测反应正在产生的那种气体。
-   *  气室内部：只读取该气室内部的产气（外部产气不会激活内部探测器，反之亦然）。 */
+  /** 检测开态：只有"反应产生的气体"超过阈值 或 放入开启物质（兼容旧数据；编辑器已不再暴露后者）。
+   *  不检测大气里预置的气体（如初始 atmosphere.add('H2', 8)），否则外部空气的 N2/O2
+   *  会让 N2/O2 探测器永久开启。气室内部只看该气室内部的产气。
+   *  其余复用 Switch.update + "&"联锁。 */
   _isOpenTarget(scene) {
     const gasOn = this.gas ? this._gasMass(scene) > this.threshold : false;
     const openingOn = this.opening ? this.openingMass() > 0 : false;

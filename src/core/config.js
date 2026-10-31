@@ -67,7 +67,7 @@ export const CFG = {
   lampRange: 70, // px（灯提供加热/点燃的半径）
   lampLightRange: 180, // px（灯提供"光照"条件的半径——见光分解如 HClO）
   placeLampRange: 120, // px（放置沉淀到灯上的半径）
-  inventory: { slots: 5, capacity: 100, slotPx: 56, itemSlotPx: 70 }, // 物品格在 HUD 中放大（装烧杯/滴管/集气瓶看得清）
+  inventory: { slots: 5, capacity: 100, slotPx: 56, itemSlotPx: 70 }, // slotPx=桌面槽宽；itemSlotPx 只用于小屏槽宽缩放（5 格统一，不单独放大）
 
   // 相机视窗（世界坐标）：设计基准 1000×800；画布宽高比与之不同时按比例展开
   // （见 Camera.compute），可见范围被这两条夹住——太大会糊成一片，太小会看不到周边。

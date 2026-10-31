@@ -83,6 +83,7 @@ export class Particle extends Obj {
     });
     this.substance = substance;
     this.amount = amount;
+    this.liquid = getSubstance(substance).state === 'liquid'; // 液体（Br2/H2O2/HCl…）渲染为液滴，不画成固体球
     this.collectible = collectible ?? !isSoluble(substance);
     this.placed = placed;
     this.mat = new ParticleMaterial(this); // 让浸入容器的沉淀能参与反应（Zn+HCl 等）
@@ -95,12 +96,32 @@ export class Particle extends Obj {
   /** 调试悬停显示：沉淀 · 物质 ×合并数（几颗 0.5g 合并；大堆合并颗粒会 >容器上限） */
   get hoverLabel() {
     const n = Math.max(1, Math.ceil(this.amount / CFG.maxParticleMass));
-    return `沉淀·${this.substance} ×${n}`;
+    return `${this.liquid ? '液滴' : '沉淀'}·${this.substance} ×${n}`;
   }
 
   render(ctx) {
     const sub = getSubstance(this.substance);
-    const c = sub.solid && sub.solid.length ? sub.solid[0] : '#c9b46a';
+    const c = sub.ionColor?.color ?? (sub.solid && sub.solid.length ? sub.solid[0] : '#c9b46a');
+    if (this.liquid) {
+      // 液滴：扁椭圆 + 高光（不再画成可垫脚的固体球）
+      const w = this.w * 1.35;
+      const h = this.h * 0.7;
+      const cx = this.x + this.w / 2;
+      const cy = this.y + this.h - h / 2;
+      ctx.save();
+      ctx.globalAlpha = 0.82;
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, w / 2, h / 2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 0.55;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.ellipse(cx - w * 0.12, cy - h * 0.14, w * 0.12, h * 0.16, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      return;
+    }
     renderPrecipitateBall(ctx, this.x + this.w / 2, this.y + this.h / 2, this.w, c);
   }
 }

@@ -587,6 +587,15 @@ Chezzle.Plugin.register('showtime', {
     const fired = new Set();
     const fireOnce = (p) => { if (fired.has(p)) return; fired.add(p); doActions(p.act); };
 
+    // 存档点回档：玩家会回到存档时刻的位置，但“走到区域→切场景”的出口触发器
+    // 在回档前已经 fired 过；如果不重新武装，读档后就再也无法从同一出口继续前进。
+    // 只重置带 goto 的 pos 触发器（横幅等一次性演出不重复刷）。
+    const gotoTriggers = plays.filter((p) => p.on === 'pos'
+      && Array.isArray(p.act) && p.act.some((a) => a && a.kind === 'goto'));
+    scene.on('checkpointRestored', () => {
+      for (const p of gotoTriggers) fired.delete(p);
+    });
+
     // ① enter：Multiscene switchTo 会 fire('enter')
     for (const p of plays) {
       if (p.on === 'enter') scene.on('enter', () => fireOnce(p));
@@ -609,28 +618,33 @@ Chezzle.Plugin.register('showtime', {
       cancels.push(scene.wait(0.2, openWatch));
     };
     if (openRefs.length) openWatch();
-    // ④ pos：玩家中心进入矩形（一次；触发后停轮询）。require=开关 id：开关有效开启才触发
-    //   （传送门"被开关承认才亮"——没过门的门不能传）。
+    // ④ pos：玩家中心进入矩形（一次性动作；区域轮询保留，供存档回档后重新武装 goto）
+    //   require=开关 id：开关有效开启才触发（传送门"被开关承认才亮"——没过门的门不能传）。
     for (const p of plays) {
       if (p.on !== 'pos' || !(Number.isFinite(p.x) && Number.isFinite(p.w))) continue;
       const check = () => {
-        if (fired.has(p)) return;
-        let ok = true;
-        if (p.require) {
-          const sw = scene.byId[p.require];
-          const open = sw ? (typeof sw.effectiveOpen === 'function' ? sw.effectiveOpen(scene) : !!sw.open) : true;
-          ok = !!open;
-        }
-        if (ok) {
-          const pl = scene.player;
-          if (pl && !pl.hidden) {
-            const cx = pl.x + pl.w / 2;
-            const cy = pl.y + pl.h / 2;
-            if (cx >= p.x && cx <= p.x + p.w && cy >= p.y && cy <= p.y + p.h) fireOnce(p);
+        if (!fired.has(p)) {
+          let ok = true;
+          if (p.require) {
+            const sw = scene.byId[p.require];
+            const open = sw ? (typeof sw.effectiveOpen === 'function' ? sw.effectiveOpen(scene) : !!sw.open) : true;
+            ok = !!open;
+          }
+          if (ok) {
+            const pl = scene.player;
+            if (pl && !pl.hidden) {
+              const cx = pl.x + pl.w / 2;
+              const cy = pl.y + pl.h / 2;
+              if (cx >= p.x && cx <= p.x + p.w && cy >= p.y && cy <= p.y + p.h) fireOnce(p);
+            }
           }
         }
-        cancels.push(scene.wait(0.2, check));
+        // ★ 触发过也不能停止轮询：存档回档会重新武装 goto 触发器，需要下一次轮询
+        //   才能再次检测到玩家进入区域（旧逻辑 fire 后直接 return = 读档后永久失效）。
       };
+      // 用 interval 而不是递归 wait：轮询会持续整个场景；递归 wait 每次 fired 后仍
+      // 继续把已结束定时器的 cancel 塞进 cancels，长时间游玩会积累。
+      cancels.push(scene.interval(0.2, check));
       check();
     }
     // ⑤ at：世界时间到点（一次）

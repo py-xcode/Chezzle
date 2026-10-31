@@ -34,7 +34,8 @@ export function bindKeyboard(scene) {
     HELD.add(e.code); // 先记物理态（非方向键 keyup 也要精确释放）
     const action = actionOfCode(e.code);
     if (action === 'restart') {
-      scene.restart();
+      // 编辑器试玩：重开按钮/R 键都禁用，避免刷新编辑器丢掉未导出的编辑
+      if (!scene.hideRestartButton) scene.restart();
       e.preventDefault();
       return;
     }
@@ -78,10 +79,37 @@ export function bindKeyboard(scene) {
     const action = actionOfCode(e.code);
     if (action) scene.control.delete(action);
   };
+  // 桌面端：鼠标滚轮 / 数字键 1~5 切换物品栏选中格（不需要点格子）
+  const slotCount = () => scene.player?.inventory?.slots?.length ?? 0;
+  const onWheel = (e) => {
+    const n = slotCount();
+    if (!n || scene.status !== 'running' || scene.overview || scene.restartMenuOpen) return;
+    const inv = scene.player.inventory;
+    const dir = e.deltaY > 0 ? 1 : e.deltaY < 0 ? -1 : 0;
+    if (!dir) return;
+    inv.selected = (inv.selected + dir + n) % n;
+    e.preventDefault();
+  };
+  const onSlotKey = (e) => {
+    const m = /^(?:Digit|Numpad)([1-9])$/.exec(e.code);
+    if (!m) return;
+    const idx = Number(m[1]) - 1;
+    if (idx < 0 || idx >= slotCount()) return;
+    if (scene.status !== 'running' || scene.overview || scene.restartMenuOpen) return;
+    scene.player.inventory.selected = idx;
+    e.preventDefault();
+  };
+  const onContext = (e) => {
+    // 桌面端禁用右键菜单（游戏内右键无用途，还会吞 keyup / 弹菜单打断操作）
+    e.preventDefault();
+    onClear();
+  };
   window.addEventListener('keydown', onDown);
   window.addEventListener('keyup', onUp);
+  window.addEventListener('wheel', onWheel, { passive: false });
+  window.addEventListener('keydown', onSlotKey);
   window.addEventListener('blur', onClear);
-  window.addEventListener('contextmenu', onClear); // 右键菜单会吞 keyup
+  window.addEventListener('contextmenu', onContext); // 右键菜单会吞 keyup；同时禁用右键菜单
   window.addEventListener('focusout', onClear); // 焦点移出（点击别处、切换焦点）
   document.addEventListener('visibilitychange', onClear);
   // ★ 恢复仍按住的键（Multiscene.switchTo 重绑时会调 bindKeyboard——按住方向键
@@ -93,8 +121,10 @@ export function bindKeyboard(scene) {
   return () => {
     window.removeEventListener('keydown', onDown);
     window.removeEventListener('keyup', onUp);
+    window.removeEventListener('wheel', onWheel);
+    window.removeEventListener('keydown', onSlotKey);
     window.removeEventListener('blur', onClear);
-    window.removeEventListener('contextmenu', onClear);
+    window.removeEventListener('contextmenu', onContext);
     window.removeEventListener('focusout', onClear);
     document.removeEventListener('visibilitychange', onClear);
     // 只移除监听器——HELD 是"物理按住态"，由 keyup/blur/contextmenu 清除；

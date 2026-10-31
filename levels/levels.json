@@ -34,7 +34,13 @@
 "让 我 看 看 是 谁 化 学 没 及 格",
 "因为丁达尔效应，所以光有了形状。",
 "门捷列夫小时候吵着要玩的Chezzle！",
-"关注 @一化儿 ！（Chezzle和一化儿其实没啥关系）"],
+"关注 @一化儿 ！（Chezzle和一化儿其实没啥关系）",
+"我 爱 你 ！！",
+"duang duang",
+"根本没有这样的关卡！",
+"准备好了吗？大的要来了！",
+"你这关卡保熟吗？",
+"按住W开始寻思……"],
   "version": 2,
   "_说明": [
     "Chezzle 关卡表",
@@ -73,6 +79,12 @@
     ],
     "Li": [
       { "id": "Li-1", "name": "锂-7", "mass": 7, "file": "levels/level3-1.html", "requires": ["He-1"] }
+    ],
+    "Be": [
+      { "id": "Be-1", "name": "铍-9", "mass": 9, "file": "levels/level4-1.html", "requires": ["Li-1"] }
+    ],
+    "B": [
+      { "id": "B-1", "name": "硼-9", "mass": 11, "file": "levels/level5-1.html", "requires": ["Be-1"] }
     ]
   }
 }

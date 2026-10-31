@@ -72,7 +72,7 @@ function phaseFactor(p1, p2) {
 /** 是否"真实溶液"（含水介质）：干式台子（酒精灯/喷灯/开关 volume=0 无水）上的
  *  沉淀粉末是固体、不电离，不能当溶液用（phase 恒为 'solution' 是适配器实现细节） */
 function hasSolution(m) {
-  return !!(m && m.phase === 'solution' && m.solution && m.solution.volume > 0);
+  return !!(m && m.phase === 'solution' && m.solution && m.solution.liquidVolume() > 0);
 }
 
 /** 条件判定：heat/highTemp/ignited/催化/浓+加热/氧分压分支（组合条件全部满足才算真） */
@@ -90,16 +90,24 @@ function conditionMet(cond, env, ctx) {
     if (cond.heat !== undefined && !(env.conditions.heat || env.conditions.highTemp)) return false;
     if (cond.highTemp !== undefined && !env.conditions.highTemp) return false;
     if (cond.electric !== undefined && !env.conditions.electric) return false; // 电解（电解池）
-    if (cond.ignited !== undefined && !(env.conditions.ignited && env.atmosphere.o2Fraction() > COMBUSTION_MIN_O2)) return false;
+    if (cond.ignited !== undefined && !env.conditions.ignited) return false;
+    // 卤素燃烧（Cu/Fe + Cl2）不依赖 O2：例如纯 Cl2 气室里没有氧气，仍应能点燃。
+    // cond.gas 指定氧化性气体；不写 gas 的旧 ignited 规则仍要求 O2 达标。
+    if (cond.ignited !== undefined) {
+      if (cond.gas) {
+        if (!(env.atmosphere.mass(cond.gas) > 1e-6)) return false;
+      } else if (!(env.atmosphere.o2Fraction() > COMBUSTION_MIN_O2)) return false;
+    }
     if (cond.light !== undefined && !env.conditions.light) return false; // 见光反应（HClO 分解等）
     if (cond.o2 !== undefined) {
       const f = env.atmosphere.o2Fraction();
       if (cond.o2 === 'low' && !(f < 0.15 && f > COMBUSTION_MIN_O2)) return false;
       if (cond.o2 === 'high' && !(f >= 0.15)) return false;
+      if (cond.o2 === 'pure' && !(f >= 0.6)) return false; // 纯氧/富氧（空气 0.2 不算）
     }
     if (cond.concHigh !== undefined && !(ctx && ctx.acidConc >= CONC_HIGH)) return false;
     // 需"真实溶液"介质（容器有水，volume>0）：干式台子/开阔地固固不满足
-    if (cond.solution !== undefined && !(ctx.containerMat && ctx.containerMat.solution && ctx.containerMat.solution.volume > 0)) return false;
+    if (cond.solution !== undefined && !(ctx.containerMat && ctx.containerMat.solution && ctx.containerMat.solution.liquidVolume() > 0)) return false;
     return true; // 组合条件全部满足
   }
   return false;
@@ -161,12 +169,14 @@ export class ChemistryEngine {
     // + 灯上 CuSO4 粉末没有水就不该生成 Cu(OH)2。纯固-固接触只走特例表（铝热等）
     // 与高温固固还原（CuO+C 等）
     const bothSolid = !hasSolution(matA) && !hasSolution(matB);
+    if (!bothSolid) this._tryRedoxPair(matA, matB, dt, env, ctx);
+    // 特例优先于通用离子交换（双水解/配合物/沉淀转化不能被普通复分解抢先）；
+    // 固-固特例（Fe+S、铝热等）也走这里，不能在 !bothSolid 分支里被跳过
+    this._trySpecialPairs(matA, matB, dt, env, ctx);
     if (!bothSolid) {
-      this._tryRedoxPair(matA, matB, dt, env, ctx);
       this._tryIonic(matA, matB, dt, env, ctx);
       this._tryDisplacement(matA, matB, dt, env, ctx);
     }
-    this._trySpecialPairs(matA, matB, dt, env, ctx);
     this._trySolidReduction(matA, matB, dt, env, ctx);
   }
 
@@ -219,14 +229,14 @@ export class ChemistryEngine {
     // 同材料特例：Na2O2 遇大气 CO2、CaCO3/Na2CO3 遇大气 CO2 成酸式盐
     this._trySpecialSelf(mat, dt, env, ctx);
     // 同材料特例配对（同一材料里两种溶质/沉淀混合：K2Cr2O7+NaOH 同池、
-    // Na2CO3+HCl 分步、Al(OH)3+NaOH 两性溶解等）
+    // Na2CO3+HCl 分步、Al(OH)3+NaOH 两性溶解、双水解等）；气体规则交给 _trySpecialSelf。
     for (const rule of SPECIAL_PAIR_RULES) {
-      const [r0, r1] = rule.reactants;
-      if (getSubstance(r0.id).state === 'gas' || getSubstance(r1.id).state === 'gas') continue; // 气体规则由 _trySpecialSelf 处理
-      if (rule.waterNeeded) continue; // 需水规则（CaCO3/Na2CO3+CO2）由 _trySpecialSelf 处理
-      if (mat.avail(r0.id) > 0 && mat.avail(r1.id) > 0) {
-        this._runRule(rule, { [r0.id]: mat, [r1.id]: mat }, dt, env, ctx);
-      }
+      if (rule.atmosphereOnly) continue;
+      // 气体反应物通常交给 _trySpecialSelf / reactAtmosphere；但如果该气体
+      // 以溶质形式真的存在于本材料（如关卡把 H2S 写进池水），仍要允许特例
+      // 在同一溶液内反应——否则 H2S + HClO/FeCl2 永远被跳过。
+      if (rule.reactants.some((r) => getSubstance(r.id).state === 'gas' && !(mat.avail(r.id) > 0))) continue;
+      this._runPairDataRule(rule, mat, mat, dt, env, ctx);
     }
     // 同材料离子反应（同池溶质混合：FeCl3+KSCN、NaOH+CuSO4 同池、AgNO3+NaCl 等）
     this._tryIonic(mat, mat, dt, env, ctx);
@@ -314,6 +324,7 @@ export class ChemistryEngine {
     const ctx = this._ctxOf(baseMat, baseMat, dt, env);
     for (const id of baseMat.ids()) {
       for (const gas of ['CO2', 'SO2', 'Cl2', 'NH3']) {
+        if (env.absorbBlocked?.(gas)) continue; // 电解池阳极 Cl2 直接逸出，不被同池碱液吸收
         const rule = acidGasRuleFor(gas, id);
         if (!rule) continue;
         const gasAvail = env.atmosphere.mass(gas);
@@ -355,39 +366,93 @@ export class ChemistryEngine {
       // 原因只列"显著"燃料（≥10% 总量，主导者在前），避免把残留的微量 H2 写进爆鸣原因误导
       const cause = `${FUELS.filter((f) => atm.mass(f) > fuel * 0.1).sort((a, b) => atm.mass(b) - atm.mass(a)).join('+') || '可燃气体'} 爆鸣`;
       atm._cause = cause; // 盖章：爆鸣消耗燃料/O2 的原因
-      for (const g of FUELS) atm.remove(g, atm.mass(g));
-      atm.remove('O2', Math.min(atm.mass('O2'), fuel * 2.5));
+      // 质量守恒：按各燃料完全燃烧计量消耗 O2 并生成产物（O2 不足时按比例不完全燃烧）
+      const need = { H2: 8, CO: 0.571, CH4: 4, H2S: 1.412 }; // 每 g 燃料所需 O2 g
+      let o2Need = 0;
+      for (const g of FUELS) o2Need += atm.mass(g) * (need[g] ?? 2);
+      const o2Have = atm.mass('O2');
+      const k = o2Need > 0 ? Math.min(1, o2Have / o2Need) : 1;
+      const prod = { H2O: 0, CO2: 0, SO2: 0 };
+      for (const g of FUELS) {
+        const m = atm.mass(g) * k;
+        atm.remove(g, m);
+        if (g === 'H2') prod.H2O += m * 9;
+        else if (g === 'CO') prod.CO2 += m * (44 / 28);
+        else if (g === 'CH4') { prod.CO2 += m * (44 / 16); prod.H2O += m * (36 / 16); }
+        else if (g === 'H2S') { prod.SO2 += m * (64 / 34); prod.H2O += m * (18 / 34); }
+      }
+      atm.remove('O2', Math.min(o2Have, o2Need * k));
+      for (const [id, m] of Object.entries(prod)) if (m > 1e-9) atm.add(id, m);
       if (env.explode) env.explode(env.explodePoint ?? null, strength, cause);
       return;
+    }
+    // 常温/见光的大气反应（不依赖点燃）：2NO+O2、2H2S+SO2、H2+Cl2 等
+    const atmMat = this._atmMat(env);
+    const ctx = this._ctxOf(atmMat, atmMat, dt, env);
+    const ambientRule = (rule) => rule.condition === 'normal'
+      || (rule.condition && typeof rule.condition === 'object' && rule.condition.light !== undefined);
+    for (const rule of ATMOSPHERE_SPECIAL_RULES) {
+      if (!ambientRule(rule)) continue;
+      const s = {};
+      for (const r of rule.reactants) s[r.id] = atmMat;
+      this._runRule(rule, s, dt, env, ctx);
+    }
+    // 气相归中：2NH3 + 3Cl2 → N2 + 6HCl(g)（氨过量时下一步白烟继续把 HCl 变成 NH4Cl）。
+    // 直接写大气，不走 _runRule 的产气钩子（否则 HCl 会被截成气泡柱，无法继续与 NH3 反应）。
+    {
+      const mmNH3 = getSubstance('NH3').mm;
+      const mmCl2 = getSubstance('Cl2').mm;
+      const mmN2 = getSubstance('N2').mm;
+      const mmHCl = getSubstance('HCl(g)').mm;
+      const nh3 = atm.mass('NH3');
+      const cl2 = atm.mass('Cl2');
+      if (nh3 > 1e-9 && cl2 > 1e-9) {
+        const maxByCl2 = (cl2 * 2 * mmNH3) / (3 * mmCl2);
+        const takeNH3 = Math.min(nh3, maxByCl2, RATE.special * dt * 0.5);
+        if (takeNH3 > 1e-9) {
+          const units = takeNH3 / (2 * mmNH3);
+          this._stamp(ctx, reactionEquation(['NH3', 'Cl2'], ['N2', 'HCl(g)']));
+          atm.remove('NH3', takeNH3);
+          atm.remove('Cl2', units * 3 * mmCl2);
+          const n2Mass = units * mmN2;
+          const hclMass = units * 6 * mmHCl;
+          atm.add('N2', n2Mass);
+          atm.add('HCl(g)', hclMass);
+          // 气相产物也要进气体探测器数据源（它们没走 _emitGas 的产气钩子）
+          ctx.env.recordGas?.('N2', n2Mass);
+          ctx.env.recordGas?.('HCl(g)', hclMass);
+        }
+      }
+    }
+    // 白烟：NH3 + HCl(g) → NH4Cl（大气中相遇成固体小颗粒；常温即可，不需点燃）
+    {
+      const nh3 = atm.mass('NH3');
+      const hcl = atm.mass('HCl(g)');
+      if (nh3 > 1e-9 && hcl > 1e-9) {
+        const mmNH3 = getSubstance('NH3').mm;
+        const mmHCl = getSubstance('HCl(g)').mm;
+        const m = Math.min(nh3, (hcl * mmNH3) / mmHCl, RATE.special * dt);
+        if (m > 1e-9) {
+          this._stamp(ctx, reactionEquation(['NH3', 'HCl(g)'], ['NH4Cl']));
+          atm.remove('NH3', m);
+          atm.remove('HCl(g)', (m * mmHCl) / mmNH3);
+          ctx.env.emit({ id: 'NH4Cl', mass: m * (1 + mmHCl / mmNH3), phase: 'particle' }, ctx.lastRxText);
+        }
+      }
     }
     if (!env.globalIgnited) return;
     // 缓慢燃烧（低浓度）与大气特殊反应（合成氨、氨催化氧化）
     const env2 = { ...env, conditions: { ...env.conditions, ignited: true } };
-    const atmMat = this._atmMat(env);
-    const ctx = this._ctxOf(atmMat, atmMat, dt, env2);
     for (const rule of ATMOSPHERE_COMBUSTION_RULES) {
       const s = {};
       for (const r of rule.reactants) s[r.id] = atmMat;
       this._runRule(rule, s, dt, env2, ctx);
     }
     for (const rule of ATMOSPHERE_SPECIAL_RULES) {
+      if (ambientRule(rule)) continue;
       const s = {};
       for (const r of rule.reactants) s[r.id] = atmMat;
       this._runRule(rule, s, dt, env2, ctx);
-    }
-    // 白烟：NH3 + HCl → NH4Cl（大气中相遇成固体小颗粒）
-    const nh3 = atm.mass('NH3');
-    const hcl = atm.mass('HCl');
-    if (nh3 > 1e-9 && hcl > 1e-9) {
-      const mmNH3 = getSubstance('NH3').mm;
-      const mmHCl = getSubstance('HCl').mm;
-      const m = Math.min(nh3, (hcl * mmNH3) / mmHCl, RATE.special * dt);
-      if (m > 1e-9) {
-        this._stamp(ctx, reactionEquation(['NH3', 'HCl'], ['NH4Cl']));
-        atm.remove('NH3', m);
-        atm.remove('HCl', (m * mmHCl) / mmNH3);
-        ctx.env.emit({ id: 'NH4Cl', mass: m * (1 + mmHCl / mmNH3), phase: 'particle' }, ctx.lastRxText);
-      }
     }
   }
 
@@ -418,9 +483,10 @@ export class ChemistryEngine {
       for (const id of mat.ids()) {
         if (OXIDIZERS[id]) list.push({ oxId: id });
         // 非氧化性酸（HCl/稀 H2SO4）→ 归一为 H+ 氧化剂（金属+酸产 H2）；
-        // HNO3 是氧化性酸走 NO3- 还原（表中 HNO3 条目）
+        // HNO3 是氧化性酸走 NO3- 还原（表中 HNO3 条目）。H2SO4 同时保留"浓硫酸氧化"
+        // 分支：稀硫酸走 H+ 产氢，浓+加热才走 SO2（见 _isPassivated / push 过滤）。
         const s = getSubstance(id);
-        if (s.ions?.cat === 'H+' && s.kind === 'acid' && id !== 'HNO3' && id !== 'H2SO4') {
+        if (s.ions?.cat === 'H+' && s.kind === 'acid' && id !== 'HNO3') {
           list.push({ oxId: 'H+', acidId: id });
         }
         if (id === 'H2SO4') list.push({ oxId: 'H2SO4', acidId: 'H2SO4' }); // 浓硫酸氧化（稀/常温不氧化见 _isPassivated）
@@ -434,6 +500,10 @@ export class ChemistryEngine {
           if (oxId === redId) continue;
           const red = REDUCERS[redId];
           if (!red) continue;
+          // 浓硫酸+加热时只走 H2SO4→SO2 分支，不再同时走 H+→H2（否则一边产 SO2 一边产 H2）
+          if (oxId === 'H+' && acidId === 'H2SO4'
+            && ctx.acidConc >= PASSIVATION_CONC
+            && (env.conditions.heat || env.conditions.highTemp)) continue;
           // 氧化剂强度门槛（I2 氧化性不足，不能氧化 Fe2+）
           if (red.minOx && (ox.strength ?? 0) < red.minOx) continue;
           if (this._isPassivated(oxId, redId, env, ctx)) continue;
@@ -470,14 +540,16 @@ export class ChemistryEngine {
   }
 
   /** 还原剂"还原性强弱"（同共享氧化剂时强者先反应：I- > Fe2+ > Br-） */
-  _pickRedKey(oxId, redId, env, ctx) {
+  _pickRedKey(oxId, redId, env, ctx, oxMat, redMat) {
     const red = REDUCERS[redId];
     if (!red.branches) return undefined;
     if (red.branches.weak && red.branches.strong) {
       if (oxId === 'HNO3') {
         // Fe + HNO3 计量比：酸过量（n≥4×nFe）→ Fe3+；Fe 过量 → Fe2+
-        const nHNO3 = this._molesOf(ctx, oxId);
-        const nFe = this._molesOf(ctx, redId);
+        // ★ 必须从**实际含 Fe 的材料**取摩尔数：固体 Fe 不在容器溶液里，旧实现 nFe=0 →
+        //   比值无穷大永远走 Fe3+（铁过量也生成 Fe3+，与量变设计相反）。
+        const nHNO3 = this._molesIn(oxMat ?? ctx.containerMat, oxId);
+        const nFe = this._molesIn(redMat, redId);
         return nHNO3 / Math.max(1e-9, nFe) >= 4 ? 'strong' : 'weak';
       }
       return (OXIDIZERS[oxId].strength ?? 0) >= STRONG_OXIDIZER ? 'strong' : 'weak';
@@ -489,17 +561,33 @@ export class ChemistryEngine {
     return undefined;
   }
 
+  /** 某材料里 id 的摩尔数（容器/固体/玩家通用） */
+  _molesIn(mat, id) {
+    if (!mat || typeof mat.avail !== 'function') return 0;
+    return mat.avail(id) / getSubstance(id).mm;
+  }
+
   /** 配平执行：摩尔推进（质量守恒） */
   _runRedox(cand, dt, env, ctx) {
     const { oxMat, redMat, oxId, redId } = cand;
-    const redKey = this._pickRedKey(oxId, redId, env, ctx);
+    const redKey = this._pickRedKey(oxId, redId, env, ctx, oxMat, redMat);
     const acidId = cand.acidId ?? (oxId === 'HNO3' || oxId === 'H+' ? (ctx.acidId || 'H2SO4') : ctx.acidId);
+    // 强碱中 KMnO4 遇过渡金属还原剂：按中性分支（MnO2 + 金属氢氧化物）配平，
+    // 避免把 MnO4^2- 与 Fe3+/Cu2+/Zn2+ 配成 Fe2(MnO4)3 之类不存在的盐。
+    let medium = ctx.medium;
+    let oxKey;
+    if (oxId === 'KMnO4' && ctx.medium === 'base'
+      && ['FeSO4', 'FeCl2', 'Fe', 'Cu', 'Zn', 'Mg', 'Al'].includes(redId)) {
+      medium = 'neutral';
+      oxKey = 'neutral';
+    }
     const eq = balanceRedox(oxId, redId, {
-      medium: ctx.medium,
+      medium,
       acidId,
       baseId: ctx.baseId,
       conc: ctx.acidConc,
       redKey,
+      oxKey,
     });
     if (!eq) return;
     // 防呆：产物与反应物完全同集（如 CuSO4+Cu 同元素往返）→ 跳过
@@ -618,11 +706,12 @@ export class ChemistryEngine {
   _stepwiseCarbonate(matA, matB, idA, idB, eA, eB, dt, env, ctx) {
     const pick = (acidId, acidE, acidMat, carbId, carbE, carbMat) => {
       if (!acidE.ions || !carbE.ions) return null;
-      if (acidE.ions.cat !== 'H+' || (acidE.ions.catCount ?? 1) !== 1) return null;
+      if (acidE.ions.cat !== 'H+') return null;
       if (carbE.ions.an !== 'CO3^2-') return null;
       if (!isSoluble(carbId)) return null; // 不溶碳酸盐：表面直接分解（走离子路径产 CO2）
       return {
         acidId, acidMat, carbId, carbMat, acidE, carbE,
+        acidH: acidE.ions.catCount ?? 1, // 一元酸=1；二元/多元酸一次可质子化多个碳酸根
         bicarb: ensureSalt(carbE.ions.cat, 'HCO3-').id,
         bysalt: ensureSalt(carbE.ions.cat, acidE.ions.an).id,
       };
@@ -636,12 +725,13 @@ export class ChemistryEngine {
     const rate = RATE.ionic * phaseFactor(m.acidMat.phase, m.carbMat.phase)
       * this._concFactorFor(m.acidMat, m.acidId) * this._concFactorFor(m.carbMat, m.carbId)
       * this._strengthFactor(m.acidMat, m.acidId);
-    const units = Math.min(availAcid, availCarb, (rate * dt) / mmAcid);
+    // 1 分子酸（含 acidH 个质子）+ acidH 个碳酸根 → acidH 个碳酸氢根 + 1 个酸根盐
+    const units = Math.min(availAcid, availCarb / m.acidH, (rate * dt) / mmAcid);
     // 组合成立但本 tick 推进量为 0：仍返回 true —— 只要碳酸根还在，产气那一步就得让路
     if (!(units > 1e-12)) return true;
     this._stamp(ctx, reactionEquation([m.acidId, m.carbId], [m.bicarb, m.bysalt]));
     const takeAcid = units * mmAcid;
-    const takeCarb = units * mmCarb;
+    const takeCarb = units * m.acidH * mmCarb;
     const remAcid = m.acidMat.consume(m.acidId, takeAcid);
     const remCarb = m.carbMat.consume(m.carbId, takeCarb);
     const scale = Math.min(
@@ -650,7 +740,7 @@ export class ChemistryEngine {
     );
     if (!(scale > 1e-9)) return true;
     const act = units * scale;
-    this._emit(m.bicarb, act * getSubstance(m.bicarb).mm, ctx);
+    this._emit(m.bicarb, act * m.acidH * getSubstance(m.bicarb).mm, ctx);
     this._emit(m.bysalt, act * getSubstance(m.bysalt).mm, ctx);
     this._logReaction(ctx, [m.acidId, m.carbId], [m.bicarb, m.bysalt]);
     return true;
@@ -785,15 +875,35 @@ export class ChemistryEngine {
     }
     if (catId === 'H+' && anId === 'HCO3-') return { drives: true, products: [{ id: 'CO2', coeff: 1 }, { id: 'H2O', coeff: 1 }] };
     if (catId === 'H+' && anId === 'SO3^2-') return { drives: true, products: [{ id: 'SO2', coeff: 1 }, { id: 'H2O', coeff: 1 }] };
-    if (catId === 'H+' && anId === 'S2-') return { drives: true, products: [{ id: 'H2S', coeff: 1 }] };
+    if (catId === 'H+' && anId === 'S2-') {
+      // CuS/Ag2S/PbS 不溶于非氧化性稀酸（溶度积很小）；FeS/ZnS 可溶
+      if (['CuS', 'Ag2S', 'PbS'].includes(idA) || ['CuS', 'Ag2S', 'PbS'].includes(idB)) {
+        return { drives: false, products: [] };
+      }
+      return { drives: true, products: [{ id: 'H2S', coeff: 1 }] };
+    }
     if (catId === 'H+' && anId === 'SiO3^2-') return { drives: true, products: [{ id: 'H2SiO3', coeff: 1 }] }; // 硅酸胶状沉淀（水玻璃+酸）
+    // 弱酸盐酸化（弱酸根 + H+ → 弱酸分子）
+    if (catId === 'H+' && anId === 'CH3COO-') return { drives: true, products: [{ id: 'CH3COOH', coeff: 1 }] };
+    if (catId === 'H+' && anId === 'C2O4^2-') return { drives: true, products: [{ id: 'H2C2O4', coeff: 1 }] };
+    if (catId === 'H+' && anId === 'ClO-') return { drives: true, products: [{ id: 'HClO', coeff: 1 }] };
+    if (catId === 'H+' && anId === 'PO4^3-') return { drives: true, products: [{ id: 'H3PO4', coeff: 1 }] };
+    // 偏铝酸盐 + 酸需要水参与（NaAlO2+HCl+H2O→Al(OH)3+NaCl），交给特例表，避免离子路径少水
+    if (catId === 'H+' && anId === 'AlO2-') return { drives: false, products: [] };
+    // 三价金属 + CO3/HCO3/S2：走双水解特例（不能按普通复分解生成 Fe2(CO3)3/Al2(CO3)3 等不存在的盐）
+    if ((catId === 'Fe3+' || catId === 'Al3+' || catId === 'Cr3+')
+      && (anId === 'CO3^2-' || anId === 'HCO3-' || anId === 'S2-')) return { drives: false, products: [] };
+    // Cu2+ + CO3 生成碱式碳酸铜（双水解特例），不走普通 CuCO3 沉淀
+    if (catId === 'Cu2+' && (anId === 'CO3^2-' || anId === 'HCO3-')) return { drives: false, products: [] };
     if (catId === 'NH4+' && anId === 'OH-') return { drives: true, products: [{ id: 'NH3', coeff: 1 }, { id: 'H2O', coeff: 1 }] };
     // 检验铁离子：Fe3+ + 3SCN- → 血红色溶液（显色驱动）
     if (catId === 'Fe3+' && anId === 'SCN-') return { drives: true, products: [{ id: 'Fe(SCN)3', coeff: 1 }] };
     const salt = ensureSalt(catId, anId);
     if (salt.id === idA || salt.id === idB) return { drives: false, products: [] };
     // 驱动判据：不溶 → 沉淀；**微溶**（solubilityLimit，如 Ca(OH)2/Ag2SO4/CaSO4/PbCl2）
-    // → 也生成（进溶液，超过饱和浓度时析出——"滴到一定量后溶液变浑浊"）
+    // → 也生成（进溶液，超过饱和浓度时析出——"滴到一定量后溶液变浑浊"）。
+    // 即使不驱动，也返回产物：复分解里"一边沉淀/产气、另一边是旁观可溶盐"时，
+    // 旁观盐仍要生成，否则质量会凭空消失（AgCl+NH3 的 NH4Cl 等）。
     return { drives: salt.soluble !== 'soluble' || salt.solubilityLimit > 0, products: [{ id: salt.id, coeff: 1 }] };
   }
 
@@ -811,42 +921,67 @@ export class ChemistryEngine {
 
   _runPairDataRule(rule, matA, matB, dt, env, ctx) {
     if (rule.atmosphereOnly) return; // 仅大气反应（NH3+HCl 白烟在 reactAtmosphere）
-    // 碳酸盐+CO2→酸式盐需有水且非强酸性（酸性环境碳酸盐直接被酸分解产 CO2，不会积累酸式盐）
-    if (rule.waterNeeded && !(ctx.inContainer && ctx.containerMat.avail('H2O') > 0)) return;
-    if (rule.waterNeeded && ctx.medium === 'acid') return;
-    const [r0, r1] = rule.reactants;
-    const gas0 = getSubstance(r0.id).state === 'gas';
-    const gas1 = getSubstance(r1.id).state === 'gas';
-    const src0 = gas0 ? this._atmMat(env) : null;
-    const src1 = gas1 ? this._atmMat(env) : null;
-    const has0 = (m) => (gas0 ? src0.avail(r0.id) > 0 : m.avail(r0.id) > 0);
-    const has1 = (m) => (gas1 ? src1.avail(r1.id) > 0 : m.avail(r1.id) > 0);
-    if (has0(matA) && has1(matB)) {
-      this._runRule(rule, { [r0.id]: gas0 ? src0 : matA, [r1.id]: gas1 ? src1 : matB }, dt, env, ctx);
-    } else if (has0(matB) && has1(matA)) {
-      this._runRule(rule, { [r0.id]: gas0 ? src0 : matB, [r1.id]: gas1 ? src1 : matA }, dt, env, ctx);
+    const sources = {};
+    for (const r of rule.reactants) {
+      if (getSubstance(r.id).state === 'gas') {
+        // 气体也可能以"溶质"形式存在于溶液（编辑器/关卡把 H2S 直接写进 solutes）；
+        // 先取溶液里的同 id 气体，再退回大气。否则 Fe + 溶解 H2S 永远只看到大气。
+        if (matA.avail(r.id) > 0) sources[r.id] = matA;
+        else if (matB.avail(r.id) > 0) sources[r.id] = matB;
+        else sources[r.id] = this._atmMat(env);
+        continue;
+      }
+      if (r.id === 'H2O') {
+        // 水通常不在两个反应物材料里：优先容器溶液，其次任一侧材料
+        if (ctx.containerMat && ctx.containerMat.avail('H2O') > 0) sources[r.id] = ctx.containerMat;
+        else if (matA.avail('H2O') > 0) sources[r.id] = matA;
+        else if (matB.avail('H2O') > 0) sources[r.id] = matB;
+        continue;
+      }
+      if (matA.avail(r.id) > 0) sources[r.id] = matA;
+      else if (matB.avail(r.id) > 0) sources[r.id] = matB;
     }
+    for (const r of rule.reactants) {
+      if (!sources[r.id]) return;
+      if (sources[r.id].avail(r.id) <= 0) return;
+    }
+    // 碳酸盐 + 大气 CO2 成酸式盐：强酸环境不积累（直接分解产 CO2）；
+    // 加热环境下 CO2 溶解度下降、碳酸氢盐反而分解，不做碳酸化（否则加热池会自我反转）
+    if (rule.reactants.some((r) => r.id === 'CO2') && rule.reactants.some((r) => r.id === 'H2O')
+      && (ctx.medium === 'acid' || env.conditions.heat || env.conditions.highTemp)) return;
+    if (rule.co2Over && env.atmosphere.mass('CO2') < rule.co2Over) return;
+    this._runRule(rule, sources, dt, env, ctx);
   }
 
-  /** 同材料自反应特例：Na2O2 遇大气 CO2、碳酸盐遇过量 CO2 成酸式盐 */
+  /** 同材料自反应特例：Na2O2 遇大气 CO2、碳酸盐遇过量 CO2 成酸式盐。
+   *  规则统一从 SPECIAL_PAIR_RULES 里找"含气体的特例"，并把 H2O 从容器溶液补进来。 */
   _trySpecialSelf(mat, dt, env, ctx) {
     const atm = env.atmosphere;
-    // Na2O2 + CO2（大气）→ Na2CO3 + O2
-    if (mat.avail('Na2O2') > 0 && atm.mass('CO2') > 1e-9) {
-      const rule = SPECIAL_PAIR_RULES.find((r) => r.reactants[0].id === 'Na2O2' && r.reactants[1].id === 'CO2');
-      if (rule) this._runRule(rule, { Na2O2: mat, CO2: this._atmMat(env) }, dt, env, ctx);
-    }
-    // 溶液/池中的碳酸盐 + 过量大气 CO2 → 碳酸氢盐（少量 CO2 先生成正盐，过量后转化；酸性环境不转化）
-    if (ctx.inContainer && ctx.medium !== 'acid' && atm.mass('CO2') > 1e-9 && ctx.containerMat.avail('H2O') > 0) {
-      for (const rule of SPECIAL_PAIR_RULES) {
-        const [r0, r1] = rule.reactants;
-        const gasId = getSubstance(r0.id).state === 'gas' ? r0.id : getSubstance(r1.id).state === 'gas' ? r1.id : null;
-        if (gasId !== 'CO2') continue;
-        const solidId = r0.id === 'CO2' ? r1.id : r0.id;
-        if (mat.avail(solidId) > 0) {
-          this._runRule(rule, { [solidId]: mat, CO2: this._atmMat(env) }, dt, env, ctx);
+    for (const rule of SPECIAL_PAIR_RULES) {
+      const gasIds = rule.reactants.filter((r) => getSubstance(r.id).state === 'gas').map((r) => r.id);
+      if (!gasIds.length) continue;
+      // 目前同材料特例只处理大气 CO2（Na2O2 碳化、碳酸盐→酸式盐）
+      if (gasIds.some((id) => id !== 'CO2')) continue;
+      const solid = rule.reactants.find((r) => getSubstance(r.id).state !== 'gas' && r.id !== 'H2O');
+      if (!solid || !(mat.avail(solid.id) > 0)) continue;
+      const sources = {};
+      for (const r of rule.reactants) {
+        if (getSubstance(r.id).state === 'gas') { sources[r.id] = this._atmMat(env); continue; }
+        if (r.id === 'H2O') {
+          if (mat.avail('H2O') > 0) sources[r.id] = mat;
+          else if (ctx.containerMat && ctx.containerMat.avail('H2O') > 0) sources[r.id] = ctx.containerMat;
+          continue;
         }
+        if (mat.avail(r.id) > 0) sources[r.id] = mat;
+        else if (ctx.containerMat && ctx.containerMat.avail(r.id) > 0) sources[r.id] = ctx.containerMat;
       }
+      if (rule.reactants.some((r) => !sources[r.id])) continue;
+      if (rule.reactants.some((r) => !(sources[r.id].avail(r.id) > 0))) continue;
+      // 强酸/加热环境：碳酸盐优先与酸反应或分解，不积累酸式盐
+      if (rule.reactants.some((r) => r.id === 'H2O')
+        && (ctx.medium === 'acid' || env.conditions.heat || env.conditions.highTemp)) continue;
+      if (rule.co2Over && atm.mass('CO2') < rule.co2Over) continue;
+      this._runRule(rule, sources, dt, env, ctx);
     }
   }
 
@@ -860,10 +995,15 @@ export class ChemistryEngine {
       const B = swapped ? matA : matB;
       for (const idM of A.ids()) {
         if (getSubstance(idM).kind !== 'metal') continue;
+        // Na/K/Li 遇盐溶液：先与水反应（特例），不直接置换金属
+        if (idM === 'Na' || idM === 'K' || idM === 'Li') continue;
         for (const idE of B.ids()) {
           const e = getSubstance(idE);
           if (!e.ions) continue;
           if (e.kind !== 'salt') continue; // 酸由 REDOX 的 H+ 氧化剂处理
+          // 金属盐（CuSO4/CuCl2/AgNO3/FeCl3…）已由 L1 REDOX 统一处理，
+          // 再走置换会双路执行（同一 tick 消耗两倍）
+          if (OXIDIZERS[idE]) continue;
           this._displaceOne(A, B, idM, idE, dt, env, ctx);
         }
       }
@@ -1031,7 +1171,7 @@ export class ChemistryEngine {
       const info = mediaInfo(sol);
       medium = info.medium;
       acidId = info.acidId;
-      if (acidId) acidConc = (sol.mass(acidId) / sol.volume) * 1000;
+      if (acidId) acidConc = (sol.mass(acidId) / sol.liquidVolume()) * 1000;
       if (info.baseId) baseId = info.baseId;
       if (medium === 'acid' && !acidId) medium = 'neutral';
     }
@@ -1043,7 +1183,7 @@ export class ChemistryEngine {
       // 干式台子（灯/开关 volume=0）只是"承载面"——可溶产物**不能**进它的溶液
       // （幽灵溶质：不可见、不可收集、质量凭空消失——用户确认的根因），
       // 要落回台面成固体粉末。
-      inLiquid: !!(containerMat && containerMat.solution && containerMat.solution.volume > 0),
+      inLiquid: !!(containerMat && containerMat.solution && containerMat.solution.liquidVolume() > 0),
       containerMat,
       playerInvolved: matA.isPlayer || matB.isPlayer,
       solidObj,
@@ -1074,8 +1214,21 @@ export class ChemistryEngine {
       // 水只进"真容器"（池/烧杯等有水介质）；干式台子（灯/开关 volume=0）与开阔地
       // 的水蒸发不建模——否则灯上反应（NH4Cl+Ca(OH)2 制氨等）会把水积进灯里，
       // 干式台子被"弄湿"后触发本不该发生的遇水反应
-      if (ctx.inContainer && ctx.containerMat.solution && ctx.containerMat.solution.volume > 0) {
+      if (ctx.inContainer && ctx.containerMat.solution && ctx.containerMat.solution.liquidVolume() > 0) {
         ctx.containerMat.add('H2O', mass);
+      } else if (ctx.env && ctx.env.atmosphere) {
+        // 大气反应（燃烧等）生成的水：进大气（水蒸气），保证质量守恒
+        ctx.env.atmosphere.add('H2O', mass);
+      }
+      return;
+    }
+    // 液体产物（H2O2/HCl/Br2 等）：有真容器就进溶液；干台/开阔地生成液滴粒子
+    // （旧实现会落成"可垫脚的固体球"）
+    if (sub.state === 'liquid') {
+      if (ctx.inContainer && ctx.containerMat.solution && ctx.containerMat.solution.liquidVolume() > 0) {
+        ctx.containerMat.add(id, mass, ctx.lastRxText);
+      } else {
+        ctx.env.emit({ id, mass, phase: 'particle' }, ctx.lastRxText);
       }
       return;
     }
@@ -1188,8 +1341,8 @@ export class ChemistryEngine {
         if (leftover <= 1e-9) return 0;
       }
     }
-    // 2. 水溶解气体（CO2→H2CO3、SO2→H2SO3、SO3→H2SO4、NO2→HNO3+NO、NH3→氨水、
-    //    Cl2→氯水溶质）；消耗等摩尔水（防止 H2CO3⇌CO2+H2O 循环无限产水）
+    // 2. 水溶解气体（CO2→H2CO3、SO2→H2SO3、SO3→H2SO4、NO2→2HNO3+NO、NH3→氨水、
+    //    Cl2→HCl+HClO）；严格按 GAS_WATER_RULES 的水/产物系数消耗水并生成产物
     if (leftover > 1e-9 && baseMat && baseMat.avail('H2O') > 0) {
       for (const gw of GAS_WATER_RULES) {
         if (gw.gas !== id) continue;
@@ -1200,19 +1353,11 @@ export class ChemistryEngine {
         if (gw.gas === 'CO2' || gw.gas === 'SO2' || gw.gas === 'NO2' || gw.gas === 'Cl2') {
           if (!opts.forceDissolve) continue;
         }
-        const gasMM = getSubstance(id).mm;
         const diss = Math.min(leftover, RATE.acidGas * ctx.dt * 0.15);
         if (diss <= 1e-9) break;
-        const waterNeed = diss / gasMM; // 1 mol 气体配 1 mol 水（简化）
-        if (baseMat.avail('H2O') < waterNeed) break;
-        baseMat.consume('H2O', waterNeed);
-        if (getSubstance(gw.acid).state === 'gas') {
-          baseMat.add(gw.acid, (diss * getSubstance(gw.acid).mm) / gasMM, ctx.lastRxText); // 气体溶质（氯水）
-        } else {
-          this._emit(gw.acid, (diss * getSubstance(gw.acid).mm) / gasMM, ctx);
-        }
-        if (gw.byGas) this._emit(gw.byGas, (diss * getSubstance(gw.byGas).mm) / gasMM, ctx);
-        leftover -= diss;
+        const done = this._dissolveGas(gw, diss, ctx);
+        if (!done) break; // 水不够（或产品无法入账）→ 留给大气
+        leftover -= done;
         break;
       }
     }
@@ -1223,6 +1368,32 @@ export class ChemistryEngine {
     return 0;
   }
 
+  /** 按 GAS_WATER_RULES 把 mass 克气体溶入容器水：消耗 waterCoeff mol 水，
+   *  按 products 系数生成产物（气体产物进大气，液体/固体产物进溶液）。
+   *  返回实际溶解的气体质量；水不足/无产品时返回 0（气体留在大气）。 */
+  _dissolveGas(gw, mass, ctx) {
+    const cm = ctx.containerMat;
+    if (!cm || !(mass > 0)) return 0;
+    const gasMM = getSubstance(gw.gas).mm;
+    const moles = mass / gasMM;
+    const waterNeed = moles * (gw.water ?? 1) * getSubstance('H2O').mm;
+    if (cm.avail('H2O') < waterNeed) return 0;
+    const products = gw.products ?? [{ id: gw.acid, coeff: 1 }];
+    const list = [];
+    for (const p of products) {
+      const pMass = moles * p.coeff * getSubstance(p.id).mm;
+      if (pMass > 1e-12) list.push({ id: p.id, mass: pMass });
+    }
+    if (!list.length) return 0;
+    cm.consume('H2O', waterNeed);
+    this._stamp(ctx, reactionEquation([gw.gas, 'H2O'], products.map((p) => p.id)));
+    for (const p of list) {
+      if (getSubstance(p.id).state === 'gas') this._emit(p.id, p.mass, ctx);
+      else cm.add(p.id, p.mass, ctx.lastRxText);
+    }
+    return mass;
+  }
+
   /**
    * 溶液浓度因子：反应物浓度越低反应越慢（相对其饱和显色浓度；无色溶质用默认参照）。
    * 固体/气体返回 1。范围钳制在 [0.05, 1]，避免反应永远无法完成。
@@ -1231,12 +1402,12 @@ export class ChemistryEngine {
     if (!mat || mat.phase !== 'solution' || !mat.solution) return 1;
     // 干式台子（酒精灯/喷灯 volume=0，内部无水）不参与浓度计算——
     // 否则 mass/0 = NaN 会污染 rate → 反应推进 NaN → 溶液写入 NaN
-    if (!(mat.solution.volume > 0)) return 1;
+    if (!(mat.solution.liquidVolume() > 0)) return 1;
     if (id === 'H2O') return 1; // 溶剂浓度恒定（避免 water=0 时反应被压到 5%）
     if (mat.owner && mat.owner.precipitates && (mat.owner.precipitates.get(id) ?? 0) > 0) return 1;
     const sub = getSubstance(id);
     const sat = sub.ionColor ? sub.ionColor.sat : 100;
-    const gPerL = (mat.solution.mass(id) / mat.solution.volume) * 1000;
+    const gPerL = (mat.solution.mass(id) / mat.solution.liquidVolume()) * 1000;
     if (!Number.isFinite(gPerL) || gPerL <= 0) return 0.05;
     return Math.max(0.05, Math.min(1, gPerL / sat));
   }
@@ -1296,22 +1467,13 @@ export class ChemistryEngine {
 
       const gasAvail = atm.mass(gw.gas);
       if (gasAvail <= MIN_ENTRY) continue;
-      const gasMM = getSubstance(gw.gas).mm;
       const absorb = Math.min(gasAvail, RATE.acidGas * dt * 0.1);
       // 微量不吸收：吸收量不足 MIN_ENTRY 时让气体留在大气（空气计可见），
       // 避免在溶液里反复生成"0.000g 级"的微量溶质（NH3·H2O 条目翻转）
       if (absorb <= MIN_ENTRY) continue;
-      const waterNeed = absorb / gasMM;
-      if (ctx.containerMat.avail('H2O') < waterNeed) continue;
-      this._stamp(ctx, reactionEquation([gw.gas], [gw.acid, gw.byGas].filter(Boolean)));
-      ctx.containerMat.consume('H2O', waterNeed);
-      atm.remove(gw.gas, absorb);
-      if (getSubstance(gw.acid).state === 'gas') {
-        ctx.containerMat.add(gw.acid, (absorb * getSubstance(gw.acid).mm) / gasMM, ctx.lastRxText); // 氯水溶质
-      } else {
-        this._emit(gw.acid, (absorb * getSubstance(gw.acid).mm) / gasMM, ctx);
-      }
-      if (gw.byGas) this._emit(gw.byGas, (absorb * getSubstance(gw.byGas).mm) / gasMM, ctx);
+      const done = this._dissolveGas(gw, absorb, ctx);
+      if (!done) continue;
+      atm.remove(gw.gas, done);
     }
   }
 

@@ -500,16 +500,16 @@ test('氢气爆鸣：H2 积累超爆炸下限 + 点燃源 → 爆炸（消耗 H2
   assert.ok(env.atmosphere.mass('O2') < 400, '爆炸应消耗 O2');
 });
 
-test('可燃气体低浓度点燃：不爆炸也不被消耗（灯不产 CO2）', () => {
+test('可燃气体低浓度点燃：缓慢燃烧（不爆炸）并生成产物', () => {
   const engine = new ChemistryEngine();
   const env = makeEnv({ ignited: true }, { globalIgnited: true });
-  env.atmosphere.add('CO', 2); // 低浓度
+  env.atmosphere.add('CO', 2); // 低浓度（低于爆炸下限）
   let exploded = false;
   env.explode = () => { exploded = true; };
   for (let i = 0; i < 200; i++) engine.reactAtmosphere(env, TICK);
   assert.equal(exploded, false, '低浓度 CO 不应爆炸');
-  assert.equal(env.atmosphere.mass('CO'), 2, 'CO 应保留（灯点燃不消耗可燃气体、不产 CO2）');
-  assert.equal(env.atmosphere.mass('CO2'), 0, '灯点燃不应产生 CO2');
+  assert.ok(env.atmosphere.mass('CO') < 1.5, '低浓度点燃应缓慢消耗 CO（不再无条件保留）');
+  assert.ok(env.atmosphere.mass('CO2') > 0.2, 'CO 燃烧应生成 CO2（质量守恒）');
 });
 
 // ---- 15. 自发分解（碳酸） ---------------------------------------------------
@@ -521,8 +521,8 @@ test('碳酸自发分解：H2CO3 → H2O + CO2↑', () => {
   // 分解占绝对主导（部分 CO2 被池水吸收回碳酸，存在溶解平衡，但 62g 只剩微量）
   assert.ok(pool.solution.mass('H2CO3') < 1, `H2CO3 残留=${pool.solution.mass('H2CO3')}`);
   assert.ok(env.atmosphere.mass('CO2') > 40, `CO2=${env.atmosphere.mass('CO2')}`);
-  // H2CO3 分解 = CO2 逸出（不额外产水）
-  assert.ok(pool.solution.water < 1, `water=${pool.solution.water}`);
+  // H2CO3 分解 = CO2 逸出 + 水回到溶剂（质量守恒）
+  assert.ok(Math.abs(pool.solution.water - 18) < 0.5, `water=${pool.solution.water}（应回收 18g）`);
 });
 
 // ---- 15b. 碳酸盐遇酸分步：碳酸根过量时一滴都不冒泡 ---------------------------
