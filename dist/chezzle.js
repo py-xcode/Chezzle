@@ -1858,6 +1858,16 @@ class Scene {
     this.status = s;
   }
 
+  /** 调试：立即通关（levels/levels.json 的 debugClickWin 为 true 时，关卡内点击画布调用）。
+   *  直接 setStatus + _fireStatusOnce **同步**执行：不等下一 tick，进度记录、结算浮层
+   *  立刻完成——专门用来复现/验证"通关记录、结算页、退出重进"这类跨页面流程。 */
+  debugWinNow() {
+    if (this.status !== 'running') return false;
+    this.setStatus('win');
+    this._fireStatusOnce();
+    return true;
+  }
+
   /** 状态推进后补发一次事件（win/died 各只发一次）。
    *  放在 step 里轮询而不是只靠 setStatus：关卡脚本/对象直接改 scene.status 的情况
    *  也能被捕捉到——之前"通关不记录、不弹浮层"就是因为事件没发出去。 */
@@ -12664,8 +12674,13 @@ function handleSceneTapUp(scene) {
  * 落在滴管玻璃段但玩家太远 / 无容器等 → 未命中（不滴也不拖）。
  */
 function handleScenePressDown(scene, canvas, sx, sy, onInfo = null, pad = 6) {
+  if (!scene) return false;
+  // 调试通关（levels.json 的 debugClickWin：由 levels/report.js 提前读好并置全局开关）：
+  // 按下画布任意位置 → 立刻通关，不再走物体命中管线
+  if (typeof window !== 'undefined' && window.__CZ_DEBUG_CLICK_WIN === true &&
+    typeof scene.debugWinNow === 'function' && scene.debugWinNow()) return true;
   // 鸟瞰/竖屏/菜单打开/已死亡：场景管线冻结（后两者点击属于 UI 语义，不能穿透到物体）
-  if (!scene || scene.overview || portraitScene(scene) || worldPaused(scene)) return false;
+  if (scene.overview || portraitScene(scene) || worldPaused(scene)) return false;
   scene._pressHome = null;
   const hit = hitTap(scene, canvas, sx, sy, pad);
   if (!hit) {
@@ -17400,6 +17415,10 @@ class TouchUI {
     if (this.isPortrait()) return 'rot';
     const scene = act.scene;
     const hud = act.hud ?? null;
+    // 调试通关（levels.json 的 debugClickWin，由 report.js 读好并置全局开关）：
+    // 任意触点（含 HUD/摇杆区域）都直接通关，手机上也方便测流程
+    if (typeof window !== 'undefined' && window.__CZ_DEBUG_CLICK_WIN === true &&
+      typeof scene.debugWinNow === 'function' && scene.debugWinNow()) return 'ui';
     // 重开菜单打开（游戏已暂停）：触点只交给菜单（按钮命中 / 点面板外关闭），
     // 摇杆/右下按钮/场景按下管线全部不响应
     if (scene.restartMenuOpen) {
@@ -18610,6 +18629,8 @@ class LevelBuilder {
     if (typeof location !== 'undefined' && /[?&]debug=1/.test(location.search)) {
       this.scene.debugMode = true;
     }
+    // 调试通关不在这里读 URL：由页面脚本 levels/report.js 读取 levels/levels.json 的
+    // debugClickWin 配置后，设置 window.__CZ_DEBUG_CLICK_WIN（默认关闭）。
     // 无玩家时相机聚焦关卡内容包围盒：否则显示世界中央，物体（滴管等）不在视口
     // 内——玩家看不到也点不到（"点击没反应"的根源）
     if (!this.scene.player) {
@@ -24929,7 +24950,11 @@ class Multiscene {
     canvas.addEventListener('mouseleave', onLeave);
     canvas.addEventListener('click', (e) => {
       const cur = activeOf();
-      if (!cur || !cur.hud) return;
+      if (!cur) return;
+      // 调试通关（levels.json 的 debugClickWin）：多场景关卡里鼠标点一下也直接通关
+      if (typeof window !== 'undefined' && window.__CZ_DEBUG_CLICK_WIN === true &&
+        typeof cur.scene.debugWinNow === 'function' && cur.scene.debugWinNow()) return;
+      if (!cur.hud) return;
       const { x, y } = screenPos(e);
       // 提示按钮 / 物品栏选格 / 场景内可点击物体（滴管等 onTap）——与单场景同一管线
       handleSceneClick(cur.scene, cur.hud, canvas, x, y);
@@ -25108,4 +25133,4 @@ exports.Multiscene = Multiscene;
   };
   global.Chezzle = __require("src/index.js");
 })(typeof window !== 'undefined' ? window : globalThis);
-console.log('[Chezzle] 引擎构建 "vmvwagucl"');
+console.log('[Chezzle] 引擎构建 "vmw5vdv9u"');

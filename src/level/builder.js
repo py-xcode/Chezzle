@@ -214,6 +214,8 @@ export class LevelBuilder {
     if (typeof location !== 'undefined' && /[?&]debug=1/.test(location.search)) {
       this.scene.debugMode = true;
     }
+    // 调试通关不在这里读 URL：由页面脚本 levels/report.js 读取 levels/levels.json 的
+    // debugClickWin 配置后，设置 window.__CZ_DEBUG_CLICK_WIN（默认关闭）。
     // 无玩家时相机聚焦关卡内容包围盒：否则显示世界中央，物体（滴管等）不在视口
     // 内——玩家看不到也点不到（"点击没反应"的根源）
     if (!this.scene.player) {

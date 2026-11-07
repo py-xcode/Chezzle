@@ -412,6 +412,10 @@ export class TouchUI {
     if (this.isPortrait()) return 'rot';
     const scene = act.scene;
     const hud = act.hud ?? null;
+    // 调试通关（levels.json 的 debugClickWin，由 report.js 读好并置全局开关）：
+    // 任意触点（含 HUD/摇杆区域）都直接通关，手机上也方便测流程
+    if (typeof window !== 'undefined' && window.__CZ_DEBUG_CLICK_WIN === true &&
+      typeof scene.debugWinNow === 'function' && scene.debugWinNow()) return 'ui';
     // 重开菜单打开（游戏已暂停）：触点只交给菜单（按钮命中 / 点面板外关闭），
     // 摇杆/右下按钮/场景按下管线全部不响应
     if (scene.restartMenuOpen) {

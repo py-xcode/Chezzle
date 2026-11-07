@@ -1642,6 +1642,16 @@ export class Scene {
     this.status = s;
   }
 
+  /** 调试：立即通关（levels/levels.json 的 debugClickWin 为 true 时，关卡内点击画布调用）。
+   *  直接 setStatus + _fireStatusOnce **同步**执行：不等下一 tick，进度记录、结算浮层
+   *  立刻完成——专门用来复现/验证"通关记录、结算页、退出重进"这类跨页面流程。 */
+  debugWinNow() {
+    if (this.status !== 'running') return false;
+    this.setStatus('win');
+    this._fireStatusOnce();
+    return true;
+  }
+
   /** 状态推进后补发一次事件（win/died 各只发一次）。
    *  放在 step 里轮询而不是只靠 setStatus：关卡脚本/对象直接改 scene.status 的情况
    *  也能被捕捉到——之前"通关不记录、不弹浮层"就是因为事件没发出去。 */

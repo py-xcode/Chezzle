@@ -18,8 +18,8 @@
 <!-- 偏好 + 音效：prefs.js 供 audio.js 读 sfxVolume/sfxMuted；点击音由 audio.js 统一接线，
      需要不同语义的元素用 data-sfx 覆盖（本页：返回 ui.back、筛选/重置 ui.tick、进入 ui.open；
      走廊卡片在 select-model 之后按"可进/锁定"动态挂 level.enter / ui.deny，拖动时跳过）。 -->
-<script src="prefs.js?vmvwagucl"></script>
-<script src="audio.js?vmvwagucl"></script>
+<script src="prefs.js?vmw5vdv9u"></script>
+<script src="audio.js?vmw5vdv9u"></script>
 <style>
   /* ★ 主题色用三个数值自定义属性承载并注册成 <number>：这样它们**可以被 transition 插值**，
      换元素时背景洗色/符文环/光晕才会平滑过渡而不是硬切（"用 var() 拼的颜色"默认不可动画）。 */
@@ -757,6 +757,8 @@
 </style>
 </head>
 <body>
+<!-- 本地存储守卫：无痕模式/禁用网站数据时无法保存进度，铺警告层禁止继续 -->
+<script src="storage-guard.js"></script>
 <div id="bg" aria-hidden="true">
   <div class="wash"></div>
   <div id="stars"></div>

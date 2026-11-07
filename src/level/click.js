@@ -425,8 +425,13 @@ export function handleSceneTapUp(scene) {
  * 落在滴管玻璃段但玩家太远 / 无容器等 → 未命中（不滴也不拖）。
  */
 export function handleScenePressDown(scene, canvas, sx, sy, onInfo = null, pad = 6) {
+  if (!scene) return false;
+  // 调试通关（levels.json 的 debugClickWin：由 levels/report.js 提前读好并置全局开关）：
+  // 按下画布任意位置 → 立刻通关，不再走物体命中管线
+  if (typeof window !== 'undefined' && window.__CZ_DEBUG_CLICK_WIN === true &&
+    typeof scene.debugWinNow === 'function' && scene.debugWinNow()) return true;
   // 鸟瞰/竖屏/菜单打开/已死亡：场景管线冻结（后两者点击属于 UI 语义，不能穿透到物体）
-  if (!scene || scene.overview || portraitScene(scene) || worldPaused(scene)) return false;
+  if (scene.overview || portraitScene(scene) || worldPaused(scene)) return false;
   scene._pressHome = null;
   const hit = hitTap(scene, canvas, sx, sy, pad);
   if (!hit) {

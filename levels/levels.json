@@ -1,5 +1,6 @@
 {
   "debugUnlockAll": false,
+  "debugClickWin": false,
   "tips": ["我知道你正在看这条Tips！",
 "喵喵喵",
 "泥嚎！希望Chezzle能让你天天开心！",
@@ -56,7 +57,8 @@
     "rare      稀有元素（紫色 + 更高难度标识）。旧的 47 个（惰性气体+稀土+贵金属）太宽了，",
     "          这里只留**稀有气体**；要加就自己往数组里塞符号（如 \"Pt\",\"Au\"）",
     "tips      选关→关卡过场左下角的 Tips 文案池：填字符串数组，每次随机抽一条",
-    "debugUnlockAll  true = 选关页忽略前置关卡解锁（调试用：直接进任意已编写关卡；正式发布记得改回 false）"
+    "debugUnlockAll  true = 选关页忽略前置关卡解锁（调试用：直接进任意已编写关卡；正式发布记得改回 false）",
+    "debugClickWin   true = 调试通关：关卡内点击画布任意位置直接通关（测结算/进度/退出重进用；正式发布改回 false）"
   ],
 
   "tutorial": {
@@ -84,7 +86,7 @@
       { "id": "Be-1", "name": "铍-9", "mass": 9, "file": "levels/level4-1.html", "requires": ["Li-1"] }
     ],
     "B": [
-      { "id": "B-1", "name": "硼-9", "mass": 11, "file": "levels/level5-1.html", "requires": ["Be-1"] }
+      { "id": "B-1", "name": "硼-11", "mass": 11, "file": "levels/level5-1.html", "requires": ["Be-1"] }
     ]
   }
 }

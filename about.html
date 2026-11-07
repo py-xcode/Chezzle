@@ -13,8 +13,8 @@
 })();
 </script>
 <!-- 偏好 + 音效：prefs.js 供 audio.js 读 sfxVolume/sfxMuted；返回/去选关的点击音用 data-sfx 覆盖默认 -->
-<script src="prefs.js?vmvwagucl"></script>
-<script src="audio.js?vmvwagucl"></script>
+<script src="prefs.js?vmw5vdv9u"></script>
+<script src="audio.js?vmw5vdv9u"></script>
 <style>
   :root { --gold: #e8b84b; --gold-l: #ffd76a; --cyan: #7fd8ff; --panel: #141a40; --edge: #2b3047; --txt: #dfe8f2; --dim: #9fb2c8; }
   * { box-sizing: border-box; margin: 0; }
@@ -124,6 +124,8 @@
 </style>
 </head>
 <body>
+<!-- 本地存储守卫：无痕模式/禁用网站数据时无法保存进度，铺警告层禁止继续 -->
+<script src="storage-guard.js"></script>
 <div id="veil" aria-hidden="true"></div>
 <div id="introSweep" aria-hidden="true"><i></i></div>
 <div id="sbar" aria-hidden="true"><i></i></div>
@@ -162,6 +164,7 @@
     <span class="k"><kbd>R</kbd> 重开本关</span>
     <span class="k"><kbd>V</kbd> 鸟瞰（灵魂出窍）：暂停 + 滚轮缩放 + 拖动平移，看整关布局</span>
     <span class="k"><kbd>F5</kbd> 暂停 <kbd>F6</kbd> 步进（调试模式，URL 加 <kbd>?debug=1</kbd> 开启）</span>
+    <span class="k"><kbd>debugClickWin</kbd> 调试通关：在 levels/levels.json 里设为 true 后，关卡内点一下直接通关（测结算页/进度保存用）</span>
   </div>
   <p>悬停物体可以查看它的<b>来源与成分</b>（调试模式）。鼠标点击右下角的物品栏格子可以切换收集槽——5 个格子大小一致，装着烧杯/滴管/集气瓶的格子会画出物品缩略图与质量，里面装的液体和气体成分一目了然；选中可拾取物品时，物品栏上方会显示该物品的操作与键位（移动端则在右下直接出现对应按钮）。<b>移动端</b>：左下摇杆 + 右下 Q/⇧ 与物品操作按键，首次触屏自动全屏（右上 ⛶ 可切换），左上信息合并成一张卡；鸟瞰模式单指拖动平移、双指捏合缩放。</p>
   <p><a href="levels/items-demo.html" style="color:#ffd76a"><b>▶ 打开物品演示关</b></a>（烧杯 / 滴管 / 集气瓶的操作用例）。</p>

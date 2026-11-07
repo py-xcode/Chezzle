@@ -117,7 +117,11 @@ export class Multiscene {
     canvas.addEventListener('mouseleave', onLeave);
     canvas.addEventListener('click', (e) => {
       const cur = activeOf();
-      if (!cur || !cur.hud) return;
+      if (!cur) return;
+      // 调试通关（levels.json 的 debugClickWin）：多场景关卡里鼠标点一下也直接通关
+      if (typeof window !== 'undefined' && window.__CZ_DEBUG_CLICK_WIN === true &&
+        typeof cur.scene.debugWinNow === 'function' && cur.scene.debugWinNow()) return;
+      if (!cur.hud) return;
       const { x, y } = screenPos(e);
       // 提示按钮 / 物品栏选格 / 场景内可点击物体（滴管等 onTap）——与单场景同一管线
       handleSceneClick(cur.scene, cur.hud, canvas, x, y);

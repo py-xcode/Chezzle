@@ -97,20 +97,31 @@
   // ---- 通关页：时间 / 新解锁关卡 ----
   /** 关卡表缓存（levels.json 可能比关卡页加载慢；找不到就只显示已有信息） */
   let cfgCache;
-  async function loadLevelsConfig() {
-    if (cfgCache !== undefined) return cfgCache;
-    const urls = [BASE + 'levels/levels.json', 'levels/levels.json', '../levels/levels.json'];
-    for (const u of urls) {
-      try {
-        const r = await fetch(u, { cache: 'no-cache' });
-        if (!r.ok) continue;
-        cfgCache = await r.json();
-        return cfgCache;
-      } catch (e) { /* 继续下一个路径 */ }
-    }
-    cfgCache = null;
-    return null;
+  let cfgPromise = null;
+  function loadLevelsConfig() {
+    if (cfgCache !== undefined) return Promise.resolve(cfgCache);
+    if (cfgPromise) return cfgPromise; // 提前读取与通关补数据共用同一次请求
+    cfgPromise = (async () => {
+      const urls = [BASE + 'levels/levels.json', 'levels/levels.json', '../levels/levels.json'];
+      for (const u of urls) {
+        try {
+          const r = await fetch(u, { cache: 'no-cache' });
+          if (!r.ok) continue;
+          cfgCache = await r.json();
+          return cfgCache;
+        } catch (e) { /* 继续下一个路径 */ }
+      }
+      cfgCache = null;
+      return null;
+    })();
+    return cfgPromise;
   }
+  // 调试通关开关：**只有 levels/levels.json 里 debugClickWin: true 才生效**（默认关闭）。
+  // 页面加载时提前读取；关卡内点击由引擎检查 window.__CZ_DEBUG_CLICK_WIN。
+  window.__CZ_DEBUG_CLICK_WIN = false;
+  loadLevelsConfig().then((cfg) => {
+    window.__CZ_DEBUG_CLICK_WIN = !!(cfg && cfg.debugClickWin === true);
+  }).catch(() => { window.__CZ_DEBUG_CLICK_WIN = false; });
   const allLevelsOf = (cfg) => {
     const out = [];
     if (!cfg) return out;
@@ -140,6 +151,20 @@
     const s = Math.floor((cs % 6000) / 100);
     const c = cs % 100;
     return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(c).padStart(2, '0')}`;
+  }
+  const escHtml = (s) => String(s == null ? '' : s)
+    .replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  /** 新解锁关卡卡组（data 每次异步补上时也会重新渲染这一块） */
+  function newlyHtml(newly) {
+    if (!newly || !newly.length) return '<span class="czw-none">没有新的关卡解锁</span>';
+    return newly.map((n, i) =>
+      '<span class="czw-new" style="--d:' + (80 + i * 70) + 'ms">' +
+      '<b>' + escHtml(n.name || n.id) + '</b>' + (n.sym ? '<i>' + escHtml(n.sym) + '</i>' : '') + '</span>').join('');
+  }
+  function whyNoteHtml(why) {
+    return '没认出本页是哪个关卡' + (why ? '：' + escHtml(why) : '') +
+      '<br>修法（二选一）：① 本关脚本里加 ChezzleReport.bind(scene, \'关卡id\')；' +
+      '② 在 levels/levels.json 里把该关的 file 写成 ' + escHtml(hereRaw()) + '（.html 可省）';
   }
 
   // 常驻悬浮"返回选关"（左上角）。
@@ -301,23 +326,42 @@
     setLevelId(id) { if (id) pageId = String(id); return pageId; },
     getLevelId() { return pageId; },
 
-    /** 通关统一入口：记录 + 浮层。场景没显式 bind 过也能用（引擎会直接调它，见 scene.js），
-     *  此时按"页面级 id → 当前文件名反查 levels.json"的顺序兜底。 */
-    async onWin(scene, explicitId) {
-      const id = explicitId || ID_OF.get(scene) || pageId || await resolveIdByFile() || '';
+    /** 通关统一入口：**先同步**记录进度 + 立刻建结算浮层，再异步补「本次新解锁」等
+     *  需要 levels.json 的数据。场景没显式 bind 过也能用（引擎会直接调它，见 scene.js），
+     *  此时按"页面级 id → 当前文件名反查 levels.json"的顺序兜底。
+     *
+     *  为什么必须先同步：
+     *   · 画布 HUD 每帧检查 #czl-win 决定是否只铺暗场；以前浮层排在 fetch 后面，
+     *     网络慢时会先画出画布版「通关」面板，然后又被 DOM 结算页盖掉（两段式）。
+     *   · 进度写入同样排在 fetch 后面：玩家看到第一屏就退出时，这一关根本没记上。 */
+    onWin(scene, explicitId) {
       const elapsed = scene && Number.isFinite(scene.time) ? scene.time : null;
-      let total = 0;
+      const knownId = explicitId || ID_OF.get(scene) || pageId || '';
+      const before = load().cleared;
+      if (knownId) ChezzleReport.record(knownId);
+      const total = load().cleared.length;
+      // 多路触发（bind 事件 / 引擎直调 / 250ms 轮询）时只让第一路建浮层并解析，
+      // 后面的调用只负责补记进度（record 幂等）。
+      const already = !!document.getElementById('czl-win');
+      ChezzleReport.overlay(knownId, total, knownId ? '' : idWhy, { elapsed, newly: [] });
+      if (already) return;
+      return this._winFill({ knownId, before, elapsed });
+    },
+
+    /** onWin 的异步收尾：读关卡表 → 解析未知 id → 补记进度 → 用真实数据刷新结算浮层 */
+    async _winFill(info) {
+      const beforeSet = new Set(info.before || []);
+      let id = info.knownId;
       let newly = [];
+      let total = load().cleared.length;
       try {
-        const before = load().cleared;
-        const beforeSet = new Set(before);
         const cfg = await loadLevelsConfig();
-        const beforeUnlocked = unlockedIds(cfg, beforeSet);
-        if (id) ChezzleReport.record(id);
+        if (!id) id = await resolveIdByFile() || '';
+        if (!info.knownId && id) ChezzleReport.record(id);
         total = load().cleared.length;
         if (cfg && id) {
-          const afterSet = new Set(load().cleared);
-          const afterUnlocked = unlockedIds(cfg, afterSet);
+          const beforeUnlocked = unlockedIds(cfg, beforeSet);
+          const afterUnlocked = unlockedIds(cfg, new Set(load().cleared));
           const all = allLevelsOf(cfg);
           newly = [...afterUnlocked]
             .filter((x) => {
@@ -333,7 +377,27 @@
         console.log('[ChezzleReport] 通关记录 → id=' + (id || '(未识别)') + '，累计 ' + total + ' 关，key=' + KEY +
           (id ? '' : '；原因：' + idWhy));
       } catch (e) { console.warn('[ChezzleReport] 记录失败：' + e.message); }
-      ChezzleReport.overlay(id, total, id ? '' : idWhy, { elapsed, newly });
+      ChezzleReport._fillWin({ id, total, why: id ? '' : idWhy, newly });
+    },
+
+    /** 结算浮层已经显示后，用最终数据刷新标题/关卡/累计/新解锁（不存在则跳过） */
+    _fillWin({ id, total, why, newly }) {
+      const d = document.getElementById('czl-win');
+      if (!d || !d.querySelector) return;
+      const titleEl = d.querySelector('.czw-title em');
+      if (titleEl) titleEl.textContent = id === 'tutorial' ? '引导完成' : 'CLEAR';
+      const subEl = d.querySelector('.czw-sub');
+      if (subEl) {
+        subEl.innerHTML = '关卡 <b>' + escHtml(id || '未识别') + '</b> · 累计 <b>' + (total ?? 0) + '</b> 关';
+      }
+      const listEl = d.querySelector('.czw-new-list');
+      if (listEl) listEl.innerHTML = newlyHtml(newly);
+      const noteEl = d.querySelector('.czw-note');
+      if (noteEl) {
+        if (id) noteEl.remove();
+        else noteEl.innerHTML = whyNoteHtml(why);
+      }
+      if (d.setAttribute) d.setAttribute('aria-label', id === 'tutorial' ? '引导完成' : '通关');
     },
 
     /** 通关浮层样式：只注入一次（Phigros 风：深色结算面板 + 大号用时 + 新解锁关卡卡组） */
@@ -346,12 +410,18 @@
         '  background:radial-gradient(130% 95% at 50% 38%, rgba(21,17,52,.72), rgba(4,3,13,.92));',
         '  opacity:0;transition:opacity .3s ease}',
         '#czl-win.in{opacity:1}',
-        '#czl-win .czw-card{position:relative;width:min(540px,92vw);max-height:92vh;overflow:auto;padding:24px 30px 22px;',
+        // 卡片用 border-box + 100% 上限：以前是 content-box 的 max-height:92vh，
+        // 在小视口/带缩放的屏幕上，外框（padding+border）比视口还高，卡片被上下裁掉，
+        // 底部的「返回选关」永远够不到。现在卡片本身限制在视口内，内容区滚动、按钮常驻。
+        '#czl-win .czw-card{position:relative;box-sizing:border-box;display:flex;flex-direction:column;',
+        '  width:min(540px,100%);max-height:calc(100vh - 32px);overflow:hidden;padding:0;',
         '  text-align:center;color:#dfe8f2;background:linear-gradient(180deg,#272150 0%,#120d30 56%,#0d0922 100%);',
         '  border:1.5px solid rgba(232,184,75,.78);border-radius:14px;',
         '  box-shadow:0 0 30px rgba(232,184,75,.16),0 18px 46px rgba(0,0,0,.62);',
         '  transform:translateY(18px) scale(.97);opacity:0;transition:transform .4s cubic-bezier(.2,.9,.3,1.05),opacity .3s ease}',
         '#czl-win.in .czw-card{transform:none;opacity:1}',
+        '#czl-win .czw-body{min-height:0;overflow:auto;overscroll-behavior:contain;padding:24px 30px 0}',
+        '#czl-win .czw-foot{flex:none;padding:16px 30px 22px}',
         '#czl-win .czw-kicker{font:bold 10px/1 ui-monospace,Consolas,monospace;letter-spacing:4px;color:rgba(232,184,75,.78)}',
         '#czl-win .czw-title{margin-top:10px;font:bold 38px/1.05 "Segoe UI","Microsoft YaHei",sans-serif;',
         '  letter-spacing:16px;padding-left:16px;color:#ffe9b0;text-shadow:0 0 22px rgba(255,215,106,.55)}',
@@ -368,8 +438,8 @@
         '#czl-win .czw-time{font:bold 31px/1 ui-monospace,Consolas,monospace;letter-spacing:2px;color:#fff;',
         '  text-shadow:0 0 16px rgba(232,184,75,.45)}',
         '#czl-win .czw-unlock{margin-top:16px;padding-top:13px;border-top:1px solid rgba(232,184,75,.16);text-align:left}',
-        '#czl-win .czw-unlock h4{font:bold 11px/1.2 "Segoe UI","Microsoft YaHei",sans-serif;letter-spacing:2px;',
-        '  color:#9fb2c8;margin-bottom:9px}',
+        '#czl-win .czw-unlock h4{margin:0 0 9px;font:bold 11px/1.2 "Segoe UI","Microsoft YaHei",sans-serif;letter-spacing:2px;',
+        '  color:#9fb2c8}',
         '#czl-win .czw-unlock h4::before{content:"";display:inline-block;width:5px;height:5px;margin-right:7px;',
         '  background:#ffd76a;transform:rotate(45deg) translateY(-1px)}',
         '#czl-win .czw-new-list{display:flex;flex-wrap:wrap;gap:7px}',
@@ -384,7 +454,7 @@
         '#czl-win .czw-none{font-size:11px;letter-spacing:1px;color:#6f7b96;padding:3px 0}',
         '#czl-win .czw-note{margin-top:13px;font-size:11px;line-height:1.6;color:#8a94b5;text-align:left;',
         '  padding:7px 9px;border-left:2px solid rgba(232,184,75,.45);background:rgba(232,184,75,.05);border-radius:4px}',
-        '#czl-win .czw-btn{margin-top:19px;padding:10px 40px;border:0;cursor:pointer;',
+        '#czl-win .czw-btn{margin-top:0;padding:10px 40px;border:0;cursor:pointer;',
         '  font:bold 15px/1 "Segoe UI","Microsoft YaHei",sans-serif;letter-spacing:4px;color:#2a2000;',
         '  background:linear-gradient(180deg,#ffe6a0,#e8b84b);',
         '  clip-path:polygon(12px 0,100% 0,calc(100% - 12px) 100%,0 100%);',
@@ -394,12 +464,19 @@
         '#czl-win .czw-btn:focus-visible{outline:2px solid #fff;outline-offset:3px}',
         '@media (prefers-reduced-motion: reduce){#czl-win,#czl-win .czw-card{transition:none}',
         '  #czl-win .czw-new{animation:none;opacity:1;transform:none}}',
-        '@media (max-width:520px){#czl-win .czw-card{padding:20px 18px 18px}',
+        '@media (max-width:520px){#czl-win .czw-body{padding:20px 18px 0}',
+        '  #czl-win .czw-foot{padding:16px 18px 18px}',
         '  #czl-win .czw-title{font-size:30px;letter-spacing:11px;padding-left:11px}',
         '  #czl-win .czw-time{font-size:25px}}',
-        // 大屏同步放大（与画布 HUD 的 uiScaleOf 同向：2K≈1.2×、超宽≈1.4×）
-        '@media (min-width:1600px){#czl-win .czw-card{zoom:1.2}}',
-        '@media (min-width:2100px){#czl-win .czw-card{zoom:1.42}}',
+        // 大屏同步放大（与画布 HUD 的 uiScaleOf 同向：2K≈1.2×、超宽≈1.4×）。
+        // zoom 会把 max-height 一起放大，所以上限要按同样倍率折回去：
+        // (100vh - 32px) / 1.2 = 83.3333vh - 26.6667px，1.42 同理。
+        '@media (min-width:1600px){#czl-win .czw-card{zoom:1.2;max-height:calc(83.3333vh - 26.6667px)}}',
+        '@media (min-width:2100px){#czl-win .czw-card{zoom:1.42;max-height:calc(70.4225vh - 22.5352px)}}',
+        // 移动端点地址栏会吃掉 vh 的下半截：支持 dvh 就按真实可见高度算。
+        '@supports (height:100dvh){#czl-win .czw-card{max-height:calc(100dvh - 32px)}}',
+        '@media (min-width:1600px){@supports (height:100dvh){#czl-win .czw-card{max-height:calc(83.3333dvh - 26.6667px)}}}',
+        '@media (min-width:2100px){@supports (height:100dvh){#czl-win .czw-card{max-height:calc(70.4225dvh - 22.5352px)}}}',
       ].join('');
       doc.head.appendChild(s);
     },
@@ -408,8 +485,6 @@
      *  why = 未识别关卡 id 时的具体原因；opts = { elapsed, newly:[{id,name,sym}] } */
     overlay(id, total, why, opts = {}) {
       if (document.getElementById('czl-win')) return;
-      const esc = (s) => String(s == null ? '' : s)
-        .replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
       this._winStyle(document);
       const d = document.createElement('div');
       d.id = 'czl-win';
@@ -421,25 +496,19 @@
       const timeHtml = elapsed == null ? '' :
         '<div class="czw-timebox"><span class="czw-tlabel">本次用时</span>' +
         '<span class="czw-time" id="czwTime">' + formatTime(0) + '</span></div>';
-      const newHtml = newly.length
-        ? newly.map((n, i) =>
-          '<span class="czw-new" style="--d:' + (80 + i * 70) + 'ms">' +
-          '<b>' + esc(n.name || n.id) + '</b>' + (n.sym ? '<i>' + esc(n.sym) + '</i>' : '') + '</span>').join('')
-        : '<span class="czw-none">没有新的关卡解锁</span>';
-      const note = id ? '' : (
-        '<div class="czw-note">没认出本页是哪个关卡' + (why ? '：' + esc(why) : '') +
-        '<br>修法（二选一）：① 本关脚本里加 ChezzleReport.bind(scene, \'关卡id\')；' +
-        '② 在 levels/levels.json 里把该关的 file 写成 ' + esc(hereRaw()) + '（.html 可省）</div>');
+      const note = id ? '' : '<div class="czw-note">' + whyNoteHtml(why) + '</div>';
       d.innerHTML =
         '<div class="czw-card">' +
+        '<div class="czw-body">' +
         '<div class="czw-kicker">CHEZZLE · RESULT</div>' +
         '<div class="czw-title"><em>' + (title === '通关' ? 'CLEAR' : title) + '</em></div>' +
-        '<div class="czw-sub">关卡 <b>' + esc(id || '未识别') + '</b> · 累计 <b>' + (total ?? 0) + '</b> 关</div>' +
+        '<div class="czw-sub">关卡 <b>' + escHtml(id || '未识别') + '</b> · 累计 <b>' + (total ?? 0) + '</b> 关</div>' +
         '<div class="czw-divider"></div>' +
         timeHtml +
-        '<div class="czw-unlock"><h4>本次新解锁</h4><div class="czw-new-list">' + newHtml + '</div></div>' +
+        '<div class="czw-unlock"><h4>本次新解锁</h4><div class="czw-new-list">' + newlyHtml(newly) + '</div></div>' +
         note +
-        '<button class="czw-btn" data-act="select" type="button" data-sfx="ui.back">返回选关</button>' +
+        '</div>' +
+        '<div class="czw-foot"><button class="czw-btn" data-act="select" type="button" data-sfx="ui.back">返回选关</button></div>' +
         '</div>';
       document.body.appendChild(d);
       // 进场：遮罩淡入 + 面板上浮

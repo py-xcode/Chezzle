@@ -7,9 +7,9 @@
 <link rel="icon" href="data:,">
 <title>Chezzle · 化学 × 解谜</title>
 <!-- 偏好设置（引擎与首页设置面板共用；必须在本页任何引擎脚本之前加载） -->
-<script src="prefs.js?vmvwagucl"></script>
+<script src="prefs.js?vmw5vdv9u"></script>
 <!-- 音效（UI 点击自动接线 + 设置面板音量；读 ChezzlePrefs 的 sfxVolume/sfxMuted 实时生效） -->
-<script src="audio.js?vmvwagucl"></script>
+<script src="audio.js?vmw5vdv9u"></script>
 <script>
 /* 深链首帧：路由不是首页时，先把首页的标题/角落舞台藏起来（脚本还没跑到也不闪首页） */
 (function () {
@@ -153,7 +153,7 @@
   body.low .meteor { filter: none; }
   body.low .bar { transition: none; }
   /* —— 入场：深色幕布自动淡出（纯 CSS，不等引擎；国内网络下引擎包很大）——
-     开场动画一律不依赖 dist/chezzle.js?vmvwagucl：标题/按钮的 CSS 动画在解析时就跑起来，
+     开场动画一律不依赖 dist/chezzle.js?vmw5vdv9u：标题/按钮的 CSS 动画在解析时就跑起来，
      引擎只影响两个角落的小舞台（下面用"启动占位"承接等待）。 */
   #veil { position: fixed; inset: 0; z-index: 899; background: #07051a; pointer-events: none;
     animation: veilOut .55s ease-out .02s both; }
@@ -244,6 +244,12 @@
     transition: opacity .34s ease, transform .5s cubic-bezier(.2,.8,.3,1); }
   .czset-level.on { opacity: 1; transform: none; }
   .czset-level iframe { display: block; width: 100%; height: 100%; border: 0; pointer-events: none; }
+  /* 竖屏首页时 body 被整体旋转 90°；设置弹窗本身已挪到 body 外保持竖直，
+     但预览 iframe 仍要按"关卡自己的横屏视口"加载（竖着加载会命中关卡的「请横屏游玩」遮罩）。
+     所以只把预览容器按 100vh×100vw 转 90°：对外仍铺满竖屏，内部视口是横屏。 */
+  .czset.rot .czset-level { inset: auto; left: 50%; top: 50%; width: 100vh; height: 100vw;
+    transform: translate(-50%, -50%) rotate(90deg); }
+  .czset.rot .czset-level.on { transform: translate(-50%, -50%) rotate(90deg); }
   .czset.previewing { background: rgba(5,4,16,.12); -webkit-backdrop-filter: none; backdrop-filter: none; }
   .czset.previewing .czset-panel { z-index: 2; background: rgba(16,13,42,.52);
     -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
@@ -260,7 +266,7 @@
     .czset-level, .czset-head, .czset-foot, .czset-sec { transition: none; }
   }
   .czset-panel { position: relative; display: flex; flex-direction: column; width: min(560px, 94vw);
-    max-height: min(88vh, 660px); color: #dfe8f2; overflow: hidden;
+    box-sizing: border-box; max-height: min(88vh, 660px); color: #dfe8f2; overflow: hidden;
     background: linear-gradient(180deg, #282050 0%, #120d30 55%, #0e0a24 100%);
     border: 1.5px solid rgba(232, 184, 75, .8); border-radius: 12px;
     box-shadow: 0 0 26px rgba(232, 184, 75, .18), 0 20px 48px rgba(0, 0, 0, .6);
@@ -299,6 +305,9 @@
     font: bold 8.5px/1 ui-monospace, Consolas, monospace; letter-spacing: 2px;
     color: rgba(232,184,75,.6); }
   .czset-keys { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 18px; margin-top: 8px; }
+  .czset-storage-note { margin-top: 7px; font-size: 11.5px; line-height: 1.65; color: #8a94b5; }
+  .czset-storage-note b { color: #ffd76a; font-weight: bold; }
+  .czset-storage-btn { margin-top: 9px; }
   .czset-key { display: flex; align-items: center; justify-content: space-between; gap: 10px;
     padding: 6px 0; font-size: 12.5px; color: #c9d6ee;
     border-bottom: 1px dashed rgba(127, 216, 255, .12); }
@@ -320,6 +329,34 @@
     filter: none; }
   .czset-btn.ghost:hover { border-color: #7fd8ff; color: #fff; }
   .czset-btn:focus-visible, .czset-kbtn:focus-visible, .czset-x:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+
+  /* —— 本地存储测试说明弹窗（设置里点「测试本地存储」后弹出；说明文字不再塞在设置面板里）—— */
+  .czsg { position: fixed; inset: 0; z-index: 1300; display: flex; align-items: center; justify-content: center;
+    padding: 18px; background: rgba(4,3,14,.78); -webkit-backdrop-filter: blur(5px); backdrop-filter: blur(5px);
+    opacity: 0; transition: opacity .22s ease; }
+  .czsg[hidden] { display: none; }
+  .czsg.in { opacity: 1; }
+  .czsg-panel { position: relative; box-sizing: border-box; width: min(430px, 94vw); max-height: calc(100dvh - 36px);
+    overflow: auto; padding: 22px 24px 20px; color: #dfe8f2; text-align: center;
+    background: linear-gradient(180deg, #27204d 0%, #120d30 56%, #0d0922 100%);
+    border: 1.5px solid rgba(232,184,75,.82); border-radius: 14px;
+    box-shadow: 0 0 30px rgba(232,184,75,.16), 0 20px 50px rgba(0,0,0,.62);
+    transform: translateY(16px) scale(.975); transition: transform .3s cubic-bezier(.2,.9,.3,1.05); }
+  .czsg.in .czsg-panel { transform: none; }
+  .czsg-kicker { font: bold 10px/1 ui-monospace, Consolas, monospace; letter-spacing: 3px; color: rgba(232,184,75,.75); }
+  .czsg-panel h2 { margin-top: 10px; font: bold 20px/1.3 "Segoe UI","Microsoft YaHei",sans-serif; letter-spacing: 3px;
+    color: #ffe9b0; text-shadow: 0 0 14px rgba(255,215,106,.4); }
+  .czsg-panel p { margin-top: 12px; font-size: 12.5px; line-height: 1.75; color: #b9c6dd; text-align: left; }
+  .czsg-panel p b { color: #ffd76a; }
+  .czsg-panel .czsg-hint { margin-top: 13px; padding: 8px 10px; border-left: 2px solid rgba(232,184,75,.6);
+    background: rgba(232,184,75,.06); border-radius: 4px; font-size: 12px; line-height: 1.7; color: #cfe0f5; text-align: left; }
+  .czsg-ok { margin-top: 17px; padding: 9px 30px; border: 0; cursor: pointer;
+    font: bold 13px/1 "Segoe UI","Microsoft YaHei",sans-serif; letter-spacing: 2px; color: #2a2000;
+    background: linear-gradient(180deg,#ffe6a0,#e8b84b);
+    clip-path: polygon(9px 0,100% 0,calc(100% - 9px) 100%,0 100%);
+    filter: drop-shadow(0 0 12px rgba(232,184,75,.45)); }
+  .czsg-ok:focus-visible { outline: 2px solid #fff; outline-offset: 3px; }
+  @media (max-width:520px) { .czsg-panel { padding: 18px 18px 16px; } .czsg-panel h2 { font-size: 18px; letter-spacing: 1px; } }
   @media (max-height: 520px) {
     .czset-preview { height: 92px; }
     .czset-body { padding-top: 10px; }
@@ -402,7 +439,7 @@
   .czupd[hidden] { display: none; }
   .czupd.in { opacity: 1; }
   .czupd-panel { position: relative; display: flex; flex-direction: column; width: min(650px, 94vw);
-    max-height: min(86vh, 720px); overflow: hidden; color: #dfe8f2;
+    box-sizing: border-box; max-height: min(86vh, 720px); overflow: hidden; color: #dfe8f2;
     background: linear-gradient(180deg, #27204d 0%, #120d30 56%, #0d0922 100%);
     border: 1.5px solid rgba(232,184,75,.82); border-radius: 12px;
     box-shadow: 0 0 32px rgba(232,184,75,.16), 0 24px 70px rgba(0,0,0,.65);
@@ -443,6 +480,8 @@
 </style>
 </head>
 <body>
+<!-- 本地存储守卫：无痕模式/禁用网站数据时无法保存进度，铺警告层禁止继续 -->
+<script src="storage-guard.js"></script>
 <div id="veil" aria-hidden="true"></div>
 <div id="bg" aria-hidden="true">
   <div class="nebula"></div>
@@ -509,7 +548,7 @@
     </g>
   </svg>
   <!-- 版本号 = 更新当天的日期（alpha-MMDD），不要自己顺序递增 -->
-  <div class="ver">alpha-1031</div>
+  <div class="ver">alpha-1107</div>
 
   <a id="btnPlay" class="bar" href="select.html" data-sfx="ui.open">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -559,6 +598,11 @@
         <h3>音效 <span id="czSetSfxVal">70%</span></h3>
         <input id="czSetSfxVol" type="range" min="0" max="100" step="1" value="70" aria-label="音效音量" data-sfx="off">
       </section>
+      <section class="czset-sec" id="czSetStorage">
+        <h3>本地存储</h3>
+        <p class="czset-storage-note" id="czSetStorageMsg">用于确认关闭浏览器后进度还能保留。</p>
+        <button id="czSetStorageTest" class="czset-btn ghost czset-storage-btn" type="button" data-sfx="ui.toggle">测试本地存储</button>
+      </section>
       <section class="czset-sec" id="czSetTouch">
         <h3>摇杆大小 <span id="czSetJoyVal">100%</span></h3>
         <input id="czSetJoy" type="range" min="80" max="140" step="5" value="100" aria-label="摇杆大小">
@@ -574,6 +618,17 @@
       <button id="czSetReset" class="czset-btn ghost" type="button" data-sfx="ui.toggle">恢复默认</button>
       <button id="czSetDone" class="czset-btn" type="button" data-sfx="ui.close">完成</button>
     </div>
+  </div>
+</div>
+
+<!-- 本地存储测试说明弹窗（设置里点「测试本地存储」后弹出；长说明只放这里） -->
+<div id="czStorageGuide" class="czsg" hidden aria-hidden="true">
+  <div class="czsg-panel" role="dialog" aria-modal="true" aria-labelledby="czStorageGuideTitle">
+    <p class="czsg-kicker">CHEZZLE · STORAGE</p>
+    <h2 id="czStorageGuideTitle">本地存储测试</h2>
+    <p>已写入测试标记。<b>请完全退出浏览器后重新打开本页</b>（只刷新页面不算）。</p>
+    <div class="czsg-hint">重新进入时：看到「本地存储正常」的弹窗，说明数据能保存；如果没有看到弹窗，说明浏览器无法保存数据（常见于无痕模式）。</div>
+    <button id="czStorageGuideOk" class="czsg-ok" type="button" data-sfx="ui.close">知道了</button>
   </div>
 </div>
 
@@ -593,6 +648,20 @@
     </div>
   </div>
 </div>
+
+<script>
+/* 首页竖屏时，applyRotSize() 会把整个 body 顺时针旋转 90°（坐标换算见首页脚本）。
+   全屏弹窗（设置 / 更新）若留在 body 内，position:fixed 会跟着 body 的变换一起转，
+   手机竖屏看到的弹窗就是横躺的、内容还会被裁掉。把它们挂到 <html> 下（body 之外）：
+   固定定位重新以真实视口为参照，弹窗内容保持竖直。 */
+(function () {
+  var html = document.documentElement;
+  ['czSet', 'czUpdate'].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el && el.parentNode !== html) html.appendChild(el);
+  });
+})();
+</script>
 
 <!-- 左下：传送门（A 高台门 / B 地面门，无限循环） -->
 <div class="stage" id="stageL">
@@ -666,6 +735,11 @@
   /** 本地静态服务器只认 .html；Cloudflare Pages 给 clean URL（.html 会 301）→ 分环境生成 */
   function pageUrl(p) { return isLocal ? p : String(p).replace(/\.html?$/i, ''); }
   function withSpa(p) { return pageUrl(p) + (String(p).indexOf('?') >= 0 ? '&' : '?') + 'spa=1'; }
+  /** 调试选项：外层 URL 带 ?win=1 时透传给关卡 iframe —— 关卡内点一下直接通关
+   *  （用来复现"通关后退出重进"的进度问题，不影响正常游玩）。 */
+  function debugWinQuery() {
+    try { return /[?&]win=1(?:&|$)/.test(location.search) ? '&win=1' : ''; } catch (e) { return ''; }
+  }
   function baseName(p) {
     var s = String(p || '').split('?')[0].split('#')[0].replace(/\/+$/, '');
     var a = s.split('/');
@@ -920,7 +994,7 @@
             }, 140);
           }
         });
-        f.src = withSpa(info.file);
+        f.src = withSpa(info.file) + debugWinQuery();
         box.appendChild(f);
         S.game = f;
       };
@@ -997,12 +1071,12 @@
 
 <script>
 // ============================================================================
-// 引擎懒加载：只有首页的两个角落小舞台需要 dist/chezzle.js?vmvwagucl（~800KB）。
+// 引擎懒加载：只有首页的两个角落小舞台需要 dist/chezzle.js?vmw5vdv9u（~800KB）。
 // 选关 / 关于 / 关卡视图各自在 iframe 里加载自己的引擎；外壳不再为一个装饰动画
 // 在首屏下载大包 —— 国内访问 CF Pages 时这是首屏体感最大的一个优化。
 // ============================================================================
 (function () {
-  var SRC = 'dist/chezzle.js?vmvwagucl';
+  var SRC = 'dist/chezzle.js?vmw5vdv9u';
   window.__czEngineWaiters = [];
   window.__czHomeShow = window.__czHomeShow || function () {};
   window.__czLoadEngine = function (cb) {
@@ -1782,6 +1856,10 @@ if (!document.body.classList.contains('czl-page')) window.__czStartHome();
   var keysSec = document.getElementById('czSetKeys');
   var sfxVol = document.getElementById('czSetSfxVol');
   var sfxVal = document.getElementById('czSetSfxVal');
+  var storageTestBtn = document.getElementById('czSetStorageTest');
+  var storageMsg = document.getElementById('czSetStorageMsg');
+  var storageGuide = document.getElementById('czStorageGuide');
+  var storageGuideOk = document.getElementById('czStorageGuideOk');
   var previewWrap = document.getElementById('czSetPreviewWrap');
   var previewCv = document.getElementById('czSetPreview');
   var levelStage = document.getElementById('czSetLevel');
@@ -1796,6 +1874,61 @@ if (!document.body.classList.contains('czl-page')) window.__czStartHome();
   try { if (P.get().sfxMuted) P.save({ sfxMuted: false }); } catch (e) { /* 忽略 */ }
 
   function pct(v) { return Math.round(v * 100) + '%'; }
+  /** 竖屏首页：body 被旋转 90°；设置面板挂到 body 外保持竖直，预览层需要单独反向旋转 */
+  function portraitHome() {
+    try { return (window.__czShellView || 'home') === 'home' && matchMedia('(orientation: portrait)').matches; }
+    catch (e) { return false; }
+  }
+
+  // ---- 本地存储跨会话测试 ----
+  // 写入标记 → 用户完全退出浏览器 → 重新进入时若标记还在，storage-guard.js 会弹
+  // 「本地存储正常」；没弹就说明数据保不住（常见于无痕模式）。Chrome 无痕只能在
+  // “退出重进”后验证，没法在页面加载瞬间识别，所以用这种用户可观察的方式测试。
+  var STORAGE_MSG_DEFAULT = '用于确认关闭浏览器后进度还能保留。';
+  var STORAGE_MSG_PENDING = '测试标记已写入，等待退出浏览器重进验证。';
+  function syncStorageNote() {
+    if (!storageMsg) return;
+    var pending = !!(window.ChezzleStorageGuard &&
+      typeof window.ChezzleStorageGuard.testPending === 'function' && window.ChezzleStorageGuard.testPending());
+    storageMsg.textContent = pending ? STORAGE_MSG_PENDING : STORAGE_MSG_DEFAULT;
+    if (storageTestBtn) storageTestBtn.textContent = pending ? '重新写入测试标记' : '测试本地存储';
+  }
+  function openStorageGuide() {
+    if (!storageGuide) return;
+    storageGuide.hidden = false;
+    storageGuide.setAttribute('aria-hidden', 'false');
+    requestAnimationFrame(function () { storageGuide.classList.add('in'); });
+    if (storageGuideOk && storageGuideOk.focus) { try { storageGuideOk.focus(); } catch (e) { /* ignore */ } }
+  }
+  function closeStorageGuide() {
+    if (!storageGuide || storageGuide.hidden) return;
+    storageGuide.classList.remove('in');
+    storageGuide.setAttribute('aria-hidden', 'true');
+    setTimeout(function () {
+      if (!storageGuide.classList.contains('in')) storageGuide.hidden = true;
+    }, 220);
+  }
+  if (storageGuideOk) storageGuideOk.addEventListener('click', closeStorageGuide);
+  if (storageGuide) storageGuide.addEventListener('click', function (e) { if (e.target === storageGuide) closeStorageGuide(); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape' || !storageGuide || storageGuide.hidden) return;
+    e.preventDefault();
+    if (e.stopImmediatePropagation) e.stopImmediatePropagation(); // 不要顺带关掉下面的设置面板
+    else if (e.stopPropagation) e.stopPropagation();
+    closeStorageGuide();
+  });
+  if (storageTestBtn) {
+    storageTestBtn.addEventListener('click', function () {
+      var G = window.ChezzleStorageGuard;
+      var at = (G && typeof G.markTest === 'function') ? G.markTest() : 0;
+      if (!at) {
+        if (storageMsg) storageMsg.textContent = '写入失败：当前浏览器无法保存数据，请关闭无痕模式或允许本站保存数据。';
+        return;
+      }
+      syncStorageNote();
+      openStorageGuide();
+    });
+  }
 
   // ---- 实际关卡预览：拖动视觉类滑杆时，设置窗外的背景换成真实关卡 iframe ----
   // 不用小画布模拟比例：直接加载同一套关卡页，视角/触控尺寸由关卡自己的引擎按
@@ -2108,6 +2241,8 @@ if (!document.body.classList.contains('czl-page')) window.__czStartHome();
     if (!panel.hidden) return;
     lastFocus = document.activeElement;
     syncInputs();
+    syncStorageNote();
+    panel.classList.toggle('rot', portraitHome());
     panel.hidden = false;
     panel.setAttribute('aria-hidden', 'false');
     // 强制一帧后再加 .in，确保淡入/上浮过渡生效；预览画布此时才有实际尺寸
@@ -2129,14 +2264,18 @@ if (!document.body.classList.contains('czl-page')) window.__czStartHome();
   if (closeBtn) closeBtn.addEventListener('click', closePanel);
   if (doneBtn) doneBtn.addEventListener('click', closePanel);
   if (resetBtn) resetBtn.addEventListener('click', function () { P.reset(); syncInputs(); });
-  window.addEventListener('resize', function () { if (!panel.hidden) schedulePreview(); });
+  window.addEventListener('resize', function () {
+    if (panel.hidden) return;
+    panel.classList.toggle('rot', portraitHome());
+    schedulePreview();
+  });
   panel.addEventListener('click', function (e) { if (e.target === panel) closePanel(); });
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape' && !panel.hidden && !listening) closePanel();
   });
 })();
 </script>
-<script src="updates.js?v=alpha-1031"></script>
+<script src="updates.js?v=alpha-1107"></script>
 <script>
 /* ============================================================================
    主页更新弹窗

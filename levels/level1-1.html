@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh">
 <head>
 <meta charset="utf-8">
@@ -10,12 +10,14 @@
 </style>
 </head>
 <body>
+<!-- 本地存储守卫：无痕模式/禁用网站数据时无法保存进度，铺警告层禁止继续 -->
+<script src="../storage-guard.js"></script>
 <!-- 启动/加载动画：与选关页"进入关卡"过场同款（见 levels/boot.js；导出到 levels/ 下时直接可用） -->
 <script src="boot.js"></script>
 <canvas id="game"></canvas>
-<script src="../prefs.js?vmvwagucl"></script>
-<script src="../audio.js?vmvwagucl"></script>
-<script src="../dist/chezzle.js?vmvwagucl"></script>
+<script src="../prefs.js?vmw5vdv9u"></script>
+<script src="../audio.js?vmw5vdv9u"></script>
+<script src="../dist/chezzle.js?vmw5vdv9u"></script>
 
 <script src="report.js"></script>
 <script>
@@ -25,6 +27,7 @@ window.addEventListener('resize', () => Chezzle.fitCanvasToWindow(canvas));
 const L = new Chezzle.LevelBuilder(canvas, { worldW: 1500, worldH: 800 });
 L
   // 调试模式：打开本关时 URL 加 ?debug=1（.debugmode() 已废弃，导出仅留提示）
+  // 调试通关：levels/levels.json 里设 "debugClickWin": true 后，点一下画布任意位置直接通关（测结算页/进度保存用）
   .floor(52, 703, 443, 94, { id: 'floor5' })
   .block(359, 624, { substance: 'Zn', w: 80, h: 80, id: 'block1' })
   .pool(490, 704, 241, 55, { volume: 500, solutes: {"HCl":30}, gasHeight: 900, id: 'pool1' })
